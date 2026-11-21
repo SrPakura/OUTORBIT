@@ -1478,7 +1478,7 @@ export class WorldObjectsManager {
     const mesh = buildPropMesh(spec.kind);
     mesh.name = `prop-${spec.id}`;
     mesh.scale.setScalar(spec.scale ?? 1);
-    this.placeOnPlanet(mesh, planet, ...spec.sphericalDir, 0);
+    this.placeOnPlanet(mesh, planet, ...spec.sphericalDir, spec.altitudeOffset ?? 0);
     mesh.rotateY(spec.yaw ?? 0);
     this.group.add(mesh);
   }

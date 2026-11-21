@@ -148,7 +148,9 @@ export type PropKind =
   | 'palm_tree'
   | 'fern_cluster'
   | 'ancient_statue'
-  | 'vine_arch';
+  | 'vine_arch'
+  // --- Shogunato Feudal Nevado (Kurogane · Planeta 2) ---
+  | 'cherry_snow_tree';
 
 /** Prop ambiental sin colisión: puro set dressing sobre la superficie. */
 export interface PropSpec {
@@ -158,6 +160,8 @@ export interface PropSpec {
   sphericalDir: [number, number, number];
   yaw?: number;
   scale?: number;
+  /** Altura sobre la superficie (props sobre plataformas orbitales). */
+  altitudeOffset?: number;
 }
 
 export interface PlanetRuntime {

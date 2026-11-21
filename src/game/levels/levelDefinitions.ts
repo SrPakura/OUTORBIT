@@ -302,7 +302,7 @@ function prop(
   id: string,
   kind: PropKind,
   dir: [number, number, number],
-  options: { yaw?: number; scale?: number } = {}
+  options: { yaw?: number; scale?: number; altitudeOffset?: number } = {}
 ): PropSpec {
   return {
     id,
@@ -311,6 +311,7 @@ function prop(
     sphericalDir: dir,
     yaw: options.yaw,
     scale: options.scale,
+    altitudeOffset: options.altitudeOffset,
   };
 }
 
@@ -439,14 +440,14 @@ export const GALAXY_PLANETS: PlanetSpec[] = [
   {
     id: 'cryo-glaciar',
     order: 2,
-    name: 'Cryo-Drop',
-    subtitle: 'Santuario Glacial y Archipiélago Abisal',
+    name: 'Kurogane',
+    subtitle: 'Shogunato Feudal Nevado · Castillo y Aldea',
     biome: 'cryo',
     center: [-160, 125, -450],
     radius: 145,
     gravityStrength: 0.95,
-    surfaceColor: '#bae6fd',
-    patchColor: '#f8fafc',
+    surfaceColor: '#e0f2fe',
+    patchColor: '#93c5fd',
     atmosphereColor: '#e0f2fe',
     hasWaterShell: true,
     waterRadius: 146.5,
@@ -881,173 +882,293 @@ function verdantContent(): {
 }
 
 // ----------------------------------------------------------------------------
-// Planeta 2 — Cryo-Drop: SANTUARIO GLACIAL Y ARCHIPIÉLAGO ABISAL (r = 145).
-// Océano helado con cristales gigantes e iglús. 3 desafíos distintos:
-// (1) Isla-Fortaleza central amurallada con la palanca tras el iglú norte,
-// (2) Búnker Criogénico con LOCKDOWN + pared rompible lateral y ruta
-// subterránea, (3) Plataforma Orbital a 22 m con cadena de 3 burbujas.
+// Planeta 2 — Kurogane: SHOGUNATO FEUDAL NEVADO · CASTILLO Y ALDEA (r = 145).
+// Planeta nevado con Aldea Feudal densa (casas, pagodas, torii, farolillos y
+// cerezos nevados) y 3 zonas interconectadas:
+// (1) Aldea Feudal + Dojo: recinto con valla láser y palanca tras la casa
+//     lateral; el Capitán Samurái (sashimono dorado) porta la llave maestra,
+// (2) Castillo del Shogun de Hielo: doble recinto CERRado (portón de llave,
+//     muro trasero agrietado, vigías samurái en torres y un Oni con kanabo)
+//     con Santuario Interior con LOCKDOWN + palanca lateral + segunda pared
+//     rompible para Digger,
+// (3) Santuario Flotante en Órbita a 22 m: plataforma con Torii y farolillos
+//     vigilada por un vigía, alcanzada desde la torre norte con 3 burbujas.
 // ----------------------------------------------------------------------------
 
 function cryoContent(): {
   structures: StructureSpec[];
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
+  grass: GrassZoneSpec[];
   bubbles: WaterBubbleSpec[];
   props: PropSpec[];
   npcs: NpcSpec[];
 } {
   const planet = GALAXY_PLANETS[2];
-  const WALL = '#5b7f99';
+  const WALL = '#5b7f99'; // muros de hielo lacado del Shogunato
   const GATE = '#7dd3fc';
   const f = baseFrame(planet.id, [0.3, 0.82, 0.42], planet.radius);
 
   const structures: StructureSpec[] = [
-    // --- Isla-Fortaleza central (20 x 16, h=4.5): CERRADA en los 4 lados. ---
-    wallSeg(f, 'cy-isla-wall-n', 0, -8, 't1', 20, 4.5, WALL),
-    // Sur: 7.5 + 7.5 (muro) + 5 (compuerta) = 20 m exactos.
-    wallSeg(f, 'cy-isla-wall-s-l', -6.25, 8, 't1', 7.5, 4.5, WALL),
-    wallSeg(f, 'cy-isla-wall-s-r', 6.25, 8, 't1', 7.5, 4.5, WALL),
-    wallSeg(f, 'cy-isla-wall-e', 10, 0, 't2', 16, 4.5, WALL),
-    wallSeg(f, 'cy-isla-wall-w', -10, 0, 't2', 16, 4.5, WALL),
-    towerAt(f, 'cy-isla-tower-ne', 10, -8, WALL, 7),
-    towerAt(f, 'cy-isla-tower-se', 10, 8, WALL, 7),
-    towerAt(f, 'cy-isla-tower-nw', -10, -8, WALL, 7),
-    towerAt(f, 'cy-isla-tower-sw', -10, 8, WALL, 7),
+    // --- Zona 1: Dojo de la Aldea (18 x 14, h=4): CERRADO, valla láser sur. ---
+    wallSeg(f, 'kg-dojo-wall-n', -28, 13, 't1', 18, 4, WALL),
+    // Sur: 6.3 + 6.3 (muro) + 5.4 (valla láser) = 18 m exactos.
+    wallSeg(f, 'kg-dojo-wall-s-l', -33.85, 27, 't1', 6.3, 4, WALL),
+    wallSeg(f, 'kg-dojo-wall-s-r', -22.15, 27, 't1', 6.3, 4, WALL),
+    wallSeg(f, 'kg-dojo-wall-e', -19, 20, 't2', 14, 4, WALL),
+    wallSeg(f, 'kg-dojo-wall-w', -37, 20, 't2', 14, 4, WALL),
+    towerAt(f, 'kg-dojo-torre', -37, 13, WALL, 7),
 
-    // --- Búnker Criogénico (14 x 12, h=4): CERRADO en los 4 lados. ---
-    wallSeg(f, 'cy-bunker-wall-n', -24, 0, 't1', 14, 4, WALL),
-    // Sur: 4.5 + 4.5 (muro) + 5 (compuerta) = 14 m exactos.
-    wallSeg(f, 'cy-bunker-wall-s-l', -28.75, 12, 't1', 4.5, 4, WALL),
-    wallSeg(f, 'cy-bunker-wall-s-r', -19.25, 12, 't1', 4.5, 4, WALL),
-    wallSeg(f, 'cy-bunker-wall-w', -31, 6, 't2', 12, 4, WALL),
-    // Este: 3.5 + 3.5 (muro) + 5 (pared agrietada) = 12 m exactos.
-    wallSeg(f, 'cy-bunker-wall-e-n', -17, 1.75, 't2', 3.5, 4, WALL),
-    wallSeg(f, 'cy-bunker-wall-e-s', -17, 10.25, 't2', 3.5, 4, WALL),
-    // Núcleo blindado del búnker (decorativo, el generador queda al lado).
-    struct(f, 'cy-bunker-nucleo', 'bunker', -27.5, 3.5, null, [3, 3.8, 3], WALL),
+    // --- Zona 2: Castillo del Shogun (44 x 34, h=5): CERRADO en los 4 lados. ---
+    // Sur: 19 + 19 (muro) + 6 (portón de llave) = 44 m exactos.
+    wallSeg(f, 'kg-castillo-wall-s-l', -12.5, -3, 't1', 19, 5, WALL),
+    wallSeg(f, 'kg-castillo-wall-s-r', 12.5, -3, 't1', 19, 5, WALL),
+    // Norte: 19 + 19 (muro) + 6 (pared agrietada) = 44 m exactos.
+    wallSeg(f, 'kg-castillo-wall-n-l', -12.5, -37, 't1', 19, 5, WALL),
+    wallSeg(f, 'kg-castillo-wall-n-r', 12.5, -37, 't1', 19, 5, WALL),
+    wallSeg(f, 'kg-castillo-wall-e', 22, -20, 't2', 34, 5, WALL),
+    wallSeg(f, 'kg-castillo-wall-w', -22, -20, 't2', 34, 5, WALL),
+    // Torres de las esquinas: los vigías samurái otean el patio.
+    towerAt(f, 'kg-castillo-tower-se', 22, -3, WALL, 9),
+    towerAt(f, 'kg-castillo-tower-sw', -22, -3, WALL, 9),
+    towerAt(f, 'kg-castillo-tower-ne', 22, -37, WALL, 9),
+    towerAt(f, 'kg-castillo-tower-nw', -22, -37, WALL, 9),
 
-    // --- Torre glacial + Plataforma Orbital del núcleo 3 (Axel). ---
-    towerAt(f, 'cy-torre-glacial', 22, -12, GATE, 14),
-    struct(f, 'cy-plataforma-orbital', 'platform', 30, -18, null, [5, 1.2, 5], GATE, {
+    // --- Zona 2: Santuario Interior del Castillo (18 x 12, h=4): CERRADO. ---
+    // Sur: 6.5 + 6.5 (muro) + 5 (compuerta lockdown) = 18 m exactos.
+    wallSeg(f, 'kg-santuario-wall-s-l', -5.75, -16, 't1', 6.5, 4, WALL),
+    wallSeg(f, 'kg-santuario-wall-s-r', 5.75, -16, 't1', 6.5, 4, WALL),
+    wallSeg(f, 'kg-santuario-wall-n', 0, -28, 't1', 18, 4, WALL),
+    wallSeg(f, 'kg-santuario-wall-e', 9, -22, 't2', 12, 4, WALL),
+    // Oeste: 3.5 + 3.5 (muro) + 5 (pared agrietada) = 12 m exactos.
+    wallSeg(f, 'kg-santuario-wall-w-n', -9, -26.25, 't2', 3.5, 4, WALL),
+    wallSeg(f, 'kg-santuario-wall-w-s', -9, -17.75, 't2', 3.5, 4, WALL),
+
+    // --- Zona 3: Torre norte + Santuario Flotante en órbita (Generador 3). ---
+    towerAt(f, 'kg-torre-norte', 8, -41, GATE, 12),
+    struct(f, 'kg-santuario-orbital', 'platform', 0, -58, null, [6, 1.2, 6], GATE, {
       altitudeOffset: 22,
-    }),
-    struct(f, 'cy-orb-platform-2', 'platform', -28, -14, null, [4, 1.1, 4], GATE, {
-      altitudeOffset: 18,
     }),
   ];
 
   const objects: WorldObjectSpec[] = [
-    // ==================== Desafío 1: Isla-Fortaleza ====================
-    obj(planet.id, 'cy-gen-1', 'generator', frameDir(f, 0, -2)),
-    lockedGate(f, 'cy-isla-compuerta', 0, 8, 't1', [2.5, 3.6, 0.6]),
-    // Palanca escondida tras el iglú norte (o roca de Estasis a distancia).
-    switchLever(f, 'cy-isla-palanca', 3, -12.5, { linkedGateId: 'cy-isla-compuerta' }),
+    // ==================== Zona 1: Dojo de la Aldea ====================
+    obj(planet.id, 'kg-gen-1', 'generator', frameDir(f, -28, 18)),
+    laserGate(f, 'kg-dojo-laser', -28, 27, 't1'),
+    // Palanca tras la casa lateral del Dojo (apaga la valla láser).
+    switchLever(f, 'kg-dojo-palanca', -42, 27),
 
-    // ==================== Desafío 2: Búnker Criogénico ====================
-    obj(planet.id, 'cy-gen-2', 'generator', frameDir(f, -21, 9)),
-    // Compuerta con LOCKDOWN: si salta la alarma se sella de golpe.
-    lockedGate(f, 'cy-bunker-compuerta', -24, 12, 't1', [2.5, 3.6, 0.6], {
+    // ==================== Zona 2: Castillo del Shogun ====================
+    // Portón principal: se abre con la llave maestra del Capitán del Dojo.
+    lockedGate(f, 'kg-castillo-porton', 0, -3, 't1', [3, 4.5, 0.8], {
+      requiresKeycard: true,
+    }),
+    // Pared trasera agrietada: bolas de nieve gigantes y barriles fuera.
+    breakableWall(f, 'kg-castillo-muro-norte', 0, -37, 't1', [3, 4.5, 0.7]),
+    // Santuario Interior: compuerta con LOCKDOWN + palanca lateral del patio.
+    lockedGate(f, 'kg-santuario-compuerta', 0, -16, 't1', [2.5, 3.8, 0.6], {
       lockdownOnAlert: true,
     }),
-    switchLever(f, 'cy-bunker-palanca', -20, 15, { linkedGateId: 'cy-bunker-compuerta' }),
-    // Pared rompible lateral, junto a las bolas de nieve y el barril.
-    breakableWall(f, 'cy-bunker-muro-lateral', -17, 6, 't2', [2.5, 3.4, 0.6]),
-    obj(planet.id, 'cy-bola-bunker-1', 'snowball', frameDir(f, -13, 6)),
-    obj(planet.id, 'cy-bola-bunker-2', 'snowball', frameDir(f, -14, 8)),
-    obj(planet.id, 'cy-barril-bunker', 'barrel_explosive', frameDir(f, -14, 4)),
+    switchLever(f, 'kg-santuario-palanca', 14, -11, {
+      linkedGateId: 'kg-santuario-compuerta',
+    }),
+    // Segunda pared rompible del Santuario (acceso subterráneo de Digger).
+    breakableWall(f, 'kg-santuario-muro-oeste', -9, -22, 't2', [2.5, 3.6, 0.6]),
+    obj(planet.id, 'kg-gen-2', 'generator', frameDir(f, 0, -22)),
 
-    // ==================== Desafío 3: Plataforma Orbital ====================
-    obj(planet.id, 'cy-gen-3', 'generator', frameDir(f, 30, -18), { altitudeOffset: 23.2 }),
+    // ==================== Zona 3: Santuario Flotante ====================
+    obj(planet.id, 'kg-gen-3', 'generator', frameDir(f, 0, -59), { altitudeOffset: 23.2 }),
 
-    // Bolas de nieve gigantes para la Estasis y provisiones del campamento.
-    obj(planet.id, 'cy-bola-1', 'snowball', frameDir(f, 16, 14)),
-    obj(planet.id, 'cy-bola-2', 'snowball', frameDir(f, 8, 16)),
-    obj(planet.id, 'cy-bola-3', 'snowball', [0.15, 0.95, 0.28]),
-    obj(planet.id, 'cy-bola-4', 'snowball', [0.6, 0.6, 0.5]),
-    obj(planet.id, 'cy-bola-5', 'snowball', [-0.4, 0.8, -0.4]),
-    obj(planet.id, 'cy-roca-1', 'rock', frameDir(f, 16, 8)),
-    obj(planet.id, 'cy-roca-2', 'rock', [-0.2, 0.9, -0.4]),
-    obj(planet.id, 'cy-roca-3', 'rock', [0.45, 0.75, -0.5]),
-    obj(planet.id, 'cy-barril-isla', 'barrel_explosive', frameDir(f, 4, 12)),
-    obj(planet.id, 'cy-caja-1', 'crate', [0.25, 0.85, 0.45]),
-    obj(planet.id, 'cy-caja-2', 'crate', frameDir(f, -16, -8)),
+    // Bolas de nieve gigantes y barriles junto al muro trasero agrietado.
+    obj(planet.id, 'kg-bola-norte-1', 'snowball', frameDir(f, 3.5, -41)),
+    obj(planet.id, 'kg-bola-norte-2', 'snowball', frameDir(f, -3.5, -41)),
+    obj(planet.id, 'kg-bola-norte-3', 'snowball', frameDir(f, 0, -43.5)),
+    obj(planet.id, 'kg-barril-norte-1', 'barrel_explosive', frameDir(f, -6, -41)),
+    obj(planet.id, 'kg-barril-norte-2', 'barrel_explosive', frameDir(f, 6, -41)),
+    // Barril y bola junto a la pared rompible del Santuario Interior.
+    obj(planet.id, 'kg-barril-santuario', 'barrel_explosive', frameDir(f, -13, -22)),
+    obj(planet.id, 'kg-bola-santuario', 'snowball', frameDir(f, -13, -18)),
+    // Agarrables repartidos por la aldea, el lago helado y el patio.
+    obj(planet.id, 'kg-bola-lago', 'snowball', frameDir(f, 24, 8)),
+    obj(planet.id, 'kg-bola-aldea-1', 'snowball', frameDir(f, 10, 42)),
+    obj(planet.id, 'kg-bola-aldea-2', 'snowball', frameDir(f, -12, 42)),
+    obj(planet.id, 'kg-roca-1', 'rock', frameDir(f, 18, 20)),
+    obj(planet.id, 'kg-roca-2', 'rock', frameDir(f, -16, 4)),
+    obj(planet.id, 'kg-roca-3', 'rock', frameDir(f, 30, -6)),
+    obj(planet.id, 'kg-roca-4', 'rock', [0.15, 0.95, 0.28]),
+    obj(planet.id, 'kg-roca-5', 'rock', [-0.4, 0.8, -0.4]),
+    obj(planet.id, 'kg-caja-1', 'crate', frameDir(f, 12, 28)),
+    obj(planet.id, 'kg-caja-2', 'crate', frameDir(f, -10, 36)),
+    obj(planet.id, 'kg-caja-3', 'crate', frameDir(f, 20, -8)),
+    obj(planet.id, 'kg-barril-aldea', 'barrel_explosive', frameDir(f, 6, 30)),
   ];
 
   const enemies: EnemySpawnSpec[] = [
-    // Isla central: brute + guardias custodiando el núcleo 1.
-    { kind: 'brute', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 4, 3), 0.05, 3) },
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -4, 3), 0.05, 4) },
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 0, 12), 0.05, 4) },
-    // Búnker criogénico: guardia interior del núcleo 2.
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -22, 4), 0.04, 4) },
-    // Vigía sobre la plataforma orbital del núcleo 3.
-    lookout(planet.id, frameDir(f, 28.5, -17), 23.2, frameDir(f, 22, -10)),
-    // Dron de reconocimiento sobre el hielo y guardia del camino del puente.
-    { kind: 'drone', planetId: planet.id, patrolDirs: patrolCircle(0.25, 0.85, 0.45, 0.1, 4) },
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 14, 10), 0.06, 4) },
+    // ==================== Zona 1: Aldea y Dojo ====================
+    // Capitán Samurái del Dojo (sashimono dorado): porta la llave maestra.
+    {
+      kind: 'officer',
+      skin: 'samurai',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, -28, 20), 0.035, 4),
+      dropsKeycard: true,
+    },
+    // Samuráis patrullando la puerta del Dojo y la calle mayor de la aldea.
+    { kind: 'guard', skin: 'samurai', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -28, 33), 0.04, 4) },
+    { kind: 'guard', skin: 'samurai', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 0, 24), 0.06, 4) },
+
+    // ==================== Zona 2: Castillo del Shogun ====================
+    // Vigías samurái en las torres frontales, barriendo el patio con la mirada.
+    lookout(planet.id, frameDir(f, 22, -3), 8.65, frameDir(f, 0, -20), 'samurai'),
+    lookout(planet.id, frameDir(f, -22, -3), 8.65, frameDir(f, 0, -20), 'samurai'),
+    // Oni acorazado con kanabo custodiando el patio del Castillo.
+    { kind: 'brute', skin: 'oni', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 0, -10), 0.04, 3) },
+    // Samuráis patrullando el patio entre el portón y el Santuario Interior.
+    { kind: 'guard', skin: 'samurai', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 12, -9), 0.04, 4) },
+    { kind: 'guard', skin: 'samurai', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -12, -9), 0.04, 4) },
+
+    // ==================== Zona 3: Santuario Flotante ====================
+    // Vigía samurái sobre la plataforma orbital, oteando hacia el Castillo.
+    lookout(planet.id, frameDir(f, -3, -60), 23.2, frameDir(f, 0, -30), 'samurai'),
+    // Dron de reconocimiento sobrevolando el lago helado de la aldea.
+    { kind: 'drone', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 26, 16), 0.08, 4) },
   ];
 
-  // Cadena de 3 burbujas de agua espaciales hasta la plataforma orbital.
+  // Arbustos nevados para el sigilo de Kitsune: Dojo, aldea, frente del
+  // Castillo y lago helado.
+  const grass: GrassZoneSpec[] = [
+    { id: 'kg-hierba-dojo', planetId: planet.id, sphericalDir: frameDir(f, -42, 31), angularRadius: 0.2 },
+    { id: 'kg-hierba-aldea', planetId: planet.id, sphericalDir: frameDir(f, 14, 34), angularRadius: 0.2 },
+    { id: 'kg-hierba-castillo-e', planetId: planet.id, sphericalDir: frameDir(f, 16, 2), angularRadius: 0.18 },
+    { id: 'kg-hierba-castillo-o', planetId: planet.id, sphericalDir: frameDir(f, -16, 2), angularRadius: 0.18 },
+    { id: 'kg-hierba-lago', planetId: planet.id, sphericalDir: frameDir(f, 31, 20), angularRadius: 0.18 },
+  ];
+
+  // Cadena de 3 burbujas de agua espaciales desde la torre norte hasta el
+  // Santuario Flotante (Axel / Gravity Dash / Ancla) + burbuja del lago helado.
   const bubbles: WaterBubbleSpec[] = [
-    orbitBubble('cy-bub-o1', planet, frameDir(f, 25, -14), 6, 8),
-    orbitBubble('cy-bub-o2', planet, frameDir(f, 28, -16), 12, 7.5),
-    orbitBubble('cy-bub-o3', planet, frameDir(f, 29.5, -17.5), 18, 7),
-    orbitBubble('cy-bub-oeste', planet, frameDir(f, -18, -9), 10, 8),
+    orbitBubble('kg-bub-1', planet, frameDir(f, 10, -45), 13, 7),
+    orbitBubble('kg-bub-2', planet, frameDir(f, 7, -49), 16.5, 6.5),
+    orbitBubble('kg-bub-3', planet, frameDir(f, 4, -53), 19.5, 6),
+    orbitBubble('kg-bub-lago', planet, frameDir(f, 26, 12), 3, 8),
   ];
 
-  // --- Ambientación glaciar: cristales gigantes, iglús del campamento,
-  // puentes congelados hacia la isla y farolillos congelados. ---
+  // --- Densidad visual del Shogunato: aldea feudal densa con torii, casas,
+  // pagodas, farolillos cálidos, cerezos nevados, pinos, puentes de madera,
+  // senderos de piedra, lago helado con cristales y castillo decorado. ---
+  const toCenter = (axM: number, azM: number): THREE.Vector3 =>
+    new THREE.Vector3().addScaledVector(f.t1, -axM).addScaledVector(f.t2, 28 - azM).normalize();
   const props: PropSpec[] = [
-    // Campamento de iglús inicial (con la Dra. Vex).
-    prop(planet.id, 'cy-iglu-camp-1', 'igloo', frameDir(f, 20, 18)),
-    prop(planet.id, 'cy-iglu-camp-2', 'igloo', frameDir(f, 16, 20)),
-    prop(planet.id, 'cy-iglu-camp-3', 'igloo', frameDir(f, 22, 14)),
-    // Iglú del norte: esconde la palanca de la isla.
-    prop(planet.id, 'cy-iglu-norte', 'igloo', frameDir(f, 2, -14)),
-    prop(planet.id, 'cy-iglu-4', 'igloo', [-0.5, 0.6, 0.55], { scale: 0.85 }),
-    // Camino congelado del campamento a la isla.
-    prop(planet.id, 'cy-camino-1', 'stone_path', frameDir(f, 12, 13)),
-    prop(planet.id, 'cy-camino-2', 'stone_path', frameDir(f, 8, 11)),
-    prop(planet.id, 'cy-puente-hielo', 'wood_bridge', frameDir(f, 4, 10), { yaw: Math.PI / 2 }),
-    // Farolillos congelados marcando la entrada de la isla.
-    prop(planet.id, 'cy-farol-1', 'paper_lantern', frameDir(f, 3, 10)),
-    prop(planet.id, 'cy-farol-2', 'paper_lantern', frameDir(f, -3, 10)),
-    // Cristales de hielo gigantes repartidos por el glaciar.
-    prop(planet.id, 'cy-cristal-1', 'ice_crystal', frameDir(f, 16, 14), { scale: 1.8 }),
-    prop(planet.id, 'cy-cristal-2', 'ice_crystal', frameDir(f, -14, -18), { scale: 2.2 }),
-    prop(planet.id, 'cy-cristal-3', 'ice_crystal', frameDir(f, 26, 4), { scale: 1.5 }),
-    prop(planet.id, 'cy-cristal-4', 'ice_crystal', frameDir(f, -30, 10), { scale: 2.0 }),
-    prop(planet.id, 'cy-cristal-5', 'ice_crystal', frameDir(f, 8, -22), { scale: 1.7 }),
-    prop(planet.id, 'cy-cristal-6', 'ice_crystal', [0.1, 0.9, 0.2], { scale: 2.4 }),
-    prop(planet.id, 'cy-cristal-7', 'ice_crystal', [-0.3, 0.7, -0.5], { scale: 2.0 }),
-    prop(planet.id, 'cy-cristal-8', 'ice_crystal', [0.55, 0.5, -0.6], { scale: 1.6 }),
-    prop(planet.id, 'cy-cristal-9', 'ice_crystal', [0.85, 0.3, 0.3], { scale: 1.9 }),
-    prop(planet.id, 'cy-cristal-10', 'ice_crystal', [-0.6, 0.1, 0.75], { scale: 2.1 }),
+    // ==================== Zona 1: Aldea Feudal Nevada ====================
+    // Torii de la entrada + farolillos junto al Maestro Takeshi.
+    prop(planet.id, 'kg-torii-entrada', 'torii_gate', frameDir(f, 0, 42), { scale: 1.2 }),
+    prop(planet.id, 'kg-farol-entrada-e', 'paper_lantern', frameDir(f, 2, 38)),
+    prop(planet.id, 'kg-farol-entrada-o', 'paper_lantern', frameDir(f, -2, 38)),
+    // Casas de madera de la aldea flanqueando la calle mayor.
+    prop(planet.id, 'kg-casa-1', 'village_house', frameDir(f, 9, 30), { yaw: yawFace(f, 9, 30, toCenter(9, 30)) }),
+    prop(planet.id, 'kg-casa-2', 'village_house', frameDir(f, -9, 30), { yaw: yawFace(f, -9, 30, toCenter(-9, 30)) }),
+    prop(planet.id, 'kg-casa-3', 'village_house', frameDir(f, 15, 36), { yaw: yawFace(f, 15, 36, toCenter(15, 36)) }),
+    prop(planet.id, 'kg-casa-4', 'village_house', frameDir(f, -15, 36), { yaw: yawFace(f, -15, 36, toCenter(-15, 36)) }),
+    prop(planet.id, 'kg-casa-5', 'village_house', frameDir(f, 8, 20), { yaw: yawFace(f, 8, 20, toCenter(8, 20)) }),
+    prop(planet.id, 'kg-casa-6', 'village_house', frameDir(f, -8, 20), { yaw: yawFace(f, -8, 20, toCenter(-8, 20)) }),
+    prop(planet.id, 'kg-casa-7', 'village_house', frameDir(f, 16, 14), { yaw: yawFace(f, 16, 14, toCenter(16, 14)) }),
+    prop(planet.id, 'kg-casa-8', 'village_house', frameDir(f, -16, 14), { yaw: yawFace(f, -16, 14, toCenter(-16, 14)) }),
+    prop(planet.id, 'kg-casa-9', 'village_house', frameDir(f, 22, 26), { yaw: yawFace(f, 22, 26, toCenter(22, 26)) }),
+    prop(planet.id, 'kg-casa-10', 'village_house', frameDir(f, -14, 40), { yaw: yawFace(f, -14, 40, toCenter(-14, 40)) }),
+    // Casa lateral que esconde la palanca del Dojo.
+    prop(planet.id, 'kg-casa-palanca', 'village_house', frameDir(f, -42, 23), { yaw: yawFace(f, -42, 23, f.t2) }),
+    // Pagodas de la aldea: plaza central y flancos.
+    prop(planet.id, 'kg-pagoda-1', 'pagoda_house', frameDir(f, 0, 34)),
+    prop(planet.id, 'kg-pagoda-2', 'pagoda_house', frameDir(f, 24, 34)),
+    prop(planet.id, 'kg-pagoda-3', 'pagoda_house', frameDir(f, -24, 40)),
+    // Farolillos cálidos marcando la calle mayor nevada.
+    prop(planet.id, 'kg-farol-1', 'paper_lantern', frameDir(f, 2, 30)),
+    prop(planet.id, 'kg-farol-2', 'paper_lantern', frameDir(f, -2, 30)),
+    prop(planet.id, 'kg-farol-3', 'paper_lantern', frameDir(f, 2, 18)),
+    prop(planet.id, 'kg-farol-4', 'paper_lantern', frameDir(f, -2, 18)),
+    prop(planet.id, 'kg-farol-5', 'paper_lantern', frameDir(f, 2, 10)),
+    prop(planet.id, 'kg-farol-6', 'paper_lantern', frameDir(f, -2, 10)),
+    // Cerezos nevados de la aldea.
+    prop(planet.id, 'kg-cerezo-1', 'cherry_snow_tree', frameDir(f, 12, 26), { scale: 1.2 }),
+    prop(planet.id, 'kg-cerezo-2', 'cherry_snow_tree', frameDir(f, -12, 26), { scale: 1.2 }),
+    prop(planet.id, 'kg-cerezo-3', 'cherry_snow_tree', frameDir(f, 18, 30), { scale: 1.15 }),
+    prop(planet.id, 'kg-cerezo-4', 'cherry_snow_tree', frameDir(f, -18, 30), { scale: 1.15 }),
+    prop(planet.id, 'kg-cerezo-5', 'cherry_snow_tree', frameDir(f, 6, 38)),
+    prop(planet.id, 'kg-cerezo-6', 'cherry_snow_tree', frameDir(f, -6, 38)),
+    prop(planet.id, 'kg-cerezo-7', 'cherry_snow_tree', frameDir(f, 20, 18)),
+    prop(planet.id, 'kg-cerezo-8', 'cherry_snow_tree', frameDir(f, -20, 18)),
+    // Pinos invernales alrededor de la aldea.
+    prop(planet.id, 'kg-pino-1', 'pine_tree', frameDir(f, 30, 26), { scale: 1.3 }),
+    prop(planet.id, 'kg-pino-2', 'pine_tree', frameDir(f, -30, 38), { scale: 1.3 }),
+    prop(planet.id, 'kg-pino-3', 'pine_tree', frameDir(f, 34, 8), { scale: 1.25 }),
+    prop(planet.id, 'kg-pino-4', 'pine_tree', frameDir(f, -32, 2), { scale: 1.25 }),
+    prop(planet.id, 'kg-pino-5', 'pine_tree', frameDir(f, 12, 44), { scale: 1.2 }),
+    prop(planet.id, 'kg-pino-6', 'pine_tree', frameDir(f, -12, 44), { scale: 1.2 }),
+    // Senderos de piedra de la calle mayor y acceso al Dojo.
+    prop(planet.id, 'kg-sendero-1', 'stone_path', frameDir(f, 0, 40)),
+    prop(planet.id, 'kg-sendero-2', 'stone_path', frameDir(f, 0, 32)),
+    prop(planet.id, 'kg-sendero-3', 'stone_path', frameDir(f, 0, 24)),
+    prop(planet.id, 'kg-sendero-4', 'stone_path', frameDir(f, 0, 14)),
+    prop(planet.id, 'kg-sendero-5', 'stone_path', frameDir(f, 0, 6)),
+    prop(planet.id, 'kg-sendero-dojo', 'stone_path', frameDir(f, -34, 32), { yaw: Math.PI / 2 }),
+    // Puente de madera de la entrada sur de la aldea.
+    prop(planet.id, 'kg-puente-entrada', 'wood_bridge', frameDir(f, 0, 46)),
+    // Bambú nevado entre las casas del flanco este.
+    prop(planet.id, 'kg-bambu-1', 'bamboo_cluster', frameDir(f, 28, 34)),
+    prop(planet.id, 'kg-bambu-2', 'bamboo_cluster', frameDir(f, -28, 34)),
+    prop(planet.id, 'kg-bambu-3', 'bamboo_cluster', frameDir(f, 32, 30)),
+    prop(planet.id, 'kg-bambu-4', 'bamboo_cluster', frameDir(f, -30, 28)),
+
+    // ==================== Lago helado (flanco este) ====================
+    prop(planet.id, 'kg-puente-lago', 'wood_bridge', frameDir(f, 26, 12), { yaw: Math.PI / 2 }),
+    prop(planet.id, 'kg-cristal-lago-1', 'ice_crystal', frameDir(f, 22, 8), { scale: 1.6 }),
+    prop(planet.id, 'kg-cristal-lago-2', 'ice_crystal', frameDir(f, 30, 16), { scale: 1.8 }),
+    prop(planet.id, 'kg-cristal-lago-3', 'ice_crystal', frameDir(f, 24, 17), { scale: 1.4 }),
+    prop(planet.id, 'kg-cristal-lago-4', 'ice_crystal', frameDir(f, 31, 7), { scale: 1.5 }),
+
+    // ==================== Zona 2: Castillo del Shogun ====================
+    // Torii monumental delante del portón principal + farolillos del guardia.
+    prop(planet.id, 'kg-torii-monumental', 'torii_gate', frameDir(f, 0, 3), { scale: 1.7 }),
+    prop(planet.id, 'kg-farol-porton-e', 'paper_lantern', frameDir(f, 4, 0)),
+    prop(planet.id, 'kg-farol-porton-o', 'paper_lantern', frameDir(f, -4, 0)),
+    // Cerezos nevados flanqueando la aproximación al Castillo.
+    prop(planet.id, 'kg-cerezo-castillo-e', 'cherry_snow_tree', frameDir(f, 18, 2), { scale: 1.25 }),
+    prop(planet.id, 'kg-cerezo-castillo-o', 'cherry_snow_tree', frameDir(f, -18, 2), { scale: 1.25 }),
+    // Sendero del patio interior + cerezos y farolillos del patio.
+    prop(planet.id, 'kg-sendero-patio', 'stone_path', frameDir(f, 0, -10)),
+    prop(planet.id, 'kg-cerezo-patio-e', 'cherry_snow_tree', frameDir(f, 16, -8)),
+    prop(planet.id, 'kg-cerezo-patio-o', 'cherry_snow_tree', frameDir(f, -16, -8)),
+    // Pinos y cristales tras los muros del Castillo.
+    prop(planet.id, 'kg-pino-castillo-e', 'pine_tree', frameDir(f, 28, -24), { scale: 1.3 }),
+    prop(planet.id, 'kg-pino-castillo-o', 'pine_tree', frameDir(f, -28, -24), { scale: 1.3 }),
+    prop(planet.id, 'kg-cristal-castillo-e', 'ice_crystal', frameDir(f, 34, -28), { scale: 2.0 }),
+    prop(planet.id, 'kg-cristal-castillo-o', 'ice_crystal', frameDir(f, -32, -30), { scale: 1.9 }),
+    prop(planet.id, 'kg-cristal-torre-norte', 'ice_crystal', frameDir(f, 14, -44), { scale: 1.6 }),
+
+    // ==================== Zona 3: Santuario Flotante ====================
+    prop(planet.id, 'kg-torii-orbital', 'torii_gate', frameDir(f, 0, -62), { altitudeOffset: 23.2, scale: 1.1 }),
+    prop(planet.id, 'kg-farol-orbital-e', 'paper_lantern', frameDir(f, 2.5, -61), { altitudeOffset: 23.2 }),
+    prop(planet.id, 'kg-farol-orbital-o', 'paper_lantern', frameDir(f, -2.5, -61), { altitudeOffset: 23.2 }),
   ];
 
   const npcs: NpcSpec[] = [
     {
-      id: 'vex',
-      name: 'Dra. Vex',
-      role: 'Investigadora Polar',
+      id: 'takeshi',
+      name: 'Maestro Takeshi',
+      role: 'Ronin Retirado',
       planetId: planet.id,
-      sphericalDir: frameDir(f, 18, 16),
-      yaw: yawFace(
-        f,
-        18,
-        16,
-        new THREE.Vector3().addScaledVector(f.t1, -18).addScaledVector(f.t2, -16).normalize()
-      ),
-      accentColor: '#7dd3fc',
+      sphericalDir: frameDir(f, 3, 40.5),
+      yaw: yawFace(f, 3, 40.5, toCenter(3, 40.5)),
+      accentColor: '#f87171',
       dialogue: [
-        'Los 3 núcleos criogénicos están protegidos: uno en la Isla Central tras el puente, otro dentro del Búnker Sellado (si salta la alarma se cierra la compuerta!) y el tercero flotando en la Plataforma Orbital superior.',
-        'La palanca de la isla está escondida tras el iglú del norte. Lánzale una roca con Estasis si no quieres acercarte.',
-        'Para la plataforma orbital: sube a la torre glacial y sigue las burbujas de agua. Axel lo borda nadando.',
+        'El Shogunato selló su Castillo en la nieve. El Capitán Samurái del Dojo guarda la llave maestra; si prefieres las sombras, usa los arbustos nevados, rompe el muro trasero del castillo o escala por las burbujas al Santuario Celestial.',
+        'El Dojo de la aldea está cerrado por una valla láser: la palanca se esconde tras la casa lateral del oeste, o excava por debajo con Digger. ¡El Capitán porta el estandarte dorado en la espalda, no lo confundas con un samurái cualquiera!',
+        'El patio del Castillo lo custodia un Oni acorazado con su kanabo y dos vigías en las torres. Noquea por la espalda con [E] y cruza la hierba nevada; si salta la alarma, la compuerta del Santuario Interior se sella de golpe.',
       ],
     },
   ];
 
-  return { structures, objects, enemies, bubbles, props, npcs };
+  return { structures, objects, enemies, grass, bubbles, props, npcs };
 }
 
 // ----------------------------------------------------------------------------
@@ -1403,7 +1524,7 @@ export const GALAXY_SPEC: GalaxySpec = {
     ...kronos.structures,
   ],
   waterBubbles: [...verdant.bubbles, ...cryo.bubbles, ...bastion.bubbles, ...kronos.bubbles],
-  grassZones: [...luna.grass, ...verdant.grass],
+  grassZones: [...luna.grass, ...verdant.grass, ...cryo.grass],
   props: [...verdant.props, ...cryo.props, ...bastion.props],
   objects: [
     ...luna.objects,
