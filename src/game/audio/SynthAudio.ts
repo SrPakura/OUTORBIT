@@ -27,7 +27,8 @@ export type GameSoundKind =
   | 'melee'
   | 'hurt'
   | 'wallBreak'
-  | 'npcTalk';
+  | 'npcTalk'
+  | 'bounce';
 
 const MASTER_VOLUME = 0.36;
 
@@ -141,6 +142,9 @@ export class SynthAudio {
         break;
       case 'npcTalk':
         this.playNpcTalk();
+        break;
+      case 'bounce':
+        this.playBounce();
         break;
     }
   }
@@ -330,5 +334,13 @@ export class SynthAudio {
   playNpcTalk(): void {
     this.tone('sine', 640, 900, 0.07, 0.55);
     this.tone('sine', 900, 1180, 0.08, 0.4, 0.07);
+  }
+
+  /** HITO 2 — Trampolín de flor gigante/seta: barrido ascendente burbujeante
+   *  y divertido (240 -> 620 Hz con armónico triangular y colita aguda). */
+  playBounce(): void {
+    this.tone('sine', 240, 620, 0.18, 0.7);
+    this.tone('triangle', 240, 620, 0.16, 0.4, 0.02);
+    this.tone('sine', 620, 880, 0.08, 0.3, 0.12);
   }
 }

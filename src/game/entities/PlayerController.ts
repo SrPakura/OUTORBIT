@@ -10,8 +10,10 @@ import {
   alignBasisToUp,
   findStrongestGravityPlanet,
   getTangentAxes,
+  resolvePlayerProps,
   resolvePlayerStructures,
 } from '../math/spherical';
+import { getPlanetTerrainOffsetVec } from '../math/terrain';
 import { buildCharacterModel, buildDisguiseOverlay } from '../render/proceduralModels';
 import type { GameSoundKind } from '../audio/SynthAudio';
 import type { LockOnHandle, WorldObjectsManager } from './WorldObjects';
@@ -110,6 +112,9 @@ const WALL_BREAK_RADIUS = 3.4;
 
 // Hielo resbaladizo (bioma cryo / parches de hielo): baja adherencia al frenar.
 const ICE_GRIP = 1.6;
+
+// HITO 2: follaje denso (helechos/bambú) — empuje elástico y paso más lento.
+const FOLIAGE_SPEED_MUL = 0.88;
 
 interface CharacterParts {
   head: THREE.Object3D;
@@ -289,6 +294,7 @@ export class PlayerController {
   private readonly _v1 = new THREE.Vector3();
   private readonly _v2 = new THREE.Vector3();
   private readonly _v3 = new THREE.Vector3();
+  private readonly _groundUp = new THREE.Vector3(); // HITO 2: normal del suelo
   private readonly _q1 = new THREE.Quaternion();
   private readonly _yawQuat = new THREE.Quaternion();
   private readonly _flipQuat = new THREE.Quaternion().setFromAxisAngle(
@@ -315,12 +321,15 @@ export class PlayerController {
     this.profile = GAME_CONSTANTS.CHARACTERS.kitsune;
 
     // Spawn sobre la superficie, +Y alineado con la normal radial.
+    // HITO 2: la altura de spawn incluye el terreno local (pad plano del
+    // punto de aparición: h≈0, pero se calcula igual para coherencia).
+    this._up.copy(spawnDir).normalize();
+    const spawnTerrain = getPlanetTerrainOffsetVec(this.currentPlanet.spec.id, this._up);
     this.pos
-      .copy(spawnDir)
-      .normalize()
-      .multiplyScalar(this.currentPlanet.spec.radius)
+      .copy(this._up)
+      .multiplyScalar(this.currentPlanet.spec.radius + spawnTerrain)
       .add(this.currentPlanet.centerVec);
-    this._up.copy(this.pos).sub(this.currentPlanet.centerVec).normalize();
+    this.altitude = spawnTerrain;
     this.lastUp.copy(this._up);
     alignBasisToUp(this.basisQuat, this._up, 1);
 
@@ -735,10 +744,14 @@ export class PlayerController {
     const len = this._up.length();
     if (len > 1e-6) this._up.divideScalar(len);
     this.lastUp.copy(this._up);
-    this.pos.copy(planet.centerVec).addScaledVector(this._up, planet.spec.radius);
+    // HITO 2: el suelo de salida vive a la altura exacta del terreno local.
+    const terrainOffset = getPlanetTerrainOffsetVec(planet.spec.id, this._up);
+    this.pos
+      .copy(planet.centerVec)
+      .addScaledVector(this._up, planet.spec.radius + terrainOffset);
     alignBasisToUp(this.basisQuat, this._up, 1);
     this.grounded = true;
-    this.altitude = 0;
+    this.altitude = terrainOffset;
     this.vertVel = 0;
     this.jumpsUsed = 0;
     this.inFlight = false;
@@ -752,7 +765,8 @@ export class PlayerController {
   forceSurfaceEject(): void {
     this.isBurrowing = false;
     this.grounded = false;
-    this.altitude = 0.5;
+    // HITO 2: eyección sobre el terreno local (cráter/valle incluido).
+    this.altitude = getPlanetTerrainOffsetVec(this.currentPlanet.spec.id, this.lastUp) + 0.5;
     this.vertVel = 12;
     this.jumpsUsed = 1;
   }
@@ -895,7 +909,13 @@ export class PlayerController {
       for (let i = 0; i < this.planets.length; i++) {
         const planet = this.planets[i];
         this._v1.copy(this.pos).sub(planet.centerVec);
-        const surfaceDist = this._v1.length() - planet.spec.radius;
+        const dist = this._v1.length();
+        // HITO 2: la superficie incluye el relieve local del terreno.
+        const terrainOffset =
+          dist > 1e-6
+            ? getPlanetTerrainOffsetVec(planet.spec.id, this._v1.divideScalar(dist))
+            : 0;
+        const surfaceDist = dist - planet.spec.radius - terrainOffset;
         if (surfaceDist < nearest) nearest = surfaceDist;
       }
       this.nearestSurfaceDist = nearest;
@@ -1048,13 +1068,16 @@ export class PlayerController {
 
     let speed = 0;
     const onIce = this.world.isOnIce(this.pos, planet);
+    // HITO 2: el follaje denso (helechos/bambú) frena ligeramente el paso.
+    const inFoliage = this.world.isInFoliage(this.pos, planet);
     if (this.isMoving) {
       this._move.normalize();
       const sprinting = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
       speed =
         this.profile.moveSpeed *
         (sprinting ? SPRINT_MULTIPLIER : 1) *
-        (this.isBurrowing ? BURROW_SPEED_MUL : 1);
+        (this.isBurrowing ? BURROW_SPEED_MUL : 1) *
+        (inFoliage ? FOLIAGE_SPEED_MUL : 1);
       if (onIce) {
         // Hielo resbaladizo: inercia al acelerar/frenar sobre el parche.
         this._v1.copy(this._move).multiplyScalar(speed);
@@ -1096,30 +1119,59 @@ export class PlayerController {
       planet.spec.id,
       PLAYER_STRUCTURE_RADIUS
     );
-    const groundAltitude = structureRes.groundAltitude;
+
+    // HITO 2 — Terreno esférico + props físicos: el suelo real es
+    // planet.radius + terrainOffset + suelo elevado, donde el elevado combina
+    // estructuras (techos) y props (copas/corolas/sombreros caminables).
+    this._groundUp.copy(this.pos).sub(center);
+    const groundUpLen = this._groundUp.length();
+    if (groundUpLen > 1e-6) this._groundUp.divideScalar(groundUpLen);
+    const terrainOffset = getPlanetTerrainOffsetVec(planet.spec.id, this._groundUp);
+    const propRes = resolvePlayerProps(
+      this.pos,
+      this.vertVel,
+      this.altitude,
+      planet,
+      this.world.getPropColliders(),
+      PLAYER_STRUCTURE_RADIUS
+    );
+    const propElevated = propRes.groundAltitude - terrainOffset;
+    const elevated = Math.max(structureRes.groundAltitude, propElevated, 0);
+    const groundAltitude = terrainOffset + elevated;
 
     // Dinámica vertical (salto / gravedad radial) sobre el suelo efectivo:
-    // planet.radius + groundAltitude cuando se está encima de una estructura.
+    // planet.radius + groundAltitude cuando se está encima de terreno,
+    // estructura o prop.
     const wasAirborne = !this.grounded;
     this.altitude += this.vertVel * dt;
     this.vertVel -= GRAVITY_BASE * this.profile.gravityScale * dt;
     if (this.altitude <= groundAltitude) {
-      // Aterrizaje en Modo Júpiter (Digger): onda expansiva.
-      if (
-        wasAirborne &&
-        groundAltitude <= 0.01 &&
-        this.vertVel < -SHOCKWAVE_MIN_FALL &&
-        this.profile.gravityScale > 1.2
-      ) {
-        this.world.shockwave(this.pos, SHOCKWAVE_RADIUS);
+      // HITO 2: flor gigante / seta bioluminiscente — trampolín con voltereta
+      // cuando el suelo ganador es el techo rebotador del prop.
+      if (propRes.bounceImpulse > 0 && propElevated >= elevated - 0.01 && !this.isBurrowing) {
+        this.vertVel = propRes.bounceImpulse;
+        this.grounded = false;
+        this.jumpsUsed = 1;
+        this.flipTimer = FLIP_TIME;
+        this.onSound?.('bounce');
+      } else {
+        // Aterrizaje en Modo Júpiter (Digger): onda expansiva.
+        if (
+          wasAirborne &&
+          elevated <= 0.01 &&
+          this.vertVel < -SHOCKWAVE_MIN_FALL &&
+          this.profile.gravityScale > 1.2
+        ) {
+          this.world.shockwave(this.pos, SHOCKWAVE_RADIUS);
+        }
+        this.altitude = groundAltitude;
+        this.vertVel = 0;
+        if (!this.grounded) {
+          this.jumpsUsed = 0;
+          this.onSound?.('land'); // aterrizaje suave tras el salto/vuelo
+        }
+        this.grounded = true;
       }
-      this.altitude = groundAltitude;
-      this.vertVel = 0;
-      if (!this.grounded) {
-        this.jumpsUsed = 0;
-        this.onSound?.('land'); // aterrizaje suave tras el salto/vuelo
-      }
-      this.grounded = true;
     } else {
       this.grounded = false;
     }
@@ -1242,7 +1294,7 @@ export class PlayerController {
       return;
     }
 
-    if (this.flightTime > 0.12 && newDist <= activeTarget.spec.radius + 0.15) {
+    if (this.flightTime > 0.12 && newDist <= activeTarget.spec.radius + getPlanetTerrainOffsetVec(activeTarget.spec.id, this._up) + 0.15) {
       this.landOn(activeTarget, this._up);
     }
   }
@@ -1312,14 +1364,16 @@ export class PlayerController {
     this.flightDest = null;
     this.flightTime = 0;
     this.grounded = true;
-    this.altitude = 0;
     this.vertVel = 0;
     this.jumpsUsed = 0;
     this.flightVel.set(0, 0, 0);
     this.lastUp.copy(up);
+    // HITO 2: aterrizaje sobre la altura exacta del terreno local.
+    const terrainOffset = getPlanetTerrainOffsetVec(target.spec.id, up);
+    this.altitude = terrainOffset;
     this.pos
       .copy(target.centerVec)
-      .addScaledVector(up, target.spec.radius);
+      .addScaledVector(up, target.spec.radius + terrainOffset);
     this.onSound?.('land');
   }
 
@@ -1330,9 +1384,14 @@ export class PlayerController {
   private beginDirectedFlight(target: PlanetRuntime): void {
     this.flightStart.copy(this.pos);
     this._v1.copy(this.pos).sub(target.centerVec).normalize();
+    // HITO 2: el destino del arco vive sobre el terreno real del punto de
+    // contacto (no sobre la esfera nominal).
     this.flightEnd
       .copy(target.centerVec)
-      .addScaledVector(this._v1, target.spec.radius);
+      .addScaledVector(
+        this._v1,
+        target.spec.radius + getPlanetTerrainOffsetVec(target.spec.id, this._v1)
+      );
 
     // Punto de control: arco elevado sobre el origen del nivel (0,0,0).
     this.flightCtrl.copy(this.flightStart).add(this.flightEnd).multiplyScalar(0.5);
@@ -1462,7 +1521,11 @@ export class PlayerController {
       this.coreDiveActive = false;
       this.isBurrowing = false;
       this.pos.copy(this.diveEnd);
-      this.altitude = 0.1;
+      // HITO 2: salida del núcleo sobre el terreno del polo opuesto.
+      this._up.copy(this.diveEnd).sub(planet.centerVec);
+      const upLen = this._up.length();
+      if (upLen > 1e-6) this._up.divideScalar(upLen);
+      this.altitude = getPlanetTerrainOffsetVec(planet.spec.id, this._up) + 0.1;
       this.vertVel = 5; // saltito de salida en el polo opuesto
       this.grounded = false;
       this.jumpsUsed = 0;

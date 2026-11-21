@@ -16,6 +16,7 @@ import { buildPlanetModel } from './render/proceduralModels';
 import { PlayerController } from './entities/PlayerController';
 import { WorldObjectsManager, type WorldPlayerState } from './entities/WorldObjects';
 import { GALAXY_SPEC } from './levels/levelDefinitions';
+import { initPlanetTerrain, isInLowBasin } from './math/terrain';
 import { BehaviorTracker, createEmptyBehaviorVector } from './ai/BehaviorTracker';
 import { computePlanetAdaptation } from './ai/AdaptationDirector';
 import { SynthAudio } from './audio/SynthAudio';
@@ -250,6 +251,11 @@ export class GameEngine {
   private loadGalaxy(): void {
     this.disposeLevel();
 
+    // HITO 2 — Terreno esférico determinista: se inicializa ANTES de
+    // construir los modelos de planeta y de instanciar estructuras, props,
+    // objetos, enemigos y NPCs (todo el mundo se apoya en él).
+    initPlanetTerrain(GALAXY_SPEC);
+
     this.scene.background = new THREE.Color(GALAXY_SPEC.skyTopColor);
     this.backdrop = createSpaceBackdrop(
       this.scene,
@@ -401,12 +407,15 @@ export class GameEngine {
     this.worldState.burrowing = player.isBurrowing;
     this.worldState.swimming = player.isSwimming;
     this.worldState.parryActive = player.parryWindowActive;
-    this.worldState.stealthMul = player.stealthMultiplier;
+    // HITO 2: cuenca/cráter profundo del terreno = cobertura extra (x0.85).
+    this.worldState.stealthMul =
+      player.stealthMultiplier *
+      (isInLowBasin(player.planet.spec.id, player.up) ? 0.85 : 1);
     this.worldState.sprinting = player.isSprinting;
     this.worldState.airborne = player.isAirborne;
     this.worldState.flightTargetPlanetId = player.flightTargetPlanetId;
     this.worldState.characterId = player.characterId;
-    this.worldState.inGrass = world.isInGrass(player.position, player.planet);
+    this.worldState.inGrass = world.checkPlayerInGrass(player.position, player.planet);
     // HITO 1: contexto de infracción — contrabando de Estasis y acción
     // hostil reciente (el mundo lleva el temporizador de 3.5s).
     this.worldState.holdingContraband = world.held > 0;

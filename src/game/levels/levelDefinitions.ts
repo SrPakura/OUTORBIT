@@ -316,6 +316,58 @@ function prop(
   };
 }
 
+/**
+ * HITO 2 — Anillo determinista de props alrededor del centro de un frame
+ * (ax/az en metros sobre el plano tangente). Rellena `out` directamente.
+ */
+function propRing(
+  f: BaseFrame,
+  out: PropSpec[],
+  prefix: string,
+  kind: PropKind,
+  count: number,
+  radiusM: number,
+  options: { scale?: number; faceCenter?: boolean; offsetAngle?: number } = {}
+): void {
+  for (let i = 0; i < count; i++) {
+    const a = (options.offsetAngle ?? 0) + (i / count) * Math.PI * 2;
+    const ax = Math.cos(a) * radiusM;
+    const az = Math.sin(a) * radiusM;
+    out.push(
+      prop(f.planetId, `${prefix}-${i + 1}`, kind, frameDir(f, ax, az), {
+        scale: options.scale,
+        yaw: options.faceCenter
+          ? yawFace(f, ax, az, new THREE.Vector3().addScaledVector(f.t1, -ax).addScaledVector(f.t2, -az).normalize())
+          : undefined,
+      })
+    );
+  }
+}
+
+/**
+ * HITO 2 — Línea determinista de props entre dos puntos del plano tangente
+ * (avenidas, senderos, cadenas de trampolines de flora).
+ */
+function propLine(
+  f: BaseFrame,
+  out: PropSpec[],
+  prefix: string,
+  kind: PropKind,
+  from: [number, number],
+  to: [number, number],
+  count: number,
+  options: { scale?: number } = {}
+): void {
+  for (let i = 0; i < count; i++) {
+    const t = count === 1 ? 0.5 : i / (count - 1);
+    const ax = from[0] + (to[0] - from[0]) * t;
+    const az = from[1] + (to[1] - from[1]) * t;
+    out.push(prop(f.planetId, `${prefix}-${i + 1}`, kind, frameDir(f, ax, az), {
+      scale: options.scale,
+    }));
+  }
+}
+
 /** Burbuja de agua en órbita: centro absoluto = planetCenter + dir * (R + alt). */
 function orbitBubble(
   id: string,
@@ -503,6 +555,7 @@ function lunaContent(): {
   enemies: EnemySpawnSpec[];
   grass: GrassZoneSpec[];
   zones: RestrictedZoneSpec[];
+  props: PropSpec[];
   npcs: NpcSpec[];
 } {
   const planet = GALAXY_PLANETS[0];
@@ -593,7 +646,46 @@ function lunaContent(): {
     },
   ];
 
-  return { structures, objects, enemies, grass, zones, npcs };
+  // ==================== HITO 2: flora lunar táctica (~24 props) ====================
+  // Setas bioluminiscentes trampolín, rocas de los cráteres con colisión real,
+  // antenas y focos del perímetro: la luna deja de ser un llano vacío.
+  const props: PropSpec[] = [
+    // Par de setas parkour junto al muro agrietado trasero: rebota y salta
+    // el recinto por detrás sin gastar el barril (ruta alternativa).
+    prop(planet.id, 'luna-seta-muro-1', 'glow_mushroom', frameDir(gf, -13, 3)),
+    prop(planet.id, 'luna-seta-muro-2', 'glow_mushroom', frameDir(gf, -13, -3)),
+    // Setas de los cráteres: encadenan saltos entre depresiones lunares.
+    prop(planet.id, 'luna-seta-crater-1', 'glow_mushroom', frameDir(gf, 22, 14)),
+    prop(planet.id, 'luna-seta-crater-2', 'glow_mushroom', frameDir(gf, -20, -16)),
+    prop(planet.id, 'luna-seta-crater-3', 'glow_mushroom', frameDir(gf, 26, -10)),
+    // Seta del pasillo de entrada: rebota sobre la patrulla del guardia.
+    prop(planet.id, 'luna-seta-pasillo', 'glow_mushroom', frameDir(gf, 14, -6)),
+    // Rocas escalonadas de los cráteres (colisión + techo caminable).
+    prop(planet.id, 'luna-roca-5', 'rock', frameDir(gf, 18, -14), { scale: 1.2 }),
+    prop(planet.id, 'luna-roca-6', 'rock', frameDir(gf, -16, 12), { scale: 1.1 }),
+    prop(planet.id, 'luna-roca-7', 'rock', frameDir(gf, 24, 6)),
+    prop(planet.id, 'luna-roca-8', 'rock', frameDir(gf, -24, -8), { scale: 1.15 }),
+    prop(planet.id, 'luna-roca-9', 'rock', frameDir(gf, 8, 22)),
+    prop(planet.id, 'luna-roca-10', 'rock', frameDir(gf, -6, -22), { scale: 0.9 }),
+    prop(planet.id, 'luna-roca-11', 'rock', [0.7, 0.45, 0.35], { scale: 1.25 }),
+    prop(planet.id, 'luna-roca-12', 'rock', [-0.35, 0.6, -0.6], { scale: 1.05 }),
+    // Antenas del perímetro vigilando los cráteres lejanos.
+    prop(planet.id, 'luna-antena-1', 'antenna', frameDir(gf, 20, 18)),
+    prop(planet.id, 'luna-antena-2', 'antenna', frameDir(gf, -22, -18)),
+    prop(planet.id, 'luna-antena-3', 'antenna', frameDir(gf, 30, -2)),
+    // Focos del Puesto Vigía barriendo el llano lunar.
+    prop(planet.id, 'luna-foco-1', 'spotlight', frameDir(gf, 16, 8)),
+    prop(planet.id, 'luna-foco-2', 'spotlight', frameDir(gf, -14, -14)),
+    prop(planet.id, 'luna-foco-3', 'spotlight', frameDir(gf, 4, -26)),
+    // Pinos lunares dispersos entre cráteres (cobertura visual + tronco sólido).
+    prop(planet.id, 'luna-pino-1', 'pine_tree', frameDir(gf, 12, 16), { scale: 1.1 }),
+    prop(planet.id, 'luna-pino-2', 'pine_tree', frameDir(gf, -10, -18), { scale: 1.0 }),
+    prop(planet.id, 'luna-pino-3', 'pine_tree', frameDir(gf, 28, 10), { scale: 1.2 }),
+    // Sendero de piedra del spawn al puesto (decoración transitable).
+    prop(planet.id, 'luna-sendero-1', 'stone_path', frameDir(gf, 17, 0)),
+  ];
+
+  return { structures, objects, enemies, grass, zones, props, npcs };
 }
 
 // ----------------------------------------------------------------------------
@@ -896,7 +988,64 @@ function verdantContent(): {
     prop(planet.id, 'vd-helecho-libre-2', 'fern_cluster', [-0.8, 0.5, -0.2]),
     prop(planet.id, 'vd-totem-libre', 'ancient_statue', [0.6, 0.55, 0.55]),
     prop(planet.id, 'vd-arco-libre', 'vine_arch', [0.45, 0.75, 0.5]),
+
+    // ==================== HITO 2: selva densa y táctica ====================
+    // Cadenas de flores gigantes trampolín: rebota POR ENCIMA de las
+    // murallas (apex ~10 m) sin gastar el Ídolo-Llave ni los barriles.
+    // Ruina Oeste: muro este (x=8) y valla láser sur (z=6).
+    prop(planet.id, 'vd-flor-ruina-e1', 'giant_flower', frameDir(fR, 12, -3)),
+    prop(planet.id, 'vd-flor-ruina-e2', 'giant_flower', frameDir(fR, 12, 3)),
+    prop(planet.id, 'vd-flor-ruina-s1', 'giant_flower', frameDir(fR, -5, 11)),
+    prop(planet.id, 'vd-flor-ruina-s2', 'giant_flower', frameDir(fR, 5, 11)),
+    // Gran Zigurat: muros sur/oeste/norte (h=5) y patio hacia la terraza.
+    prop(planet.id, 'vd-flor-zig-s1', 'giant_flower', frameDir(fA, -7, 19)),
+    prop(planet.id, 'vd-flor-zig-s2', 'giant_flower', frameDir(fA, 7, 19)),
+    prop(planet.id, 'vd-flor-zig-o1', 'giant_flower', frameDir(fA, -24, -6)),
+    prop(planet.id, 'vd-flor-zig-o2', 'giant_flower', frameDir(fA, -24, 6)),
+    prop(planet.id, 'vd-flor-zig-n1', 'giant_flower', frameDir(fA, -5, -19)),
+    prop(planet.id, 'vd-flor-zig-n2', 'giant_flower', frameDir(fA, 5, -19)),
+    prop(planet.id, 'vd-flor-zig-patio1', 'giant_flower', frameDir(fA, -5, 11)),
+    prop(planet.id, 'vd-flor-zig-patio2', 'giant_flower', frameDir(fA, 5, 11)),
+    // Setas bioluminiscentes iluminando los claros nocturnos de la selva.
+    prop(planet.id, 'vd-seta-1', 'glow_mushroom', frameDir(fV, 16, 18)),
+    prop(planet.id, 'vd-seta-2', 'glow_mushroom', frameDir(fV, -16, -18)),
+    prop(planet.id, 'vd-seta-3', 'glow_mushroom', frameDir(fR, 16, -12)),
+    prop(planet.id, 'vd-seta-4', 'glow_mushroom', frameDir(fA, 20, -18)),
+    // Rocas escalonadas junto a las rutas de trampolín.
+    prop(planet.id, 'vd-roca-prop-1', 'rock', frameDir(fR, 14, 8), { scale: 1.2 }),
+    prop(planet.id, 'vd-roca-prop-2', 'rock', frameDir(fA, -21, 19), { scale: 1.15 }),
+    prop(planet.id, 'vd-roca-prop-3', 'rock', frameDir(fV, 22, -8)),
+    prop(planet.id, 'vd-roca-prop-4', 'rock', frameDir(fA, 10, -22), { scale: 1.1 }),
+    // Arcos de liana extra marcando los senderos entre zonas.
+    prop(planet.id, 'vd-arco-extra-1', 'vine_arch', frameDir(fV, 18, 6)),
+    prop(planet.id, 'vd-arco-extra-2', 'vine_arch', frameDir(fR, -14, -10)),
+    // Senderos de piedra adicionales hacia las flores trampolín.
+    prop(planet.id, 'vd-sendero-3', 'stone_path', frameDir(fR, 8, 9)),
+    prop(planet.id, 'vd-sendero-4', 'stone_path', frameDir(fA, 0, 21)),
   ];
+
+  // HITO 2 — Anillos y corredores generados (empujan tras la declaración).
+  // Arcos de palmeras cerrando la canopia alrededor de las 3 zonas.
+  propRing(fV, props, 'vd-palma-anillo', 'palm_tree', 10, 30, { scale: 1.35 });
+  propRing(fR, props, 'vd-ruina-palma-anillo', 'palm_tree', 8, 22, { scale: 1.25 });
+  propRing(fA, props, 'vd-zig-palma-anillo', 'palm_tree', 10, 36, { scale: 1.3 });
+  // Corredores tácticos de helechos (sigilo) flanqueando los senderos.
+  propLine(fV, props, 'vd-helecho-corredor-e', 'fern_cluster', [10, -24], [10, 14], 6);
+  propLine(fV, props, 'vd-helecho-corredor-o', 'fern_cluster', [-10, -24], [-10, 14], 6);
+  propLine(fR, props, 'vd-ruina-helecho-aprox', 'fern_cluster', [-6, 16], [6, 16], 4);
+  propLine(fA, props, 'vd-zig-helecho-frente', 'fern_cluster', [-10, 24], [10, 24], 5);
+  propLine(fA, props, 'vd-zig-helecho-lado-e', 'fern_cluster', [24, -14], [24, 12], 5);
+  propLine(fA, props, 'vd-zig-helecho-lado-o', 'fern_cluster', [-24, -14], [-24, 12], 5);
+  // Cuenca del río hundido: tótems ancestrales entre los que escabullirse.
+  propRing(
+    baseFrame(planet.id, [0.05, 0.72, 0.62], planet.radius),
+    props,
+    'vd-totem-cuenca',
+    'ancient_statue',
+    6,
+    14,
+    { faceCenter: true }
+  );
 
   const npcs: NpcSpec[] = [
     {
@@ -1208,7 +1357,72 @@ function cryoContent(): {
     prop(planet.id, 'kg-torii-orbital', 'torii_gate', frameDir(f, 0, -62), { altitudeOffset: 23.2, scale: 1.1 }),
     prop(planet.id, 'kg-farol-orbital-e', 'paper_lantern', frameDir(f, 2.5, -61), { altitudeOffset: 23.2 }),
     prop(planet.id, 'kg-farol-orbital-o', 'paper_lantern', frameDir(f, -2.5, -61), { altitudeOffset: 23.2 }),
+
+    // ==================== HITO 2: shogunato denso y táctico ====================
+    // Aldea más llena: casas exteriores, pagodas y farolillos de las esquinas.
+    prop(planet.id, 'kg-casa-11', 'village_house', frameDir(f, 26, 34), { yaw: yawFace(f, 26, 34, toCenter(26, 34)) }),
+    prop(planet.id, 'kg-casa-12', 'village_house', frameDir(f, -24, 44), { yaw: yawFace(f, -24, 44, toCenter(-24, 44)) }),
+    prop(planet.id, 'kg-casa-13', 'village_house', frameDir(f, 20, 6), { yaw: yawFace(f, 20, 6, toCenter(20, 6)) }),
+    prop(planet.id, 'kg-casa-14', 'village_house', frameDir(f, -20, 6), { yaw: yawFace(f, -20, 6, toCenter(-20, 6)) }),
+    prop(planet.id, 'kg-casa-15', 'village_house', frameDir(f, 30, 26), { yaw: yawFace(f, 30, 26, toCenter(30, 26)) }),
+    prop(planet.id, 'kg-casa-16', 'village_house', frameDir(f, -26, 40), { yaw: yawFace(f, -26, 40, toCenter(-26, 40)) }),
+    prop(planet.id, 'kg-pagoda-4', 'pagoda_house', frameDir(f, 26, 42)),
+    prop(planet.id, 'kg-pagoda-5', 'pagoda_house', frameDir(f, -30, 34)),
+    // Pinos de las afueras cerrando el horizonte de la aldea.
+    prop(planet.id, 'kg-pino-7', 'pine_tree', frameDir(f, 38, 20), { scale: 1.35 }),
+    prop(planet.id, 'kg-pino-8', 'pine_tree', frameDir(f, -40, 14), { scale: 1.35 }),
+    prop(planet.id, 'kg-pino-9', 'pine_tree', frameDir(f, 40, 34), { scale: 1.3 }),
+    prop(planet.id, 'kg-pino-10', 'pine_tree', frameDir(f, -36, 44), { scale: 1.3 }),
+    prop(planet.id, 'kg-pino-11', 'pine_tree', frameDir(f, 36, 44), { scale: 1.25 }),
+    prop(planet.id, 'kg-pino-12', 'pine_tree', frameDir(f, -42, 26), { scale: 1.25 }),
+    // Iglús del lago helado y del flanco oeste de la aldea.
+    prop(planet.id, 'kg-iglu-lago-1', 'igloo', frameDir(f, 18, 4)),
+    prop(planet.id, 'kg-iglu-lago-2', 'igloo', frameDir(f, 34, 18)),
+    prop(planet.id, 'kg-iglu-aldea', 'igloo', frameDir(f, -34, 6)),
+    // Pinos y farolillos extra del acceso norte al Castillo.
+    prop(planet.id, 'kg-pino-castillo-n', 'pine_tree', frameDir(f, 8, -32), { scale: 1.3 }),
+    prop(planet.id, 'kg-pino-castillo-s', 'pine_tree', frameDir(f, -8, -32), { scale: 1.3 }),
+    prop(planet.id, 'kg-faro-castillo-n', 'paper_lantern', frameDir(f, 4, -34)),
+    prop(planet.id, 'kg-faro-castillo-s', 'paper_lantern', frameDir(f, -4, -34)),
+    // Escalones de setas bioluminiscentes hacia la ruta del Santuario:
+    // rebota por la ladera norte hasta la torre y las burbujas.
+    prop(planet.id, 'kg-seta-ruta-1', 'glow_mushroom', frameDir(f, 4, -36)),
+    prop(planet.id, 'kg-seta-ruta-2', 'glow_mushroom', frameDir(f, 9, -38)),
+    prop(planet.id, 'kg-seta-ruta-3', 'glow_mushroom', frameDir(f, 14, -36)),
+    prop(planet.id, 'kg-seta-castillo-n', 'glow_mushroom', frameDir(f, -8, -41)),
+    // Farolillos extra del acceso al Castillo y sendero del portón.
+    prop(planet.id, 'kg-farol-castillo-1', 'paper_lantern', frameDir(f, 6, 8)),
+    prop(planet.id, 'kg-farol-castillo-2', 'paper_lantern', frameDir(f, -6, 8)),
+    prop(planet.id, 'kg-farol-castillo-3', 'paper_lantern', frameDir(f, 6, 2)),
+    prop(planet.id, 'kg-farol-castillo-4', 'paper_lantern', frameDir(f, -6, 2)),
+    prop(planet.id, 'kg-farol-castillo-5', 'paper_lantern', frameDir(f, 6, -6)),
+    prop(planet.id, 'kg-farol-castillo-6', 'paper_lantern', frameDir(f, -6, -6)),
+    prop(planet.id, 'kg-sendero-porton', 'stone_path', frameDir(f, 0, 0)),
+    prop(planet.id, 'kg-sendero-dojo-2', 'stone_path', frameDir(f, -28, 31)),
   ];
+
+  // HITO 2 — Anillos y líneas generadas (empujan tras la declaración).
+  // Avenidas de cerezos nevados flanqueando la calle mayor.
+  propLine(f, props, 'kg-cerezo-avenida-e', 'cherry_snow_tree', [5, 44], [5, 8], 6, { scale: 1.1 });
+  propLine(f, props, 'kg-cerezo-avenida-o', 'cherry_snow_tree', [-5, 44], [-5, 8], 6, { scale: 1.1 });
+  // Formaciones de cristales de hielo cerrando el lago helado.
+  propRing(
+    baseFrame(planet.id, frameDir(f, 26, 12), planet.radius),
+    props,
+    'kg-cristal-lago-anillo',
+    'ice_crystal',
+    8,
+    9,
+    { scale: 1.5, offsetAngle: 0.4 }
+  );
+  // Espesores de bambú nevado flanqueando la doble muralla del Castillo:
+  // exterior (z=0) y patio interior (z=-6), dejando libre el eje del portón.
+  propLine(f, props, 'kg-bambu-muro-e1', 'bamboo_cluster', [-18, 0], [-5, 0], 4);
+  propLine(f, props, 'kg-bambu-muro-e2', 'bamboo_cluster', [5, 0], [18, 0], 4);
+  propLine(f, props, 'kg-bambu-patio-e1', 'bamboo_cluster', [-18, -6], [-5, -6], 4);
+  propLine(f, props, 'kg-bambu-patio-e2', 'bamboo_cluster', [5, -6], [18, -6], 4);
+  propLine(f, props, 'kg-bambu-santuario-e', 'bamboo_cluster', [-18, -13], [-12, -13], 2);
+  propLine(f, props, 'kg-bambu-santuario-o', 'bamboo_cluster', [12, -13], [18, -13], 2);
 
   const npcs: NpcSpec[] = [
     {
@@ -1697,7 +1911,64 @@ function bastionContent(): {
     prop(planet.id, 'bs-torre-oculta-1', 'cyber_tower', [-0.4, 0.6, -0.6], { scale: 1.1 }),
     prop(planet.id, 'bs-neon-oculto-1', 'neon_billboard', [0.7, 0.3, 0.6]),
     prop(planet.id, 'bs-holo-oculto-1', 'holo_pillar', [-0.6, 0.2, 0.75]),
+
+    // ==================== HITO 2: metrópolis densa y táctica ====================
+    // Clústeres de rascacielos del downtown cerrando el skyline.
+    prop(planet.id, 'bs-torre-downtown-1', 'cyber_tower', frameDir(f, 48, 16), { scale: 1.2 }),
+    prop(planet.id, 'bs-torre-downtown-2', 'cyber_tower', frameDir(f, 48, -16), { scale: 1.15 }),
+    prop(planet.id, 'bs-torre-downtown-3', 'cyber_tower', frameDir(f, -48, 16), { scale: 1.2 }),
+    prop(planet.id, 'bs-torre-downtown-4', 'cyber_tower', frameDir(f, -48, -16), { scale: 1.15 }),
+    prop(planet.id, 'bs-torre-downtown-5', 'cyber_tower', frameDir(f, 44, 48), { scale: 1.1 }),
+    prop(planet.id, 'bs-torre-downtown-6', 'cyber_tower', frameDir(f, -44, 48), { scale: 1.1 }),
+    // Skyline norte tras la muralla (profundidad de la metrópolis).
+    prop(planet.id, 'bs-torre-skyline-1', 'cyber_tower', frameDir(f, 8, -44), { scale: 1.0 }),
+    prop(planet.id, 'bs-torre-skyline-2', 'cyber_tower', frameDir(f, -8, -44), { scale: 1.0 }),
+    prop(planet.id, 'bs-torre-skyline-3', 'cyber_tower', frameDir(f, 28, -40), { scale: 0.9 }),
+    prop(planet.id, 'bs-torre-skyline-4', 'cyber_tower', frameDir(f, -28, -40), { scale: 0.9 }),
+    // Patios de refrigeración: tuberías y reactores auxiliares del flanco este.
+    prop(planet.id, 'bs-tuberia-yard-e-1', 'pipe', frameDir(f, 38, 6), { yaw: 0.9 }),
+    prop(planet.id, 'bs-tuberia-yard-e-2', 'pipe', frameDir(f, 42, 10)),
+    prop(planet.id, 'bs-tuberia-yard-e-3', 'pipe', frameDir(f, 38, 16), { yaw: 0.4 }),
+    prop(planet.id, 'bs-tuberia-yard-e-4', 'pipe', frameDir(f, 42, 20)),
+    prop(planet.id, 'bs-reactor-yard-e-1', 'reactor', frameDir(f, 46, 8)),
+    prop(planet.id, 'bs-reactor-yard-e-2', 'reactor', frameDir(f, 46, 16)),
+    // Patio oeste (tras el ala corporativa): maquinaria de apoyo.
+    prop(planet.id, 'bs-tuberia-yard-o-1', 'pipe', frameDir(f, -38, -12), { yaw: 0.9 }),
+    prop(planet.id, 'bs-tuberia-yard-o-2', 'pipe', frameDir(f, -42, -18)),
+    prop(planet.id, 'bs-tuberia-yard-o-3', 'pipe', frameDir(f, -38, -24), { yaw: 0.4 }),
+    prop(planet.id, 'bs-tuberia-yard-o-4', 'pipe', frameDir(f, -44, -10)),
+    prop(planet.id, 'bs-reactor-yard-o-1', 'reactor', frameDir(f, -40, -28)),
+    prop(planet.id, 'bs-reactor-yard-o-2', 'reactor', frameDir(f, -46, -16)),
+    // Plazas carteles de neón de las afueras.
+    prop(planet.id, 'bs-neon-extra-1', 'neon_billboard', frameDir(f, 48, 30)),
+    prop(planet.id, 'bs-neon-extra-2', 'neon_billboard', frameDir(f, -48, 30)),
+    prop(planet.id, 'bs-neon-extra-3', 'neon_billboard', frameDir(f, 36, -44)),
+    prop(planet.id, 'bs-neon-extra-4', 'neon_billboard', frameDir(f, -36, -44)),
+    // Flora cibernética bioluminiscente en la zanja del patio: setas
+    // trampolín para saltar la muralla interior y flores gigantes de neón.
+    prop(planet.id, 'bs-seta-zanja-1', 'glow_mushroom', frameDir(f, 24, 19)),
+    prop(planet.id, 'bs-seta-zanja-2', 'glow_mushroom', frameDir(f, -24, 19)),
+    prop(planet.id, 'bs-seta-zanja-3', 'glow_mushroom', frameDir(f, 24, -19)),
+    prop(planet.id, 'bs-seta-zanja-4', 'glow_mushroom', frameDir(f, -24, -19)),
+    prop(planet.id, 'bs-seta-zanja-5', 'glow_mushroom', frameDir(f, 26, 0)),
+    prop(planet.id, 'bs-seta-zanja-6', 'glow_mushroom', frameDir(f, -26, 0)),
+    prop(planet.id, 'bs-flor-neon-1', 'giant_flower', frameDir(f, 0, 19)),
+    prop(planet.id, 'bs-flor-neon-2', 'giant_flower', frameDir(f, 0, -19)),
+    // Antenas y focos extra de la periferia.
+    prop(planet.id, 'bs-antena-extra-1', 'antenna', frameDir(f, 48, 24)),
+    prop(planet.id, 'bs-antena-extra-2', 'antenna', frameDir(f, -48, 24)),
+    prop(planet.id, 'bs-antena-extra-3', 'antenna', frameDir(f, 44, -28)),
+    prop(planet.id, 'bs-antena-extra-4', 'antenna', frameDir(f, -44, -28)),
+    prop(planet.id, 'bs-foco-extra-1', 'spotlight', frameDir(f, 36, 32)),
+    prop(planet.id, 'bs-foco-extra-2', 'spotlight', frameDir(f, -36, 32)),
+    prop(planet.id, 'bs-foco-extra-3', 'spotlight', frameDir(f, 28, -40)),
+    prop(planet.id, 'bs-foco-extra-4', 'spotlight', frameDir(f, -28, -40)),
   ];
+
+  // HITO 2 — Calles de sigilo entre terminales holográficas del patio
+  // exterior (empujan tras la declaración).
+  propLine(f, props, 'bs-holo-calle-sur', 'holo_pillar', [-28, 19], [28, 19], 5);
+  propLine(f, props, 'bs-holo-calle-norte', 'holo_pillar', [-28, -19], [28, -19], 5);
 
   const npcs: NpcSpec[] = [
     {
@@ -1830,6 +2101,17 @@ function kronosContent(): {
     prop(planet.id, 'kr-antena-4', 'antenna', frameDir(f, -36, -12)),
   ];
 
+  // ==================== HITO 2: grada de basalto del perímetro ====================
+  // Todo el anillo vive FUERA del pad aplanado del jefe (0.34 rad ≈ 36 m):
+  // estatuas, setas, terminales, focos, antenas y reactores sobre la cresta
+  // de basalto que sube orgánicamente, dejando el centro de pelea libre.
+  propRing(f, props, 'kr-estatua-anillo', 'ancient_statue', 8, 46, { faceCenter: true });
+  propRing(f, props, 'kr-seta-anillo', 'glow_mushroom', 6, 40, { offsetAngle: 0.35 });
+  propRing(f, props, 'kr-holo-anillo', 'holo_pillar', 4, 50, { offsetAngle: 0.6 });
+  propRing(f, props, 'kr-foco-anillo', 'spotlight', 4, 44, { offsetAngle: 0.25 });
+  propRing(f, props, 'kr-antena-anillo', 'antenna', 4, 52, { offsetAngle: 0.45 });
+  propRing(f, props, 'kr-reactor-anillo', 'reactor', 4, 55, { offsetAngle: 0.15, scale: 1.2 });
+
   return { structures, objects, enemies, zones, bubbles, props };
 }
 
@@ -1863,7 +2145,7 @@ export const GALAXY_SPEC: GalaxySpec = {
     ...bastion.zones,
     ...kronos.zones,
   ],
-  props: [...verdant.props, ...cryo.props, ...bastion.props, ...kronos.props],
+  props: [...luna.props, ...verdant.props, ...cryo.props, ...bastion.props, ...kronos.props],
   objects: [
     ...luna.objects,
     ...verdant.objects,

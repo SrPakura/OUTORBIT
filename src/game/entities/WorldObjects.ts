@@ -12,6 +12,7 @@ import type {
   PlanetAdaptationConfig,
   PlanetRuntime,
   PlayerBehaviorVector,
+  PropKind,
   PropSpec,
   RestrictedZoneSpec,
   WaterBubbleSpec,
@@ -36,9 +37,12 @@ import {
   createStructureCollider,
   findStrongestGravityPlanet,
   isLineBlockedByStructures,
+  resolvePlayerProps,
   resolvePlayerStructures,
+  type PropCollider,
   type StructureCollider,
 } from '../math/spherical';
+import { getPlanetTerrainOffsetVec } from '../math/terrain';
 import {
   ANTI_STASIS_INDEX,
   KRONOS_POSTURES,
@@ -523,6 +527,12 @@ const _steerGoal = new THREE.Vector3();
 const _sepGoal = new THREE.Vector3();
 const _sep = new THREE.Vector3();
 const _chaseGoal = new THREE.Vector3();
+// HITO 2: scratch del sondeo de props (distancia segmento-segmento, cero allocs).
+const _propMid = new THREE.Vector3();
+const _propD1 = new THREE.Vector3();
+const _propD2 = new THREE.Vector3();
+const _propR = new THREE.Vector3();
+const _propQ = new THREE.Vector3();
 
 /** PRNG determinista para los spawns dinámicos de la adaptación. */
 function makeSeededRandom(seed: number): () => number {
@@ -994,6 +1004,49 @@ function buildStateIcons(): { group: THREE.Group; question: THREE.Group; alert: 
 // ============================================================================
 // Gestor de objetos interactivos del mundo esférico
 // ============================================================================
+
+// --- HITO 2: blueprint de colliders físicos por PropKind ---
+// Dimensiones en metros a escala 1 (se multiplican por `scale` del prop).
+// `twinPillarOffset` > 0 emite 2 colliders de pilar a ±offset·scale rotados
+// por el yaw del mesh: se choca con los pilares y se pasa BAJO el arco.
+interface PropColliderBlueprint {
+  radius: number;
+  height: number;
+  capRadius: number;
+  capY: number;
+  bounceImpulse: number;
+  softFoliage: boolean;
+  stealthBush: boolean;
+  twinPillarOffset: number;
+}
+
+const PROP_COLLIDER_BLUEPRINTS: Partial<Record<PropKind, PropColliderBlueprint>> = {
+  palm_tree: { radius: 0.55, height: 4.2, capRadius: 1.05, capY: 3.4, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  cherry_snow_tree: { radius: 0.5, height: 3.0, capRadius: 0.95, capY: 2.4, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  pine_tree: { radius: 0.45, height: 2.0, capRadius: 0.8, capY: 1.6, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  ancient_statue: { radius: 0.95, height: 4.0, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  reactor: { radius: 1.0, height: 2.6, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  ice_crystal: { radius: 0.8, height: 3.2, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  igloo: { radius: 1.7, height: 1.6, capRadius: 1.35, capY: 1.55, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  pagoda_house: { radius: 2.2, height: 5.2, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  village_house: { radius: 1.9, height: 3.6, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  cyber_tower: { radius: 1.6, height: 14.5, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  holo_pillar: { radius: 0.7, height: 2.5, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  pipe: { radius: 1.0, height: 1.5, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  antenna: { radius: 0.35, height: 4.5, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  paper_lantern: { radius: 0.45, height: 2.4, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  spotlight: { radius: 0.4, height: 3.7, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  neon_billboard: { radius: 1.8, height: 6.3, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  giant_flower: { radius: 0.35, height: 2.5, capRadius: 1.1, capY: 2.25, bounceImpulse: 18.5, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  glow_mushroom: { radius: 0.4, height: 1.8, capRadius: 1.0, capY: 1.55, bounceImpulse: 16.0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  fern_cluster: { radius: 0.95, height: 0.9, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: true, stealthBush: true, twinPillarOffset: 0 },
+  bamboo_cluster: { radius: 0.9, height: 2.9, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: true, stealthBush: true, twinPillarOffset: 0 },
+  torii_gate: { radius: 0.3, height: 3.6, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 1.5 },
+  vine_arch: { radius: 0.5, height: 3.7, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 1.6 },
+  rock: { radius: 0.55, height: 0.5, capRadius: 0.5, capY: 0.45, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  // stone_path y wood_bridge: decoración plana transitable, sin collider.
+};
+
 export class WorldObjectsManager {
   private readonly group: THREE.Group;
   private readonly planets: PlanetRuntime[];
@@ -1040,6 +1093,8 @@ export class WorldObjectsManager {
   private readonly kronosInput: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
   // --- Oleada 2: galaxia continua ---
   private readonly structureColliders: StructureCollider[] = [];
+  // --- HITO 2: colliders físicos de props (flora, rocas, obstáculos) ---
+  private readonly propColliders: PropCollider[] = [];
   private readonly planetGenTotal = new Map<string, number>();
   private readonly planetGenDestroyed = new Map<string, number>();
   private readonly planetKeycardTotal = new Map<string, number>();
@@ -1201,15 +1256,20 @@ export class WorldObjectsManager {
   buildGalaxy(galaxy: GalaxySpec, planets: PlanetRuntime[]): void {
     // Estructuras: mesh visual + collider de colisión/LoS (misma convención).
     // Los arcos emiten además 2 colliders sólidos en sus pilares laterales.
+    // HITO 2: se apoyan en la altura exacta del terreno (los pads de
+    // aplanado del módulo terrain garantizan h≈0 bajo su huella).
     for (const spec of galaxy.structures) {
       const planet = this.findPlanet(spec.planetId);
-      this.group.add(buildStructureMesh(spec, planet.centerVec, planet.spec.radius));
+      _v1.set(spec.sphericalDir[0], spec.sphericalDir[1], spec.sphericalDir[2]).normalize();
+      const groundedRadius =
+        planet.spec.radius + getPlanetTerrainOffsetVec(spec.planetId, _v1);
+      this.group.add(buildStructureMesh(spec, planet.centerVec, groundedRadius));
       this.structureColliders.push(
-        createStructureCollider(spec, planet.centerVec, planet.spec.radius)
+        createStructureCollider(spec, planet.centerVec, groundedRadius)
       );
       if (spec.kind === 'arch_gate') {
         this.structureColliders.push(
-          ...createArchGatePillarColliders(spec, planet.centerVec, planet.spec.radius)
+          ...createArchGatePillarColliders(spec, planet.centerVec, groundedRadius)
         );
       }
     }
@@ -1256,8 +1316,8 @@ export class WorldObjectsManager {
       });
     }
 
-    // Props ambientales (aldea feudal de Verdant, cristales de Cryo,
-    // maquinaria de Bastion): set dressing sin colisión.
+    // Props ambientales (Hito 2): flora, rocas y obstáculos con grounding
+    // exacto sobre el terreno y colisión física real.
     for (const prop of galaxy.props ?? []) this.spawnProp(prop);
 
     for (const spec of galaxy.objects) this.spawnObject(spec);
@@ -1352,7 +1412,11 @@ export class WorldObjectsManager {
     altitudeOffset: number
   ): THREE.Vector3 {
     _v1.set(dirX, dirY, dirZ).normalize();
-    mesh.position.copy(planet.centerVec).addScaledVector(_v1, planet.spec.radius + altitudeOffset);
+    // HITO 2: todo lo que vive en superficie se apoya en la altura exacta
+    // del terreno (cráteres, colinas, valles) del planeta.
+    const surfaceAltitude =
+      planet.spec.radius + getPlanetTerrainOffsetVec(planet.spec.id, _v1) + altitudeOffset;
+    mesh.position.copy(planet.centerVec).addScaledVector(_v1, surfaceAltitude);
     _q1.setFromUnitVectors(_upAxis, _v1);
     mesh.quaternion.copy(_q1);
     return mesh.position;
@@ -1469,6 +1533,10 @@ export class WorldObjectsManager {
       this.group.add(gate.group);
       // Collider dinámico: bloquea jugador/enemigos/conos mientras está
       // cerrada; Digger puede cruzar por debajo excavando.
+      // HITO 2: collider a la altura exacta del terreno bajo la compuerta.
+      _v1.set(spec.sphericalDir[0], spec.sphericalDir[1], spec.sphericalDir[2]).normalize();
+      const gateGroundedRadius =
+        planet.spec.radius + getPlanetTerrainOffsetVec(spec.planetId, _v1);
       const collider = createStructureCollider(
         {
           id: `gate-collider-${spec.id}`,
@@ -1482,7 +1550,7 @@ export class WorldObjectsManager {
           passableUnderground: true,
         },
         planet.centerVec,
-        planet.spec.radius
+        gateGroundedRadius
       );
       this.structureColliders.push(collider);
       this.lockedGates.push({
@@ -1523,6 +1591,10 @@ export class WorldObjectsManager {
       const pos = this.placeOnPlanet(wall.group, planet, ...spec.sphericalDir, altitude);
       wall.group.rotateY(spec.yaw ?? 0);
       this.group.add(wall.group);
+      // HITO 2: collider a la altura exacta del terreno bajo el muro.
+      _v1.set(spec.sphericalDir[0], spec.sphericalDir[1], spec.sphericalDir[2]).normalize();
+      const wallGroundedRadius =
+        planet.spec.radius + getPlanetTerrainOffsetVec(spec.planetId, _v1);
       const collider = createStructureCollider(
         {
           id: `wall-collider-${spec.id}`,
@@ -1536,7 +1608,7 @@ export class WorldObjectsManager {
           passableUnderground: true,
         },
         planet.centerVec,
-        planet.spec.radius
+        wallGroundedRadius
       );
       this.structureColliders.push(collider);
       this.breakableWalls.push({
@@ -1588,6 +1660,72 @@ export class WorldObjectsManager {
     this.placeOnPlanet(mesh, planet, ...spec.sphericalDir, spec.altitudeOffset ?? 0);
     mesh.rotateY(spec.yaw ?? 0);
     this.group.add(mesh);
+    // HITO 2: registra los colliders físicos del prop sobre el terreno exacto.
+    this.pushPropColliders(spec, planet, mesh, spec.scale ?? 1, spec.altitudeOffset ?? 0);
+  }
+
+  /**
+   * HITO 2 — Emite los PropCollider de un prop según su blueprint: collider
+   * único en el centro o pilares gemelos (torii/arco: se choca con los
+   * pilares y se pasa bajo el arco). La base se apoya en la altura exacta
+   * del terreno en la dirección de cada collider.
+   */
+  private pushPropColliders(
+    spec: PropSpec,
+    planet: PlanetRuntime,
+    mesh: THREE.Object3D,
+    scale: number,
+    altitudeOffset: number
+  ): void {
+    const blueprint = PROP_COLLIDER_BLUEPRINTS[spec.kind];
+    if (blueprint === undefined) return; // stone_path / wood_bridge: transitable
+
+    const push = (center: THREE.Vector3, upDir: THREE.Vector3, baseAltitude: number, id: string): void => {
+      this.propColliders.push({
+        id,
+        planetId: spec.planetId,
+        center,
+        upDir,
+        baseAltitude,
+        radius: blueprint.radius * scale,
+        height: blueprint.height * scale,
+        capRadius: blueprint.capRadius * scale,
+        capY: blueprint.capY * scale,
+        bounceImpulse: blueprint.bounceImpulse,
+        softFoliage: blueprint.softFoliage,
+        isStealthBush: blueprint.stealthBush,
+      });
+    };
+
+    if (blueprint.twinPillarOffset > 0) {
+      // Pilares gemelos a ±offset·scale en el eje X local del mesh girado.
+      for (const side of [-1, 1]) {
+        _v1
+          .set(side * blueprint.twinPillarOffset * scale, 0, 0)
+          .applyQuaternion(mesh.quaternion);
+        _v2.copy(mesh.position).add(_v1);
+        _v3.copy(_v2).sub(planet.centerVec);
+        const len = _v3.length();
+        if (len < 1e-6) continue;
+        _v3.divideScalar(len);
+        const terrainH = getPlanetTerrainOffsetVec(spec.planetId, _v3);
+        const baseAltitude = terrainH + altitudeOffset;
+        _v2.copy(planet.centerVec).addScaledVector(_v3, planet.spec.radius + baseAltitude);
+        push(
+          _v2.clone(),
+          _v3.clone(),
+          baseAltitude,
+          `${spec.id}-pillar-${side > 0 ? 'r' : 'l'}`
+        );
+      }
+      return;
+    }
+
+    // Collider único: la base del mesh ya vive en la superficie del terreno.
+    _v3.copy(mesh.position).sub(planet.centerVec);
+    const baseAltitude = _v3.length() - planet.spec.radius;
+    _v3.normalize();
+    push(mesh.position.clone(), _v3.clone(), baseAltitude, spec.id);
   }
 
   private spawnBubble(spec: WaterBubbleSpec): void {
@@ -1624,9 +1762,13 @@ export class WorldObjectsManager {
         .addScaledVector(t1, Math.cos(a) * r)
         .addScaledVector(t2, Math.sin(a) * r)
         .normalize();
+      // HITO 2: cada brizna se apoya en la altura exacta del terreno.
       _dummy.position
         .copy(planet.centerVec)
-        .addScaledVector(dir, planet.spec.radius + 0.5);
+        .addScaledVector(
+          dir,
+          planet.spec.radius + getPlanetTerrainOffsetVec(spec.planetId, dir) + 0.5
+        );
       quat.setFromUnitVectors(_upAxis, dir);
       _dummy.quaternion.copy(quat);
       _dummy.rotateY((i * 2.399) % (Math.PI * 2));
@@ -1829,7 +1971,13 @@ export class WorldObjectsManager {
 
   /** Transform del jefe sobre la esfera (+ tumbado si fue derrotado). */
   private syncKronosTransform(k: KronosObj): void {
-    k.pos.copy(k.planet.centerVec).addScaledVector(k.dir, k.planet.spec.radius);
+    // HITO 2: KRONOS pisa la altura exacta del terreno (arena aplanada).
+    k.pos
+      .copy(k.planet.centerVec)
+      .addScaledVector(
+        k.dir,
+        k.planet.spec.radius + getPlanetTerrainOffsetVec(k.planet.spec.id, k.dir)
+      );
     k.mesh.position.copy(k.pos);
     _q1.setFromUnitVectors(_upAxis, k.dir);
     _v3.set(0, 0, 1).applyQuaternion(_q1);
@@ -2077,10 +2225,13 @@ export class WorldObjectsManager {
       }
 
       const planet = findStrongestGravityPlanet(orb.pos, this.planets, null);
-      if (
-        orb.pos.distanceToSquared(planet.centerVec) <=
-        (planet.spec.radius + 0.3) * (planet.spec.radius + 0.3)
-      ) {
+      // HITO 2: impacto contra el terreno real (colinas/cráteres incluidos).
+      _v2.copy(orb.pos).sub(planet.centerVec);
+      const orbDist = _v2.length();
+      if (orbDist > 1e-6) _v2.divideScalar(orbDist);
+      const orbSurface =
+        planet.spec.radius + getPlanetTerrainOffsetVec(planet.spec.id, _v2) + 0.3;
+      if (orbDist <= orbSurface) {
         this.deactivateProjectile(orb);
       } else if (orb.life <= 0) {
         this.deactivateProjectile(orb);
@@ -2214,13 +2365,35 @@ export class WorldObjectsManager {
     return null;
   }
 
-  isInGrass(pos: THREE.Vector3, planet: PlanetRuntime): boolean {
+  /**
+   * HITO 1+2 — Cobertura de sigilo: hierba alta de las zonas O follaje denso
+   * (helechos/bambú registrados como arbustos de sigilo en sus colliders).
+   */
+  checkPlayerInGrass(pos: THREE.Vector3, planet: PlanetRuntime): boolean {
     for (const zone of this.grassZones) {
       if (zone.planetId !== planet.spec.id) continue;
       _v1.copy(pos).sub(planet.centerVec);
       if (_v1.lengthSq() < 1e-6) continue;
       _v1.normalize();
       if (_v1.dot(zone.dir) > zone.cosThreshold) return true;
+    }
+    for (let i = 0; i < this.propColliders.length; i++) {
+      const c = this.propColliders[i];
+      if (!c.isStealthBush || c.planetId !== planet.spec.id) continue;
+      const r = c.radius + 0.4;
+      if (pos.distanceToSquared(c.center) < r * r) return true;
+    }
+    return false;
+  }
+
+  /** HITO 2 — El jugador está dentro de follaje denso (helechos/bambú):
+   *  empuje elástico suave y factor de velocidad reducido. */
+  isInFoliage(pos: THREE.Vector3, planet: PlanetRuntime): boolean {
+    for (let i = 0; i < this.propColliders.length; i++) {
+      const c = this.propColliders[i];
+      if (!c.softFoliage || c.planetId !== planet.spec.id) continue;
+      const r = c.radius + 0.5;
+      if (pos.distanceToSquared(c.center) < r * r) return true;
     }
     return false;
   }
@@ -2493,6 +2666,11 @@ export class WorldObjectsManager {
   /** Colliders de todas las estructuras de la galaxia (colisión del jugador). */
   getStructureColliders(): StructureCollider[] {
     return this.structureColliders;
+  }
+
+  /** HITO 2 — Colliders físicos de todos los props (flora, rocas, obstáculos). */
+  getPropColliders(): PropCollider[] {
+    return this.propColliders;
   }
 
   getGeneratorTotalOn(planetId: string): number {
@@ -3192,9 +3370,13 @@ export class WorldObjectsManager {
 
       // Impacto contra el terreno: ruido de distracción para los guardias
       // cercanos del mismo planeta (no golpearon a nadie directamente).
+      // HITO 2: superficie real = radio nominal + terreno local.
       _v2.copy(grab.pos).sub(planet.centerVec);
       const surfaceDist = _v2.length();
-      if (surfaceDist <= planet.spec.radius + grab.radius) {
+      if (surfaceDist > 1e-6) _v2.divideScalar(surfaceDist);
+      const grabSurface =
+        planet.spec.radius + getPlanetTerrainOffsetVec(planet.spec.id, _v2) + grab.radius;
+      if (surfaceDist <= grabSurface) {
         if (grab.kind === 'barrel_explosive') {
           this.explode(grab.pos, state, onPlayerDamage);
           this.emitNoise(grab.pos, planet);
@@ -3246,9 +3428,15 @@ export class WorldObjectsManager {
     _v1.copy(grab.pos).sub(planet.centerVec);
     if (_v1.lengthSq() < 1e-6) _v1.set(0, 1, 0);
     _v1.normalize();
+    // HITO 2: reposa sobre la altura exacta del terreno.
     grab.pos
       .copy(planet.centerVec)
-      .addScaledVector(_v1, planet.spec.radius + grab.radius * 0.5);
+      .addScaledVector(
+        _v1,
+        planet.spec.radius +
+          getPlanetTerrainOffsetVec(planet.spec.id, _v1) +
+          grab.radius * 0.5
+      );
     grab.mesh.position.copy(grab.pos);
     _q1.setFromUnitVectors(_upAxis, _v1);
     grab.mesh.quaternion.copy(_q1);
@@ -3910,10 +4098,13 @@ export class WorldObjectsManager {
 
       // Impacto contra el terreno o fin de vida útil.
       const planet = findStrongestGravityPlanet(proj.pos, this.planets, null);
-      if (
-        proj.pos.distanceToSquared(planet.centerVec) <=
-        (planet.spec.radius + 0.3) * (planet.spec.radius + 0.3)
-      ) {
+      // HITO 2: superficie real = radio nominal + terreno local.
+      _v2.copy(proj.pos).sub(planet.centerVec);
+      const projDist = _v2.length();
+      if (projDist > 1e-6) _v2.divideScalar(projDist);
+      const projSurface =
+        planet.spec.radius + getPlanetTerrainOffsetVec(planet.spec.id, _v2) + 0.3;
+      if (projDist <= projSurface) {
         this.deactivateProjectile(proj);
       } else if (proj.life <= 0) {
         this.deactivateProjectile(proj);
@@ -4124,6 +4315,12 @@ export class WorldObjectsManager {
           _steerEnd,
           this.structureColliders,
           enemy.planet.spec.id
+        ) &&
+        !this.isSegmentBlockedByProps(
+          _steerStart,
+          _steerEnd,
+          enemy.planet.spec.id,
+          GUARD_STRUCTURE_RADIUS
         )
       ) {
         if (i > 0) enemy.steerBias = probeAngle > 0 ? 1 : -1;
@@ -4136,19 +4333,73 @@ export class WorldObjectsManager {
     outDir.copy(enemy.dir).addScaledVector(_steerTangent, angularStep).normalize();
   }
 
-  /** ¿El camino tangente hacia `targetDir` está libre de muros? */
+  /** ¿El camino tangente hacia `targetDir` está libre de muros y props? */
   private enemyTangentClear(enemy: EnemyObj, targetDir: THREE.Vector3): boolean {
     _steerTangent.copy(targetDir).addScaledVector(enemy.dir, -targetDir.dot(enemy.dir));
     if (_steerTangent.lengthSq() < 1e-10) return true;
     _steerTangent.normalize();
     _steerStart.copy(enemy.pos).addScaledVector(enemy.dir, STEER_LIFT);
     _steerEnd.copy(_steerStart).addScaledVector(_steerTangent, STEER_LOOKAHEAD);
-    return !isLineBlockedByStructures(
-      _steerStart,
-      _steerEnd,
-      this.structureColliders,
-      enemy.planet.spec.id
+    return (
+      !isLineBlockedByStructures(
+        _steerStart,
+        _steerEnd,
+        this.structureColliders,
+        enemy.planet.spec.id
+      ) &&
+      !this.isSegmentBlockedByProps(_steerStart, _steerEnd, enemy.planet.spec.id, GUARD_STRUCTURE_RADIUS)
     );
+  }
+
+  /**
+   * HITO 2 — ¿Algún prop sólido del planeta bloquea el segmento a->b?
+   * Distancia segmento-segmento (Ericson, Real-Time Collision Detection)
+   * contra el eje del prop (base -> techo), con rechazo previo por esfera
+   * envolvente en el punto medio del sondeo. SIN allocations.
+   */
+  private isSegmentBlockedByProps(
+    a: THREE.Vector3,
+    b: THREE.Vector3,
+    planetId: string,
+    radius: number
+  ): boolean {
+    _propMid.copy(a).add(b).multiplyScalar(0.5);
+    const halfLen = a.distanceTo(b) * 0.5;
+    for (let i = 0; i < this.propColliders.length; i++) {
+      const c = this.propColliders[i];
+      if (c.planetId !== planetId || c.softFoliage) continue;
+      const bound = c.height + c.radius + radius + halfLen + 0.6;
+      if (c.center.distanceToSquared(_propMid) > bound * bound) continue;
+
+      // Segmento del sondeo (d1) contra el eje del prop (d2).
+      _propD1.copy(b).sub(a);
+      _propD2.copy(c.upDir).multiplyScalar(c.height);
+      _propR.copy(a).sub(c.center);
+      const aa = _propD1.dot(_propD1);
+      const ee = _propD2.dot(_propD2);
+      const ff = _propD2.dot(_propR);
+      let s = 0;
+      let t = 0;
+      if (aa > 1e-10 && ee > 1e-10) {
+        const cc = _propD1.dot(_propR);
+        const bb = _propD1.dot(_propD2);
+        const denom = aa * ee - bb * bb;
+        s = denom > 1e-10 ? Math.min(1, Math.max(0, (bb * ff - cc * ee) / denom)) : 0;
+        t = (bb * s + ff) / ee;
+        if (t < 0) {
+          t = 0;
+          s = Math.min(1, Math.max(0, -cc / aa));
+        } else if (t > 1) {
+          t = 1;
+          s = Math.min(1, Math.max(0, (bb - cc) / aa));
+        }
+      }
+      _propQ.copy(c.center).addScaledVector(_propD2, t);
+      _propR.copy(a).addScaledVector(_propD1, s).sub(_propQ);
+      const hitR = c.radius + radius;
+      if (_propR.lengthSq() < hitR * hitR) return true;
+    }
+    return false;
   }
 
   /**
@@ -4234,9 +4485,11 @@ export class WorldObjectsManager {
       altitude +=
         enemy.state === GUARD_STATE_KO ? 0.35 : DRONE_HOVER_ALT + Math.sin(enemy.hoverPhase) * 0.25;
     }
+    // HITO 2: el suelo real incluye el terreno esférico (colinas/cráteres).
+    const terrainH = getPlanetTerrainOffsetVec(enemy.planet.spec.id, enemy.dir);
     enemy.pos
       .copy(enemy.planet.centerVec)
-      .addScaledVector(enemy.dir, enemy.planet.spec.radius + altitude);
+      .addScaledVector(enemy.dir, enemy.planet.spec.radius + terrainH + altitude);
     // Colisión contra estructuras: los caminantes no atraviesan muros.
     if (
       enemy.state !== GUARD_STATE_KO &&
@@ -4252,6 +4505,21 @@ export class WorldObjectsManager {
         GUARD_STRUCTURE_RADIUS
       );
       if (res.hitWall) {
+        enemy.dir.copy(enemy.pos).sub(enemy.planet.centerVec).normalize();
+      }
+    }
+    // HITO 2: colisión contra props sólidos (árboles, estatuas, casas,
+    // flores): los enemigos rodean la flora en vez de atravesarla.
+    if (enemy.state !== GUARD_STATE_KO && enemy.kind !== 'turret') {
+      const propRes = resolvePlayerProps(
+        enemy.pos,
+        0,
+        terrainH + altitude,
+        enemy.planet,
+        this.propColliders,
+        GUARD_STRUCTURE_RADIUS
+      );
+      if (propRes.hitProp) {
         enemy.dir.copy(enemy.pos).sub(enemy.planet.centerVec).normalize();
       }
     }
@@ -4565,6 +4833,8 @@ export class WorldObjectsManager {
     this.predictiveShields = false;
     this.alertBoost = 0;
     this.structureColliders.length = 0;
+    // HITO 2: colliders físicos de props.
+    this.propColliders.length = 0;
     // HITO 1: zonas restringidas, infracciones y banner de aviso.
     this.restrictedZones.length = 0;
     this.zoneCachePlanetId = null;

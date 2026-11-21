@@ -30,10 +30,16 @@ export interface ComicCelOptions {
 const celVertexShader = /* glsl */ `
   varying vec3 vNormalWorld;
   varying vec3 vViewDir;
+  #ifdef USE_COLOR
+    varying vec3 vVertexColor;
+  #endif
   void main() {
     vec4 worldPos = modelMatrix * vec4( position, 1.0 );
     vNormalWorld = normalize( mat3( modelMatrix ) * normal );
     vViewDir = normalize( cameraPosition - worldPos.xyz );
+    #ifdef USE_COLOR
+      vVertexColor = color;
+    #endif
     gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `;
@@ -51,6 +57,9 @@ const celFragmentShader = /* glsl */ `
 
   varying vec3 vNormalWorld;
   varying vec3 vViewDir;
+  #ifdef USE_COLOR
+    varying vec3 vVertexColor;
+  #endif
 
   // Patrón de puntos halftone en espacio de pantalla (estilo cómic impreso).
   float halftonePattern( vec2 fragCoord, float scale ) {
@@ -66,10 +75,16 @@ const celFragmentShader = /* glsl */ `
     vec3 V = normalize( vViewDir );
     float NdotL = dot( N, normalize( uSunDir ) );
 
+    // Color base: uniforme o sombreado por vértice (terreno del Hito 2).
+    vec3 baseColor = uColor;
+    #ifdef USE_COLOR
+      baseColor *= vVertexColor;
+    #endif
+
     // 3 bandas marcadas de iluminación tipo cómic.
-    vec3 litColor = uColor * 1.12;
-    vec3 midColor = mix( uColor, uShadowTint, 0.28 );
-    vec3 darkColor = mix( uColor, uShadowTint, 0.62 );
+    vec3 litColor = baseColor * 1.12;
+    vec3 midColor = mix( baseColor, uShadowTint, 0.28 );
+    vec3 darkColor = mix( baseColor, uShadowTint, 0.62 );
 
     vec3 finalColor = litColor;
     if ( NdotL < 0.12 ) {
@@ -92,7 +107,7 @@ const celFragmentShader = /* glsl */ `
     finalColor += uRimColor * fresnel * uRimStrength;
 
     // Emisión extra opcional (energía, cristales, portal).
-    finalColor += uColor * uEmissiveBoost;
+    finalColor += baseColor * uEmissiveBoost;
 
     gl_FragColor = vec4( finalColor, uOpacity );
   }

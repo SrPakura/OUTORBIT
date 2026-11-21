@@ -399,3 +399,150 @@ export function isLineBlockedByStructures(
   }
   return false;
 }
+
+// ============================================================================
+// HITO 2 — Colisión contra props físicos: flora, rocas y obstáculos sólidos.
+//
+// Cada prop se reduce a un cilindro alineado con la normal del planeta
+// (tronco/tallo/pilar) más un techo ancho opcional caminable o rebotador
+// (copa de árbol, corola de flor gigante, sombrero de seta). El follaje
+// denso (helechos/bambú) es elástico y da cobertura de sigilo.
+// ============================================================================
+
+export interface PropCollider {
+  id: string;
+  planetId: string;
+  /** Centro mundial de la base (superficie exacta del terreno + offset). */
+  center: THREE.Vector3;
+  /** Normal del planeta en la base (eje local +Y del prop). */
+  upDir: THREE.Vector3;
+  /** Altitud absoluta de la base sobre el radio nominal (terreno incluido). */
+  baseAltitude: number;
+  /** Radio del cilindro sólido (tronco, tallo, pilar). */
+  radius: number;
+  /** Altura del cilindro sólido sobre la base. */
+  height: number;
+  /** Radio del techo ancho caminable/rebotador (0: sin techo). */
+  capRadius: number;
+  /** Altura del techo sobre la base. */
+  capY: number;
+  /** Impulso vertical al pisar el techo (0: techo caminable normal). */
+  bounceImpulse: number;
+  /** Foliage elástico (helechos/bambú): empuje suave + cobertura de sigilo. */
+  softFoliage: boolean;
+  /** Arbusto de sigilo: `checkPlayerInGrass` devuelve true dentro del radio. */
+  isStealthBush: boolean;
+}
+
+export interface PropResolveResult {
+  /** Altitud de suelo ganada por techos de props (0 si ninguno). */
+  groundAltitude: number;
+  /** Hubo empuje lateral contra un prop sólido. */
+  hitProp: boolean;
+  /** Impulso de trampolín armado (flor gigante / seta bioluminiscente). */
+  bounceImpulse: number;
+  /** El jugador quedó dentro de follaje denso (helechos/bambú). */
+  inFoliageCover: boolean;
+}
+
+const PROP_CAP_BAND = 0.45;
+const _prToProp = new THREE.Vector3();
+const _prTangent = new THREE.Vector3();
+const _prFallback = new THREE.Vector3();
+const _propResolveResult: PropResolveResult = {
+  groundAltitude: 0,
+  hitProp: false,
+  bounceImpulse: 0,
+  inFoliageCover: false,
+};
+
+/**
+ * Resuelve la colisión del jugador (o un enemigo) contra los props físicos
+ * del planeta: empuje lateral fuera de troncos/tallos/pilares, suelo elevado
+ * sobre techos caminables e impulso de trampolín sobre flores/setas.
+ * Muta `pos` con el empuje y devuelve un objeto reutilizado (CERO allocations).
+ */
+export function resolvePlayerProps(
+  pos: THREE.Vector3,
+  velY: number,
+  altitude: number,
+  planet: PlanetRuntime,
+  propColliders: PropCollider[],
+  playerRadius: number
+): PropResolveResult {
+  let groundAltitude = 0;
+  let hitProp = false;
+  let bounceImpulse = 0;
+  let inFoliageCover = false;
+  const planetId = planet.spec.id;
+  for (let i = 0; i < propColliders.length; i++) {
+    const c = propColliders[i];
+    if (c.planetId !== planetId) continue;
+    // Rechazo rápido vertical: muy por encima o por debajo del prop.
+    if (altitude > c.baseAltitude + c.height + 3 || altitude < c.baseAltitude - 3) continue;
+
+    _prToProp.copy(pos).sub(c.center);
+    const upDist = _prToProp.dot(c.upDir);
+    _prTangent.copy(_prToProp).addScaledVector(c.upDir, -upDist);
+    const tangSq = _prTangent.lengthSq();
+
+    // Techo ancho (corola/sombrero/copa): suelo elevado caminable o rebotador.
+    if (c.capRadius > 0) {
+      const capR = c.capRadius + playerRadius * 0.5;
+      if (
+        tangSq < capR * capR &&
+        upDist >= c.capY - PROP_CAP_BAND &&
+        (velY <= 0 || upDist >= c.capY)
+      ) {
+        const top = c.baseAltitude + c.capY;
+        if (top > groundAltitude) groundAltitude = top;
+        if (c.bounceImpulse > 0 && velY <= 0 && upDist <= c.capY + 0.1) {
+          bounceImpulse = c.bounceImpulse;
+        }
+        continue;
+      }
+    }
+
+    // Cuerpo del prop: empuje lateral fuera del cilindro.
+    const r = c.radius + playerRadius;
+    if (tangSq >= r * r) continue;
+    if (upDist >= c.height || upDist < -2.2) continue;
+
+    if (c.softFoliage) {
+      // Foliage denso: cobertura + empuje elástico solo del núcleo del tallo.
+      inFoliageCover = true;
+      const core = c.radius * 0.5 + playerRadius;
+      if (tangSq < core * core) {
+        const tangLen = Math.sqrt(tangSq);
+        if (tangLen > 1e-6) {
+          _prTangent.divideScalar(tangLen);
+          pos.addScaledVector(_prTangent, core - tangLen);
+        } else {
+          _prFallback.set(1, 0, 0).cross(c.upDir);
+          if (_prFallback.lengthSq() < 1e-6) _prFallback.set(0, 0, 1).cross(c.upDir);
+          _prFallback.normalize();
+          pos.addScaledVector(_prFallback, core);
+        }
+      }
+      continue;
+    }
+
+    // Prop sólido: empuje completo fuera del cilindro.
+    const tangLen = Math.sqrt(tangSq);
+    if (tangLen > 1e-6) {
+      _prTangent.divideScalar(tangLen);
+      pos.addScaledVector(_prTangent, r - tangLen);
+    } else {
+      _prFallback.set(1, 0, 0).cross(c.upDir);
+      if (_prFallback.lengthSq() < 1e-6) _prFallback.set(0, 0, 1).cross(c.upDir);
+      _prFallback.normalize();
+      pos.addScaledVector(_prFallback, r);
+    }
+    hitProp = true;
+  }
+  _propResolveResult.groundAltitude = groundAltitude;
+  _propResolveResult.hitProp = hitProp;
+  _propResolveResult.bounceImpulse = bounceImpulse;
+  _propResolveResult.inFoliageCover = inFoliageCover;
+  return _propResolveResult;
+}

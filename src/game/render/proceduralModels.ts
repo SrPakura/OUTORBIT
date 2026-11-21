@@ -9,6 +9,7 @@ import {
   type StructureSpec,
 } from '../types';
 import { orientObjectOnSphere } from '../math/spherical';
+import { getPlanetTerrainOffset } from '../math/terrain';
 import { addComicOutline, createComicCelMaterial, createToonMaterial, type ComicCelOptions } from './toonMaterials';
 
 // ============================================================================
@@ -840,34 +841,175 @@ function buildPalmTree(): THREE.Group {
  * Clúster de helechos tropicales: hojas anchas radiando desde la base y una
  * flor exótica magenta con centro amarillo brillando en el centro.
  */
+/**
+ * Clúster de helechos tropicales volumétrico (Hito 2): doble capa de frondas
+ * (anillo bajo ancho + corona alta alzada) y pequeñas flores tropicales
+ * brillantes (magenta/coral/dorado) anidadas entre las frondas.
+ */
 function buildFernCluster(): THREE.Group {
   const fern = new THREE.Group();
   const leafColors = ['#22c55e', '#16a34a', '#4ade80'];
-  for (let i = 0; i < 7; i++) {
+  // Capa baja: 8 frondas anchas casi horizontales que abren la base.
+  for (let i = 0; i < 8; i++) {
     const pivot = new THREE.Group();
-    pivot.rotation.y = (i / 7) * Math.PI * 2 + 0.25;
+    pivot.rotation.y = (i / 8) * Math.PI * 2 + 0.25;
     const leaf = toonMesh(new THREE.SphereGeometry(1, 10, 8), leafColors[i % 3], 0.016);
-    leaf.scale.set(0.17, 0.05, 0.95);
-    leaf.position.set(0, 0.34, 0.42);
-    leaf.rotation.x = -1.05; // hoja ancha alzándose hacia fuera
+    leaf.scale.set(0.19, 0.05, 0.95);
+    leaf.position.set(0, 0.26, 0.44);
+    leaf.rotation.x = -1.25; // fronda ancha tendida hacia fuera
     pivot.add(leaf);
     fern.add(pivot);
   }
-  // Flor exótica central: pétalos magenta + corazón amarillo brillante.
-  const stem = toonMesh(new THREE.CylinderGeometry(0.045, 0.06, 0.5, 6), '#15803d', 0.012);
-  stem.position.y = 0.25;
-  fern.add(stem);
-  const petals = toonMesh(new THREE.SphereGeometry(0.22, 10, 8), '#e879f9', 0.016);
-  petals.scale.set(1, 0.75, 1);
-  petals.position.y = 0.58;
-  fern.add(petals);
-  const heart = new THREE.Mesh(
-    new THREE.SphereGeometry(0.09, 8, 6),
-    new THREE.MeshBasicMaterial({ color: 0xfacc15 })
-  );
-  heart.position.y = 0.68;
-  fern.add(heart);
+  // Capa alta: 6 frondas menores alzándose hacia el centro.
+  for (let i = 0; i < 6; i++) {
+    const pivot = new THREE.Group();
+    pivot.rotation.y = (i / 6) * Math.PI * 2 + 0.78;
+    const leaf = toonMesh(new THREE.SphereGeometry(1, 10, 8), leafColors[(i + 1) % 3], 0.016);
+    leaf.scale.set(0.15, 0.045, 0.72);
+    leaf.position.set(0, 0.5, 0.3);
+    leaf.rotation.x = -0.85; // fronda erguida que cierra el volumen
+    pivot.add(leaf);
+    fern.add(pivot);
+  }
+  // Flores tropicales pequeñas anidadas entre las frondas.
+  const blossomColors = ['#e879f9', '#fb7185', '#facc15'];
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + 0.5;
+    const stem = toonMesh(new THREE.CylinderGeometry(0.035, 0.05, 0.42, 6), '#15803d', 0.012);
+    stem.position.set(Math.cos(a) * 0.16, 0.21, Math.sin(a) * 0.16);
+    stem.rotation.z = Math.cos(a) * 0.25;
+    stem.rotation.x = -Math.sin(a) * 0.25;
+    fern.add(stem);
+    const blossom = toonMesh(new THREE.SphereGeometry(0.13, 10, 8), blossomColors[i], 0.014);
+    blossom.scale.set(1, 0.75, 1);
+    blossom.position.set(Math.cos(a) * 0.21, 0.46, Math.sin(a) * 0.21);
+    fern.add(blossom);
+    const heart = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xfde047 })
+    );
+    heart.position.set(Math.cos(a) * 0.21, 0.52, Math.sin(a) * 0.21);
+    fern.add(heart);
+  }
   return fern;
+}
+
+/**
+ * Flor gigante trampolín (~2.2 m, Hito 2): tallo grueso curvado jade, doble
+ * corona de pétalos esculpidos magenta/coral y estambre de polen dorado
+ * brillante. Física: tallo sólido + techo petalar ancho que rebota al jugador.
+ */
+function buildGiantFlower(): THREE.Group {
+  const flower = new THREE.Group();
+  // Tallo grueso curvado (jade): 4 segmentos que se inclinan suavemente.
+  const stalkColors = ['#10b981', '#059669'];
+  let leanX = 0;
+  for (let i = 0; i < 4; i++) {
+    const seg = toonMesh(
+      new THREE.CylinderGeometry(0.125 - i * 0.012, 0.16 - i * 0.012, 0.58, 8),
+      stalkColors[i % 2],
+      0.018
+    );
+    leanX += i * 0.05;
+    seg.position.set(leanX, 0.29 + i * 0.55, 0);
+    seg.rotation.z = -0.1 - i * 0.045;
+    flower.add(seg);
+  }
+  // Hojas de la base abriéndose en abanico.
+  const leafColors = ['#34d399', '#10b981'];
+  for (let i = 0; i < 4; i++) {
+    const pivot = new THREE.Group();
+    pivot.rotation.y = (i / 4) * Math.PI * 2 + 0.5;
+    const leaf = toonMesh(new THREE.SphereGeometry(1, 10, 8), leafColors[i % 2], 0.016);
+    leaf.scale.set(0.22, 0.05, 0.85);
+    leaf.position.set(0, 0.28, 0.5);
+    leaf.rotation.x = -1.15;
+    pivot.add(leaf);
+    flower.add(pivot);
+  }
+  // Corona de pétalos esculpidos: anillo exterior magenta + interior coral.
+  const head = new THREE.Group();
+  head.position.set(leanX, 2.32, 0);
+  const petalColors = ['#e879f9', '#fb7185'];
+  for (let ring = 0; ring < 2; ring++) {
+    const count = 8 - ring * 2;
+    for (let i = 0; i < count; i++) {
+      const pivot = new THREE.Group();
+      pivot.rotation.y = (i / count) * Math.PI * 2 + ring * 0.42;
+      const petal = toonMesh(new THREE.SphereGeometry(1, 10, 8), petalColors[ring], 0.02);
+      petal.scale.set(0.36 - ring * 0.09, 0.085, 0.66 - ring * 0.12);
+      petal.position.set(0, 0.03 - ring * 0.06, 0.58 - ring * 0.18);
+      petal.rotation.x = 0.55 - ring * 0.18;
+      pivot.add(petal);
+      head.add(pivot);
+    }
+  }
+  // Estambre central: corazón dorado brillante con puntas de polen.
+  const stamen = new THREE.Mesh(
+    new THREE.SphereGeometry(0.2, 12, 10),
+    new THREE.MeshBasicMaterial({ color: 0xfde047 })
+  );
+  stamen.position.y = 0.16;
+  head.add(stamen);
+  const pollenGeometry = new THREE.SphereGeometry(0.055, 8, 6);
+  const pollenMaterial = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const pollen = new THREE.Mesh(pollenGeometry, pollenMaterial);
+    pollen.position.set(Math.cos(a) * 0.14, 0.3, Math.sin(a) * 0.14);
+    head.add(pollen);
+  }
+  flower.add(head);
+  return flower;
+}
+
+/**
+ * Seta bioluminiscente (~1.6 m, Hito 2): tallo robusto crema con anillo cian
+ * y sombrero ancho manchado que brilla suave (Kurogane, Neon Bastion, Luna).
+ * Física: tallo sólido + sombrero ancho que rebota al jugador.
+ */
+function buildGlowMushroom(): THREE.Group {
+  const mushroom = new THREE.Group();
+  const stem = toonMesh(new THREE.CylinderGeometry(0.26, 0.38, 1.15, 10), '#fef3c7', 0.018);
+  stem.position.y = 0.58;
+  mushroom.add(stem);
+  const ring = toonMesh(new THREE.TorusGeometry(0.3, 0.05, 8, 16), '#67e8f9', 0.012);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.78;
+  mushroom.add(ring);
+  const cap = toonMesh(
+    new THREE.SphereGeometry(0.95, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    '#22d3ee',
+    0.02
+  );
+  cap.position.y = 1.18;
+  cap.scale.set(1, 0.6, 1);
+  mushroom.add(cap);
+  const glow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.78, 12, 10),
+    new THREE.MeshBasicMaterial({
+      color: 0xa5f3fc,
+      transparent: true,
+      opacity: 0.4,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  glow.position.y = 1.32;
+  glow.scale.set(1, 0.55, 1);
+  mushroom.add(glow);
+  // Manchas crema del sombrero (deterministas).
+  const spotGeometry = new THREE.SphereGeometry(0.13, 8, 6);
+  const spotMaterial = createToonMaterial('#fef9c3');
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.4;
+    const r = 0.42 + (i % 3) * 0.2;
+    const spot = new THREE.Mesh(spotGeometry, spotMaterial);
+    spot.position.set(Math.cos(a) * r, 1.5 + Math.sin(i * 1.7) * 0.05, Math.sin(a) * r);
+    spot.scale.set(1, 0.4, 1);
+    mushroom.add(spot);
+  }
+  return mushroom;
 }
 
 /**
@@ -1294,8 +1436,8 @@ function buildPineTreeProp(): THREE.Group {
 }
 
 /**
- * Construye el mesh de un prop ambiental por su tipo. Los props no tienen
- * colisión: son set dressing (aldea feudal, cristales, maquinaria).
+ * Construye el mesh de un prop ambiental por su tipo. Desde el Hito 2 los
+ * props tienen colisión física real (troncos, techos, trampolines, follaje).
  */
 export function buildPropMesh(kind: PropKind): THREE.Group {
   switch (kind) {
@@ -1343,6 +1485,12 @@ export function buildPropMesh(kind: PropKind): THREE.Group {
       return buildReactor();
     case 'spotlight':
       return buildSpotlight();
+    case 'giant_flower':
+      return buildGiantFlower();
+    case 'glow_mushroom':
+      return buildGlowMushroom();
+    case 'rock':
+      return buildRock();
   }
 }
 
@@ -1391,12 +1539,37 @@ export function buildPlanetModel(spec: PlanetSpec): {
   const random = makeSeededRandom(hashString(spec.id));
   const outlineThickness = Math.max(spec.radius * 0.006, 0.03);
 
-  // --- Esfera principal ---
-  const sphere = toonMesh(
-    new THREE.SphereGeometry(spec.radius, 48, 32),
-    spec.surfaceColor,
-    outlineThickness
-  );
+  // --- Esfera principal desplazada por el terreno (Hito 2) ---
+  // 88x60 segmentos para que colinas, cráteres y valles se lean suaves.
+  // Cada vértice se normaliza a su dirección radial, evalúa el heightfield
+  // determinista y se desplaza a (radius + h). El color por vértice oscurece
+  // las hondonadas y aclara las crestas manteniendo la respuesta toon.
+  const sphereGeometry = new THREE.SphereGeometry(spec.radius, 88, 60);
+  const positionAttr = sphereGeometry.getAttribute('position') as THREE.BufferAttribute;
+  const vertexCount = positionAttr.count;
+  const vertexColors = new Float32Array(vertexCount * 3);
+  for (let i = 0; i < vertexCount; i++) {
+    const px = positionAttr.getX(i);
+    const py = positionAttr.getY(i);
+    const pz = positionAttr.getZ(i);
+    const len = Math.sqrt(px * px + py * py + pz * pz);
+    const inv = len > 1e-9 ? 1 / len : 0;
+    const nx = px * inv;
+    const ny = py * inv;
+    const nz = pz * inv;
+    const h = getPlanetTerrainOffset(spec.id, nx, ny, nz);
+    const r = spec.radius + h;
+    positionAttr.setXYZ(i, nx * r, ny * r, nz * r);
+    const shade = 1 + Math.max(-0.08, Math.min(0.08, h * 0.075));
+    vertexColors[i * 3] = shade;
+    vertexColors[i * 3 + 1] = shade;
+    vertexColors[i * 3 + 2] = shade;
+  }
+  positionAttr.needsUpdate = true;
+  sphereGeometry.setAttribute('color', new THREE.Float32BufferAttribute(vertexColors, 3));
+  sphereGeometry.computeVertexNormals();
+  const sphere = toonMesh(sphereGeometry, spec.surfaceColor, outlineThickness);
+  (sphere.material as THREE.ShaderMaterial).vertexColors = true;
   sphere.position.copy(center);
   group.add(sphere);
 
@@ -1417,13 +1590,16 @@ export function buildPlanetModel(spec: PlanetSpec): {
   atmosphere.position.copy(center);
   group.add(atmosphere);
 
-  // --- Parches de terreno ---
+  // --- Parches de terreno abrazando el relieve (Hito 2) ---
   const patchCount = 9;
   for (let i = 0; i < patchCount; i++) {
     const u = random();
     const phi = random() * Math.PI * 2;
     const cosTheta = 1 - 2 * u;
     const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
+    const dirX = sinTheta * Math.cos(phi);
+    const dirY = cosTheta;
+    const dirZ = sinTheta * Math.sin(phi);
     const patchRadius = spec.radius * (0.16 + random() * 0.16);
     const isIce = spec.hasIcePatches === true && random() > 0.45;
     const patch = toonMesh(
@@ -1431,48 +1607,22 @@ export function buildPlanetModel(spec: PlanetSpec): {
       isIce ? '#f0f9ff' : spec.patchColor,
       outlineThickness * 0.6
     );
+    // Se apoyan sobre la altura exacta del terreno para no flotar ni hundirse.
     placeOnSphere(
       patch,
       center,
-      sinTheta * Math.cos(phi),
-      cosTheta,
-      sinTheta * Math.sin(phi),
-      spec.radius * 0.9
+      dirX,
+      dirY,
+      dirZ,
+      spec.radius + getPlanetTerrainOffset(spec.id, dirX, dirY, dirZ) - patchRadius * 0.1
     );
     patch.scale.y = 0.32;
     group.add(patch);
   }
 
-  // --- Árboles y rocas en superficie (Verdant: selva densa de palmeras) ---
-  let propCount = 8;
-  if (spec.biome === 'verdant') propCount = 22;
-  else if (spec.biome === 'cryo') propCount = 8;
-  else if (spec.biome === 'bastion' || spec.biome === 'kronos') propCount = 6;
-  for (let i = 0; i < propCount; i++) {
-    const u = random();
-    const phi = random() * Math.PI * 2;
-    const cosTheta = 1 - 2 * u;
-    const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
-    // Verdant es una selva tropical: palmeras y helechos en lugar de pinos.
-    let prop: THREE.Group;
-    if (spec.biome === 'verdant') {
-      const r = random();
-      prop = r > 0.5 ? buildPalmTree() : r > 0.25 ? buildFernCluster() : buildRock();
-    } else {
-      prop = random() > 0.35 ? buildPineTree() : buildRock();
-    }
-    const scale = spec.radius * 0.045;
-    prop.scale.setScalar(scale);
-    placeOnSphere(
-      prop,
-      center,
-      sinTheta * Math.cos(phi),
-      cosTheta,
-      sinTheta * Math.sin(phi),
-      spec.radius - scale * 0.15
-    );
-    group.add(prop);
-  }
+  // (Hito 2) La flora y rocas de superficie ya NO se generan aquí al azar:
+  // viven como PropSpec estructurados en levelDefinitions con grounding exacto
+  // y colisión física real. Se mantienen anillos orbitales y asteroides.
 
   // --- Anillos orbitales ---
   let ringGroup: THREE.Group | null = null;

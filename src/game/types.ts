@@ -168,9 +168,17 @@ export type PropKind =
   // --- Metrópoli Cyberpunk (Neon Bastion · Planeta 3) ---
   | 'neon_billboard'
   | 'cyber_tower'
-  | 'holo_pillar';
+  | 'holo_pillar'
+  // --- Flora interactiva y rocas con colisión (Hito 2: terreno + props) ---
+  | 'giant_flower'
+  | 'glow_mushroom'
+  | 'rock';
 
-/** Prop ambiental sin colisión: puro set dressing sobre la superficie. */
+/**
+ * Prop ambiental con colisión física real (Hito 2): troncos sólidos, techos
+ * caminables, flores trampolín, follaje de sigilo y rocas escalables. Todos
+ * se apoyan en la altura exacta del terreno esférico.
+ */
 export interface PropSpec {
   id: string;
   kind: PropKind;
