@@ -7,6 +7,7 @@ import type {
   GalaxySpec,
   GrassZoneSpec,
   InteractableKind,
+  NpcSpec,
   PlanetAdaptationConfig,
   PlanetRuntime,
   PlayerBehaviorVector,
@@ -17,14 +18,18 @@ import type {
 import { addComicOutline, createComicCelMaterial, createToonMaterial } from '../render/toonMaterials';
 import {
   buildBeaconBeam,
+  buildBreakableWallMesh,
   buildBruteModel,
   buildDroneModel,
   buildGuardModel,
   buildInterceptorBelt,
   buildKronosModel,
+  buildLockedGateMesh,
+  buildNpcModel,
   buildOfficerModel,
   buildPropMesh,
   buildStructureMesh,
+  buildSwitchLeverMesh,
   buildTurretModel,
   buildVisionConeMesh,
 } from '../render/proceduralModels';
@@ -104,6 +109,19 @@ const TELEPORT_PIPE_RADIUS = 2.2;
 const TELEPORT_COOLDOWN = 2.5;
 const KEYCARD_PICKUP_RADIUS = 2.4;
 const ADAPTED_SPAWN_BASE = 3; // semilla determinista para spawns de adaptación;
+
+// --- FASE B: puzle, sigilo y acción táctica ---
+const LOCKED_GATE_INTERACT_RANGE = 4.0; // [E] cerca de la compuerta
+const SWITCH_LEVER_RANGE = 3.5; // [E] cerca de la palanca
+const SWITCH_LEVER_HIT_RADIUS = 1.6; // roca/objeto de Estasis lanzado
+const BREAKABLE_WALL_HP = 2; // 2 golpes de roca o 1 barril/Digger
+const BREAKABLE_WALL_HIT_MARGIN = 1.2; // margen sobre halfX del impacto
+const NPC_FACE_RANGE = 8.0; // el NPC gira a mirarte
+const NPC_TALK_RANGE = 4.5; // [E] para hablar
+const NPC_DIALOGUE_DURATION = 7.0; // el bocadillo se cierra solo
+const LOOKOUT_SWING = Math.PI / 3; // ±60º barriendo el patio
+const LOOKOUT_SWING_SPEED = 0.55;
+const GATE_ANIM_SPEED = 2.4; // velocidad de subida/bajada de la barrera
 
 // --- Oleada 2: galaxia continua, conos de visión y distracciones ---
 const NOISE_RADIUS = 13.0; // radio del "ruido" de un objeto lanzado al suelo
@@ -250,6 +268,16 @@ interface EnemyObj {
   /** Iconos 3D de estado sobre la cabeza: '?' amarillo y '!' rojo. */
   iconQuestion: THREE.Group | null;
   iconAlert: THREE.Group | null;
+  /** FASE B: altura fija sobre la superficie (vigías en torres/murallas). */
+  altitudeOffset: number;
+  /** FASE B: vigía estacionario que rota ±60º desde su puesto. */
+  stationaryLookout: boolean;
+  /** FASE B: al caer K.O. entrega la llave/tarjeta del sector. */
+  dropsKeycard: boolean;
+  /** FASE B: fase del barrido de vigilancia del vigía. */
+  lookoutPhase: number;
+  /** FASE B: tangente de mirada base del vigía (el barrido orbita sobre ella). */
+  baseForward: THREE.Vector3;
 }
 
 /**
@@ -316,6 +344,69 @@ interface TeleporterObj {
   pos: THREE.Vector3;
   planet: PlanetRuntime;
   isExit: boolean;
+}
+
+/**
+ * FASE B — Compuerta bloqueada: marco sólido + barrera energética que baja
+ * al abrirse. Mientras `closed` su collider dinámico bloquea al jugador,
+ * a los enemigos y a los conos de visión; al abrirse el collider queda
+ * `disabled`. Puede requerir tarjeta ([E]), abrirse con su palanca vinculada
+ * y cerrarse de golpe por LOCKDOWN si salta la alarma en su planeta.
+ */
+interface LockedGateObj {
+  id: string;
+  mesh: THREE.Group;
+  barrier: THREE.Mesh;
+  barrierMaterial: THREE.MeshBasicMaterial;
+  barrierBaseY: number;
+  lockMaterial: THREE.MeshBasicMaterial;
+  pos: THREE.Vector3;
+  planet: PlanetRuntime;
+  collider: StructureCollider;
+  closed: boolean;
+  /** 0 = cerrada .. 1 = abierta (animación de la barrera). */
+  openT: number;
+  requiresKeycard: boolean;
+  lockdownOnAlert: boolean;
+}
+
+/** FASE B — Palanca/switch de pedestal: abre su compuerta vinculada. */
+interface SwitchLeverObj {
+  id: string;
+  mesh: THREE.Group;
+  leverPivot: THREE.Group;
+  crystalMaterial: THREE.MeshBasicMaterial;
+  pos: THREE.Vector3;
+  planet: PlanetRuntime;
+  activated: boolean;
+  linkedGateId: string | null;
+}
+
+/**
+ * FASE B — Pared rompible: collider sólido mientras está intacta (hp = 2);
+ * al romperse explota con FX, libera el collider y abre el pasadizo.
+ */
+interface BreakableWallObj {
+  id: string;
+  mesh: THREE.Group;
+  crackMaterial: THREE.MeshBasicMaterial;
+  pos: THREE.Vector3;
+  planet: PlanetRuntime;
+  collider: StructureCollider;
+  hp: number;
+  broken: boolean;
+}
+
+/** FASE B — NPC amigable con diálogo de pistas (bocadillo [E] flotante). */
+interface NpcObj {
+  spec: NpcSpec;
+  mesh: THREE.Group;
+  icon: THREE.Object3D | null;
+  pos: THREE.Vector3;
+  planet: PlanetRuntime;
+  dir: THREE.Vector3;
+  forward: THREE.Vector3;
+  dialogueIdx: number;
 }
 
 /**
@@ -452,6 +543,8 @@ interface LaserGateObj {
   planet: PlanetRuntime;
   cooldown: number;
   phase: number;
+  /** FASE B: apagada en vivo por una palanca sin compuerta vinculada. */
+  disabled: boolean;
 }
 
 interface WaterBubbleObj {
@@ -820,6 +913,20 @@ export class WorldObjectsManager {
   private readonly teleporters: TeleporterObj[] = [];
   private readonly explosions: ExplosionFx[] = [];
   private readonly interceptors: InterceptorObj[] = [];
+  // --- FASE B: puzle, sigilo y acción táctica ---
+  private readonly lockedGates: LockedGateObj[] = [];
+  private readonly switchLevers: SwitchLeverObj[] = [];
+  private readonly breakableWalls: BreakableWallObj[] = [];
+  private readonly npcs: NpcObj[] = [];
+  /** Bocadillo de diálogo activo (preasignado, sin GC por frame). */
+  private readonly dialogueData: { speaker: string; role: string; text: string } = {
+    speaker: '',
+    role: '',
+    text: '',
+  };
+  private dialogueNpc: NpcObj | null = null;
+  private dialogueT = 0;
+  private lockdownActive = false;
   private kronos: KronosObj | null = null;
   private readonly kronosOrbs: TurretProjectile[] = [];
   /** Vector de comportamiento combinado de la run (referencia, sin copiar). */
@@ -872,6 +979,12 @@ export class WorldObjectsManager {
    * de la Red de IA y la inyecta en el planeta recién desbloqueado.
    */
   onPlanetUnlocked: ((planet: PlanetRuntime) => void) | null = null;
+  /**
+   * FASE B: la alarma cerró de golpe compuertas con `lockdownOnAlert`
+   * (LOCKDOWN) — el GameEngine avisa por radio mientras el jugador busca
+   * una ruta alternativa.
+   */
+  onGateLockdown: (() => void) | null = null;
 
   constructor(group: THREE.Group, planets: PlanetRuntime[]) {
     this.group = group;
@@ -899,6 +1012,21 @@ export class WorldObjectsManager {
   /** Alarma global de la guarnición (radio: cuerpo descubierto, intruso). */
   get isGlobalAlert(): boolean {
     return this.globalAlert;
+  }
+
+  /** FASE B: bocadillo de diálogo activo (null si ninguno). */
+  get activeDialogue(): { speaker: string; role: string; text: string } | null {
+    return this.dialogueNpc !== null ? this.dialogueData : null;
+  }
+
+  /** FASE B: clave discreta del diálogo (0 = ninguno, N = línea N). */
+  get dialogueKey(): number {
+    return this.dialogueNpc !== null ? this.dialogueNpc.dialogueIdx + 2 : 0;
+  }
+
+  /** FASE B: hay compuertas selladas por el LOCKDOWN de la alarma. */
+  get gateLockdownActive(): boolean {
+    return this.lockdownActive;
   }
 
   // --------------------------------------------------------------------------
@@ -1012,6 +1140,7 @@ export class WorldObjectsManager {
     for (const bubble of galaxy.waterBubbles) this.spawnBubble(bubble);
     for (const zone of galaxy.grassZones ?? []) this.spawnGrass(zone);
     for (const enemy of galaxy.enemies) this.spawnEnemy(enemy);
+    for (const npc of galaxy.npcs ?? []) this.spawnNpc(npc);
 
     // Pool de explosiones / ondas expansivas (reutilizado, sin GC).
     for (let i = 0; i < 4; i++) {
@@ -1150,6 +1279,7 @@ export class WorldObjectsManager {
         planet,
         cooldown: 0,
         phase: spec.id.length * 1.3,
+        disabled: false,
       });
     } else if (spec.kind === 'keycard') {
       const mesh = buildKeycardMesh();
@@ -1193,7 +1323,125 @@ export class WorldObjectsManager {
       const pos = this.placeOnPlanet(mesh, planet, ...spec.sphericalDir, altitude);
       this.group.add(mesh);
       this.teleporters.push({ mesh, pos: pos.clone(), planet, isExit });
+    } else if (spec.kind === 'locked_gate') {
+      const halfX = spec.size?.[0] ?? 2.2;
+      const heightY = spec.size?.[1] ?? 3.4;
+      const halfZ = spec.size?.[2] ?? 0.5;
+      const gate = buildLockedGateMesh(halfX, heightY, halfZ);
+      const pos = this.placeOnPlanet(gate.group, planet, ...spec.sphericalDir, altitude);
+      gate.group.rotateY(spec.yaw ?? 0);
+      this.group.add(gate.group);
+      // Collider dinámico: bloquea jugador/enemigos/conos mientras está
+      // cerrada; Digger puede cruzar por debajo excavando.
+      const collider = createStructureCollider(
+        {
+          id: `gate-collider-${spec.id}`,
+          kind: 'wall',
+          planetId: spec.planetId,
+          sphericalDir: spec.sphericalDir,
+          altitudeOffset: altitude,
+          yaw: spec.yaw ?? 0,
+          size: [halfX, heightY, halfZ],
+          color: '#3b4463',
+          passableUnderground: true,
+        },
+        planet.centerVec,
+        planet.spec.radius
+      );
+      this.structureColliders.push(collider);
+      this.lockedGates.push({
+        id: spec.id,
+        mesh: gate.group,
+        barrier: gate.barrier,
+        barrierMaterial: gate.barrierMaterial,
+        barrierBaseY: gate.barrierBaseY,
+        lockMaterial: gate.lockMaterial,
+        pos: pos.clone(),
+        planet,
+        collider,
+        closed: true,
+        openT: 0,
+        requiresKeycard: spec.requiresKeycard ?? false,
+        lockdownOnAlert: spec.lockdownOnAlert ?? false,
+      });
+    } else if (spec.kind === 'switch_lever') {
+      const lever = buildSwitchLeverMesh();
+      const pos = this.placeOnPlanet(lever.group, planet, ...spec.sphericalDir, altitude);
+      lever.group.rotateY(spec.yaw ?? 0);
+      this.group.add(lever.group);
+      this.switchLevers.push({
+        id: spec.id,
+        mesh: lever.group,
+        leverPivot: lever.leverPivot,
+        crystalMaterial: lever.crystalMaterial,
+        pos: pos.clone(),
+        planet,
+        activated: false,
+        linkedGateId: spec.linkedGateId ?? null,
+      });
+    } else if (spec.kind === 'breakable_wall') {
+      const halfX = spec.size?.[0] ?? 2.4;
+      const heightY = spec.size?.[1] ?? 3.2;
+      const halfZ = spec.size?.[2] ?? 0.6;
+      const wall = buildBreakableWallMesh(halfX, heightY, halfZ);
+      const pos = this.placeOnPlanet(wall.group, planet, ...spec.sphericalDir, altitude);
+      wall.group.rotateY(spec.yaw ?? 0);
+      this.group.add(wall.group);
+      const collider = createStructureCollider(
+        {
+          id: `wall-collider-${spec.id}`,
+          kind: 'wall',
+          planetId: spec.planetId,
+          sphericalDir: spec.sphericalDir,
+          altitudeOffset: altitude,
+          yaw: spec.yaw ?? 0,
+          size: [halfX, heightY, halfZ],
+          color: '#57534e',
+          passableUnderground: true,
+        },
+        planet.centerVec,
+        planet.spec.radius
+      );
+      this.structureColliders.push(collider);
+      this.breakableWalls.push({
+        id: spec.id,
+        mesh: wall.group,
+        crackMaterial: wall.crackMaterial,
+        pos: pos.clone(),
+        planet,
+        collider,
+        hp: BREAKABLE_WALL_HP,
+        broken: false,
+      });
     }
+  }
+
+  /**
+   * FASE B — NPC amigable sobre la superficie: mira al jugador cuando se
+   * acerca y avanza por sus líneas de diálogo con [E].
+   */
+  private spawnNpc(spec: NpcSpec): void {
+    const planet = this.findPlanet(spec.planetId);
+    const mesh = buildNpcModel(spec.accentColor);
+    const pos = this.placeOnPlanet(mesh, planet, ...spec.sphericalDir, 0);
+    mesh.rotateY(spec.yaw ?? 0);
+    this.group.add(mesh);
+    const dir = new THREE.Vector3(...spec.sphericalDir).normalize();
+    // Tangente de mirada base: el +Z local del modelo ya girado con yaw.
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(mesh.quaternion);
+    forward.addScaledVector(dir, -forward.dot(dir));
+    if (forward.lengthSq() < 1e-6) forward.set(1, 0, 0).cross(dir);
+    forward.normalize();
+    this.npcs.push({
+      spec,
+      mesh,
+      icon: mesh.getObjectByName('promptIcon') ?? null,
+      pos: pos.clone(),
+      planet,
+      dir,
+      forward,
+      dialogueIdx: -1,
+    });
   }
 
   private spawnProp(spec: PropSpec): void {
@@ -1311,15 +1559,21 @@ export class WorldObjectsManager {
     const dir =
       waypoints.length > 0 ? waypoints[0] : new THREE.Vector3(0, 1, 0).normalize();
     if (waypoints.length === 0) waypoints.push(dir);
-    const pos = this.placeOnPlanet(mesh, planet, dir.x, dir.y, dir.z, 0);
+    const altitudeOffset = spec.altitudeOffset ?? 0;
+    const pos = this.placeOnPlanet(mesh, planet, dir.x, dir.y, dir.z, altitudeOffset);
     this.group.add(mesh);
+    // Tangente de mirada base: los vigías barren ±60º alrededor de ella.
+    const baseForward = new THREE.Vector3(0, 0, 1);
+    baseForward.addScaledVector(dir, -baseForward.dot(dir));
+    if (baseForward.lengthSq() < 1e-6) baseForward.set(1, 0, 0).cross(dir);
+    baseForward.normalize();
     this.enemies.push({
       kind: spec.kind,
       planet,
       mesh,
       pos: pos.clone(),
       dir: dir.clone(),
-      forward: new THREE.Vector3(0, 0, 1),
+      forward: baseForward.clone(),
       waypoints,
       waypointIdx: 1 % waypoints.length,
       state: GUARD_STATE_PATROL,
@@ -1339,6 +1593,11 @@ export class WorldObjectsManager {
       flankSide: this.enemies.length % 2 === 0 ? 1 : -1,
       iconQuestion: icons.question,
       iconAlert: icons.alert,
+      altitudeOffset,
+      stationaryLookout: spec.stationaryLookout ?? false,
+      dropsKeycard: spec.dropsKeycard ?? false,
+      lookoutPhase: spec.kind.length * 0.7,
+      baseForward,
     });
   }
 
@@ -1875,6 +2134,190 @@ export class WorldObjectsManager {
   }
 
   // --------------------------------------------------------------------------
+  // FASE B — Interacción táctica: compuertas, palancas, NPCs y paredes
+  // --------------------------------------------------------------------------
+  /**
+   * [E] cerca de una compuerta con `requiresKeycard`: la abre si el escuadrón
+   * lleva alguna tarjeta/llave robada (la valida como llave maestra).
+   */
+  tryOpenLockedGate(pos: THREE.Vector3): boolean {
+    if (this.keycardsCollected <= 0) return false;
+    for (const gate of this.lockedGates) {
+      if (!gate.closed || !gate.requiresKeycard) continue;
+      if (gate.pos.distanceToSquared(pos) > LOCKED_GATE_INTERACT_RANGE * LOCKED_GATE_INTERACT_RANGE) {
+        continue;
+      }
+      this.setGateOpen(gate, true);
+      return true;
+    }
+    return false;
+  }
+
+  /** [E] cerca (< 3.5m) de una palanca sin activar: la activa. */
+  tryActivateSwitch(pos: THREE.Vector3): boolean {
+    for (const lever of this.switchLevers) {
+      if (lever.activated) continue;
+      if (lever.pos.distanceToSquared(pos) > SWITCH_LEVER_RANGE * SWITCH_LEVER_RANGE) {
+        continue;
+      }
+      this.activateLever(lever);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * [E] cerca (< 4.5m) de un NPC: avanza por sus líneas de diálogo y
+   * devuelve el mensaje activo (bocadillo del HUD durante 7s). El resultado
+   * es un objeto preasignado del manager: leerlo, no almacenarlo.
+   */
+  tryNpcDialogue(pos: THREE.Vector3): { speaker: string; role: string; text: string } | null {
+    for (const npc of this.npcs) {
+      if (npc.pos.distanceToSquared(pos) > NPC_TALK_RANGE * NPC_TALK_RANGE) continue;
+      const lines = npc.spec.dialogue.length;
+      npc.dialogueIdx = lines > 0 ? (npc.dialogueIdx + 1) % lines : 0;
+      this.dialogueNpc = npc;
+      this.dialogueT = NPC_DIALOGUE_DURATION;
+      this.dialogueData.speaker = npc.spec.name;
+      this.dialogueData.role = npc.spec.role;
+      this.dialogueData.text = lines > 0 ? npc.spec.dialogue[npc.dialogueIdx] : '';
+      this.onSound?.('stasisGrab');
+      return this.dialogueData;
+    }
+    return null;
+  }
+
+  /**
+   * Embestida de Digger (Gravity Dash / melee) o explosión: daña las paredes
+   * rompibles cercanas. `heavy = true` las rompe al instante (Digger/barril);
+   * si no, cada golpe resta 1 (una roca de Estasis necesita 2 impactos).
+   * Devuelve true si alguna pared se rompió.
+   */
+  damageBreakableWalls(pos: THREE.Vector3, radius: number, heavy: boolean): boolean {
+    let broke = false;
+    for (const wall of this.breakableWalls) {
+      if (wall.broken) continue;
+      const r = radius + wall.collider.halfX;
+      if (wall.pos.distanceToSquared(pos) > r * r) continue;
+      if (this.damageBreakableWall(wall, heavy ? 2 : 1)) broke = true;
+    }
+    return broke;
+  }
+
+  /** NPC cercano con el que se puede hablar (prompt `[E] Hablar`). */
+  npcNear(pos: THREE.Vector3): boolean {
+    for (const npc of this.npcs) {
+      if (npc.pos.distanceToSquared(pos) < NPC_TALK_RANGE * NPC_TALK_RANGE) return true;
+    }
+    return false;
+  }
+
+  /** Nombre del NPC hablable más cercano (para el prompt del HUD). */
+  getNearestNpcName(pos: THREE.Vector3): string | null {
+    let best: NpcObj | null = null;
+    let bestDistSq = NPC_TALK_RANGE * NPC_TALK_RANGE;
+    for (const npc of this.npcs) {
+      const distSq = npc.pos.distanceToSquared(pos);
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        best = npc;
+      }
+    }
+    return best ? best.spec.name : null;
+  }
+
+  /** Palanca sin activar cerca (prompt `[E] Activar interruptor`). */
+  switchNear(pos: THREE.Vector3): boolean {
+    for (const lever of this.switchLevers) {
+      if (lever.activated) continue;
+      if (lever.pos.distanceToSquared(pos) < SWITCH_LEVER_RANGE * SWITCH_LEVER_RANGE) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Compuerta cerrada cerca (prompt de abrir / requiere tarjeta). */
+  lockedGateNear(pos: THREE.Vector3): boolean {
+    for (const gate of this.lockedGates) {
+      if (!gate.closed) continue;
+      if (gate.pos.distanceToSquared(pos) < LOCKED_GATE_INTERACT_RANGE * LOCKED_GATE_INTERACT_RANGE) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Abre/cierra una compuerta: libera/restaura su collider dinámico. */
+  private setGateOpen(gate: LockedGateObj, open: boolean): void {
+    if (gate.closed === !open) return;
+    gate.closed = !open;
+    gate.collider.disabled = open;
+    gate.lockMaterial.color.set(open ? 0x4ade80 : 0xef4444);
+    if (open) this.onSound?.('gateOpen');
+  }
+
+  /**
+   * Activa una palanca: bascula el mando, el cristal pasa a verde y abre la
+   * `locked_gate` vinculada (o apaga la `laser_gate` más cercana de su
+   * planeta si no tiene `linkedGateId`).
+   */
+  private activateLever(lever: SwitchLeverObj): void {
+    lever.activated = true;
+    lever.crystalMaterial.color.set(0x4ade80);
+    lever.leverPivot.rotation.x = 0.55;
+    this.onSound?.('switchClick');
+    if (lever.linkedGateId !== null) {
+      for (const gate of this.lockedGates) {
+        if (gate.id !== lever.linkedGateId) continue;
+        this.setGateOpen(gate, true);
+        return;
+      }
+    }
+    // Sin compuerta vinculada: apaga la valla láser más cercana del planeta.
+    let best: LaserGateObj | null = null;
+    let bestDistSq = Infinity;
+    for (const gate of this.gates) {
+      if (gate.disabled || gate.planet !== lever.planet) continue;
+      const distSq = gate.pos.distanceToSquared(lever.pos);
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        best = gate;
+      }
+    }
+    if (best) {
+      best.disabled = true;
+      best.mesh.visible = false;
+    }
+  }
+
+  /** Daña una pared rompible; true si se rompió (FX + collider liberado). */
+  private damageBreakableWall(wall: BreakableWallObj, amount: number): boolean {
+    if (wall.broken) return false;
+    wall.hp -= amount;
+    if (wall.hp > 0) {
+      // Primer golpe: las grietas pasan al rojo vivo (un golpe más y cae).
+      wall.crackMaterial.color.set(0xf97316);
+      this.spawnExplosion(wall.pos, 1.8, 0xf97316);
+      return false;
+    }
+    wall.broken = true;
+    wall.collider.disabled = true;
+    wall.mesh.visible = false;
+    this.spawnExplosion(wall.pos, 4.5, 0xfb923c);
+    this.spawnExplosion(wall.pos, 3, 0xfbbf24);
+    this.onSound?.('explosion');
+    this.emitNoise(wall.pos, wall.planet);
+    return true;
+  }
+
+  /** Cierra el bocadillo de diálogo (timeout o jugador alejado). */
+  private clearDialogue(): void {
+    this.dialogueNpc = null;
+    this.dialogueT = 0;
+  }
+
+  // --------------------------------------------------------------------------
 
   /** Colliders de todas las estructuras de la galaxia (colisión del jugador). */
   getStructureColliders(): StructureCollider[] {
@@ -2350,6 +2793,7 @@ export class WorldObjectsManager {
     this.updateHeld(dt, state);
     this.updateFlying(dt, state, onPlayerDamage);
     this.updateGates(dt, state, onPlayerDamage);
+    this.updateLockedGates(dt);
     this.updateEnemies(dt, state, onPlayerDamage);
     this.updateInterceptors(dt, state, onPlayerDamage);
     this.updateKronos(dt, state, onPlayerDamage);
@@ -2359,7 +2803,71 @@ export class WorldObjectsManager {
     this.updateScanners(dt, state);
     this.updateMines(dt, state, onPlayerDamage);
     this.updateTeleporters(dt, state);
+    this.updateNpcs(dt, state);
     this.updateExplosions(dt);
+  }
+
+  /**
+   * FASE B — Animación de las compuertas: la barrera energética baja al
+   * suelo (o desaparece) al abrirse y sube de golpe al cerrarse por
+   * LOCKDOWN. Cero allocations.
+   */
+  private updateLockedGates(dt: number): void {
+    for (const gate of this.lockedGates) {
+      const target = gate.closed ? 0 : 1;
+      if (gate.openT === target) continue;
+      const step = dt * GATE_ANIM_SPEED;
+      gate.openT =
+        gate.openT < target
+          ? Math.min(gate.openT + step, target)
+          : Math.max(gate.openT - step, target);
+      const k = 1 - gate.openT; // 1 = cerrada, 0 = abierta
+      gate.barrier.scale.y = Math.max(k, 0.001);
+      gate.barrier.position.y = gate.barrierBaseY * k;
+      gate.barrier.visible = k > 0.01;
+      gate.barrierMaterial.opacity = 0.55 * k;
+    }
+  }
+
+  /**
+   * FASE B — NPCs: giran hacia el jugador cuando está cerca (< 8m), el
+   * bocadillo [E] flota sobre su cabeza y el diálogo activo caduca a los
+   * 7s o al alejarse. Cero allocations.
+   */
+  private updateNpcs(dt: number, state: WorldPlayerState): void {
+    for (const npc of this.npcs) {
+      _v1.copy(state.pos).sub(npc.pos);
+      const dist = _v1.length();
+      if (dist < NPC_FACE_RANGE && dist > 1e-4) {
+        // Gira suavemente hacia el jugador (proyección tangente).
+        _v1.addScaledVector(npc.dir, -_v1.dot(npc.dir));
+        if (_v1.lengthSq() > 1e-6) {
+          _v1.normalize();
+          npc.forward.lerp(_v1, Math.min(1, dt * 6)).normalize();
+        }
+      }
+      npc.mesh.position.copy(npc.pos);
+      _q1.setFromUnitVectors(_upAxis, npc.dir);
+      _v3.set(0, 0, 1).applyQuaternion(_q1);
+      const cosYaw = _v3.dot(npc.forward);
+      _v4.copy(_v3).cross(npc.forward);
+      const yaw = Math.atan2(_v4.dot(npc.dir), cosYaw);
+      _q2.setFromAxisAngle(_upAxis, yaw);
+      npc.mesh.quaternion.copy(_q1).multiply(_q2);
+      if (npc.icon) {
+        npc.icon.visible = dist < NPC_FACE_RANGE * 1.6;
+        npc.icon.position.y = 2.35 + Math.sin(this.clock * 2.2 + npc.spec.id.length) * 0.09;
+        npc.icon.rotation.y = Math.sin(this.clock * 1.4) * 0.2;
+      }
+    }
+    if (this.dialogueNpc !== null) {
+      this.dialogueT -= dt;
+      const npc = this.dialogueNpc;
+      const away =
+        npc.pos.distanceToSquared(state.pos) >
+        (NPC_TALK_RANGE + 2) * (NPC_TALK_RANGE + 2);
+      if (this.dialogueT <= 0 || away) this.clearDialogue();
+    }
   }
 
   private updateHeld(dt: number, state: WorldPlayerState): void {
@@ -2437,6 +2945,33 @@ export class WorldObjectsManager {
       }
       if (settled) continue;
 
+      // FASE B: impacto contra palancas — una roca/objeto de Estasis las
+      // activa a distancia sin exponerte a los guardias.
+      for (const lever of this.switchLevers) {
+        if (lever.activated) continue;
+        if (grab.pos.distanceToSquared(lever.pos) > SWITCH_LEVER_HIT_RADIUS * SWITCH_LEVER_HIT_RADIUS) {
+          continue;
+        }
+        this.activateLever(lever);
+        this.settleGrab(grab, planet);
+        settled = true;
+        break;
+      }
+      if (settled) continue;
+
+      // FASE B: impacto contra paredes rompibles — 2 golpes de roca o
+      // 1 barril explosivo directo.
+      for (const wall of this.breakableWalls) {
+        if (wall.broken) continue;
+        const hitR = wall.collider.halfX + BREAKABLE_WALL_HIT_MARGIN;
+        if (grab.pos.distanceToSquared(wall.pos) > hitR * hitR) continue;
+        this.damageBreakableWall(wall, grab.kind === 'barrel_explosive' ? 2 : 1);
+        this.settleGrab(grab, planet);
+        settled = true;
+        break;
+      }
+      if (settled) continue;
+
       // Impacto contra el terreno: ruido de distracción para los guardias
       // cercanos del mismo planeta (no golpearon a nadie directamente).
       _v2.copy(grab.pos).sub(planet.centerVec);
@@ -2492,6 +3027,15 @@ export class WorldObjectsManager {
       if (gen.destroyed) continue;
       if (gen.pos.distanceToSquared(pos) < (EXPLOSION_RADIUS + 1) ** 2) {
         this.damageGenerator(gen, 2);
+      }
+    }
+    // FASE B: la explosión de un barril rompe al instante las paredes
+    // rompibles cercanas (1 barril = pasadizo secreto abierto).
+    for (const wall of this.breakableWalls) {
+      if (wall.broken) continue;
+      const r = EXPLOSION_RADIUS + wall.collider.halfX;
+      if (wall.pos.distanceToSquared(pos) < r * r) {
+        this.damageBreakableWall(wall, 2);
       }
     }
     for (const grab of this.grabs) {
@@ -2584,6 +3128,11 @@ export class WorldObjectsManager {
     onPlayerDamage: PlayerDamageFn
   ): void {
     for (const gate of this.gates) {
+      // FASE B: valla láser apagada por una palanca sin compuerta vinculada.
+      if (gate.disabled) {
+        gate.planeMaterial.opacity = 0;
+        continue;
+      }
       gate.cooldown -= dt;
       gate.planeMaterial.opacity = 0.32 + Math.sin(this.clock * 7 + gate.phase) * 0.14;
       if (state.burrowing) continue; // Digger cruza por debajo excavando.
@@ -2713,15 +3262,24 @@ export class WorldObjectsManager {
     if (enemy.state === GUARD_STATE_PATROL) {
       // Cuerpo de un compañero descubierto: aviso por radio y búsqueda.
       if (this.checkBodyDiscovery(enemy)) return;
-      const target = enemy.waypoints[enemy.waypointIdx];
-      this.moveEnemyTowards(enemy, target, GUARD_PATROL_SPEED * (this.globalAlert ? 1.5 : 1), dt);
-      if (enemy.dir.angleTo(target) < 0.02) {
-        enemy.waypointIdx = (enemy.waypointIdx + 1) % enemy.waypoints.length;
+      if (enemy.stationaryLookout) {
+        // FASE B: vigía en su puesto — barre ±60º oteando el patio.
+        this.updateLookoutScan(enemy, dt);
+      } else {
+        const target = enemy.waypoints[enemy.waypointIdx];
+        this.moveEnemyTowards(enemy, target, GUARD_PATROL_SPEED * (this.globalAlert ? 1.5 : 1), dt);
+        if (enemy.dir.angleTo(target) < 0.02) {
+          enemy.waypointIdx = (enemy.waypointIdx + 1) % enemy.waypoints.length;
+        }
       }
       if (enemy.suspicion >= 1) this.enterCombat(enemy, state);
     } else if (enemy.state === GUARD_STATE_SEARCH) {
       enemy.searchT -= dt;
-      this.moveEnemyTowards(enemy, enemy.lastSeenDir, GUARD_PATROL_SPEED * 1.3, dt);
+      if (enemy.stationaryLookout) {
+        this.updateLookoutScan(enemy, dt);
+      } else {
+        this.moveEnemyTowards(enemy, enemy.lastSeenDir, GUARD_PATROL_SPEED * 1.3, dt);
+      }
       if (this.checkBodyDiscovery(enemy)) return;
       if (enemy.suspicion >= 1) {
         this.enterCombat(enemy, state);
@@ -2730,14 +3288,22 @@ export class WorldObjectsManager {
         enemy.suspicion = Math.min(enemy.suspicion, 0.35);
       }
     } else if (enemy.state === GUARD_STATE_CHASE) {
-      _v2.copy(state.pos).sub(enemy.planet.centerVec).normalize();
-      // Flanqueo tangencial: en vez de caminar en línea recta contra los
-      // muros, orbita alrededor del jugador hasta acercarse lo suficiente.
-      if (playerDist > enemy.params.attackRange * 2.2) {
-        _q1.setFromAxisAngle(enemy.dir, INTERCEPTOR_FLANK_ANGLE * enemy.flankSide);
-        _v2.applyQuaternion(_q1).normalize();
+      if (enemy.stationaryLookout) {
+        // FASE B: el vigía no abandona su torre: apunta al jugador y da la
+        // voz de alarma por radio (sigue atacando si suben a su puesto).
+        _v2.copy(state.pos).sub(enemy.pos);
+        _v2.addScaledVector(enemy.dir, -_v2.dot(enemy.dir));
+        if (_v2.lengthSq() > 1e-6) enemy.forward.copy(_v2).normalize();
+      } else {
+        _v2.copy(state.pos).sub(enemy.planet.centerVec).normalize();
+        // Flanqueo tangencial: en vez de caminar en línea recta contra los
+        // muros, orbita alrededor del jugador hasta acercarse lo suficiente.
+        if (playerDist > enemy.params.attackRange * 2.2) {
+          _q1.setFromAxisAngle(enemy.dir, INTERCEPTOR_FLANK_ANGLE * enemy.flankSide);
+          _v2.applyQuaternion(_q1).normalize();
+        }
+        this.moveEnemyTowards(enemy, _v2, enemy.params.chaseSpeed, dt);
       }
-      this.moveEnemyTowards(enemy, _v2, enemy.params.chaseSpeed, dt);
       const lostTrack =
         playerDist > GUARD_GIVEUP_DIST ||
         (state.disguised && !sees && playerDist > GUARD_GIVEUP_DIST * 0.45);
@@ -2913,7 +3479,7 @@ export class WorldObjectsManager {
       }
       this.startSearch(enemy, koEnemy.dir);
     }
-    this.triggerGlobalAlert();
+    this.triggerGlobalAlert(koEnemy.planet);
   }
 
   private startSearch(enemy: EnemyObj, targetDir: THREE.Vector3): void {
@@ -2932,7 +3498,7 @@ export class WorldObjectsManager {
       if (enemy.state === GUARD_STATE_PATROL) this.startSearch(enemy, enemy.lastSeenDir);
       enemy.suspicion = Math.max(enemy.suspicion, 0.75);
     }
-    this.triggerGlobalAlert();
+    this.triggerGlobalAlert(findStrongestGravityPlanet(pos, this.planets, null));
   }
 
   private enterCombat(enemy: EnemyObj, state: WorldPlayerState): void {
@@ -2942,11 +3508,47 @@ export class WorldObjectsManager {
     this.radioAlert(enemy.pos, '¡Intruso disfrazado!');
   }
 
-  private triggerGlobalAlert(): void {
+  private triggerGlobalAlert(planet: PlanetRuntime | null = null): void {
     if (this.globalAlert) return;
     this.globalAlert = true;
     this.onSound?.('alert');
     this.onGlobalAlert?.();
+    this.applyGateLockdown(planet);
+  }
+
+  /**
+   * FASE B — LOCKDOWN: al saltar la alarma en un planeta, sus compuertas con
+   * `lockdownOnAlert` se cierran de golpe (aunque estuvieran abiertas por
+   * palanca o tarjeta), bloqueando la ruta directa y obligando al jugador a
+   * buscar una alternativa: pared rompible, subsuelo de Digger, tejado o
+   * palanca de desbloqueo.
+   */
+  private applyGateLockdown(planet: PlanetRuntime | null): void {
+    let closed = 0;
+    for (const gate of this.lockedGates) {
+      if (!gate.lockdownOnAlert) continue;
+      if (planet !== null && gate.planet !== planet) continue;
+      if (gate.closed) continue;
+      this.setGateOpen(gate, false);
+      closed++;
+    }
+    if (closed > 0) {
+      this.lockdownActive = true;
+      this.onGateLockdown?.();
+    }
+  }
+
+  /**
+   * FASE B — Barrido de vigilancia del vigía estacionario: rota suavemente
+   * su tangente de mirada ±60º alrededor de la normal del planeta,
+   * oteando el patio desde su torre o muralla. Cero allocations.
+   */
+  private updateLookoutScan(enemy: EnemyObj, dt: number): void {
+    enemy.lookoutPhase += dt;
+    const swing = Math.sin(enemy.lookoutPhase * LOOKOUT_SWING_SPEED) * LOOKOUT_SWING;
+    _v1.copy(enemy.baseForward);
+    _q1.setFromAxisAngle(enemy.dir, swing);
+    enemy.forward.copy(_v1.applyQuaternion(_q1)).normalize();
   }
 
   /** Rota `enemy.dir` sobre la esfera hacia `targetDir` a velocidad tangente. */
@@ -2981,10 +3583,10 @@ export class WorldObjectsManager {
     } else {
       enemy.mesh.scale.setScalar(1);
     }
-    let altitude = 0;
+    let altitude = enemy.altitudeOffset;
     if (enemy.kind === 'drone') {
       enemy.hoverPhase += dt * 3;
-      altitude =
+      altitude +=
         enemy.state === GUARD_STATE_KO ? 0.35 : DRONE_HOVER_ALT + Math.sin(enemy.hoverPhase) * 0.25;
     }
     enemy.pos
@@ -3095,6 +3697,12 @@ export class WorldObjectsManager {
     enemy.koTimer = 0;
     enemy.koRadioSent = false;
     this.guardsKnockedOut++;
+    // FASE B: el vigía/portador caído entrega la llave/tarjeta del sector.
+    if (enemy.dropsKeycard) {
+      this.keycardsCollected++;
+      this.spawnExplosion(enemy.pos, 2.2, 0xfde047);
+      this.onSound?.('keycard');
+    }
   }
 
   private destroyTurret(enemy: EnemyObj): void {
@@ -3266,6 +3874,13 @@ export class WorldObjectsManager {
     this.teleporters.length = 0;
     this.explosions.length = 0;
     this.interceptors.length = 0;
+    this.lockedGates.length = 0;
+    this.switchLevers.length = 0;
+    this.breakableWalls.length = 0;
+    this.npcs.length = 0;
+    this.dialogueNpc = null;
+    this.dialogueT = 0;
+    this.lockdownActive = false;
     this.kronos = null;
     this.kronosOrbs.length = 0;
     this.kronosBehavior = null;
@@ -3293,6 +3908,7 @@ export class WorldObjectsManager {
     this.onSound = null;
     this.onKronosDefeated = null;
     this.onPlanetUnlocked = null;
+    this.onGateLockdown = null;
   }
 
   /**

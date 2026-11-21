@@ -102,7 +102,10 @@ export type InteractableKind =
   | 'teleporter_exit'
   | 'laser_gate'
   | 'scanner_gate'
-  | 'seismic_mine';
+  | 'seismic_mine'
+  | 'locked_gate'
+  | 'switch_lever'
+  | 'breakable_wall';
 
 export interface WorldObjectSpec {
   id: string;
@@ -112,6 +115,14 @@ export interface WorldObjectSpec {
   altitudeOffset?: number;
   radius?: number;
   yaw?: number;
+  /** Dimensiones locales [halfX, heightY, halfZ] de `locked_gate` / `breakable_wall`. */
+  size?: [number, number, number];
+  /** `switch_lever`: id de la `locked_gate` que abre al activarse. */
+  linkedGateId?: string;
+  /** `locked_gate`: se abre con [E] si el jugador lleva alguna tarjeta/llave. */
+  requiresKeycard?: boolean;
+  /** `locked_gate`: si salta la alarma en su planeta, se cierra de golpe (lockdown). */
+  lockdownOnAlert?: boolean;
 }
 
 // ============================================================================
@@ -167,6 +178,24 @@ export interface EnemySpawnSpec {
   patrolDirs: [number, number, number][];
   hasHelmet?: boolean;
   pairedWithNext?: boolean;
+  /** Al caer K.O. entrega la llave/tarjeta del sector (keycardsCollected++). */
+  dropsKeycard?: boolean;
+  /** Vigía estacionario en puesto elevado/torre: rota ±60º oteando el patio. */
+  stationaryLookout?: boolean;
+  /** Altura sobre la superficie (vigías encima de torres o murallas). */
+  altitudeOffset?: number;
+}
+
+/** NPC amigable sobre la superficie de un planeta: pistas por diálogo [E]. */
+export interface NpcSpec {
+  id: string;
+  name: string;
+  role: string;
+  planetId: string;
+  sphericalDir: [number, number, number];
+  yaw?: number;
+  accentColor: string;
+  dialogue: string[];
 }
 
 export interface PlayerBehaviorVector {
@@ -226,6 +255,8 @@ export interface GalaxySpec {
   grassZones: GrassZoneSpec[];
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
+  /** NPCs amigables con diálogo (pistas de puzle sin pausar el juego). */
+  npcs?: NpcSpec[];
   /** Props ambientales (aldea feudal, cristales, maquinaria) sin colisión. */
   props?: PropSpec[];
   spawnPlanetId: string;
@@ -303,6 +334,12 @@ export interface HudSnapshot {
   spaceDriftWarning?: boolean;
   /** Motivo específico de la derrota (null: texto por defecto del HUD). */
   gameOverReason?: string | null;
+  /** Bocadillo de diálogo del NPC cercano (null: ninguno activo). */
+  activeDialogue?: { speaker: string; role: string; text: string } | null;
+  /** Tarjetas/llaves robadas que lleva el escuadrón (HUD si > 0). */
+  keycardsCollected?: number;
+  /** Un lockdown de compuertas saltó por la alarma (aviso HUD). */
+  gateLockdownActive?: boolean;
 }
 
 // ============================================================================

@@ -266,6 +266,16 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
               ¡ALERTA!
             </span>
           )}
+          {(snapshot.keycardsCollected ?? 0) > 0 && (
+            <span className="rounded-lg border-2 border-black bg-yellow-400/90 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-black shadow-[3px_3px_0_#000]">
+              TARJETAS x{snapshot.keycardsCollected}
+            </span>
+          )}
+          {snapshot.gateLockdownActive && (
+            <span className="animate-pulse rounded-lg border-2 border-black bg-red-800/90 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-red-100 shadow-[3px_3px_0_#000]">
+              LOCKDOWN COMPUERTAS
+            </span>
+          )}
         </div>
       </div>
 
@@ -303,6 +313,23 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
           <p className="rounded-lg border-2 border-yellow-300 bg-black/75 px-4 py-1.5 text-xs font-black tracking-widest text-yellow-200 shadow-[4px_4px_0_#000]">
             {snapshot.interactionPrompt}
           </p>
+        </div>
+      )}
+
+      {/* --- Bocadillo de diálogo del NPC (FASE B, sin pausar el juego) --- */}
+      {snapshot.phase === 'playing' && snapshot.activeDialogue && (
+        <div className="absolute bottom-44 left-1/2 w-[min(560px,86vw)] -translate-x-1/2">
+          <div className="rounded-xl border-2 border-cyan-300 bg-[#160b2e]/92 px-5 py-3 shadow-[5px_5px_0_#000]">
+            <p className="text-[11px] font-black tracking-[0.22em] text-cyan-300">
+              {snapshot.activeDialogue.speaker.toUpperCase()}
+              <span className="ml-2 font-bold tracking-normal text-slate-400">
+                · {snapshot.activeDialogue.role}
+              </span>
+            </p>
+            <p className="mt-1 text-sm font-semibold leading-snug text-slate-100">
+              &ldquo;{snapshot.activeDialogue.text}&rdquo;
+            </p>
+          </div>
         </div>
       )}
 

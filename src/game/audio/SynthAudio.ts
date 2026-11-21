@@ -17,7 +17,10 @@ export type GameSoundKind =
   | 'explosion'
   | 'alert'
   | 'bossHit'
-  | 'victory';
+  | 'victory'
+  | 'keycard'
+  | 'switchClick'
+  | 'gateOpen';
 
 const MASTER_VOLUME = 0.18;
 
@@ -94,6 +97,15 @@ export class SynthAudio {
         break;
       case 'victory':
         this.playVictory();
+        break;
+      case 'keycard':
+        this.playKeycard();
+        break;
+      case 'switchClick':
+        this.playSwitchClick();
+        break;
+      case 'gateOpen':
+        this.playGateOpen();
         break;
     }
   }
@@ -218,5 +230,23 @@ export class SynthAudio {
       this.tone('triangle', notes[i], notes[i], 0.22, 0.7, i * 0.13);
     }
     this.tone('sine', 1046.5, 1046.5, 0.5, 0.5, notes.length * 0.13);
+  }
+
+  /** Tarjeta/llave robada: doble blip dorado brillante. */
+  playKeycard(): void {
+    this.tone('sine', 990, 1320, 0.09, 0.7);
+    this.tone('sine', 1320, 1760, 0.12, 0.55, 0.07);
+  }
+
+  /** Palanca/switch: clac mecánico + confirmación cian. */
+  playSwitchClick(): void {
+    this.tone('square', 220, 160, 0.05, 0.55);
+    this.tone('sine', 660, 990, 0.12, 0.5, 0.04);
+  }
+
+  /** Compuerta abriéndose: barrido metálico ascendente. */
+  playGateOpen(): void {
+    this.tone('sawtooth', 140, 420, 0.3, 0.45);
+    this.tone('sine', 560, 840, 0.18, 0.35, 0.08);
   }
 }

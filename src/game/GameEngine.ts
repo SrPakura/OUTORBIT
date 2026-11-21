@@ -289,6 +289,20 @@ export class GameEngine {
     this.world.onKronosDefeated = () => this.onKronosDefeated();
     // Oleada 2: un escudo cayó en vivo -> la Red de IA adapta ese planeta.
     this.world.onPlanetUnlocked = (nextPlanet) => this.onPlanetUnlocked(nextPlanet);
+    // FASE B: la alarma selló compuertas (LOCKDOWN) -> aviso por radio
+    // mientras el jugador busca una ruta alternativa (no bloqueante).
+    this.world.onGateLockdown = () => {
+      this.radioToast = {
+        title: 'LOCKDOWN DE COMPUERTAS ACTIVO',
+        lines: [
+          'La alarma ha sellado las compuertas de la base.',
+          'Ruta alternativa: pared rompible, subsuelo de Digger, tejado o palanca.',
+        ],
+        accent: '#f87171',
+      };
+      this.radioToastT = RADIO_TOAST_DURATION;
+      this.emitHud();
+    };
     this.world.setKronosBehaviorSource(this.kronosBehavior);
     this.player.onSound = (kind) => this.audio.play(kind);
 
@@ -602,6 +616,12 @@ export class GameEngine {
     if (!player || !world) return 0;
     if (world.knockoutTargetNear(player.position)) return 1;
     if (world.guardAttackingNear(player.position)) return 2;
+    // FASE B: diálogo con NPC, palanca y compuerta con tarjeta.
+    if (world.npcNear(player.position)) return 5;
+    if (world.switchNear(player.position)) return 6;
+    if (world.lockedGateNear(player.position)) {
+      return world.keycardsCollected > 0 ? 7 : 8;
+    }
     if (world.grabbableNear(player.position)) return 3;
     if (
       player.characterId === 'digger' &&
@@ -667,6 +687,9 @@ export class GameEngine {
     key = key * 31 + (this.radioToast ? 1 : 0);
     // Deriva espacial: aviso HUD cuando el jugador se aleja de toda órbita.
     key = key * 31 + (player.isSpaceDrifting ? 1 : 0);
+    // FASE B: bocadillo de diálogo (línea activa) y lockdown de compuertas.
+    key = key * 31 + world.dialogueKey;
+    key = key * 31 + (world.gateLockdownActive ? 1 : 0);
 
     if (key !== this.hudKey) {
       this.hudKey = key;
@@ -787,6 +810,18 @@ export class GameEngine {
       case 4:
         prompt = '[SHIFT] Subsuelo · [ESPACIO] Cruzar el núcleo';
         break;
+      case 5:
+        prompt = `[E] Hablar con ${world.getNearestNpcName(player.position) ?? 'el NPC'}`;
+        break;
+      case 6:
+        prompt = '[E] Activar interruptor';
+        break;
+      case 7:
+        prompt = '[E] Abrir compuerta (usar tarjeta)';
+        break;
+      case 8:
+        prompt = 'Compuerta sellada: roba una tarjeta del sector';
+        break;
       default:
         prompt = null;
     }
@@ -868,6 +903,9 @@ export class GameEngine {
       speedLinesIntensity: this.speedLines,
       spaceDriftWarning: player.isSpaceDrifting,
       gameOverReason: this.gameOverReason,
+      activeDialogue: world.activeDialogue ? { ...world.activeDialogue } : null,
+      keycardsCollected: world.keycardsCollected,
+      gateLockdownActive: world.gateLockdownActive,
     });
   }
 

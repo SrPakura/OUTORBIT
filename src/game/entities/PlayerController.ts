@@ -106,6 +106,9 @@ const SHOCKWAVE_RADIUS = 7.5;
 const DISGUISE_DURATION = 30;
 const INVULN_TIME = 0.9;
 
+// FASE B: radio de la embestida de Digger contra paredes rompibles.
+const WALL_BREAK_RADIUS = 3.4;
+
 // Hielo resbaladizo (bioma cryo / parches de hielo): baja adherencia al frenar.
 const ICE_GRIP = 1.6;
 
@@ -150,7 +153,10 @@ interface CharacterParts {
  *   Flecha Izquierda/Derecha: cicla el objetivo fijado; con Lock-On activo la
  *   cámara gira suavemente hacia el objetivo y un aro 3D lo marca en escena.
  * - F: Parry (ventana 0.32s, cooldown 0.85s).
- * - E: noqueo por la espalda + robo de uniforme (`isDisguised`).
+ * - E: interacción táctica por prioridad — 1) noquear guardia por la
+ *   espalda + robo de uniforme (`isDisguised`), 2) hablar con un NPC cercano
+ *   (diálogo en el HUD sin pausar), 3) activar palanca o abrir compuerta
+ *   con tarjeta/llave robada.
  *
  * Cero allocations por frame: todos los vectores/cuaterniones son preasignados.
  */
@@ -607,7 +613,7 @@ export class PlayerController {
       } else if (code === 'Digit1') this.switchCharacter('kitsune');
       else if (code === 'Digit2') this.switchCharacter('digger');
       else if (code === 'Digit3') this.switchCharacter('axel');
-      else if (code === 'KeyE') this.tryKnockout();
+      else if (code === 'KeyE') this.tryInteract();
       else if (code === 'KeyF') this.tryParry();
       else if (code === 'ShiftLeft' || code === 'ShiftRight') {
         // Shift en el aire (salto o vuelo libre): dash instantáneo estilo Jett.
@@ -1594,6 +1600,8 @@ export class PlayerController {
     this.onSound?.('gravityShift');
     // Gravity Shift delante de un guardia: delata al jugador disfrazado.
     this.world.reportAbilityUse(this.pos);
+    // FASE B: la embestida de Digger revienta paredes rompibles en su ruta.
+    this.diggerSmashWalls();
   }
 
   private setGravityShiftCooldown(seconds: number): void {
@@ -1650,6 +1658,8 @@ export class PlayerController {
     this.onSound?.('gravityShift');
     // Dash delante de un guardia: delata al jugador disfrazado.
     this.world.reportAbilityUse(this.pos);
+    // FASE B: el dash de Digger también revienta paredes rompibles.
+    this.diggerSmashWalls();
   }
 
   /**
@@ -1685,6 +1695,14 @@ export class PlayerController {
     } else if (hit === 'kronos') {
       this.breakDisguise();
     }
+    // FASE B: el zarpazo de Digger revienta las paredes rompibles cercanas.
+    this.diggerSmashWalls();
+  }
+
+  /** FASE B: embestida/golpe de Digger — rompe paredes rompibles al instante. */
+  private diggerSmashWalls(): void {
+    if (this.activeCharacter !== 'digger') return;
+    this.world.damageBreakableWalls(this.pos, WALL_BREAK_RADIUS, true);
   }
 
   private tryParry(): void {
@@ -1695,14 +1713,29 @@ export class PlayerController {
     this.onSound?.('parry');
   }
 
-  private tryKnockout(): void {
+  /**
+   * [E] Interacción táctica por prioridad:
+   * 1. Noquear guardia por la espalda (roba el uniforme: `isDisguised`).
+   * 2. Hablar con un NPC cercano (< 4.5m): avanza su diálogo y lo muestra
+   *    en el HUD durante 7s sin pausar el juego.
+   * 3. Activar una palanca cercana (< 3.5m) o abrir una compuerta con
+   *    tarjeta/llave robada.
+   */
+  private tryInteract(): void {
     if (this.inFlight || this.isSwimming || this.coreDiveActive) return;
     this.getMoveForward(this._forward);
+    // Prioridad 1: noqueo por la espalda.
     if (this.world.tryKnockoutBehind(this.pos)) {
       this.behavior.stealthKnockouts++;
       this.isDisguised = true;
       this.disguiseTimer = DISGUISE_DURATION;
+      return;
     }
+    // Prioridad 2: hablar con un NPC (el mundo gestiona el bocadillo 7s).
+    if (this.world.tryNpcDialogue(this.pos) !== null) return;
+    // Prioridad 3: palanca o compuerta con tarjeta.
+    if (this.world.tryActivateSwitch(this.pos)) return;
+    this.world.tryOpenLockedGate(this.pos);
   }
 
   private breakDisguise(): void {

@@ -144,6 +144,11 @@ export interface StructureCollider {
   altitudeOffset: number;
   /** Si Digger puede cruzarla por debajo excavando. */
   passableUnderground: boolean;
+  /**
+   * Collider desactivado en vivo (compuerta abierta, pared rompible
+   * destruida): se ignora en colisión y en líneas de visión.
+   */
+  disabled?: boolean;
 }
 
 /** Banda bajo el techo desde la que se puede aterrizar/mantarse encima. */
@@ -229,6 +234,8 @@ export function resolvePlayerStructures(
   for (let i = 0; i < colliders.length; i++) {
     const c = colliders[i];
     if (c.planetId !== planetId) continue;
+    // Compuertas abiertas / paredes rompibles: collider excluido en vivo.
+    if (c.disabled) continue;
     // Digger excava por debajo de muros, puertas y vallas marcadas.
     if (isBurrowing && c.passableUnderground) continue;
 
@@ -328,6 +335,7 @@ export function isLineBlockedByStructures(
   for (let i = 0; i < colliders.length; i++) {
     const c = colliders[i];
     if (c.planetId !== planetId) continue;
+    if (c.disabled) continue;
 
     _slA.copy(a).sub(c.center).applyQuaternion(c.invQuat);
     _slB.copy(b).sub(c.center).applyQuaternion(c.invQuat);
