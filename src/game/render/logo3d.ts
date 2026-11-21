@@ -448,7 +448,20 @@ export function createMenuLogo3D(): MenuLogo3D {
   tilt.add(letters);
 
   // --- Anillo orbital de maná (elipse inclinada alrededor de la palabra) ---
-  const ringGeometry = new THREE.TorusGeometry(3.5, 0.055, 8, 128);
+  // Contorno cel oscuro por detrás: recorta el anillo con tinta limpia para
+  // que se lea nítido sobre el blade blanco (nunca se lava con el fondo).
+  const ringOutlineGeometry = new THREE.TorusGeometry(3.5, 0.098, 8, 128);
+  const ringOutlineMaterial = new THREE.MeshBasicMaterial({
+    color: 0x090b14,
+    toneMapped: false,
+  });
+  const ringOutline = new THREE.Mesh(ringOutlineGeometry, ringOutlineMaterial);
+  ringOutline.name = 'menuLogoRingOutline';
+  ringOutline.rotation.set(1.25, 0.0, -0.22);
+  ringOutline.position.z = -0.14;
+  tilt.add(ringOutline);
+
+  const ringGeometry = new THREE.TorusGeometry(3.5, 0.062, 8, 128);
   const ringMaterial = new THREE.ShaderMaterial({
     vertexShader: ringVertexShader,
     fragmentShader: ringFragmentShader,
@@ -467,6 +480,7 @@ export function createMenuLogo3D(): MenuLogo3D {
   ring.name = 'menuLogoRing';
   ring.rotation.set(1.25, 0.0, -0.22);
   ring.position.z = -0.12;
+  ring.renderOrder = 2;
   tilt.add(ring);
 
   // --- Tres estrellas de 4 puntas facetadas orbitando suavemente ---
@@ -495,6 +509,7 @@ export function createMenuLogo3D(): MenuLogo3D {
       tilt.position.y = Math.sin(time * 0.9) * 0.035;
 
       ring.rotation.z = -0.22 + Math.sin(time * 0.4) * 0.05;
+      ringOutline.rotation.z = ring.rotation.z;
 
       for (let i = 0; i < sparks.length; i++) {
         const phase = (i / sparks.length) * Math.PI * 2;
