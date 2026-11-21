@@ -457,15 +457,17 @@ export const GALAXY_PLANETS: PlanetSpec[] = [
   {
     id: 'bastion-fortaleza',
     order: 3,
-    name: 'Iron Bastion',
-    subtitle: 'Ciudadela Industrial de Kronos',
+    name: 'Neon Bastion',
+    subtitle: 'Metrópolis Cyberpunk · Ciudadela de Reactores',
     biome: 'bastion',
     center: [195, -90, -780],
     radius: 156,
     gravityStrength: 1.15,
-    surfaceColor: '#475569',
-    patchColor: '#1e293b',
-    atmosphereColor: '#fdba74',
+    surfaceColor: '#0f172a',
+    patchColor: '#1e1b4b',
+    atmosphereColor: '#ec4899',
+    hasOrbitalRings: true,
+    ringColor: '#22d3ee',
     unlockedByPlanetId: 'cryo-glaciar',
   },
   {
@@ -1172,12 +1174,19 @@ function cryoContent(): {
 }
 
 // ----------------------------------------------------------------------------
-// Planeta 3 — Iron Bastion: CIUDADELA INDUSTRIAL DE KRONOS (r = 156).
-// Megafortaleza de doble muralla con escáneres anti-disfraz, Ala Oeste con el
-// Comandante que porta la Tarjeta Maestra (y su bóveda con tarjeta extra tras
-// un muro agrietado), pasadizo secreto con tubería de teletransporte al Patio
-// de Reactores y 3 reactores: patio de láseres con palanca en la pasarela,
-// búnker blindado con Brute y torre del reactor norte con vigías y drones.
+// Planeta 3 — Neon Bastion: METRÓPOLIS CYBERPUNK · CIUDADELA DE REACTORES
+// (r = 156). Metrópolis nocturna de rascacielos de neón con 3 zonas:
+// (1) Bulevar Neón y Plaza de Acceso (spawn, Zero-7 el Netrunner): bulevar
+//     denso de cyber_towers, carteles de neón, terminales holográficas y
+//     focos de vigilancia,
+// (2) Ala Corporativa Oeste: recinto sellado custodiado por el Oficial
+//     Cyber (porta la Tarjeta Maestra), patrulla en pareja de cyber guardias
+//     y vigía elevado; su bóveda secundaria esconde una tarjeta extra tras
+//     un muro agrietado,
+// (3) Ciudadela de Reactores: portón exterior e interior con escáneres
+//     anti-disfraz y compuertas con LOCKDOWN, pasadizo secreto (muro
+//     agrietado + conducto de teletransporte) y 3 reactores protegidos por
+//     pasarelas con palancas, vallas láser, drones, mechas y torretas.
 // ----------------------------------------------------------------------------
 
 function bastionContent(): {
@@ -1189,8 +1198,8 @@ function bastionContent(): {
   npcs: NpcSpec[];
 } {
   const planet = GALAXY_PLANETS[3];
-  const WALL = '#334155';
-  const GATE = '#475569';
+  const WALL = '#1e293b'; // hormigón nocturno de la metrópolis
+  const GATE = '#334155';
   const f = baseFrame(planet.id, [0.32, 0.78, 0.5], planet.radius);
 
   const structures: StructureSpec[] = [
@@ -1322,61 +1331,142 @@ function bastionContent(): {
   ];
 
   const enemies: EnemySpawnSpec[] = [
-    // ==================== Ala Oeste ====================
-    // Comandante del Ala Oeste: porta una Tarjeta de acceso.
+    // ==================== Ala Corporativa Oeste ====================
+    // Oficial Cyber del Ala Corporativa: porta la Tarjeta Maestra.
     {
       kind: 'officer',
+      skin: 'cyber_officer',
       planetId: planet.id,
       patrolDirs: patrolCircle(...frameDir(f, -40, 0), 0.05, 4),
       dropsKeycard: true,
     },
-    // Patrulla en pareja custodiando el patio del ala.
+    // Patrulla en pareja de cyber guardias custodiando el patio del ala.
     {
       kind: 'guard',
+      skin: 'cyber_guard',
       planetId: planet.id,
       patrolDirs: patrolCircle(...frameDir(f, -40, 4.5), 0.05, 4),
       pairedWithNext: true,
     },
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -40, 4.5), 0.07, 4) },
-    // Vigía de la torre del ala oeste.
-    lookout(planet.id, frameDir(f, -44, -8), 10.65, frameDir(f, -34, 4)),
-
-    // ==================== Puerta principal ====================
     {
       kind: 'guard',
+      skin: 'cyber_guard',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, -40, 4.5), 0.07, 4),
+    },
+    // Vigía cyber de la torre del ala oeste.
+    lookout(planet.id, frameDir(f, -44, -8), 10.65, frameDir(f, -34, 4), 'cyber_guard'),
+
+    // ==================== Bulevar Neón / Puerta principal ====================
+    {
+      kind: 'guard',
+      skin: 'cyber_guard',
       planetId: planet.id,
       patrolDirs: patrolCircle(...frameDir(f, 0, 30), 0.05, 4),
       pairedWithNext: true,
     },
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 0, 30), 0.07, 4) },
+    {
+      kind: 'guard',
+      skin: 'cyber_guard',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, 0, 30), 0.07, 4),
+    },
 
     // ==================== Patio exterior ====================
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 24, 18), 0.05, 4) },
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -24, -18), 0.05, 4) },
-    { kind: 'brute', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 20, 18), 0.06, 3) },
-    { kind: 'drone', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 24, 8), 0.08, 4) },
-    { kind: 'drone', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -24, -8), 0.08, 4) },
+    {
+      kind: 'guard',
+      skin: 'cyber_guard',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, 24, 18), 0.05, 4),
+    },
+    {
+      kind: 'guard',
+      skin: 'cyber_guard',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, -24, -18), 0.05, 4),
+    },
+    // Mech pesado aplastando el patio exterior.
+    {
+      kind: 'brute',
+      skin: 'cyber_mech',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, 20, 18), 0.06, 3),
+    },
+    {
+      kind: 'drone',
+      skin: 'cyber_drone',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, 24, 8), 0.08, 4),
+    },
+    {
+      kind: 'drone',
+      skin: 'cyber_drone',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, -24, -8), 0.08, 4),
+    },
 
     // ==================== Torre del Reactor Norte ====================
-    { kind: 'drone', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -10, -19), 0.07, 4) },
-    { kind: 'drone', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 5, -19), 0.09, 4) },
+    {
+      kind: 'drone',
+      skin: 'cyber_drone',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, -10, -19), 0.07, 4),
+    },
+    {
+      kind: 'drone',
+      skin: 'cyber_drone',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, 5, -19), 0.09, 4),
+    },
     { kind: 'turret', planetId: planet.id, patrolDirs: [frameDir(f, 26, -20)] },
-    // Vigías de las torres de la muralla norte oteando el patio.
-    lookout(planet.id, frameDir(f, 32, -24), 10.65, frameDir(f, 0, -4)),
-    lookout(planet.id, frameDir(f, -32, -24), 10.65, frameDir(f, 0, -4)),
+    // Vigías cyber de las torres de la muralla norte oteando el patio.
+    lookout(planet.id, frameDir(f, 32, -24), 10.65, frameDir(f, 0, -4), 'cyber_guard'),
+    lookout(planet.id, frameDir(f, -32, -24), 10.65, frameDir(f, 0, -4), 'cyber_guard'),
 
-    // ==================== Ciudadela interior ====================
-    // Oficial de la compuerta interior (delata disfraces).
-    { kind: 'officer', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 0, 18), 0.04, 4) },
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 8, 8), 0.05, 4) },
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -8, 8), 0.05, 4) },
-    // Brute del búnker blindado del reactor 2.
-    { kind: 'brute', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -8, -5), 0.05, 3) },
-    // Guardia del patio de láseres del reactor 1.
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 12.5, -10), 0.035, 4) },
-    // Vigías de las torres interiores.
-    lookout(planet.id, frameDir(f, 18, -14), 8.65, frameDir(f, 0, -2)),
-    lookout(planet.id, frameDir(f, -18, -14), 8.65, frameDir(f, 0, -2)),
+    // ==================== Ciudadela de Reactores (interior) ====================
+    // Oficial Cyber de la compuerta interior (delata disfraces).
+    {
+      kind: 'officer',
+      skin: 'cyber_officer',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, 0, 18), 0.04, 4),
+    },
+    {
+      kind: 'guard',
+      skin: 'cyber_guard',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, 8, 8), 0.05, 4),
+    },
+    {
+      kind: 'guard',
+      skin: 'cyber_guard',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, -8, 8), 0.05, 4),
+    },
+    // Mech del búnker blindado del reactor 2.
+    {
+      kind: 'brute',
+      skin: 'cyber_mech',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, -8, -5), 0.05, 3),
+    },
+    // Cyber guardia del patio de láseres del reactor 1.
+    {
+      kind: 'guard',
+      skin: 'cyber_guard',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, 12.5, -10), 0.035, 4),
+    },
+    // Dron cibernético sobrevolando el patio de reactores.
+    {
+      kind: 'drone',
+      skin: 'cyber_drone',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, 0, 4), 0.06, 4),
+    },
+    // Vigías cyber de las torres interiores.
+    lookout(planet.id, frameDir(f, 18, -14), 8.65, frameDir(f, 0, -2), 'cyber_guard'),
+    lookout(planet.id, frameDir(f, -18, -14), 8.65, frameDir(f, 0, -2), 'cyber_guard'),
   ];
 
   // Burbujas: pasarela del reactor 1 y cadena hasta la torre del reactor 3.
@@ -1386,34 +1476,162 @@ function bastionContent(): {
     orbitBubble('bs-bub-n2', planet, frameDir(f, 3.5, -18.5), 9.5, 7.5),
   ];
 
-  // --- Ambientación mecánica: tuberías, antenas, reactores y focos. ---
+  // --- Densidad visual de la metrópolis: rascacielos de neón, carteles
+  // holográficos, terminales, tuberías, reactores, antenas y focos. ---
   const props: PropSpec[] = [
-    prop(planet.id, 'bs-tuberia-teleport', 'pipe', frameDir(f, 38, 2), { yaw: 0.3 }),
-    prop(planet.id, 'bs-tuberia-2', 'pipe', frameDir(f, -40, 0), { yaw: -0.8 }),
+    // ==================== Zona 1: Bulevar Neón y Plaza de Acceso ====================
+    // Rascacielos futuristas flanqueando el bulevar de acceso.
+    prop(planet.id, 'bs-torre-bulevar-1', 'cyber_tower', frameDir(f, 18, 36)),
+    prop(planet.id, 'bs-torre-bulevar-2', 'cyber_tower', frameDir(f, -18, 36)),
+    prop(planet.id, 'bs-torre-bulevar-3', 'cyber_tower', frameDir(f, 26, 44), { scale: 1.15 }),
+    prop(planet.id, 'bs-torre-bulevar-4', 'cyber_tower', frameDir(f, -26, 44), { scale: 1.15 }),
+    prop(planet.id, 'bs-torre-plaza-1', 'cyber_tower', frameDir(f, 34, 30), { scale: 0.9 }),
+    prop(planet.id, 'bs-torre-plaza-2', 'cyber_tower', frameDir(f, -34, 30), { scale: 0.9 }),
+    prop(planet.id, 'bs-torre-fondo-1', 'cyber_tower', frameDir(f, 14, 48), { scale: 1.2 }),
+    prop(planet.id, 'bs-torre-fondo-2', 'cyber_tower', frameDir(f, -14, 48), { scale: 1.2 }),
+    // Carteles de neón cian/magenta del bulevar.
+    prop(planet.id, 'bs-neon-bulevar-1', 'neon_billboard', frameDir(f, 10, 40)),
+    prop(planet.id, 'bs-neon-bulevar-2', 'neon_billboard', frameDir(f, -10, 40)),
+    prop(planet.id, 'bs-neon-bulevar-3', 'neon_billboard', frameDir(f, 24, 33)),
+    prop(planet.id, 'bs-neon-bulevar-4', 'neon_billboard', frameDir(f, -24, 33)),
+    prop(planet.id, 'bs-neon-bulevar-5', 'neon_billboard', frameDir(f, 0, 46)),
+    prop(planet.id, 'bs-neon-plaza-1', 'neon_billboard', frameDir(f, 32, 40)),
+    prop(planet.id, 'bs-neon-plaza-2', 'neon_billboard', frameDir(f, -32, 40)),
+    prop(planet.id, 'bs-neon-puerta-e', 'neon_billboard', frameDir(f, 30, 26)),
+    prop(planet.id, 'bs-neon-puerta-o', 'neon_billboard', frameDir(f, -30, 26)),
+    // Terminales holográficas de la plaza de acceso.
+    prop(planet.id, 'bs-holo-plaza-1', 'holo_pillar', frameDir(f, 4, 34)),
+    prop(planet.id, 'bs-holo-plaza-2', 'holo_pillar', frameDir(f, -4, 34)),
+    prop(planet.id, 'bs-holo-plaza-3', 'holo_pillar', frameDir(f, 16, 30)),
+    prop(planet.id, 'bs-holo-plaza-4', 'holo_pillar', frameDir(f, -16, 30)),
+    prop(planet.id, 'bs-holo-plaza-5', 'holo_pillar', frameDir(f, 0, 38)),
+    prop(planet.id, 'bs-holo-plaza-6', 'holo_pillar', frameDir(f, 22, 48)),
+    prop(planet.id, 'bs-holo-plaza-7', 'holo_pillar', frameDir(f, -22, 48)),
+    // Focos de vigilancia barriendo el bulevar.
+    prop(planet.id, 'bs-foco-1', 'spotlight', frameDir(f, 0, 29)),
+    prop(planet.id, 'bs-foco-bulevar-1', 'spotlight', frameDir(f, 12, 34)),
+    prop(planet.id, 'bs-foco-bulevar-2', 'spotlight', frameDir(f, -12, 34)),
+    prop(planet.id, 'bs-foco-bulevar-3', 'spotlight', frameDir(f, 6, 44)),
+    prop(planet.id, 'bs-foco-bulevar-4', 'spotlight', frameDir(f, -6, 44)),
+    // Tuberías y antenas del bulevar.
     prop(planet.id, 'bs-tuberia-3', 'pipe', frameDir(f, 12, 26), { yaw: 1.6 }),
+    prop(planet.id, 'bs-tuberia-bulevar-1', 'pipe', frameDir(f, 40, 34)),
+    prop(planet.id, 'bs-tuberia-bulevar-2', 'pipe', frameDir(f, -40, 34)),
+    prop(planet.id, 'bs-antena-3', 'antenna', frameDir(f, 20, 30)),
+    prop(planet.id, 'bs-antena-bulevar-1', 'antenna', frameDir(f, 36, 44)),
+    prop(planet.id, 'bs-antena-bulevar-2', 'antenna', frameDir(f, -36, 44)),
+
+    // ==================== Zona 2: Ala Corporativa Oeste ====================
+    // Rascacielos corporativos flanqueando el recinto sellado.
+    prop(planet.id, 'bs-torre-ala-1', 'cyber_tower', frameDir(f, -40, -16), { scale: 1.1 }),
+    prop(planet.id, 'bs-torre-ala-2', 'cyber_tower', frameDir(f, -40, 14), { scale: 1.1 }),
+    // Cartel corporativo magenta sobre la valla láser de entrada.
+    prop(planet.id, 'bs-neon-ala-1', 'neon_billboard', frameDir(f, -38, -12)),
+    prop(planet.id, 'bs-neon-ala-2', 'neon_billboard', frameDir(f, -42, 12)),
+    // Terminales holográficas dentro del ala corporativa.
+    prop(planet.id, 'bs-holo-ala-1', 'holo_pillar', frameDir(f, -40, -5)),
+    prop(planet.id, 'bs-holo-ala-2', 'holo_pillar', frameDir(f, -36, 6)),
+    // Focos y tuberías de mantenimiento del ala.
+    prop(planet.id, 'bs-foco-ala-1', 'spotlight', frameDir(f, -36, -10)),
+    prop(planet.id, 'bs-foco-ala-2', 'spotlight', frameDir(f, -44, 10)),
+    prop(planet.id, 'bs-tuberia-2', 'pipe', frameDir(f, -40, 0), { yaw: -0.8 }),
+    prop(planet.id, 'bs-tuberia-ala-1', 'pipe', frameDir(f, -46, -14)),
+
+    // ==================== Patio exterior (entre las dos murallas) ====================
+    // Rascacielos de la periferia asomándose sobre la muralla.
+    prop(planet.id, 'bs-torre-patio-e', 'cyber_tower', frameDir(f, 26, 8), { scale: 0.85 }),
+    prop(planet.id, 'bs-torre-patio-o', 'cyber_tower', frameDir(f, -26, 8), { scale: 0.85 }),
+    prop(planet.id, 'bs-torre-patio-n-e', 'cyber_tower', frameDir(f, 14, -20), { scale: 0.8 }),
+    prop(planet.id, 'bs-torre-patio-n-o', 'cyber_tower', frameDir(f, -14, -20), { scale: 0.8 }),
+    // Carteles de neón del patio.
+    prop(planet.id, 'bs-neon-patio-1', 'neon_billboard', frameDir(f, 28, -2)),
+    prop(planet.id, 'bs-neon-patio-2', 'neon_billboard', frameDir(f, -28, 2)),
+    prop(planet.id, 'bs-neon-patio-3', 'neon_billboard', frameDir(f, 8, -21)),
+    prop(planet.id, 'bs-neon-patio-4', 'neon_billboard', frameDir(f, -8, -21)),
+    // Terminales holográficas entre búnkers y pasarelas.
+    prop(planet.id, 'bs-holo-patio-1', 'holo_pillar', frameDir(f, 24, 4)),
+    prop(planet.id, 'bs-holo-patio-2', 'holo_pillar', frameDir(f, -24, 4)),
+    prop(planet.id, 'bs-holo-patio-3', 'holo_pillar', frameDir(f, 10, -22)),
+    prop(planet.id, 'bs-holo-patio-4', 'holo_pillar', frameDir(f, -10, -22)),
+    // Focos de vigilancia del patio.
+    prop(planet.id, 'bs-foco-2', 'spotlight', frameDir(f, 20, -22)),
+    prop(planet.id, 'bs-foco-3', 'spotlight', frameDir(f, -20, 22)),
+    prop(planet.id, 'bs-foco-patio-1', 'spotlight', frameDir(f, 16, 16)),
+    prop(planet.id, 'bs-foco-patio-2', 'spotlight', frameDir(f, -16, 16)),
+    prop(planet.id, 'bs-foco-patio-3', 'spotlight', frameDir(f, 30, 14)),
+    prop(planet.id, 'bs-foco-patio-4', 'spotlight', frameDir(f, -30, -14)),
+    // Tuberías, antenas y reactores auxiliares del patio.
     prop(planet.id, 'bs-tuberia-4', 'pipe', frameDir(f, -12, -26), { yaw: 2.4 }),
     prop(planet.id, 'bs-tuberia-5', 'pipe', frameDir(f, 36, -12)),
     prop(planet.id, 'bs-tuberia-6', 'pipe', frameDir(f, -36, 12)),
+    prop(planet.id, 'bs-tuberia-patio-1', 'pipe', frameDir(f, 44, 8)),
+    prop(planet.id, 'bs-tuberia-patio-2', 'pipe', frameDir(f, -44, -8)),
     prop(planet.id, 'bs-antena-1', 'antenna', frameDir(f, 30, -26)),
     prop(planet.id, 'bs-antena-2', 'antenna', frameDir(f, -30, 26)),
-    prop(planet.id, 'bs-antena-3', 'antenna', frameDir(f, 20, 30)),
-    prop(planet.id, 'bs-antena-4', 'antenna', [0.15, 0.9, 0.25]),
+    prop(planet.id, 'bs-antena-patio-1', 'antenna', frameDir(f, 34, 16)),
+    prop(planet.id, 'bs-antena-patio-2', 'antenna', frameDir(f, -34, -16)),
     prop(planet.id, 'bs-reactor-prop-1', 'reactor', frameDir(f, 28, -6)),
     prop(planet.id, 'bs-reactor-prop-2', 'reactor', frameDir(f, -28, 6)),
+
+    // ==================== Ciudadela de Reactores (interior) ====================
+    // Carteles de neón flanqueando la compuerta interior.
+    prop(planet.id, 'bs-neon-ciudadela-1', 'neon_billboard', frameDir(f, 16, 12)),
+    prop(planet.id, 'bs-neon-ciudadela-2', 'neon_billboard', frameDir(f, -16, 12)),
+    // Terminales holográficas del patio de reactores.
+    prop(planet.id, 'bs-holo-ciudadela-1', 'holo_pillar', frameDir(f, 14, 10)),
+    prop(planet.id, 'bs-holo-ciudadela-2', 'holo_pillar', frameDir(f, -14, 10)),
+    prop(planet.id, 'bs-holo-ciudadela-3', 'holo_pillar', frameDir(f, 0, -8)),
+    // Reactores auxiliares y focos entre las pasarelas.
+    prop(planet.id, 'bs-reactor-ciudadela-1', 'reactor', frameDir(f, 16, 4)),
+    prop(planet.id, 'bs-reactor-ciudadela-2', 'reactor', frameDir(f, -16, -10)),
+    prop(planet.id, 'bs-foco-ciudadela-1', 'spotlight', frameDir(f, 6, 12)),
+    prop(planet.id, 'bs-foco-ciudadela-2', 'spotlight', frameDir(f, -6, 12)),
+
+    // ==================== Periferia norte y flancos exteriores ====================
+    // Skyline de la metrópolis tras la muralla norte.
+    prop(planet.id, 'bs-torre-norte-1', 'cyber_tower', frameDir(f, 0, -34), { scale: 1.25 }),
+    prop(planet.id, 'bs-torre-norte-2', 'cyber_tower', frameDir(f, 20, -34), { scale: 1.05 }),
+    prop(planet.id, 'bs-torre-norte-3', 'cyber_tower', frameDir(f, -20, -34), { scale: 1.05 }),
+    prop(planet.id, 'bs-torre-flanco-e', 'cyber_tower', frameDir(f, 40, -20), { scale: 0.95 }),
+    prop(planet.id, 'bs-torre-flanco-o', 'cyber_tower', frameDir(f, -40, 20), { scale: 0.95 }),
+    // Carteles de neón iluminando el muro agrietado del pasadizo.
+    prop(planet.id, 'bs-neon-norte-1', 'neon_billboard', frameDir(f, 10, -30)),
+    prop(planet.id, 'bs-neon-norte-2', 'neon_billboard', frameDir(f, -10, -30)),
+    prop(planet.id, 'bs-neon-pasadizo-e', 'neon_billboard', frameDir(f, 44, -4)),
+    prop(planet.id, 'bs-neon-pasadizo-o', 'neon_billboard', frameDir(f, -44, 4)),
+    // Terminales holográficas junto a los muros agrietados.
+    prop(planet.id, 'bs-holo-pasadizo-e', 'holo_pillar', frameDir(f, 36, 6)),
+    prop(planet.id, 'bs-holo-pasadizo-o', 'holo_pillar', frameDir(f, -36, -6)),
+    // Tubería de mantenimiento junto al conducto de teletransporte.
+    prop(planet.id, 'bs-tuberia-teleport', 'pipe', frameDir(f, 38, 2), { yaw: 0.3 }),
+    // Tuberías, antenas, reactores y focos de la periferia.
+    prop(planet.id, 'bs-tuberia-periferia-1', 'pipe', frameDir(f, 0, -36)),
+    prop(planet.id, 'bs-tuberia-periferia-2', 'pipe', frameDir(f, 24, -34)),
+    prop(planet.id, 'bs-tuberia-periferia-3', 'pipe', frameDir(f, -24, -34)),
+    prop(planet.id, 'bs-antena-norte-1', 'antenna', frameDir(f, 10, -32)),
+    prop(planet.id, 'bs-antena-norte-2', 'antenna', frameDir(f, -10, -32)),
     prop(planet.id, 'bs-reactor-prop-3', 'reactor', frameDir(f, 0, -30)),
-    prop(planet.id, 'bs-reactor-prop-4', 'reactor', [0.5, 0.75, -0.3]),
-    prop(planet.id, 'bs-foco-1', 'spotlight', frameDir(f, 0, 29)),
-    prop(planet.id, 'bs-foco-2', 'spotlight', frameDir(f, 20, -22)),
-    prop(planet.id, 'bs-foco-3', 'spotlight', frameDir(f, -20, 22)),
+    prop(planet.id, 'bs-reactor-periferia-1', 'reactor', frameDir(f, 16, -28)),
+    prop(planet.id, 'bs-reactor-periferia-2', 'reactor', frameDir(f, -16, -28)),
     prop(planet.id, 'bs-foco-4', 'spotlight', frameDir(f, -8, -28)),
+    prop(planet.id, 'bs-foco-periferia-1', 'spotlight', frameDir(f, 20, -28)),
+    prop(planet.id, 'bs-foco-periferia-2', 'spotlight', frameDir(f, -20, -28)),
+    prop(planet.id, 'bs-foco-periferia-3', 'spotlight', frameDir(f, 36, 2)),
+    prop(planet.id, 'bs-foco-periferia-4', 'spotlight', frameDir(f, -36, -2)),
+    // Maquinaria dispersa por la cara oculta del planeta.
+    prop(planet.id, 'bs-antena-4', 'antenna', [0.15, 0.9, 0.25]),
+    prop(planet.id, 'bs-reactor-prop-4', 'reactor', [0.5, 0.75, -0.3]),
     prop(planet.id, 'bs-foco-5', 'spotlight', [0.35, 0.8, 0.45]),
+    prop(planet.id, 'bs-torre-oculta-1', 'cyber_tower', [-0.4, 0.6, -0.6], { scale: 1.1 }),
+    prop(planet.id, 'bs-neon-oculto-1', 'neon_billboard', [0.7, 0.3, 0.6]),
+    prop(planet.id, 'bs-holo-oculto-1', 'holo_pillar', [-0.6, 0.2, 0.75]),
   ];
 
   const npcs: NpcSpec[] = [
     {
       id: 'zero7',
       name: 'Zero-7',
-      role: 'Hacker de la Resistencia',
+      role: 'Netrunner',
       planetId: planet.id,
       sphericalDir: frameDir(f, 9, 32),
       yaw: yawFace(
@@ -1422,11 +1640,11 @@ function bastionContent(): {
         32,
         new THREE.Vector3().addScaledVector(f.t1, -9).addScaledVector(f.t2, -8).normalize()
       ),
-      accentColor: '#a78bfa',
+      accentColor: '#22d3ee',
       dialogue: [
-        '¡Cuidado con los escáneres de la puerta principal: queman cualquier disfraz y cierran las compuertas! Roba la Tarjeta Maestra al Comandante del Ala Oeste o vuela el muro agrietado para colarte por la tubería de mantenimiento.',
-        'La bóveda del Ala Oeste esconde una tarjeta extra tras su muro agrietado. Un barril bien colocado y listo.',
-        'El pasadizo de la tubería te deja en pleno Patio de Reactores... si encuentras el muro agrietado del flanco este.',
+        'Bienvenido a Neon Bastion. Los escáneres de la avenida queman cualquier disfraz y activan el lockdown. Roba la Tarjeta Maestra al Oficial del Ala Corporativa Oeste o vuela el muro agrietado hacia el conducto de teletransporte.',
+        'La bóveda del Ala Corporativa esconde una tarjeta extra tras su muro agrietado: un barril bien colocado y la IA nunca sabrá que estuviste ahí. El Oficial es el de las líneas magenta y la antena holográfica.',
+        'El conducto del flanco este te deja en pleno Patio de Reactores. Allí dentro: vallas láser con la palanca en la pasarela, un mech pesado junto al búnker y drones sobre la torre norte. Si salta la alarma, las compuertas se sellan de golpe.',
       ],
     },
   ];
@@ -1437,8 +1655,10 @@ function bastionContent(): {
 // ----------------------------------------------------------------------------
 // Planeta 4 — Trono de KRONOS: NÚCLEO CARMESÍ (r = 106).
 // Arena épica con 6 pilares de cobertura, 2 plataformas laterales elevadas
-// con barriles, rocas para Estasis bien repartidas y 2 burbujas de agua en
-// órbita para flanquear por el aire al Comandante KRONOS.
+// con barriles, rocas para Estasis bien repartidas, 2 burbujas de agua en
+// órbita para flanquear por el aire al Comandante KRONOS y un perímetro
+// imperial de tronos-holograma, reactores, focos y antenas lejos del centro
+// de pelea para no estorbar el combate.
 // ----------------------------------------------------------------------------
 
 function kronosContent(): {
@@ -1446,6 +1666,7 @@ function kronosContent(): {
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
   bubbles: WaterBubbleSpec[];
+  props: PropSpec[];
 } {
   const planet = GALAXY_PLANETS[4];
   const PILLAR = '#3f3f46';
@@ -1499,7 +1720,33 @@ function kronosContent(): {
     orbitBubble('kr-bub-2', planet, frameDir(f, -30, -18), 14, 10),
   ];
 
-  return { structures, objects, enemies, bubbles };
+  // --- Perímetro imperial del Trono: terminales holográficas, reactores,
+  // focos y antenas en el anillo exterior de la arena, lejos del centro de
+  // pelea (pilares a 14-18 m, plataformas a 26 m) para no estorbar. ---
+  const props: PropSpec[] = [
+    // Tronos-holograma custodiando las diagonales de la arena.
+    prop(planet.id, 'kr-holo-1', 'holo_pillar', frameDir(f, 30, 22)),
+    prop(planet.id, 'kr-holo-2', 'holo_pillar', frameDir(f, -30, 22)),
+    prop(planet.id, 'kr-holo-3', 'holo_pillar', frameDir(f, 30, -22)),
+    prop(planet.id, 'kr-holo-4', 'holo_pillar', frameDir(f, -30, -22)),
+    // Reactores del Núcleo Carmesí marcando los ejes cardinales.
+    prop(planet.id, 'kr-reactor-1', 'reactor', frameDir(f, 0, 34), { scale: 1.3 }),
+    prop(planet.id, 'kr-reactor-2', 'reactor', frameDir(f, 0, -34), { scale: 1.3 }),
+    prop(planet.id, 'kr-reactor-3', 'reactor', frameDir(f, 34, 0), { scale: 1.3 }),
+    prop(planet.id, 'kr-reactor-4', 'reactor', frameDir(f, -34, 0), { scale: 1.3 }),
+    // Focos de la guardia imperial bañando de luz el perímetro.
+    prop(planet.id, 'kr-foco-1', 'spotlight', frameDir(f, 24, 28)),
+    prop(planet.id, 'kr-foco-2', 'spotlight', frameDir(f, -24, 28)),
+    prop(planet.id, 'kr-foco-3', 'spotlight', frameDir(f, 24, -28)),
+    prop(planet.id, 'kr-foco-4', 'spotlight', frameDir(f, -24, -28)),
+    // Antenas del Núcleo transmitiendo la voluntad de KRONOS.
+    prop(planet.id, 'kr-antena-1', 'antenna', frameDir(f, 36, 12)),
+    prop(planet.id, 'kr-antena-2', 'antenna', frameDir(f, -36, 12)),
+    prop(planet.id, 'kr-antena-3', 'antenna', frameDir(f, 36, -12)),
+    prop(planet.id, 'kr-antena-4', 'antenna', frameDir(f, -36, -12)),
+  ];
+
+  return { structures, objects, enemies, bubbles, props };
 }
 
 // ----------------------------------------------------------------------------
@@ -1525,7 +1772,7 @@ export const GALAXY_SPEC: GalaxySpec = {
   ],
   waterBubbles: [...verdant.bubbles, ...cryo.bubbles, ...bastion.bubbles, ...kronos.bubbles],
   grassZones: [...luna.grass, ...verdant.grass, ...cryo.grass],
-  props: [...verdant.props, ...cryo.props, ...bastion.props],
+  props: [...verdant.props, ...cryo.props, ...bastion.props, ...kronos.props],
   objects: [
     ...luna.objects,
     ...verdant.objects,

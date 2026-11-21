@@ -150,7 +150,11 @@ export type PropKind =
   | 'ancient_statue'
   | 'vine_arch'
   // --- Shogunato Feudal Nevado (Kurogane · Planeta 2) ---
-  | 'cherry_snow_tree';
+  | 'cherry_snow_tree'
+  // --- Metrópoli Cyberpunk (Neon Bastion · Planeta 3) ---
+  | 'neon_billboard'
+  | 'cyber_tower'
+  | 'holo_pillar';
 
 /** Prop ambiental sin colisión: puro set dressing sobre la superficie. */
 export interface PropSpec {
@@ -194,7 +198,8 @@ export type EnemySkin =
   | 'oni'
   | 'cyber_guard'
   | 'cyber_officer'
-  | 'cyber_drone';
+  | 'cyber_drone'
+  | 'cyber_mech';
 
 export type EnemyAlertState = 'patrol' | 'suspicious' | 'searching' | 'combat' | 'knocked_out';
 

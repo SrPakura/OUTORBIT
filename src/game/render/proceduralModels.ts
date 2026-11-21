@@ -1102,6 +1102,192 @@ function buildSpotlight(): THREE.Group {
   return spot;
 }
 
+// ============================================================================
+// Props cyberpunk (Neon Bastion · Metrópolis): carteles de neón, rascacielos
+// futuristas y terminales holográficas del bulevar.
+// ============================================================================
+
+/**
+ * Cartel publicitario de neón: poste metálico doble y panel luminoso oscuro
+ * con barras de neón cian/magenta (glifos katakana estilizados), marco de
+ * neón perimetral y antena superior con baliza roja.
+ */
+function buildNeonBillboard(): THREE.Group {
+  const billboard = new THREE.Group();
+  // Poste metálico doble.
+  for (const side of [-1, 1]) {
+    const post = celMesh(new THREE.CylinderGeometry(0.09, 0.12, 4.6, 8), '#334155', 0.016);
+    post.position.set(0.8 * side, 2.3, 0);
+    billboard.add(post);
+  }
+  // Panel del cartel: chapa oscura con marco.
+  const panel = celMesh(new THREE.BoxGeometry(3.4, 2.0, 0.22), '#0f172a', 0.02);
+  panel.position.y = 4.4;
+  billboard.add(panel);
+  // Barras de neón cian/magenta: líneas de texto publicitario ilegible.
+  const cyanMaterial = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
+  const magentaMaterial = new THREE.MeshBasicMaterial({ color: 0xe879f9 });
+  const barGeometry = new THREE.BoxGeometry(1, 0.16, 0.06);
+  const barWidths = [2.4, 1.7, 2.1, 1.3];
+  for (let i = 0; i < barWidths.length; i++) {
+    const bar = new THREE.Mesh(barGeometry, i % 2 === 0 ? cyanMaterial : magentaMaterial);
+    bar.scale.x = barWidths[i];
+    bar.position.set((i % 2 === 0 ? -0.15 : 0.2) * (i % 2), 4.95 - i * 0.38, 0.15);
+    billboard.add(bar);
+  }
+  // Marco de neón cian perimetral.
+  const frameVGeometry = new THREE.BoxGeometry(0.08, 2.0, 0.08);
+  const frameHGeometry = new THREE.BoxGeometry(3.4, 0.08, 0.08);
+  for (const side of [-1, 1]) {
+    const frameV = new THREE.Mesh(frameVGeometry, cyanMaterial);
+    frameV.position.set(1.62 * side, 4.4, 0.14);
+    billboard.add(frameV);
+  }
+  for (const dy of [-1.04, 1.04]) {
+    const frameH = new THREE.Mesh(frameHGeometry, cyanMaterial);
+    frameH.position.set(0, 4.4 + dy, 0.14);
+    billboard.add(frameH);
+  }
+  // Antena superior con baliza roja.
+  const antenna = celMesh(new THREE.CylinderGeometry(0.03, 0.03, 0.9, 6), '#94a3b8', 0.012);
+  antenna.position.set(1.1, 5.85, 0);
+  billboard.add(antenna);
+  const beacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xef4444 })
+  );
+  beacon.position.set(1.1, 6.32, 0);
+  billboard.add(beacon);
+  return billboard;
+}
+
+/**
+ * Rascacielos futurista de Neon Bastion: fuste escalonado oscuro de 3 tramos
+ * con franjas horizontales de ventanas neón cian/magenta y baliza roja en la
+ * azotea sobre mástil de comunicaciones.
+ */
+function buildCyberTower(): THREE.Group {
+  const tower = new THREE.Group();
+  const bodyColors = ['#0f172a', '#131c33', '#0f172a'];
+  const cyanMaterial = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
+  const magentaMaterial = new THREE.MeshBasicMaterial({ color: 0xe879f9 });
+  // Fuste escalonado: 3 tramos que se estrechan hacia el cielo.
+  const sections: Array<[number, number, number]> = [
+    [1.5, 5.2, 0],
+    [1.15, 4.8, 5.2],
+    [0.8, 4.4, 10.0],
+  ];
+  sections.forEach(([halfX, height, baseY], i) => {
+    const body = celMesh(
+      new THREE.BoxGeometry(halfX * 2, height, halfX * 2),
+      bodyColors[i],
+      0.022
+    );
+    body.position.y = baseY + height / 2;
+    tower.add(body);
+    // Franjas horizontales de ventanas neón: anillos que rodean las 4 caras.
+    const stripeCount = 3;
+    for (let s = 0; s < stripeCount; s++) {
+      const stripe = new THREE.Mesh(
+        new THREE.BoxGeometry(halfX * 2 * 1.03, 0.2, halfX * 2 * 1.03),
+        (i + s) % 2 === 0 ? cyanMaterial : magentaMaterial
+      );
+      stripe.position.y = baseY + 0.9 + (s * (height - 1.6)) / (stripeCount - 1);
+      tower.add(stripe);
+    }
+    // Remate blindado entre tramos.
+    const cap = celMesh(
+      new THREE.BoxGeometry(halfX * 2 * 1.08, 0.24, halfX * 2 * 1.08),
+      '#334155',
+      0.018
+    );
+    cap.position.y = baseY + 0.12;
+    tower.add(cap);
+  });
+  // Azotea: remate, mástil y baliza roja de aviación.
+  const roof = celMesh(new THREE.BoxGeometry(1.0, 0.3, 1.0), '#334155', 0.018);
+  roof.position.y = 14.45;
+  tower.add(roof);
+  const mast = celMesh(new THREE.CylinderGeometry(0.05, 0.08, 1.7, 6), '#64748b', 0.014);
+  mast.position.y = 15.4;
+  tower.add(mast);
+  const beacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.13, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xef4444 })
+  );
+  beacon.position.y = 16.3;
+  tower.add(beacon);
+  return tower;
+}
+
+/**
+ * Terminal holográfica del bulevar: base metálica con pedestal de mando y
+ * pantalla magenta, haz de proyección y prisma flotante cian rodeado por un
+ * anillo de luz (ambos aditivos, como un holograma real).
+ */
+function buildHoloPillar(): THREE.Group {
+  const pillar = new THREE.Group();
+  // Base metálica anclada al asfalto.
+  const base = celMesh(new THREE.CylinderGeometry(0.55, 0.7, 0.4, 10), '#334155', 0.018);
+  base.position.y = 0.2;
+  pillar.add(base);
+  // Pedestal/terminal oscuro con pantalla luminosa.
+  const terminal = celMesh(new THREE.BoxGeometry(0.5, 0.9, 0.5), '#1f2937', 0.016);
+  terminal.position.y = 0.85;
+  pillar.add(terminal);
+  const screen = new THREE.Mesh(
+    new THREE.BoxGeometry(0.34, 0.5, 0.05),
+    new THREE.MeshBasicMaterial({ color: 0xe879f9 })
+  );
+  screen.position.set(0, 0.95, 0.27);
+  pillar.add(screen);
+  // Haz de proyección cian translúcido.
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05, 0.3, 0.9, 8, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0x22d3ee,
+      transparent: true,
+      opacity: 0.25,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  beam.position.y = 1.6;
+  pillar.add(beam);
+  // Prisma holográfico flotante cian.
+  const holo = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.34, 0),
+    new THREE.MeshBasicMaterial({
+      color: 0x22d3ee,
+      transparent: true,
+      opacity: 0.7,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  holo.name = 'holoPrism';
+  holo.position.y = 2.15;
+  holo.scale.set(0.8, 1.3, 0.8);
+  pillar.add(holo);
+  // Anillo de luz magenta orbitando el prisma.
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.5, 0.045, 8, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0xe879f9,
+      transparent: true,
+      opacity: 0.75,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  ring.name = 'holoRing';
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 2.15;
+  pillar.add(ring);
+  return pillar;
+}
+
 /** Pino reutilizable como prop (el mismo builder de los planetas). */
 function buildPineTreeProp(): THREE.Group {
   return buildPineTree();
@@ -1139,6 +1325,12 @@ export function buildPropMesh(kind: PropKind): THREE.Group {
       return buildVineArch();
     case 'cherry_snow_tree':
       return buildCherrySnowTree();
+    case 'neon_billboard':
+      return buildNeonBillboard();
+    case 'cyber_tower':
+      return buildCyberTower();
+    case 'holo_pillar':
+      return buildHoloPillar();
     case 'ice_crystal':
       return buildIceCrystal();
     case 'igloo':
@@ -2290,10 +2482,403 @@ export function buildOniModel(): THREE.Group {
   return group;
 }
 
+// ============================================================================
+// Metrópolis Cyberpunk (Neon Bastion · Planeta 3): guardias cibernéticos,
+// drones de vigilancia y mechas pesados. Sustituyen temáticamente a
+// guardias/oficiales (soldado cyber), drones (dron angular) y brutes
+// (exoesqueleto mecha). Cuerpos cel con contornos finos y mirando hacia +Z,
+// como el resto de enemigos.
+// ============================================================================
+
+const CYBER_ARMOR = '#1e1b4b'; // armadura índigo oscura
+const CYBER_DARK = '#0f0f1e'; // negro azulado del casco/peto
+const CYBER_STEEL = '#3f3f46';
+
+/**
+ * Soldado cyberpunk de Neon Bastion: armadura negra/índigo con líneas
+ * luminosas cian neón, visor horizontal brillante y rifle energético. Con
+ * `isOfficer` (Oficial del Ala Corporativa) las líneas pasan a magenta
+ * brillante y añade antena dorsal y hombreras holográficas: es él quien
+ * porta la Tarjeta Maestra.
+ */
+export function buildCyberGuardModel(isOfficer = false): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'cyberGuard';
+  const lineHex = isOfficer ? 0xe879f9 : 0x22d3ee;
+  const lineMaterial = new THREE.MeshBasicMaterial({ color: lineHex });
+
+  // Torso de armadura índigo.
+  const torso = celMesh(new THREE.CapsuleGeometry(0.36, 0.36, 8, 14), CYBER_ARMOR, 0.016);
+  torso.position.y = 0.55;
+  group.add(torso);
+
+  // Peto angular oscuro con línea de neón vertical sobre el pecho.
+  const chest = celMesh(new THREE.BoxGeometry(0.62, 0.5, 0.42), CYBER_DARK, 0.016);
+  chest.position.set(0, 0.62, 0.14);
+  group.add(chest);
+  const chestLine = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.4, 0.05), lineMaterial);
+  chestLine.position.set(0, 0.62, 0.37);
+  group.add(chestLine);
+
+  // Cinturón táctico con hebilla luminosa.
+  const belt = celMesh(new THREE.CylinderGeometry(0.38, 0.38, 0.14, 14), CYBER_DARK, 0.014);
+  belt.position.y = 0.38;
+  group.add(belt);
+  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.08, 0.06), lineMaterial);
+  buckle.position.set(0, 0.38, 0.38);
+  group.add(buckle);
+
+  // Cabeza: casco oscuro con visor horizontal de neón.
+  const head = new THREE.Group();
+  head.name = 'head';
+  head.position.y = 1.34;
+  const skull = celMesh(new THREE.SphereGeometry(0.5, 18, 14), CYBER_DARK, 0.016);
+  head.add(skull);
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.14, 0.16), lineMaterial);
+  visor.position.set(0, 0.05, 0.44);
+  head.add(visor);
+  const helmet = celMesh(
+    new THREE.SphereGeometry(0.54, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    CYBER_ARMOR,
+    0.016
+  );
+  helmet.position.y = 0.1;
+  head.add(helmet);
+  // Cristal de comunicación sobre la sien.
+  const earJack = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.1), lineMaterial);
+  earJack.position.set(0.5, 0.05, 0);
+  head.add(earJack);
+  if (isOfficer) {
+    // Antena dorsal del oficial con punta magenta brillante.
+    const antenna = celMesh(
+      new THREE.CylinderGeometry(0.025, 0.025, 0.55, 6),
+      '#94a3b8',
+      0.012
+    );
+    antenna.position.set(0.24, 0.6, -0.08);
+    antenna.rotation.z = -0.18;
+    head.add(antenna);
+    const tip = new THREE.Mesh(
+      new THREE.SphereGeometry(0.06, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xe879f9 })
+    );
+    tip.position.set(0.29, 0.88, -0.08);
+    head.add(tip);
+  }
+  group.add(head);
+
+  // Brazos y piernas de armadura con botas oscuras.
+  group.add(buildLimb('leftArm', 0.46, 0.74, 0.12, 0.28, CYBER_ARMOR));
+  group.add(buildLimb('rightArm', -0.46, 0.74, 0.12, 0.28, CYBER_ARMOR));
+  group.add(buildLimb('leftLeg', 0.18, 0.32, 0.14, 0.18, CYBER_DARK));
+  group.add(buildLimb('rightLeg', -0.18, 0.32, 0.14, 0.18, CYBER_DARK));
+
+  // Hombreras blindadas; el oficial añade placas holográficas magenta.
+  for (const side of [-1, 1]) {
+    const pad = celMesh(new THREE.SphereGeometry(0.17, 10, 8), CYBER_DARK, 0.014);
+    pad.position.set(0.46 * side, 0.88, 0);
+    pad.scale.set(1, 0.7, 1);
+    group.add(pad);
+    if (isOfficer) {
+      const holo = new THREE.Mesh(
+        new THREE.BoxGeometry(0.36, 0.13, 0.32),
+        new THREE.MeshBasicMaterial({
+          color: 0xe879f9,
+          transparent: true,
+          opacity: 0.5,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      holo.position.set(0.46 * side, 1.04, 0);
+      group.add(holo);
+    }
+  }
+
+  // Líneas de neón en las espinillas (detalle sin contorno).
+  const shinGeometry = new THREE.BoxGeometry(0.05, 0.22, 0.04);
+  for (const legName of ['leftLeg', 'rightLeg']) {
+    const leg = group.getObjectByName(legName);
+    if (!leg) continue;
+    const shin = new THREE.Mesh(shinGeometry, lineMaterial);
+    shin.position.set(0, -0.3, 0.1);
+    leg.add(shin);
+  }
+
+  // Arma energética: rifle de pulso (guardia) o bastón de mando (oficial).
+  const rightArm = group.getObjectByName('rightArm');
+  if (rightArm) {
+    const weapon = new THREE.Group();
+    weapon.name = 'energyWeapon';
+    if (isOfficer) {
+      // Bastón de mando: mástil oscuro con emisor magenta en la punta.
+      const shaft = celMesh(new THREE.CylinderGeometry(0.035, 0.035, 1.15, 6), CYBER_STEEL, 0.012);
+      weapon.add(shaft);
+      const emitter = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.11, 0),
+        new THREE.MeshBasicMaterial({ color: 0xe879f9 })
+      );
+      emitter.position.y = 0.62;
+      weapon.add(emitter);
+      const gripRing = new THREE.Mesh(
+        new THREE.TorusGeometry(0.07, 0.02, 8, 14),
+        new THREE.MeshBasicMaterial({ color: 0xe879f9 })
+      );
+      gripRing.rotation.x = Math.PI / 2;
+      gripRing.position.y = 0.1;
+      weapon.add(gripRing);
+      weapon.position.set(0, -0.3, 0.12);
+      weapon.rotation.x = -0.15;
+    } else {
+      // Rifle de pulso: culata oscura, celda cian y cañón con boquilla.
+      const body = celMesh(new THREE.BoxGeometry(0.09, 0.1, 0.8), CYBER_STEEL, 0.012);
+      weapon.add(body);
+      const cell = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.06, 0.18), lineMaterial);
+      cell.position.set(0, 0.09, -0.08);
+      weapon.add(cell);
+      const muzzle = celMesh(
+        new THREE.CylinderGeometry(0.045, 0.055, 0.16, 8),
+        '#18181b',
+        0.012
+      );
+      muzzle.rotation.x = Math.PI / 2;
+      muzzle.position.z = 0.46;
+      weapon.add(muzzle);
+      const muzzleGlow = new THREE.Mesh(
+        new THREE.SphereGeometry(0.05, 8, 6),
+        lineMaterial
+      );
+      muzzleGlow.position.z = 0.55;
+      weapon.add(muzzleGlow);
+      weapon.position.set(0, -0.34, 0.16);
+      weapon.rotation.x = 0.08;
+    }
+    rightArm.add(weapon);
+  }
+
+  return group;
+}
+
+/**
+ * Dron de vigilancia de Neon Bastion: fuselaje angular oscuro con núcleo
+ * rojo escáner al frente y 4 rotores/anillos luminosos cian en las esquinas,
+ * unidos por brazos de carbono. Sustituye al dron uniformado.
+ */
+export function buildCyberDroneModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'cyberDrone';
+
+  // Fuselaje angular: octaedro achatado y alargado hacia el frente.
+  const body = celMesh(new THREE.OctahedronGeometry(0.5, 0), '#1f2937', 0.016);
+  body.scale.set(1.1, 0.68, 1.35);
+  group.add(body);
+
+  // Núcleo rojo escáner con anillo, mirando al frente (+Z).
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(0.15, 12, 10),
+    new THREE.MeshBasicMaterial({ color: 0xef4444 })
+  );
+  core.position.set(0, 0, 0.42);
+  group.add(core);
+  const coreRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.2, 0.035, 8, 18),
+    new THREE.MeshBasicMaterial({ color: 0xef4444 })
+  );
+  coreRing.position.set(0, 0, 0.47);
+  group.add(coreRing);
+
+  // 4 rotores/anillos luminosos cian en las esquinas con brazos de carbono.
+  const rotorGeometry = new THREE.TorusGeometry(0.22, 0.045, 8, 20);
+  const rotorMaterial = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
+  const armGeometry = new THREE.BoxGeometry(0.34, 0.05, 0.05);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const arm = celMesh(armGeometry, '#374151', 0.012);
+      arm.position.set(sx * 0.3, 0.12, sz * 0.3);
+      arm.rotation.y = Math.atan2(-sz, sx);
+      group.add(arm);
+      const rotor = new THREE.Mesh(rotorGeometry, rotorMaterial);
+      rotor.rotation.x = Math.PI / 2;
+      rotor.position.set(sx * 0.48, 0.16, sz * 0.48);
+      group.add(rotor);
+    }
+  }
+
+  // Antena dorsal con baliza ámbar.
+  const antenna = celMesh(new THREE.CylinderGeometry(0.025, 0.025, 0.42, 6), '#94a3b8', 0.012);
+  antenna.position.y = 0.5;
+  group.add(antenna);
+  const beacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+  );
+  beacon.position.y = 0.72;
+  group.add(beacon);
+
+  return group;
+}
+
+/**
+ * Mech exoesqueleto pesado de Neon Bastion: chasis angular gris oscuro,
+ * visor rojo brillante, reactor pectoral cian y brazo cañón pesado. Sustituye
+ * al brute en la Ciudadela de Reactores (solo cae con explosivos, parry o
+ * estasis, igual que el brute uniformado).
+ */
+export function buildCyberMechModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'cyberMech';
+  const MECH_FRAME = '#374151';
+  const MECH_DARK = '#1f2937';
+
+  // Chasis angular: torso caja masiva con placas.
+  const torso = celMesh(new THREE.BoxGeometry(0.95, 0.8, 0.6), MECH_FRAME, 0.02);
+  torso.position.y = 1.15;
+  group.add(torso);
+  // Placa pectoral con reactor cian brillante.
+  const chest = celMesh(new THREE.BoxGeometry(0.7, 0.55, 0.2), MECH_DARK, 0.018);
+  chest.position.set(0, 1.2, 0.36);
+  group.add(chest);
+  const reactor = new THREE.Mesh(
+    new THREE.SphereGeometry(0.15, 12, 10),
+    new THREE.MeshBasicMaterial({ color: 0x22d3ee })
+  );
+  reactor.position.set(0, 1.22, 0.5);
+  group.add(reactor);
+  const reactorRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.21, 0.04, 8, 18),
+    new THREE.MeshBasicMaterial({ color: 0x22d3ee })
+  );
+  reactorRing.position.set(0, 1.22, 0.52);
+  group.add(reactorRing);
+  // Rejillas de ventilación traseras con brillo cian.
+  for (const dy of [-0.15, 0.05, 0.25]) {
+    const vent = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.06, 0.05),
+      new THREE.MeshBasicMaterial({ color: 0x22d3ee })
+    );
+    vent.position.set(0, 1.2 + dy, -0.34);
+    group.add(vent);
+  }
+
+  // Pelvis y cintura articulada.
+  const pelvis = celMesh(new THREE.BoxGeometry(0.6, 0.3, 0.45), MECH_DARK, 0.016);
+  pelvis.position.y = 0.62;
+  group.add(pelvis);
+
+  // Cabeza pequeña con visor rojo brillante y cuernos de sensor.
+  const head = new THREE.Group();
+  head.name = 'head';
+  head.position.y = 1.78;
+  const skull = celMesh(new THREE.BoxGeometry(0.4, 0.3, 0.38), MECH_DARK, 0.016);
+  head.add(skull);
+  const visor = new THREE.Mesh(
+    new THREE.BoxGeometry(0.34, 0.09, 0.06),
+    new THREE.MeshBasicMaterial({ color: 0xef4444 })
+  );
+  visor.position.set(0, 0.02, 0.21);
+  head.add(visor);
+  const sensorGeometry = new THREE.ConeGeometry(0.05, 0.22, 5);
+  for (const side of [-1, 1]) {
+    const sensor = celMesh(sensorGeometry, MECH_FRAME, 0.012);
+    sensor.position.set(0.2 * side, 0.24, 0);
+    sensor.rotation.z = 0.3 * side;
+    head.add(sensor);
+  }
+  group.add(head);
+
+  // Piernas gruesas articuladas con pies pesados.
+  for (const side of [-1, 1]) {
+    const thigh = celMesh(new THREE.BoxGeometry(0.3, 0.42, 0.32), MECH_FRAME, 0.018);
+    thigh.position.set(0.3 * side, 0.42, 0);
+    group.add(thigh);
+    const shin = celMesh(new THREE.BoxGeometry(0.24, 0.34, 0.28), MECH_DARK, 0.016);
+    shin.position.set(0.3 * side, 0.12, 0.02);
+    group.add(shin);
+    const foot = celMesh(new THREE.BoxGeometry(0.32, 0.14, 0.44), MECH_FRAME, 0.016);
+    foot.position.set(0.3 * side, 0.07, 0.08);
+    group.add(foot);
+  }
+
+  // Hombreras angulares voladizas.
+  for (const side of [-1, 1]) {
+    const pad = celMesh(new THREE.BoxGeometry(0.44, 0.2, 0.52), MECH_DARK, 0.018);
+    pad.position.set(0.64 * side, 1.62, 0);
+    pad.rotation.z = 0.1 * side;
+    group.add(pad);
+  }
+
+  // Brazo izquierdo con puño apoyado.
+  const leftArm = celMesh(new THREE.BoxGeometry(0.26, 0.66, 0.26), MECH_FRAME, 0.018);
+  leftArm.position.set(-0.66, 1.12, 0.04);
+  group.add(leftArm);
+  const fist = celMesh(new THREE.SphereGeometry(0.17, 10, 8), MECH_DARK, 0.016);
+  fist.position.set(-0.66, 0.72, 0.08);
+  group.add(fist);
+
+  // Brazo derecho: cañón pesado con boquilla roja y líneas de energía.
+  const shoulder = celMesh(new THREE.BoxGeometry(0.32, 0.36, 0.36), MECH_FRAME, 0.018);
+  shoulder.position.set(0.66, 1.42, 0);
+  group.add(shoulder);
+  const barrel = celMesh(
+    new THREE.CylinderGeometry(0.13, 0.16, 0.95, 10),
+    MECH_DARK,
+    0.018
+  );
+  barrel.rotation.x = Math.PI / 2;
+  barrel.position.set(0.66, 1.08, 0.5);
+  group.add(barrel);
+  const barrelBand = celMesh(
+    new THREE.CylinderGeometry(0.18, 0.18, 0.12, 10),
+    MECH_FRAME,
+    0.014
+  );
+  barrelBand.rotation.x = Math.PI / 2;
+  barrelBand.position.set(0.66, 1.08, 0.32);
+  group.add(barrelBand);
+  const muzzle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.17, 0.17, 0.1, 10),
+    new THREE.MeshBasicMaterial({ color: 0xef4444 })
+  );
+  muzzle.rotation.x = Math.PI / 2;
+  muzzle.position.set(0.66, 1.08, 0.99);
+  group.add(muzzle);
+  const energyLine = new THREE.Mesh(
+    new THREE.BoxGeometry(0.05, 0.05, 0.6),
+    new THREE.MeshBasicMaterial({ color: 0xef4444 })
+  );
+  energyLine.position.set(0.66, 1.28, 0.35);
+  group.add(energyLine);
+
+  // Propulsores dorsales con brillo cian.
+  for (const side of [-1, 1]) {
+    const thruster = celMesh(
+      new THREE.CylinderGeometry(0.1, 0.13, 0.5, 8),
+      MECH_DARK,
+      0.014
+    );
+    thruster.position.set(0.3 * side, 1.25, -0.42);
+    thruster.rotation.x = 0.35;
+    group.add(thruster);
+    const glow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.08, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0x22d3ee })
+    );
+    glow.position.set(0.3 * side, 1.02, -0.52);
+    group.add(glow);
+  }
+
+  // Escala de mecha pesado: imponente frente a los cyber guardias.
+  group.scale.setScalar(1.2);
+
+  return group;
+}
+
 /**
  * Instancia el modelo de un enemigo por su tipo y skin temática: los animales
- * de la selva (pantera, mono, gorila, avispa) sustituyen al modelo uniformado
- * por defecto; cualquier skin sin builder propio cae al modelo de su `kind`.
+ * de la selva (pantera, mono, gorila, avispa), los samuráis/onis del
+ * Shogunato Nevado y los cibernéticos de Neon Bastion sustituyen al modelo
+ * uniformado por defecto; cualquier skin sin builder propio cae al modelo de
+ * su `kind`.
  */
 export function buildEnemyModelBySkin(kind: EnemyKind, skin?: EnemySkin): THREE.Group {
   switch (skin) {
@@ -2309,6 +2894,14 @@ export function buildEnemyModelBySkin(kind: EnemyKind, skin?: EnemySkin): THREE.
       return buildSamuraiModel(kind === 'officer');
     case 'oni':
       return buildOniModel();
+    case 'cyber_guard':
+      return buildCyberGuardModel(kind === 'officer');
+    case 'cyber_officer':
+      return buildCyberGuardModel(true);
+    case 'cyber_drone':
+      return buildCyberDroneModel();
+    case 'cyber_mech':
+      return buildCyberMechModel();
     default:
       break;
   }
