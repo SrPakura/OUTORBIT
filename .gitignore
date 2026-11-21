@@ -18,3 +18,8 @@ dist
 # Base44
 .app.json*
 .types/
+
+# Raw Gravity Rush Vita dumps & intermediate GLB exports (only optimized chunks in public/ are tracked)
+referencias y base/PCSF00024/
+referencias y base/Gravite_extracted/
+referencias y base/Blender_exports/

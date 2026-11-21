@@ -173,7 +173,18 @@ export type PropKind =
   // --- Flora interactiva y rocas con colisión (Hito 2: terreno + props) ---
   | 'giant_flower'
   | 'glow_mushroom'
-  | 'rock';
+  | 'rock'
+  // --- Ciudad Sandbox (estilo Gravity Rush × OUTORBIT) ---
+  | 'city_house'
+  | 'city_shop'
+  | 'street_lamp'
+  | 'bench'
+  | 'market_stall'
+  | 'clock_tower'
+  | 'crane'
+  | 'awning_arch'
+  | 'comic_billboard'
+  | 'fountain';
 
 /**
  * Prop ambiental con colisión física real (Hito 2): troncos sólidos, techos
@@ -255,9 +266,13 @@ export interface NpcSpec {
   role: string;
   planetId: string;
   sphericalDir: [number, number, number];
+  worldPos?: [number, number, number];
+  altitudeOffset?: number;
   yaw?: number;
   accentColor: string;
   dialogue: string[];
+  /** Puntos de paseo opcionales sobre el mismo planeta (ciudad Sandbox). */
+  patrolDirs?: [number, number, number][];
 }
 
 export interface PlayerBehaviorVector {
@@ -295,10 +310,89 @@ export interface PlanetAdaptationConfig {
 }
 
 // ============================================================================
-// 4. GALAXIA CONTINUA Y PROGRESIÓN
+// 4. GALAXIA CONTINUA, MODO SANDBOX Y PROGRESIÓN
 // ============================================================================
 
-export type LevelId = 'prologue' | 'verdant' | 'cryo' | 'bastion' | 'kronos';
+export type LevelId = 'sandbox' | 'prologue' | 'verdant' | 'cryo' | 'bastion' | 'kronos';
+
+export type CollectibleKind = 'coin' | 'star_orb';
+
+/** Moneda cósmica o Orbe Estrella oculto en el modo Sandbox. */
+export interface CollectibleSpec {
+  id: string;
+  kind: CollectibleKind;
+  planetId: string;
+  sphericalDir: [number, number, number];
+  altitudeOffset?: number;
+  worldPos?: [number, number, number];
+  label?: string;
+}
+
+/** Esfera/Nodo de Ancla Gravitatoria flotante para engancharse en el aire. */
+export interface AnchorNodeSpec {
+  id: string;
+  planetId: string;
+  sphericalDir: [number, number, number];
+  altitudeOffset: number;
+  worldPos?: [number, number, number];
+  color?: string;
+}
+
+export type SandboxChallengeKind = 'race' | 'targets';
+
+export type CityDistrictId =
+  | 'pillar'
+  | 'auldnoir'
+  | 'pleajeune'
+  | 'endestria'
+  | 'vendecentre';
+
+/** Caja sólida orientable (OBB) de la ciudad Hekseville plana/multinivel. */
+export interface CityBoxCollider {
+  id: string;
+  district: CityDistrictId;
+  cx: number;
+  cy: number;
+  cz: number;
+  hx: number;
+  hy: number;
+  hz: number;
+  yaw: number;
+  passableUnderground?: boolean;
+}
+
+/** Cilindro vertical sólido (Pilar Central del Mundo). */
+export interface CityCylinderCollider {
+  id: string;
+  district: CityDistrictId;
+  cx: number;
+  cy: number;
+  cz: number;
+  radius: number;
+  halfHeight: number;
+}
+
+export interface SandboxChallengeCheckpoint {
+  planetId: string;
+  sphericalDir: [number, number, number];
+  altitudeOffset?: number;
+  worldPos?: [number, number, number];
+  radius?: number;
+}
+
+/** Micro-reto del modo Sandbox (carrera por aros o dianas con Estasis). */
+export interface SandboxChallengeSpec {
+  id: string;
+  kind: SandboxChallengeKind;
+  title: string;
+  description: string;
+  planetId: string;
+  startDir: [number, number, number];
+  startAltitudeOffset?: number;
+  timeLimitSec: number;
+  rewardCoins: number;
+  checkpoints: SandboxChallengeCheckpoint[];
+}
 
 export interface LevelObjective {
   id: string;
@@ -321,8 +415,15 @@ export interface GalaxySpec {
   enemies: EnemySpawnSpec[];
   /** NPCs amigables con diálogo (pistas de puzle sin pausar el juego). */
   npcs?: NpcSpec[];
-  /** Props ambientales (aldea feudal, cristales, maquinaria) sin colisión. */
+  /** Props ambientales (aldea feudal, cristales, maquinaria, ciudad) con/sin colisión. */
   props?: PropSpec[];
+  /** Activa mecánicas de patio de recreo Sandbox (sin game over frustrante). */
+  isSandbox?: boolean;
+  /** Ciudad plana multinivel estilo Gravity Rush (sin planetas esféricos). */
+  isFlatCity?: boolean;
+  collectibles?: CollectibleSpec[];
+  anchorNodes?: AnchorNodeSpec[];
+  challenges?: SandboxChallengeSpec[];
   spawnPlanetId: string;
   spawnDir: [number, number, number];
 }
@@ -437,6 +538,27 @@ export interface HudSnapshot {
   tutorialLessons?: string[];
   /** El tutorial activo ya cumplió su meta (tarjeta de victoria del HUD). */
   tutorialCompleted?: boolean;
+  /** Modo Sandbox activo (Hekseville Cósmica). */
+  isSandbox?: boolean;
+  isFlatCity?: boolean;
+  gravityUpMode?: 'normal' | 'wall' | 'ceiling' | 'flight';
+  sandboxCoins?: number;
+  sandboxCoinsTotal?: number;
+  sandboxOrbs?: number;
+  sandboxOrbsTotal?: number;
+  sandboxChallengesCompleted?: number;
+  sandboxChallengesTotal?: number;
+  activeChallenge?: {
+    id: string;
+    title: string;
+    kind: SandboxChallengeKind;
+    progress: number;
+    total: number;
+    timeLeftSec: number;
+    timeLimitSec: number;
+  } | null;
+  anchorTargetInRange?: boolean;
+  sandboxPopup?: { text: string; accent: string } | null;
 }
 
 // ============================================================================

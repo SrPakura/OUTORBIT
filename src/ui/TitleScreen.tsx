@@ -93,7 +93,7 @@ export default function TitleScreen({
           }}
         >
           <span className="block skew-x-12 text-3xl font-black italic tracking-[0.18em] text-white drop-shadow-[0_3px_0_#0b0b14]">
-            JUGAR
+            SANDBOX
           </span>
         </button>
 

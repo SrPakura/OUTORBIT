@@ -28,6 +28,7 @@ export interface TerrainFlattenPad {
 
 interface PlanetTerrainEntry {
   pads: TerrainFlattenPad[];
+  flat: boolean;
 }
 
 /** Terreno por planeta, inicializado por `initPlanetTerrain`. */
@@ -166,9 +167,11 @@ function rawTerrainHeight(planetId: string, nx: number, ny: number, nz: number):
  */
 export function initPlanetTerrain(galaxy: GalaxySpec): void {
   planetTerrain.clear();
+  const isFlat = Boolean(galaxy.isSandbox);
   for (const planet of galaxy.planets) {
-    planetTerrain.set(planet.id, { pads: [] });
+    planetTerrain.set(planet.id, { pads: [], flat: isFlat });
   }
+  if (isFlat) return;
 
   const addPad = (
     planetId: string,
@@ -236,7 +239,7 @@ export function getPlanetTerrainOffset(
   nz: number
 ): number {
   const entry = planetTerrain.get(planetId);
-  if (entry === undefined) return 0;
+  if (entry === undefined || entry.flat) return 0;
   const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
   if (len < 1e-9) return 0;
   const ux = nx / len;

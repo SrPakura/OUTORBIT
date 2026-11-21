@@ -11,6 +11,7 @@ import {
 import { orientObjectOnSphere } from '../math/spherical';
 import { getPlanetTerrainOffset } from '../math/terrain';
 import { addComicOutline, createComicCelMaterial, createToonMaterial, type ComicCelOptions } from './toonMaterials';
+import { buildCityPropMesh } from './cityModels';
 
 // ============================================================================
 // Utilidades
@@ -1593,6 +1594,18 @@ export function buildPropMesh(kind: PropKind): THREE.Group {
       return buildGlowMushroom();
     case 'rock':
       return buildRock();
+    // --- Ciudad Sandbox (estilo Gravity Rush × OUTORBIT) ---
+    case 'city_house':
+    case 'city_shop':
+    case 'street_lamp':
+    case 'bench':
+    case 'market_stall':
+    case 'clock_tower':
+    case 'crane':
+    case 'awning_arch':
+    case 'comic_billboard':
+    case 'fountain':
+      return buildCityPropMesh(kind);
   }
 }
 

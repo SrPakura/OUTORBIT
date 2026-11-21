@@ -3,6 +3,9 @@ import {
   GAME_CONSTANTS,
   type CharacterId,
   type CharacterProfile,
+  type CityBoxCollider,
+  type CityCylinderCollider,
+  type CityDistrictId,
   type DamageFeedbackInfo,
   type PlanetRuntime,
   type PlayerBehaviorVector,
@@ -14,6 +17,12 @@ import {
   resolvePlayerProps,
   resolvePlayerStructures,
 } from '../math/spherical';
+import {
+  getCityDistrictInfo,
+  raycastCityColliders,
+  resolvePlayerCityColliders,
+} from '../math/flatCityPhysics';
+import { ChunkMeshCollider, getHeksevilleDistrictInfo } from '../physics/ChunkMeshCollider';
 import { getPlanetTerrainOffsetVec } from '../math/terrain';
 import { buildCharacterModel, buildDisguiseOverlay } from '../render/proceduralModels';
 import type { GameSoundKind } from '../audio/SynthAudio';
@@ -324,6 +333,26 @@ export class PlayerController {
 
   private readonly keys = new Set<string>();
 
+  // Sandbox (modo libre): hooks opcionales que inyecta el GameEngine. Con
+  // `sandboxMode` activo, el Ancla Gravitatoria solo impulsa hacia objetivos
+  // válidos devueltos por `sandboxAnchorTarget` (ROADMAP.MD 1.3).
+  private sandboxMode = false;
+  private sandboxAnchorTarget: ((outPos: THREE.Vector3) => boolean) | null = null;
+  private sandboxOnInteract: ((pos: THREE.Vector3) => boolean) | null = null;
+
+  // Modo Ciudad Plana (Hekseville estilo Gravity Rush, sin planetas esféricos).
+  private flatCityEnabled = false;
+  private cityBoxes: readonly CityBoxCollider[] = [];
+  private cityCylinders: readonly CityCylinderCollider[] = [];
+  private readonly citySpawnPos = new THREE.Vector3(105, 18.2, 8);
+  private readonly flatVelWrap = { value: 0 };
+  private readonly cityAimPoint = new THREE.Vector3();
+  private readonly cityAimNormal = new THREE.Vector3(0, 1, 0);
+  private cityAimDistrict: CityDistrictId | null = null;
+  /** Hekseville 1:1: colisión contra los chunks GLB reales (null = cajas OBB). */
+  private chunkCollider: ChunkMeshCollider | null = null;
+  private citySpawnYaw = 0;
+
   // Ajustes persistentes (Controles): sensibilidad, eje Y y keybindings.
   private sensMul = 1;
   private invertY = false;
@@ -541,6 +570,114 @@ export class PlayerController {
     this.switchCharacter(id);
   }
 
+  /**
+   * Activa/desactiva los hooks del modo Sandbox (planeta libre). Con
+   * `enabled: false` el controlador vuelve al comportamiento de Tutoriales.
+   */
+  setSandboxHooks(hooks: {
+    enabled: boolean;
+    getAnchorTarget?: (outPos: THREE.Vector3) => boolean;
+    onInteract?: (pos: THREE.Vector3) => boolean;
+  }): void {
+    this.sandboxMode = hooks.enabled;
+    this.sandboxAnchorTarget = hooks.getAnchorTarget ?? null;
+    this.sandboxOnInteract = hooks.onInteract ?? null;
+  }
+
+  /** Activa la física plana multinivel de Hekseville (Gravity Rush). */
+  setFlatCity(
+    boxes: readonly CityBoxCollider[],
+    cylinders: readonly CityCylinderCollider[],
+    spawnPos: [number, number, number]
+  ): void {
+    this.flatCityEnabled = true;
+    this.cityBoxes = boxes;
+    this.cityCylinders = cylinders;
+    this.chunkCollider = null;
+    this.citySpawnYaw = 0;
+    this.citySpawnPos.set(spawnPos[0], spawnPos[1], spawnPos[2]);
+    this.respawnFlatCity();
+  }
+
+  /**
+   * Activa la ciudad 1:1 de Hekseville: la colisión la resuelve el
+   * `ChunkMeshCollider` contra las mallas GLB reales (sin cajas OBB).
+   */
+  setChunkCity(
+    collider: ChunkMeshCollider,
+    spawnPos: [number, number, number],
+    spawnYaw = 0
+  ): void {
+    this.flatCityEnabled = true;
+    this.chunkCollider = collider;
+    this.cityBoxes = [];
+    this.cityCylinders = [];
+    this.citySpawnPos.set(spawnPos[0], spawnPos[1], spawnPos[2]);
+    this.citySpawnYaw = spawnYaw;
+    this.respawnFlatCity();
+  }
+
+  /**
+   * El `manifest.json` llega después del primer frame: si aún no hay chunks
+   * cargados (el jugador sigue en el spawn provisional), se reubica en el
+   * spawn real de Hekseville.
+   */
+  updateChunkSpawn(spawnPos: [number, number, number], spawnYaw: number): void {
+    if (!this.chunkCollider || this.chunkCollider.chunkCount > 0) return;
+    this.citySpawnPos.set(spawnPos[0], spawnPos[1], spawnPos[2]);
+    this.citySpawnYaw = spawnYaw;
+    this.respawnFlatCity();
+  }
+
+  respawnFlatCity(): void {
+    this.pos.copy(this.citySpawnPos);
+    this.yaw = this.citySpawnYaw;
+    this.charYaw = this.citySpawnYaw;
+    this.pitch = -0.14;
+    this.lastUp.set(0, 1, 0);
+    alignBasisToUp(this.basisQuat, this.lastUp, 1);
+    this.vertVel = 0;
+    this.jumpsUsed = 0;
+    this.grounded = true;
+    this.inFlight = false;
+    this.flightDirected = false;
+    this.flightDest = null;
+    this.flightVel.set(0, 0, 0);
+    this.anchorBurst.set(0, 0, 0);
+    this.iceVel.set(0, 0, 0);
+    this.isBurrowing = false;
+    this.isSwimming = false;
+    this.restoreFullHp();
+  }
+
+  get flatCityDistrict(): { id: CityDistrictId; name: string; subtitle: string } {
+    if (this.chunkCollider) return getHeksevilleDistrictInfo(this.pos);
+    return getCityDistrictInfo(this.pos);
+  }
+
+  get flatCityAimLabel(): string | null {
+    if (!this.flatCityEnabled || !this.cityAimDistrict) return null;
+    switch (this.cityAimDistrict) {
+      case 'pillar':
+        return 'Pilar Central';
+      case 'auldnoir':
+        return 'Auldnoir';
+      case 'pleajeune':
+        return 'Pleajeune';
+      case 'endestria':
+        return 'Endestria';
+      case 'vendecentre':
+        return 'Vendecentre';
+    }
+  }
+
+  get gravityUpMode(): 'normal' | 'wall' | 'ceiling' | 'flight' {
+    if (this.inFlight) return 'flight';
+    if (this.lastUp.y < -0.5) return 'ceiling';
+    if (this.lastUp.y < 0.7) return 'wall';
+    return 'normal';
+  }
+
   get planet(): PlanetRuntime {
     return this.currentPlanet;
   }
@@ -638,9 +775,7 @@ export class PlayerController {
   }
 
   /** Perdido en el espacio profundo (>360 m de toda superficie). */
-  get lostInSpace(): boolean {
-    return this.nearestSurfaceDist > SPACE_DRIFT_DEATH_DIST;
-  }
+  lostInSpace = false;
 
   /** Progreso 0..1 del vuelo dirigido (mitad del cruce = 0.5). */
   get flightProgress(): number {
@@ -818,6 +953,28 @@ export class PlayerController {
         this.rcPressTime = -1;
         if (quickClick) {
           this.jettDash();
+        } else if (this.flatCityEnabled) {
+          if (this.cityAimDistrict) {
+            this.lastUp.copy(this.cityAimNormal).normalize();
+            this.inFlight = true;
+            this.flightDirected = false;
+            this.flightDest = null;
+            this.flightTime = 0;
+            this.grounded = false;
+            this.vertVel = 0;
+            this.jumpsUsed = 0;
+            this._v1.copy(this.cityAimPoint).sub(this.pos);
+            if (this._v1.lengthSq() > 1e-6) this._v1.normalize();
+            else this.getAimForward(this._v1);
+            this.flightVel.copy(this._v1).multiplyScalar(38);
+            this.setGravityShiftCooldown(GRAVITY_DASH_COOLDOWN * 0.6);
+            this.onSound?.('gravityShift');
+          } else {
+            // Apuntando al cielo abierto: restablece gravedad normal y planea/vuela.
+            this.lastUp.set(0, 1, 0);
+            this.launchFreeFlight();
+          }
+          this.cityAimDistrict = null;
         } else if (target && target !== this.currentPlanet) {
           // Tormenta Orbital: SÍ te deja saltar, pero avisa del riesgo de
           // impacto (los interceptores pueden rebotarte al planeta origen).
@@ -961,6 +1118,41 @@ export class PlayerController {
     this.flightDest = null;
     this.isSwimming = false;
     this.iceVel.set(0, 0, 0);
+  }
+
+  /** Sandbox: restaura la vida al máximo y limpia la pérdida espacial. */
+  restoreFullHp(): void {
+    this.hp = GAME_CONSTANTS.PLAYER_MAX_HP;
+    this.lostInSpace = false;
+  }
+
+  /**
+   * Sandbox: respawn limpio sobre `planet` en la dirección `dir` — aterriza
+   * de pie sobre el terreno local, limpia todas las velocidades y estados
+   * de vuelo/subsuelo/nado, y restaura la vida al máximo.
+   */
+  respawnAt(planet: PlanetRuntime, dir: THREE.Vector3): void {
+    this.currentPlanet = planet;
+    this._up.copy(dir).normalize();
+    const terrainOffset = getPlanetTerrainOffsetVec(planet.spec.id, this._up);
+    this.pos
+      .copy(planet.centerVec)
+      .addScaledVector(this._up, planet.spec.radius + terrainOffset);
+    this.altitude = terrainOffset;
+    this.lastUp.copy(this._up);
+    alignBasisToUp(this.basisQuat, this._up, 1);
+    this.vertVel = 0;
+    this.jumpsUsed = 0;
+    this.grounded = true;
+    this.inFlight = false;
+    this.flightDirected = false;
+    this.flightDest = null;
+    this.flightVel.set(0, 0, 0);
+    this.anchorBurst.set(0, 0, 0);
+    this.iceVel.set(0, 0, 0);
+    this.isBurrowing = false;
+    this.isSwimming = false;
+    this.restoreFullHp();
   }
 
   /** Mina sísmica: expulsa a Digger del subsuelo hacia arriba. */
@@ -1131,16 +1323,45 @@ export class PlayerController {
     this.animateLimbs();
     this.updateVisualAnim(dt);
 
-    // Apuntado Gravity Shift (cono desde la cámara).
+    // Apuntado Gravity Shift (cono desde la cámara o raycast urbano en Hekseville).
     if (this.gravityShifting) {
-      this.gravityTarget = this.pickPlanetUnderCrosshair();
+      if (this.flatCityEnabled) {
+        this.getAimForward(this._v1);
+        this.cityAimDistrict = this.chunkCollider
+          ? this.chunkCollider.raycast(
+              this.camera.position,
+              this._v1,
+              260,
+              this.cityAimPoint,
+              this.cityAimNormal
+            )
+          : raycastCityColliders(
+              this.camera.position,
+              this._v1,
+              260,
+              this.cityBoxes,
+              this.cityCylinders,
+              this.cityAimPoint,
+              this.cityAimNormal
+            );
+        this.gravityTarget = null;
+      } else {
+        this.gravityTarget = this.pickPlanetUnderCrosshair();
+      }
     }
 
-    // Deriva espacial: distancia a la superficie más cercana de la galaxia.
-    // El vuelo dirigido entre planetas es seguro (trayectoria propia); el
-    // vuelo libre al vacío tiene riesgo real: aviso a 260 m y muerte a 360 m.
-    if (this.flightDirected) {
+    // Deriva espacial: en ciudad plana basta con respawn si caes muy bajo.
+    // En Hekseville 1:1 los niveles inferiores llegan a y = -280, así que el
+    // umbral de vacío baja a -350.
+    if (this.flatCityEnabled) {
       this.nearestSurfaceDist = 0;
+      this.lostInSpace = false;
+      if (this.pos.y < (this.chunkCollider ? -350 : -155)) {
+        this.respawnFlatCity();
+      }
+    } else if (this.flightDirected) {
+      this.nearestSurfaceDist = 0;
+      this.lostInSpace = false;
     } else {
       let nearest = Infinity;
       for (let i = 0; i < this.planets.length; i++) {
@@ -1156,7 +1377,8 @@ export class PlayerController {
         if (surfaceDist < nearest) nearest = surfaceDist;
       }
       this.nearestSurfaceDist = nearest;
-      if (nearest > SPACE_DRIFT_DEATH_DIST) {
+      this.lostInSpace = nearest > SPACE_DRIFT_DEATH_DIST;
+      if (this.lostInSpace) {
         // Perdido en el espacio profundo: atribución explícita de la derrota.
         this.takeDamage(99, 0, 0, 0, 'Espacio profundo', 'Te alejaste demasiado del planeta');
       }
@@ -1415,6 +1637,80 @@ export class PlayerController {
       this.anchorBurst.set(0, 0, 0);
     }
 
+    if (this.flatCityEnabled) {
+      // Hekseville 1:1: hasta que el primer chunk GLB (prioridad 0) está
+      // registrado no hay suelo que colisionar; se congela al jugador en el
+      // spawn en lugar de dejarlo caer al vacío durante la carga.
+      if (this.chunkCollider && this.chunkCollider.chunkCount === 0) {
+        this.pos.copy(this.citySpawnPos);
+        this.vertVel = 0;
+        this.grounded = true;
+        this.inFlight = false;
+        this.flightVel.set(0, 0, 0);
+        return;
+      }
+
+      const axelGliding =
+        !this.grounded &&
+        !this.isBurrowing &&
+        this.activeCharacter === 'axel' &&
+        this.vertVel < 0 &&
+        this.isActionDown('jump');
+      this.vertVel -=
+        GRAVITY_BASE * this.profile.gravityScale * (axelGliding ? 0.26 : 1) * dt;
+      if (axelGliding) this.vertVel = Math.max(this.vertVel, -3.6);
+      this.pos.addScaledVector(this.lastUp, this.vertVel * dt);
+
+      const wasAirborneFlat = !this.grounded;
+      this.flatVelWrap.value = this.vertVel;
+      const cityRes = this.chunkCollider
+        ? this.chunkCollider.resolvePlayer(
+            this.pos,
+            this.flatVelWrap,
+            this.lastUp,
+            this.isBurrowing,
+            PLAYER_STRUCTURE_RADIUS,
+            1.65
+          )
+        : resolvePlayerCityColliders(
+            this.pos,
+            this.flatVelWrap,
+            this.lastUp,
+            this.isBurrowing,
+            this.cityBoxes,
+            this.cityCylinders,
+            PLAYER_STRUCTURE_RADIUS
+          );
+      this.vertVel = this.flatVelWrap.value;
+      if (cityRes.grounded) {
+        if (wasAirborneFlat) {
+          this.jumpsUsed = 0;
+          this.applySquash(SQUASH_LAND_Y, SQUASH_LAND_XZ);
+          this.onSound?.('land');
+        }
+        this.grounded = true;
+      } else {
+        this.grounded = false;
+      }
+
+      if (this.world.getBubbleAt(this.pos)) {
+        this.enterSwim();
+        return;
+      }
+      if (this.isMoving) this.walkPhase += dt * speed * 1.35;
+      else this.walkPhase += dt * 1.5;
+      if (this.isMoving && !this.isBurrowing) {
+        this.stepAccum += dt;
+        if (this.stepAccum >= 0.35) {
+          this.stepAccum -= 0.35;
+          this.onSound?.('step');
+        }
+      } else {
+        this.stepAccum = 0;
+      }
+      return;
+    }
+
     // Colisión contra las estructuras del planeta actual: empuje lateral
     // fuera de muros/torres/búnkers y suelo elevado (tejados, puentes,
     // plataformas). Digger excavando atraviesa los muros passableUnderground.
@@ -1451,7 +1747,18 @@ export class PlayerController {
     // estructura o prop.
     const wasAirborne = !this.grounded;
     this.altitude += this.vertVel * dt;
-    this.vertVel -= GRAVITY_BASE * this.profile.gravityScale * dt;
+    // Planeo aéreo de Axel: manteniendo Salto en caída, la gravedad baja a
+    // 0.26x y la caída se limita a -3.6 m/s — planeo suave y controlable
+    // entre edificios y burbujas.
+    const axelGliding =
+      !this.grounded &&
+      !this.isBurrowing &&
+      this.activeCharacter === 'axel' &&
+      this.vertVel < 0 &&
+      this.isActionDown('jump');
+    this.vertVel -=
+      GRAVITY_BASE * this.profile.gravityScale * (axelGliding ? 0.26 : 1) * dt;
+    if (axelGliding) this.vertVel = Math.max(this.vertVel, -3.6);
     if (this.altitude <= groundAltitude) {
       // HITO 2: flor gigante / seta bioluminiscente — trampolín con voltereta
       // cuando el suelo ganador es el techo rebotador del prop.
@@ -1529,13 +1836,17 @@ export class PlayerController {
       return;
     }
 
-    // Orientación hacia el planeta con mayor atracción.
-    const nearest = findStrongestGravityPlanet(this.pos, this.planets, this.currentPlanet.spec.id);
-    this.currentPlanet = nearest;
-    this._up.copy(this.pos).sub(nearest.centerVec);
-    const upLen = this._up.length();
-    if (upLen > 1e-6) {
-      this.lastUp.copy(this._up.divideScalar(upLen));
+    if (this.flatCityEnabled) {
+      this.lastUp.set(0, 1, 0);
+    } else {
+      // Orientación hacia el planeta con mayor atracción.
+      const nearest = findStrongestGravityPlanet(this.pos, this.planets, this.currentPlanet.spec.id);
+      this.currentPlanet = nearest;
+      this._up.copy(this.pos).sub(nearest.centerVec);
+      const upLen = this._up.length();
+      if (upLen > 1e-6) {
+        this.lastUp.copy(this._up.divideScalar(upLen));
+      }
     }
 
     // Natación 3D hacia donde mira la cámara.
@@ -1575,6 +1886,50 @@ export class PlayerController {
   private updateFlight(dt: number): void {
     if (this.flightDirected && this.flightDest) {
       this.updateDirectedFlight(dt, this.flightDest);
+      return;
+    }
+
+    if (this.flatCityEnabled) {
+      this.flightTime += dt;
+      // Gravedad activa en dirección `-lastUp` (suelo, pared o techo).
+      this.flightVel.addScaledVector(this.lastUp, -GRAVITY_BASE * 0.65 * dt);
+      this.pos.addScaledVector(this.flightVel, dt);
+      if (this.world.getBubbleAt(this.pos)) {
+        this.enterSwim();
+        return;
+      }
+      this.flatVelWrap.value = this.flightVel.dot(this.lastUp);
+      const cityRes = this.chunkCollider
+        ? this.chunkCollider.resolvePlayer(
+            this.pos,
+            this.flatVelWrap,
+            this.lastUp,
+            false,
+            PLAYER_STRUCTURE_RADIUS,
+            1.65
+          )
+        : resolvePlayerCityColliders(
+            this.pos,
+            this.flatVelWrap,
+            this.lastUp,
+            false,
+            this.cityBoxes,
+            this.cityCylinders,
+            PLAYER_STRUCTURE_RADIUS
+          );
+      if (cityRes.grounded && this.flightTime > 0.08) {
+        this.lastUp.copy(cityRes.groundNormal);
+        this.inFlight = false;
+        this.grounded = true;
+        this.vertVel = 0;
+        this.jumpsUsed = 0;
+        this.flightVel.set(0, 0, 0);
+        this.applySquash(SQUASH_LAND_Y, SQUASH_LAND_XZ);
+        this.onSound?.('land');
+      } else if (cityRes.hitWall) {
+        // Si chocó lateralmente mientras volaba, frena suave para poder apoyarse o reorientar.
+        this.flightVel.multiplyScalar(0.5);
+      }
       return;
     }
 
@@ -1772,6 +2127,7 @@ export class PlayerController {
   }
 
   private startCoreDive(): void {
+    if (this.flatCityEnabled) return;
     const planet = this.currentPlanet;
     this.diveStart.copy(this.pos);
     this.diveUpStart.copy(this.pos).sub(planet.centerVec).normalize();
@@ -1852,9 +2208,31 @@ export class PlayerController {
       return;
     }
     if (this.inFlight) {
+      if (this.flatCityEnabled) {
+        this.lastUp.set(0, 1, 0);
+        this.inFlight = false;
+        this.flightVel.set(0, 0, 0);
+        this.vertVel = 2.5;
+        this.grounded = false;
+        return;
+      }
+      // Sandbox: el Ancla puede engancharse a un objetivo válido en pleno
+      // vuelo (salida limpia hacia el planeta más cercano); sin objetivo
+      // conserva la flotación de cancelación de los Tutoriales.
+      if (this.sandboxMode && this.tryAnchor()) return;
       // Ancla (Espacio) en pleno vuelo: frena el impulso y flota para
       // cancelar/redirigir el salto (la gravedad suave te lleva al planeta).
       this.stopFlightToFloat();
+      return;
+    }
+    if (this.flatCityEnabled && this.lastUp.y < 0.7 && this.grounded) {
+      // Saltar desde una pared o techo en Hekseville restaura la gravedad normal (-Y).
+      this.pos.addScaledVector(this.lastUp, 0.4);
+      this.lastUp.set(0, 1, 0);
+      this.grounded = false;
+      this.vertVel = this.profile.jumpImpulse * 0.7;
+      this.jumpsUsed = 1;
+      this.onSound?.('jump');
       return;
     }
     if (this.coreDiveActive) return;
@@ -1879,9 +2257,11 @@ export class PlayerController {
    * Ancla Gravitatoria (Espacio en el aire): orbe con haz hasta
    * `profile.anchorRange` e impulso aéreo adelante/arriba para encadenar
    * saltos infinitos. Cooldown 0.9s (`anchorCooldownRatio`).
+   * Devuelve true si el impulso se aplicó.
    */
-  private tryAnchor(): void {
-    if (this.anchorCooldown > 0) return;
+  private tryAnchor(): boolean {
+    if (this.anchorCooldown > 0) return false;
+    if (this.sandboxMode) return this.tryAnchorSandbox();
     this.anchorCooldown = ANCHOR_COOLDOWN;
     getTangentAxes(this.basisQuat, this.yaw, this._forward, this._right);
     // El alcance del ancla escala con el perfil (Axel 28, Kitsune 18, Digger 14).
@@ -1897,6 +2277,63 @@ export class PlayerController {
     this.applySquash(1.12, 0.94); // HITO 4: estirón del impulso del ancla
     this.behavior.aerialAttacks++;
     this.onSound?.('anchor');
+    return true;
+  }
+
+  /**
+   * Ancla en Sandbox (ROADMAP.MD 1.3): sin objetivo válido del hook NO hay
+   * impulso (fuera el salto libre genérico en el aire). Con objetivo, el
+   * impulso se descompone respecto a `lastUp` — componente tangencial al
+   * `anchorBurst` (22-34 m/s según la distancia) y componente radial + arco
+   * extra al `vertVel` (mínimo +7.5 m/s para superar el abismo) — y también
+   * puede sacarte de un vuelo en curso hacia el planeta más cercano.
+   * Cooldown 0.55s para encadenar esferas seguidas.
+   */
+  private tryAnchorSandbox(): boolean {
+    if (!this.sandboxAnchorTarget || !this.sandboxAnchorTarget(this._v2)) return false;
+    this._v1.copy(this._v2).sub(this.pos);
+    const dist = this._v1.length();
+    if (dist < 1e-4) return false;
+    this._v1.divideScalar(dist);
+    // Salida limpia de un vuelo en curso: física de superficie sobre el
+    // planeta con mayor atracción, conservando la altura actual.
+    if (this.inFlight) {
+      this.inFlight = false;
+      this.flightDirected = false;
+      this.flightDest = null;
+      this.flightTime = 0;
+      this.flightVel.set(0, 0, 0);
+      this.currentPlanet = findStrongestGravityPlanet(
+        this.pos,
+        this.planets,
+        this.currentPlanet.spec.id
+      );
+      this._up.copy(this.pos).sub(this.currentPlanet.centerVec);
+      const upLen = this._up.length();
+      if (upLen > 1e-6) this.lastUp.copy(this._up.divideScalar(upLen));
+      this.altitude = Math.max(
+        upLen - this.currentPlanet.spec.radius,
+        0
+      );
+      this.grounded = false;
+    }
+    // Descomposición del impulso respecto al up radial actual.
+    const radial = this._v1.dot(this.lastUp);
+    this._v3.copy(this._v1).addScaledVector(this.lastUp, -radial);
+    if (this._v3.lengthSq() > 1e-6) this._v3.normalize();
+    const burstSpeed = THREE.MathUtils.clamp(dist * 0.85, 22, 34);
+    this.anchorBurst.copy(this._v3).multiplyScalar(burstSpeed);
+    this.vertVel =
+      Math.max(this.vertVel, 0) + Math.max(radial * burstSpeed, 0) + 7.5;
+    this.anchorCooldown = 0.55;
+    this.jumpsUsed = 2; // el siguiente Espacio vuelve a encadenar el Ancla
+    this.anchorFx.scale.z = this.profile.anchorRange / 18;
+    this.anchorFxTimer = ANCHOR_FX_TIME;
+    this.flipTimer = FLIP_TIME; // voltereta 360º del Ancla Gravitatoria
+    this.applySquash(1.12, 0.94); // HITO 4: estirón del impulso del ancla
+    this.behavior.aerialAttacks++;
+    this.onSound?.('anchor');
+    return true;
   }
 
   // ------------------------------------------------------------------------
@@ -2119,6 +2556,8 @@ export class PlayerController {
       this.disguiseTimer = DISGUISE_DURATION;
       return;
     }
+    // Sandbox: hook de interacción del modo libre (consume la pulsación).
+    if (this.sandboxOnInteract?.(this.pos)) return;
     // Prioridad 2: hablar con un NPC (el mundo gestiona el bocadillo 7s).
     if (this.world.tryNpcDialogue(this.pos) !== null) return;
     // Prioridad 3: palanca o compuerta con tarjeta.

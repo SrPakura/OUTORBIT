@@ -509,6 +509,9 @@ interface NpcObj {
   dir: THREE.Vector3;
   forward: THREE.Vector3;
   dialogueIdx: number;
+  waypoints: THREE.Vector3[];
+  wpIndex: number;
+  altitudeOffset: number;
 }
 
 /**
@@ -1158,6 +1161,17 @@ const PROP_COLLIDER_BLUEPRINTS: Partial<Record<PropKind, PropColliderBlueprint>>
   torii_gate: { radius: 0.3, height: 3.6, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 1.5 },
   vine_arch: { radius: 0.5, height: 3.7, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 1.6 },
   rock: { radius: 0.55, height: 0.5, capRadius: 0.5, capY: 0.45, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  // --- Ciudad Sandbox (Gravity Rush × OUTORBIT) ---
+  city_house: { radius: 2.05, height: 5.25, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  city_shop: { radius: 2.0, height: 3.1, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  street_lamp: { radius: 0.24, height: 3.9, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  bench: { radius: 0.9, height: 0.6, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  market_stall: { radius: 1.35, height: 2.3, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  clock_tower: { radius: 3.0, height: 22.2, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  crane: { radius: 1.0, height: 12.6, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  awning_arch: { radius: 0.4, height: 5.1, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 2.5 },
+  comic_billboard: { radius: 0.3, height: 5.2, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
+  fountain: { radius: 2.85, height: 0.72, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
   // stone_path y wood_bridge: decoración plana transitable, sin collider.
 };
 
@@ -1296,6 +1310,8 @@ export class WorldObjectsManager {
    * una ruta alternativa.
    */
   onGateLockdown: (() => void) | null = null;
+  /** Modo Sandbox: impacto de objeto/explosión contra dianas de retos. */
+  onSandboxTargetHit: ((pos: THREE.Vector3, radius: number) => boolean) | null = null;
 
   constructor(group: THREE.Group, planets: PlanetRuntime[]) {
     this.group = group;
@@ -1795,15 +1811,26 @@ export class WorldObjectsManager {
   private spawnNpc(spec: NpcSpec): void {
     const planet = this.findPlanet(spec.planetId);
     const mesh = buildNpcModel(spec.accentColor);
-    const pos = this.placeOnPlanet(mesh, planet, ...spec.sphericalDir, 0);
+    const altOffset = spec.altitudeOffset ?? 0;
+    let pos: THREE.Vector3;
+    const dir = new THREE.Vector3();
+    if (spec.worldPos) {
+      pos = new THREE.Vector3(spec.worldPos[0], spec.worldPos[1], spec.worldPos[2]);
+      dir.set(0, 1, 0);
+      mesh.position.copy(pos);
+      mesh.quaternion.identity();
+    } else {
+      pos = this.placeOnPlanet(mesh, planet, ...spec.sphericalDir, altOffset);
+      dir.set(...spec.sphericalDir).normalize();
+    }
     mesh.rotateY(spec.yaw ?? 0);
     this.group.add(mesh);
-    const dir = new THREE.Vector3(...spec.sphericalDir).normalize();
     // Tangente de mirada base: el +Z local del modelo ya girado con yaw.
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(mesh.quaternion);
     forward.addScaledVector(dir, -forward.dot(dir));
     if (forward.lengthSq() < 1e-6) forward.set(1, 0, 0).cross(dir);
     forward.normalize();
+    const waypoints = (spec.patrolDirs ?? []).map((d) => new THREE.Vector3(...d).normalize());
     this.npcs.push({
       spec,
       mesh,
@@ -1813,6 +1840,9 @@ export class WorldObjectsManager {
       dir,
       forward,
       dialogueIdx: -1,
+      waypoints,
+      wpIndex: 0,
+      altitudeOffset: altOffset,
     });
   }
 
@@ -3468,6 +3498,35 @@ export class WorldObjectsManager {
           _v1.normalize();
           npc.forward.lerp(_v1, Math.min(1, dt * 6)).normalize();
         }
+      } else if (npc.waypoints.length >= 2) {
+        // Paseo tranquilo por la ciudad entre waypoints sobre la superficie.
+        const wpDir = npc.waypoints[npc.wpIndex];
+        const wpAlt =
+          npc.planet.spec.radius +
+          getPlanetTerrainOffsetVec(npc.planet.spec.id, wpDir) +
+          npc.altitudeOffset;
+        _v2.copy(npc.planet.centerVec).addScaledVector(wpDir, wpAlt);
+        _v1.copy(_v2).sub(npc.pos);
+        if (_v1.lengthSq() < 1.2) {
+          npc.wpIndex = (npc.wpIndex + 1) % npc.waypoints.length;
+        } else {
+          _v1.addScaledVector(npc.dir, -_v1.dot(npc.dir));
+          if (_v1.lengthSq() > 1e-6) {
+            _v1.normalize();
+            npc.forward.lerp(_v1, Math.min(1, dt * 4)).normalize();
+            npc.pos.addScaledVector(_v1, 1.85 * dt);
+            _v2.copy(npc.pos).sub(npc.planet.centerVec);
+            const len = _v2.length();
+            if (len > 1e-6) {
+              npc.dir.copy(_v2.divideScalar(len));
+              const alt =
+                npc.planet.spec.radius +
+                getPlanetTerrainOffsetVec(npc.planet.spec.id, npc.dir) +
+                npc.altitudeOffset;
+              npc.pos.copy(npc.planet.centerVec).addScaledVector(npc.dir, alt);
+            }
+          }
+        }
       }
       npc.mesh.position.copy(npc.pos);
       _q1.setFromUnitVectors(_upAxis, npc.dir);
@@ -3623,6 +3682,19 @@ export class WorldObjectsManager {
       }
       if (settled) continue;
 
+      // Modo Sandbox: impacto contra dianas flotantes de retos de Estasis.
+      if (this.onSandboxTargetHit?.(grab.pos, grab.radius + 2.2)) {
+        if (grab.kind === 'barrel_explosive') {
+          this.explode(grab.pos, state, onPlayerDamage);
+          this.consumeGrab(grab);
+        } else if (grab.kind === 'crate' || grab.kind === 'snowball') {
+          this.consumeGrab(grab);
+        } else {
+          this.settleGrab(grab, planet);
+        }
+        continue;
+      }
+
       // Impacto contra el terreno: ruido de distracción para los guardias
       // cercanos del mismo planeta (no golpearon a nadie directamente).
       // HITO 2: superficie real = radio nominal + terreno local.
@@ -3704,6 +3776,7 @@ export class WorldObjectsManager {
   ): void {
     this.spawnExplosion(pos, EXPLOSION_RADIUS, 0xfb923c);
     this.onSound?.('explosion');
+    this.onSandboxTargetHit?.(pos, EXPLOSION_RADIUS);
     // HITO 1: una explosión (barril del jugador) es una acción hostil.
     this.notifyPlayerHostileAction();
     for (const enemy of this.enemies) {

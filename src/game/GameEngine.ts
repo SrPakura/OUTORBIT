@@ -14,10 +14,18 @@ import {
 } from './types';
 import { createSpaceBackdrop, setHalftonesEnabled } from './render/toonMaterials';
 import { buildPlanetModel } from './render/proceduralModels';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import {
+  createHeksevilleMaterialLibrary,
+  type HeksevilleDistrictId,
+  type HeksevilleMaterialLibrary,
+} from './render/heksevilleChunkMaterials';
+import { ChunkMeshCollider } from './physics/ChunkMeshCollider';
 import { PlayerController } from './entities/PlayerController';
 import { WorldObjectsManager, type WorldPlayerState } from './entities/WorldObjects';
-import { GALAXY_SPEC } from './levels/levelDefinitions';
+import { SANDBOX_GALAXY_SPEC } from './levels/sandboxCityDefinitions';
 import { getTutorialSpec, type TutorialId, type TutorialSpec } from './levels/tutorialDefinitions';
+import { SandboxManager } from './sandbox/SandboxManager';
 import { initPlanetTerrain, isInLowBasin } from './math/terrain';
 import { BehaviorTracker, createEmptyBehaviorVector } from './ai/BehaviorTracker';
 import { computePlanetAdaptation } from './ai/AdaptationDirector';
@@ -58,6 +66,45 @@ const DEFAULT_ADAPTATION: PlanetAdaptationConfig = {
 };
 
 /**
+ * Hekseville 1:1 — metadatos de un chunk `.glb` tal como los publica
+ * `/chunks/hekseville/manifest.json` (generado por el script de build).
+ */
+interface HeksevilleChunkMeta {
+  id: string;
+  district: HeksevilleDistrictId;
+  file: string;
+  priority: number;
+  tris: number;
+  bytes: number;
+  boundsMin: [number, number, number];
+  boundsMax: [number, number, number];
+  center: [number, number, number];
+  radius: number;
+}
+
+interface HeksevilleManifest {
+  version: number;
+  totalChunks: number;
+  totalTris: number;
+  spawnPos: [number, number, number];
+  spawnYaw: number;
+  chunks: HeksevilleChunkMeta[];
+}
+
+/** Distancia máxima de dibujado de un chunk de Hekseville (metros). */
+const CHUNK_VIEW_DISTANCE = 960;
+/** Chunks por lote tras los de prioridad 0 (evita picos de frame). */
+const CHUNK_BATCH_SIZE = 3;
+
+/** Libera la geometría de un subárbol (los materiales compartidos no se tocan). */
+function disposeObject3D(root: THREE.Object3D): void {
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (mesh.isMesh) mesh.geometry?.dispose();
+  });
+}
+
+/**
  * Orquestador Three.js de la GALAXIA CONTINUA: monta los 5 planetas a la vez
  * en una sola escena, ejecuta el loop principal, gestiona Pointer Lock /
  * pausa, detecta el planeta activo del jugador, proyecta los marcadores de
@@ -74,9 +121,20 @@ export class GameEngine {
   private readonly planetTicks: Array<(dt: number) => void> = [];
   private backdrop: { update: (dt: number, cameraPos: THREE.Vector3) => void; dispose: () => void } | null = null;
 
+  // Hekseville 1:1 — streaming de chunks `.glb` reales (60 chunks, ~1.18M tris).
+  /** Se incrementa al descargar el nivel: invalida streams en vuelo. */
+  private chunkEpoch = 0;
+  private chunkCollider: ChunkMeshCollider | null = null;
+  private chunkMatLib: HeksevilleMaterialLibrary | null = null;
+  private streamedChunks: Array<{ group: THREE.Group; center: THREE.Vector3; radius: number }> = [];
+  private readonly chunkFrustum = new THREE.Frustum();
+  private readonly chunkProjMat = new THREE.Matrix4();
+  private readonly chunkSphere = new THREE.Sphere();
+
   // Estado de la galaxia (única carga, sin transiciones de nivel).
   private levelGroup: THREE.Group | null = null;
   private world: WorldObjectsManager | null = null;
+  private sandbox: SandboxManager | null = null;
   private player: PlayerController | null = null;
   private objectives: LevelObjective[] = [];
   /** Clave discreta del estado de objetivos (evita allocations por frame). */
@@ -222,10 +280,13 @@ export class GameEngine {
     this.canvas = canvas;
     this.onHudSnapshot = onHudSnapshot;
 
-    // PASO B: un tutorial carga SU galaxia mínima; sin id, la campaña entera.
+    // PASO B / SANDBOX: un tutorial carga SU galaxia mínima; por defecto entra
+    // al Modo Sandbox (Hekseville Cósmica).
     const tutorialId = launchConfig?.tutorialId ?? null;
     this.tutorialSpec = tutorialId ? getTutorialSpec(tutorialId) : null;
-    this.activeGalaxySpec = this.tutorialSpec ? this.tutorialSpec.galaxy : GALAXY_SPEC;
+    this.activeGalaxySpec = this.tutorialSpec
+      ? this.tutorialSpec.galaxy
+      : SANDBOX_GALAXY_SPEC;
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -281,6 +342,14 @@ export class GameEngine {
   }
 
   private disposeLevel(): void {
+    // Invalida cualquier stream de chunks en vuelo antes de liberar la escena.
+    this.chunkEpoch++;
+    this.disposeStreamedChunks();
+    this.chunkCollider?.clear();
+    this.chunkCollider = null;
+    this.chunkMatLib?.dispose();
+    this.chunkMatLib = null;
+    this.scene.fog = null;
     if (this.player) {
       this.scene.remove(this.player.root);
       this.scene.remove(this.player.lockRing);
@@ -306,6 +375,8 @@ export class GameEngine {
       this.backdrop.dispose();
       this.backdrop = null;
     }
+    this.sandbox?.dispose();
+    this.sandbox = null;
     this.world?.clear();
     this.world = null;
     this.planets.length = 0;
@@ -338,22 +409,42 @@ export class GameEngine {
     this.levelGroup.name = 'galaxy';
     this.scene.add(this.levelGroup);
 
-    for (const spec of galaxy.planets) {
-      const { group, animTick } = buildPlanetModel(spec);
-      this.levelGroup.add(group);
-      this.planets.push({
-        spec,
-        mesh: group,
-        centerVec: new THREE.Vector3(...spec.center),
-        shielded: false,
-      });
-      this.planetTicks.push(animTick);
+    const effectiveGalaxy = galaxy;
+    if (galaxy.isFlatCity) {
+      // Hekseville 1:1: la ciudad son 60 chunks `.glb` reales servidos desde
+      // `/chunks/hekseville/`. Sin cajas OBB ni `buildHeksevilleCity()`.
+      this.chunkCollider = new ChunkMeshCollider();
+      this.chunkMatLib = createHeksevilleMaterialLibrary();
+      this.levelGroup.add(this.chunkMatLib.createCloudSeaGroup());
+      this.scene.fog = new THREE.FogExp2(0x28173c, 0.00042);
+      this.camera.far = 2400;
+      this.camera.updateProjectionMatrix();
+      for (const spec of galaxy.planets) {
+        this.planets.push({
+          spec,
+          mesh: new THREE.Group(),
+          centerVec: new THREE.Vector3(...spec.center),
+          shielded: false,
+        });
+      }
+    } else {
+      for (const spec of galaxy.planets) {
+        const { group, animTick } = buildPlanetModel(spec);
+        this.levelGroup.add(group);
+        this.planets.push({
+          spec,
+          mesh: group,
+          centerVec: new THREE.Vector3(...spec.center),
+          shielded: false,
+        });
+        this.planetTicks.push(animTick);
+      }
     }
 
     // Toda la galaxia en una sola escena: estructuras con colisión/LoS,
     // escudos, balizas, objetos, burbujas, hierba y guarniciones.
     this.world = new WorldObjectsManager(this.levelGroup, this.planets);
-    this.world.buildGalaxy(galaxy, this.planets);
+    this.world.buildGalaxy(effectiveGalaxy, this.planets);
 
     this.player = new PlayerController(
       this.planets,
@@ -362,8 +453,31 @@ export class GameEngine {
       galaxy.spawnPlanetId,
       new THREE.Vector3(...galaxy.spawnDir)
     );
+    if (galaxy.isFlatCity && this.chunkCollider) {
+      // Spawn provisional (el real llega con `manifest.json` en ~200 ms):
+      // sobre la terraza de Pleajeune, no en el vacío de Auldnoir.
+      this.player.setChunkCity(this.chunkCollider, [15, 148, 220], 3.0);
+      void this.streamHeksevilleChunks(this.chunkEpoch);
+    }
     // PASO B: el tutorial arranca con su personaje recomendado ya equipado.
     if (this.tutorialSpec) this.player.setCharacter(this.tutorialSpec.recommendedCharacter);
+    const hasSandboxContent =
+      (galaxy.collectibles?.length ?? 0) > 0 ||
+      (galaxy.anchorNodes?.length ?? 0) > 0 ||
+      (galaxy.challenges?.length ?? 0) > 0;
+    if (galaxy.isSandbox && hasSandboxContent) {
+      this.sandbox = new SandboxManager(this.levelGroup, this.planets, galaxy);
+      this.player.setSandboxHooks({
+        enabled: true,
+        getAnchorTarget: (outPos) => this.sandbox?.getBestAnchorTarget(outPos) ?? false,
+        onInteract: (pos) =>
+          this.sandbox?.tryStartNearestChallenge(pos, (k) => this.audio.play(k)) ?? false,
+      });
+      this.world.onSandboxTargetHit = (pos, radius) =>
+        (this.sandbox?.hitTargetsNear(pos, radius, (k) => this.audio.play(k)) ?? 0) > 0;
+    } else {
+      this.player.setSandboxHooks({ enabled: false });
+    }
     this.scene.add(this.player.root);
     this.scene.add(this.player.lockRing);
 
@@ -399,6 +513,135 @@ export class GameEngine {
     this.player.onSound = (kind) => this.audio.play(kind);
 
     this.objectives = this.buildObjectives(galaxy.spawnPlanetId);
+  }
+
+  // --------------------------------------------------------------------------
+  // Hekseville 1:1 — streaming de chunks `.glb`
+  // --------------------------------------------------------------------------
+  /**
+   * Descarga el manifiesto y va montando los 60 chunks de Hekseville: primero
+   * los de `priority === 0` (el suelo bajo el spawn, para que el jugador no
+   * caiga) y después el resto en lotes de 3. Cada `await` comprueba la época
+   * para abortar limpiamente si el nivel se recargó mientras tanto.
+   */
+  private async streamHeksevilleChunks(epoch: number): Promise<void> {
+    if (!this.chunkCollider || !this.chunkMatLib) return;
+    const loader = new GLTFLoader();
+
+    let manifest: HeksevilleManifest;
+    try {
+      const res = await fetch('/chunks/hekseville/manifest.json');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      manifest = (await res.json()) as HeksevilleManifest;
+    } catch (err) {
+      console.error('[Hekseville] manifest.json no disponible', err);
+      return;
+    }
+    if (epoch !== this.chunkEpoch) return;
+
+    // El spawn real de la ciudad llega con el manifiesto.
+    this.player?.updateChunkSpawn(manifest.spawnPos, manifest.spawnYaw);
+
+    const ordered = [...manifest.chunks].sort((a, b) => a.priority - b.priority);
+    const ground = ordered.filter((c) => c.priority === 0);
+    const rest = ordered.filter((c) => c.priority !== 0);
+
+    for (const meta of ground) {
+      if (epoch !== this.chunkEpoch) return;
+      await this.loadHeksevilleChunk(loader, meta, epoch);
+    }
+
+    for (let i = 0; i < rest.length; i += CHUNK_BATCH_SIZE) {
+      if (epoch !== this.chunkEpoch) return;
+      await Promise.all(
+        rest.slice(i, i + CHUNK_BATCH_SIZE).map((meta) =>
+          this.loadHeksevilleChunk(loader, meta, epoch)
+        )
+      );
+    }
+  }
+
+  /** Carga un chunk, le asigna materiales cel y lo registra en el colisionador. */
+  private async loadHeksevilleChunk(
+    loader: GLTFLoader,
+    meta: HeksevilleChunkMeta,
+    epoch: number
+  ): Promise<void> {
+    const collider = this.chunkCollider;
+    const matLib = this.chunkMatLib;
+    const levelGroup = this.levelGroup;
+    if (!collider || !matLib || !levelGroup) return;
+
+    let gltf: Awaited<ReturnType<GLTFLoader['loadAsync']>>;
+    try {
+      gltf = await loader.loadAsync(`/chunks/hekseville/${meta.file}`);
+    } catch (err) {
+      console.error(`[Hekseville] chunk ${meta.id} no cargó`, err);
+      return;
+    }
+    if (epoch !== this.chunkEpoch) {
+      disposeObject3D(gltf.scene);
+      return;
+    }
+
+    const group = new THREE.Group();
+    group.name = `chunk_${meta.id}`;
+    const meshes: THREE.Mesh[] = [];
+    gltf.scene.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      // El bucket semántico (`col_stone`, `vis_glow`...) viene en `material.name` del GLB.
+      const prevMat = mesh.material;
+      const rawName = Array.isArray(prevMat)
+        ? prevMat[0]?.name || mesh.name
+        : prevMat?.name || mesh.name;
+      mesh.material = matLib.getMaterial(meta.district, rawName);
+      if (Array.isArray(prevMat)) {
+        for (const m of prevMat) m.dispose();
+      } else {
+        prevMat?.dispose();
+      }
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      meshes.push(mesh);
+    });
+    group.add(gltf.scene);
+    levelGroup.add(group);
+    collider.registerChunk(meta.id, meta.district, meshes);
+    this.streamedChunks.push({
+      group,
+      center: new THREE.Vector3(meta.center[0], meta.center[1], meta.center[2]),
+      radius: meta.radius,
+    });
+  }
+
+  /** Libera la geometría de los chunks montados (los materiales son compartidos). */
+  private disposeStreamedChunks(): void {
+    for (const chunk of this.streamedChunks) {
+      this.levelGroup?.remove(chunk.group);
+      disposeObject3D(chunk.group);
+    }
+    this.streamedChunks.length = 0;
+  }
+
+  /** Culling barato por frustum + distancia de los chunks de Hekseville. */
+  private updateChunkCulling(): void {
+    if (this.streamedChunks.length === 0) return;
+    this.camera.updateMatrixWorld();
+    this.chunkProjMat.multiplyMatrices(
+      this.camera.projectionMatrix,
+      this.camera.matrixWorldInverse
+    );
+    this.chunkFrustum.setFromProjectionMatrix(this.chunkProjMat);
+    const camPos = this.camera.position;
+    for (const chunk of this.streamedChunks) {
+      const dist = camPos.distanceTo(chunk.center);
+      this.chunkSphere.center.copy(chunk.center);
+      this.chunkSphere.radius = chunk.radius;
+      chunk.group.visible =
+        dist - chunk.radius < CHUNK_VIEW_DISTANCE &&
+        this.chunkFrustum.intersectsSphere(this.chunkSphere);
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -449,9 +692,24 @@ export class GameEngine {
         player.update(dtSim);
         this.syncWorldState();
         this.world?.update(dtSim, this.worldState, this.boundPlayerDamage);
+        if (this.sandbox) {
+          player.getAimForward(this._v1);
+          const anchorRange = GAME_CONSTANTS.CHARACTERS[player.characterId].anchorRange;
+          this.sandbox.update(dtSim, player.position, this._v1, anchorRange, (k) =>
+            this.audio.play(k)
+          );
+        }
         this.elapsed += dtSim;
+
+        // Hekseville 1:1: los niveles inferiores llegan a y = -280, así que el
+        // umbral de vacío baja a -350 (antes -155 en la ciudad de cajas).
+        if (this.activeGalaxySpec.isFlatCity && player.position.y < -350) {
+          player.respawnFlatCity();
+        }
       }
 
+      this.chunkMatLib?.update(this.elapsed);
+      this.updateChunkCulling();
       for (const animTick of this.planetTicks) animTick(dtReal);
       this.backdrop?.update(dtReal, this.camera.position);
 
@@ -530,17 +788,18 @@ export class GameEngine {
     this.camDist += (targetDist - this.camDist) * Math.min(1, dtReal * 6);
     this.camera.position.copy(this._camPos).addScaledVector(this._camDir, -this.camDist);
 
-    // Anti-clipping contra TODOS los planetas del nivel: la cámara jamás
-    // puede quedar por debajo de ninguna superficie, ni en pleno vuelo.
-    for (let i = 0; i < this.planets.length; i++) {
-      const planet = this.planets[i];
-      this._v1.copy(this.camera.position).sub(planet.centerVec);
-      const camDistToCenter = this._v1.length();
-      const minDist = planet.spec.radius + 1.5;
-      if (camDistToCenter < minDist && camDistToCenter > 1e-6) {
-        this.camera.position
-          .copy(planet.centerVec)
-          .addScaledVector(this._v1.divideScalar(camDistToCenter), minDist);
+    // Anti-clipping contra TODOS los planetas del nivel (en ciudad plana no aplica).
+    if (!this.activeGalaxySpec.isFlatCity) {
+      for (let i = 0; i < this.planets.length; i++) {
+        const planet = this.planets[i];
+        this._v1.copy(this.camera.position).sub(planet.centerVec);
+        const camDistToCenter = this._v1.length();
+        const minDist = planet.spec.radius + 1.5;
+        if (camDistToCenter < minDist && camDistToCenter > 1e-6) {
+          this.camera.position
+            .copy(planet.centerVec)
+            .addScaledVector(this._v1.divideScalar(camDistToCenter), minDist);
+        }
       }
     }
 
@@ -626,6 +885,32 @@ export class GameEngine {
     if (!world) return [];
     const tutorial = this.tutorialSpec;
     if (tutorial) return this.buildTutorialObjectives(tutorial);
+    if (this.activeGalaxySpec.isSandbox && this.sandbox) {
+      const s = this.sandbox.getHudState();
+      return [
+        {
+          id: 'sandbox-coins',
+          description: 'Monedas cósmicas de Hekseville',
+          completed: s.coinsTotal > 0 && s.coins >= s.coinsTotal,
+          currentCount: s.coins,
+          targetCount: s.coinsTotal,
+        },
+        {
+          id: 'sandbox-orbs',
+          description: 'Orbes Estrella ocultos en la ciudad',
+          completed: s.orbsTotal > 0 && s.orbs >= s.orbsTotal,
+          currentCount: s.orbs,
+          targetCount: s.orbsTotal,
+        },
+        {
+          id: 'sandbox-challenges',
+          description: 'Retos urbanos (carreras y Estasis)',
+          completed: s.challengesTotal > 0 && s.challengesCompleted >= s.challengesTotal,
+          currentCount: s.challengesCompleted,
+          targetCount: s.challengesTotal,
+        },
+      ];
+    }
     if (planetId === 'kronos-trono') {
       const defeated = world.kronosDefeated ? 1 : 0;
       return [
@@ -841,6 +1126,32 @@ export class GameEngine {
     if (this.phase !== 'playing') return;
     const player = this.player;
     if (!player || player.hp > 0) return;
+    if (this.activeGalaxySpec.isFlatCity) {
+      player.respawnFlatCity();
+      return;
+    }
+    if (this.activeGalaxySpec.isSandbox) {
+      const spawnPlanet =
+        this.planets.find((p) => p.spec.id === this.activeGalaxySpec.spawnPlanetId) ??
+        this.planets[0];
+      if (spawnPlanet) {
+        const wasLostInSpace = player.lostInSpace;
+        this._v1.set(...this.activeGalaxySpec.spawnDir).normalize();
+        player.respawnAt(spawnPlanet, this._v1);
+        this.radioToast = {
+          title: 'REAGRUPAMIENTO EN PLAZA DEL SOL',
+          lines: [
+            wasLostInSpace
+              ? 'Demasiado lejos en el espacio abierto: devuelto a la plaza.'
+              : 'Escuadrón recuperado para seguir explorando Hekseville.',
+          ],
+          accent: '#22d3ee',
+        };
+        this.radioToastT = 3.5;
+        this.emitHud();
+      }
+      return;
+    }
     this.gameOverReason = player.lostInSpace ? 'Te perdiste en el espacio profundo' : null;
     this.phase = 'game_over';
     this.timeScale = 1;
@@ -857,7 +1168,8 @@ export class GameEngine {
     if (!player || !world) return 0;
     if (world.knockoutTargetNear(player.position)) return 1;
     if (world.guardAttackingNear(player.position)) return 2;
-    // FASE B: diálogo con NPC, palanca y compuerta con tarjeta.
+    // FASE B: diálogo con NPC, reto Sandbox, palanca y compuerta con tarjeta.
+    if (this.sandbox?.isNearChallengeStart(player.position)) return 9;
     if (world.npcNear(player.position)) return 5;
     if (world.switchNear(player.position)) return 6;
     if (world.lockedGateNear(player.position)) {
@@ -883,11 +1195,13 @@ export class GameEngine {
     // Objetivos dinámicos del planeta activo (detectado vía player.planet):
     // solo se reconstruyen cuando cambia el planeta o algún contador.
     const planetId = player.planet.spec.id;
-    const objectivesKey =
-      this.planets.indexOf(player.planet) * 100 +
-      world.getGeneratorsDestroyedOn(planetId) * 10 +
-      world.getKeycardsCollectedOn(planetId) * 5 +
-      (world.kronosDefeated ? 1 : 0);
+    const sandboxHud = this.sandbox ? this.sandbox.getHudState() : null;
+    const objectivesKey = this.activeGalaxySpec.isSandbox && sandboxHud
+      ? sandboxHud.coins * 1000 + sandboxHud.orbs * 50 + sandboxHud.challengesCompleted
+      : this.planets.indexOf(player.planet) * 100 +
+        world.getGeneratorsDestroyedOn(planetId) * 10 +
+        world.getKeycardsCollectedOn(planetId) * 5 +
+        (world.kronosDefeated ? 1 : 0);
     if (objectivesKey !== this.objectivesKey) {
       this.objectivesKey = objectivesKey;
       this.objectives = this.buildObjectives(planetId);
@@ -933,6 +1247,22 @@ export class GameEngine {
     key = key * 31 + (world.gateLockdownActive ? 1 : 0);
     // HITO 1: banner de VIGILANCIA (aparece/cambia/caduca -> emisión inmediata).
     key = key * 31 + world.warningBannerKey;
+    if (sandboxHud) {
+      key = key * 31 + sandboxHud.coins;
+      key = key * 31 + sandboxHud.orbs;
+      key = key * 31 + sandboxHud.challengesCompleted;
+      key = key * 31 + (sandboxHud.anchorTargetInRange ? 1 : 0);
+      key = key * 31 + (sandboxHud.popup ? sandboxHud.popup.text.length : 0);
+      key = key * 31 + (sandboxHud.activeChallenge ? sandboxHud.activeChallenge.progress + 1 : 0);
+    }
+
+    if (this.activeGalaxySpec.isFlatCity) {
+      const dist = player.flatCityDistrict;
+      key = key * 31 + dist.id.length;
+      key = key * 31 + dist.id.charCodeAt(0);
+      key = key * 31 + (player.flatCityAimLabel ? player.flatCityAimLabel.length : 0);
+      key = key * 31 + player.gravityUpMode.charCodeAt(0);
+    }
 
     if (key !== this.hudKey) {
       this.hudKey = key;
@@ -1027,6 +1357,41 @@ export class GameEngine {
               : '#4ade80',
       });
     }
+    if (this.sandbox) {
+      const sMarkers = this.sandbox.getChallengeMarkers();
+      for (let i = 0; i < sMarkers.length; i++) {
+        const sm = sMarkers[i];
+        this._v1.copy(sm.pos).sub(this.camera.position);
+        const inFront = this._v1.dot(this._camDir) > 0;
+        this._v2.copy(sm.pos).project(this.camera);
+        let sx = this._v2.x;
+        let sy = this._v2.y;
+        if (!inFront) {
+          sx = -sx;
+          sy = -sy;
+        }
+        let maxAbs = Math.max(Math.abs(sx), Math.abs(sy));
+        if (maxAbs < 1e-4) {
+          sx = 0;
+          sy = 1;
+          maxAbs = 1;
+        }
+        if (maxAbs > MARKER_SCREEN_CLAMP || !inFront) {
+          const scale = MARKER_SCREEN_CLAMP / maxAbs;
+          sx *= scale;
+          sy *= scale;
+        }
+        markers.push({
+          id: sm.id,
+          label: sm.label,
+          distanceMeters: player.position.distanceTo(sm.pos),
+          screenX: sx,
+          screenY: sy,
+          inFront,
+          color: sm.color,
+        });
+      }
+    }
     return markers;
   }
 
@@ -1064,6 +1429,9 @@ export class GameEngine {
         break;
       case 8:
         prompt = 'Compuerta sellada: roba una tarjeta del sector';
+        break;
+      case 9:
+        prompt = this.sandbox?.isNearChallengeStart(player.position) ?? null;
         break;
       default:
         prompt = null;
@@ -1114,10 +1482,17 @@ export class GameEngine {
     this._v2.set(1, 0, 0).applyQuaternion(this._camQuat); // right de cámara
     const damageFeedback = player.getDamageFeedback(this._v1, this._v2);
 
+    const sandboxHud = this.sandbox ? this.sandbox.getHudState() : null;
+    const isSandbox = Boolean(this.activeGalaxySpec.isSandbox);
+    const isFlatCity = Boolean(this.activeGalaxySpec.isFlatCity);
+    const flatDistrict = isFlatCity ? player.flatCityDistrict : null;
+
     this.onHudSnapshot({
       phase: this.phase,
-      levelId: this.planetLevelId(activePlanet.spec),
-      levelTitle: `${activePlanet.spec.name} · ${activePlanet.spec.subtitle}`,
+      levelId: isSandbox ? 'sandbox' : this.planetLevelId(activePlanet.spec),
+      levelTitle: flatDistrict
+        ? flatDistrict.subtitle
+        : `${activePlanet.spec.name} · ${activePlanet.spec.subtitle}`,
       activeCharacter: player.characterId,
       unlockedCharacters: ['kitsune', 'digger', 'axel'],
       hp: player.hp,
@@ -1126,14 +1501,16 @@ export class GameEngine {
       suspicionRatio: world.maxSuspicion,
       globalAlert: world.isGlobalAlert || world.anyGuardInCombat(),
       isGravityShifting: player.gravityShifting,
-      gravityTargetName: player.gravityTarget?.spec.name ?? null,
-      gravityTargetBlockedReason: player.gravityTargetBlockedReason,
+      gravityTargetName: isFlatCity
+        ? player.flatCityAimLabel
+        : (player.gravityTarget?.spec.name ?? null),
+      gravityTargetBlockedReason: isFlatCity ? null : player.gravityTargetBlockedReason,
       stasisHeldCount: world.held,
       isBurrowing: player.isBurrowing,
       isSwimming: player.isSwimming,
       anchorCooldownRatio: player.anchorCooldownRatio,
       parryWindowActive: player.parryWindowActive,
-      activePlanetName: activePlanet.spec.name,
+      activePlanetName: flatDistrict ? flatDistrict.name : activePlanet.spec.name,
       objectives: this.objectives.map((o) => ({ ...o })),
       elapsedRunSec: this.elapsed,
       pointerLocked: this.pointerLocked,
@@ -1165,6 +1542,20 @@ export class GameEngine {
       tutorialTitle: this.tutorialSpec?.title ?? null,
       tutorialLessons: this.tutorialSpec ? [...this.tutorialSpec.lessonSteps] : [],
       tutorialCompleted: this.tutorialCompleted,
+      isSandbox,
+      isFlatCity,
+      gravityUpMode: isFlatCity ? player.gravityUpMode : 'normal',
+      sandboxCoins: sandboxHud?.coins,
+      sandboxCoinsTotal: sandboxHud?.coinsTotal,
+      sandboxOrbs: sandboxHud?.orbs,
+      sandboxOrbsTotal: sandboxHud?.orbsTotal,
+      sandboxChallengesCompleted: sandboxHud?.challengesCompleted,
+      sandboxChallengesTotal: sandboxHud?.challengesTotal,
+      activeChallenge: sandboxHud?.activeChallenge
+        ? { ...sandboxHud.activeChallenge }
+        : null,
+      anchorTargetInRange: sandboxHud?.anchorTargetInRange ?? false,
+      sandboxPopup: sandboxHud?.popup ? { ...sandboxHud.popup } : null,
     });
   }
 

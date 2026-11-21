@@ -71,6 +71,36 @@ export default function GameHUD({
     : -1;
   const hasNextTutorial =
     tutorialIndex >= 0 && tutorialIndex < TUTORIAL_SPECS.length - 1;
+  // MODO SANDBOX (Hekseville Cósmica): contadores de coleccionables, reto
+  // activo, aviso de anclaje y popup cómic. Todo el bloque queda inerte si
+  // `isSandbox` no es true, así el HUD de tutoriales y campaña no cambia.
+  const isSandbox = snapshot.isSandbox === true;
+  const sandboxChallenge = snapshot.activeChallenge ?? null;
+  const sandboxPopup = snapshot.sandboxPopup ?? null;
+  const challengeCritical = (sandboxChallenge?.timeLeftSec ?? Infinity) < 8;
+  const challengeProgressRatio = sandboxChallenge
+    ? Math.min(1, Math.max(0, sandboxChallenge.progress / Math.max(1, sandboxChallenge.total)))
+    : 0;
+  // EXPLORACIÓN PURA (Hekseville plana): mientras la ciudad no tenga nada
+  // contabilizado (0 monedas, 0 orbes, 0 retos) el HUD se limpia —sin píldora
+  // de 0/0— y la barra superior pasa a una tarjeta compacta de ciudad. Los
+  // tutoriales y el sandbox con progreso conservan el HUD normal.
+  const isFlatCity = snapshot.isFlatCity === true;
+  const pureExploration =
+    isFlatCity &&
+    (snapshot.sandboxCoinsTotal ?? 0) === 0 &&
+    (snapshot.sandboxOrbsTotal ?? 0) === 0 &&
+    (snapshot.sandboxChallengesTotal ?? 0) === 0;
+  // Badge cómic del eje de gravedad activo (solo en exploración pura).
+  const gravityMode = snapshot.gravityUpMode ?? 'normal';
+  const gravityBadge =
+    gravityMode === 'wall'
+      ? { label: 'GRAVEDAD: PARED', color: '#22d3ee' }
+      : gravityMode === 'ceiling'
+        ? { label: 'GRAVEDAD: INVERTIDA', color: '#e879f9' }
+        : gravityMode === 'flight'
+          ? { label: 'GRAVEDAD: VUELO', color: '#a78bfa' }
+          : null;
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none font-sans text-slate-100">
@@ -155,28 +185,46 @@ export default function GameHUD({
       <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-4">
         <div className="rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-2 shadow-[4px_4px_0_#000]">
           <p className="text-[10px] font-bold tracking-[0.25em] text-violet-300">
-            PLANETA
+            {pureExploration ? 'DISTRITO' : 'PLANETA'}
           </p>
           <p className="text-sm font-black">{snapshot.activePlanetName}</p>
         </div>
 
         <div className="max-w-md flex-1 rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-2 shadow-[4px_4px_0_#000]">
-          <p className="mb-1 text-[10px] font-bold tracking-[0.25em] text-violet-300">
-            OBJETIVOS — {snapshot.levelTitle}
-          </p>
-          <ul className="space-y-0.5">
-            {snapshot.objectives.map((objective) => (
-              <li
-                key={objective.id}
-                className={`text-[11px] font-semibold leading-tight ${
-                  objective.completed ? 'text-emerald-400 line-through' : 'text-slate-200'
-                }`}
-              >
-                {objective.completed ? '[OK]' : `[${objective.currentCount}/${objective.targetCount}]`}{' '}
-                {objective.description}
-              </li>
-            ))}
-          </ul>
+          {pureExploration ? (
+            <div className="flex items-center gap-3">
+              <span className="h-8 w-1.5 shrink-0 rounded-full bg-gradient-to-b from-cyan-300 via-violet-400 to-fuchsia-400" />
+              <div className="min-w-0">
+                <p className="text-[11px] font-black tracking-[0.24em] text-cyan-300">
+                  HEKSEVILLE · MODO EXPLORACIÓN
+                </p>
+                <p className="mt-0.5 truncate text-[10px] font-semibold tracking-[0.14em] text-slate-300">
+                  {snapshot.levelTitle}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="mb-1 text-[10px] font-bold tracking-[0.25em] text-violet-300">
+                OBJETIVOS — {snapshot.levelTitle}
+              </p>
+              <ul className="space-y-0.5">
+                {snapshot.objectives.map((objective) => (
+                  <li
+                    key={objective.id}
+                    className={`text-[11px] font-semibold leading-tight ${
+                      objective.completed ? 'text-emerald-400 line-through' : 'text-slate-200'
+                    }`}
+                  >
+                    {objective.completed
+                      ? '[OK]'
+                      : `[${objective.currentCount}/${objective.targetCount}]`}{' '}
+                    {objective.description}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
 
         <div className="rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-2 text-right shadow-[4px_4px_0_#000]">
@@ -276,6 +324,78 @@ export default function GameHUD({
         </div>
       )}
 
+      {/* --- MODO SANDBOX: banner del RETO activo (carrera por aros o dianas
+          con Estasis). Cede su carril si hay transmisión de radio. --- */}
+      {isSandbox && sandboxChallenge && (
+        <div
+          className={`absolute left-1/2 w-[min(520px,88vw)] -translate-x-1/2 ${
+            snapshot.radioToast ? 'top-[184px]' : 'top-[116px]'
+          }`}
+        >
+          <div
+            className="rounded-lg border-2 border-black bg-[#160b2e]/95 px-4 py-2 shadow-[4px_4px_0_#000]"
+            style={{ transform: 'skewX(-6deg)' }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[11px] font-black tracking-[0.24em] text-cyan-300">
+                RETO · {sandboxChallenge.title.toUpperCase()}
+              </p>
+              <p
+                className={`font-mono text-xs font-black tabular-nums ${
+                  challengeCritical ? 'animate-pulse text-red-400' : 'text-slate-200'
+                }`}
+              >
+                {sandboxChallenge.timeLeftSec.toFixed(1)}s
+              </p>
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <span className="h-2 flex-1 overflow-hidden rounded-full border border-black bg-slate-700">
+                <span
+                  className="block h-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all"
+                  style={{ width: `${Math.round(challengeProgressRatio * 100)}%` }}
+                />
+              </span>
+              <span className="font-mono text-[10px] font-black tabular-nums text-emerald-400">
+                {sandboxChallenge.progress}/{sandboxChallenge.total}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODO SANDBOX: popup cómic inclinado (moneda, orbe, reto superado,
+          pista de NPC). Late en el sitio para llamar la atención sin tapar la
+          mira ni la guía de controles. --- */}
+      {isSandbox && sandboxPopup && (
+        <div
+          className={`absolute left-1/2 w-[min(460px,86vw)] -translate-x-1/2 ${
+            snapshot.radioToast ? 'top-[244px]' : 'top-[176px]'
+          }`}
+        >
+          <style>{`@keyframes outorbit-sandbox-popup {
+            0%, 100% { transform: scale(1) rotate(-1.2deg); }
+            50% { transform: scale(1.05) rotate(1.2deg); }
+          }`}</style>
+          <div className="-skew-x-6">
+            <div
+              className="rounded-lg border-4 bg-[#160b2e]/95 px-5 py-2 text-center shadow-[6px_6px_0_#000]"
+              style={{
+                borderColor: sandboxPopup.accent,
+                animation: 'outorbit-sandbox-popup 1.15s ease-in-out infinite',
+                boxShadow: `6px 6px 0 #000, 0 0 22px ${sandboxPopup.accent}88`,
+              }}
+            >
+              <p
+                className="skew-x-6 text-sm font-black tracking-[0.12em] drop-shadow-[2px_2px_0_#000]"
+                style={{ color: sandboxPopup.accent }}
+              >
+                {sandboxPopup.text}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- Botón rápido M: Audio --- */}
       {onToggleMute && (
         <button
@@ -285,6 +405,46 @@ export default function GameHUD({
         >
           M: AUDIO {snapshot.muted ? 'OFF' : 'ON'}
         </button>
+      )}
+
+      {/* --- MODO SANDBOX: píldora cómic de coleccionables (monedas, orbes y
+          retos) justo bajo el botón M: AUDIO, alineada con el reloj. En la
+          exploración pura de Hekseville (todo a 0) se oculta: el usuario
+          quiere explorar limpio antes de que aparezca el progreso. --- */}
+      {isSandbox && !pureExploration && (
+        <div
+          className={`absolute right-4 flex items-center gap-3 rounded-full border-2 border-black bg-[#160b2e]/90 px-4 py-1.5 shadow-[4px_4px_0_#000] ${
+            onToggleMute ? 'top-[122px]' : 'top-[84px]'
+          }`}
+        >
+          <span className="flex items-baseline gap-1.5">
+            <span className="text-[9px] font-black tracking-[0.18em] text-yellow-300/80">
+              MONEDAS
+            </span>
+            <span className="font-mono text-xs font-black tabular-nums text-yellow-300">
+              {snapshot.sandboxCoins ?? 0}/{snapshot.sandboxCoinsTotal ?? 0}
+            </span>
+          </span>
+          <span className="h-3 w-0.5 bg-violet-400/50" />
+          <span className="flex items-baseline gap-1.5">
+            <span className="text-[9px] font-black tracking-[0.18em] text-cyan-300/80">
+              ORBES
+            </span>
+            <span className="font-mono text-xs font-black tabular-nums text-cyan-300">
+              {snapshot.sandboxOrbs ?? 0}/{snapshot.sandboxOrbsTotal ?? 0}
+            </span>
+          </span>
+          <span className="h-3 w-0.5 bg-violet-400/50" />
+          <span className="flex items-baseline gap-1.5">
+            <span className="text-[9px] font-black tracking-[0.18em] text-emerald-400/80">
+              RETOS
+            </span>
+            <span className="font-mono text-xs font-black tabular-nums text-emerald-400">
+              {snapshot.sandboxChallengesCompleted ?? 0}/
+              {snapshot.sandboxChallengesTotal ?? 0}
+            </span>
+          </span>
+        </div>
       )}
 
       {/* --- Esquina inferior izquierda: HP, escuadrón e indicadores --- */}
@@ -387,6 +547,19 @@ export default function GameHUD({
 
         {/* --- Badges de estado --- */}
         <div className="flex flex-wrap gap-2">
+          {pureExploration && gravityBadge && (
+            <span
+              className="inline-block -skew-x-6 rounded-lg border-2 border-black px-3 py-1 shadow-[3px_3px_0_#000]"
+              style={{
+                backgroundColor: gravityBadge.color,
+                boxShadow: `3px 3px 0 #000, 0 0 16px ${gravityBadge.color}99`,
+              }}
+            >
+              <span className="inline-block skew-x-6 text-[10px] font-black tracking-[0.2em] text-[#0b0b14]">
+                {gravityBadge.label}
+              </span>
+            </span>
+          )}
           {snapshot.isDisguised && (
             <span className="rounded-lg border-2 border-black bg-violet-500/90 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-white shadow-[3px_3px_0_#000]">
               DISFRAZADO
@@ -458,30 +631,65 @@ export default function GameHUD({
 
       {/* --- Esquina inferior derecha: guía de controles --- */}
       <div className="absolute bottom-14 right-4 rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-3 text-[10px] font-semibold leading-relaxed text-slate-300 shadow-[4px_4px_0_#000]">
-        <p>
-          <span className="text-yellow-300">WASD</span> Mover ·{' '}
-          <span className="text-yellow-300">ESPACIO</span> Salto/Ancla
-        </p>
-        <p>
-          <span className="text-yellow-300">SHIFT</span> Sprint/Subsuelo ·{' '}
-          <span className="text-yellow-300">R/C</span> Capturar Estasis
-        </p>
-        <p>
-          <span className="text-yellow-300">CLIC IZQ</span> Disparar 1 ·{' '}
-          <span className="text-yellow-300">Q</span> Fijar objetivo (
-          <span className="text-yellow-300">←/→</span>)
-        </p>
-        <p>
-          <span className="text-yellow-300">F</span> Parry ·{' '}
-          <span className="text-yellow-300">E</span> Noquear ·{' '}
-          <span className="text-yellow-300">CLIC DER</span> Gravity Shift
-        </p>
-        <p>
-          <span className="text-yellow-300">1/2/3</span> Escuadrón ·{' '}
-          <span className="text-yellow-300">RUEDA</span> Zoom ·{' '}
-          <span className="text-yellow-300">M</span> Audio{' '}
-          {snapshot.muted ? '(silenciado)' : '(activado)'}
-        </p>
+        {isFlatCity ? (
+          <>
+            <p>
+              <span className="text-yellow-300">WASD</span> Mover ·{' '}
+              <span className="text-yellow-300">ESPACIO</span> Salto / Restablecer gravedad (
+              <span className="text-cyan-300">-Y</span>)
+            </p>
+            <p>
+              <span className="text-yellow-300">CLIC DER</span> Apuntar superficie y{' '}
+              <span className="italic text-violet-300">Gravity Shift</span>
+            </p>
+            <p>
+              <span className="text-yellow-300">E</span> Hablar con ciudadanos
+            </p>
+            <p>
+              <span className="text-yellow-300">SHIFT</span> Sprint ·{' '}
+              <span className="text-yellow-300">R/C</span> Capturar Estasis
+            </p>
+            <p>
+              <span className="text-yellow-300">1/2/3</span> Escuadrón ·{' '}
+              <span className="text-yellow-300">RUEDA</span> Zoom ·{' '}
+              <span className="text-yellow-300">M</span> Audio{' '}
+              {snapshot.muted ? '(silenciado)' : '(activado)'}
+            </p>
+          </>
+        ) : (
+          <>
+            <p>
+              <span className="text-yellow-300">WASD</span> Mover ·{' '}
+              <span className="text-yellow-300">ESPACIO</span> Salto/Ancla
+              {isSandbox && (
+                <>
+                  {' '}
+                  · <span className="text-yellow-300">E</span> Reto/Hablar
+                </>
+              )}
+            </p>
+            <p>
+              <span className="text-yellow-300">SHIFT</span> Sprint/Subsuelo ·{' '}
+              <span className="text-yellow-300">R/C</span> Capturar Estasis
+            </p>
+            <p>
+              <span className="text-yellow-300">CLIC IZQ</span> Disparar 1 ·{' '}
+              <span className="text-yellow-300">Q</span> Fijar objetivo (
+              <span className="text-yellow-300">←/→</span>)
+            </p>
+            <p>
+              <span className="text-yellow-300">F</span> Parry ·{' '}
+              <span className="text-yellow-300">E</span> Noquear ·{' '}
+              <span className="text-yellow-300">CLIC DER</span> Gravity Shift
+            </p>
+            <p>
+              <span className="text-yellow-300">1/2/3</span> Escuadrón ·{' '}
+              <span className="text-yellow-300">RUEDA</span> Zoom ·{' '}
+              <span className="text-yellow-300">M</span> Audio{' '}
+              {snapshot.muted ? '(silenciado)' : '(activado)'}
+            </p>
+          </>
+        )}
       </div>
 
       {/* --- Prompt contextual de interacción --- */}
@@ -521,6 +729,16 @@ export default function GameHUD({
           <span className="absolute top-1/2 right-0 h-0.5 w-2 -translate-y-1/2 bg-current" />
         </div>
       </div>
+
+      {/* --- MODO SANDBOX: aviso de anclaje bajo la mira. Aparece cuando una
+          Esfera de Ancla está en rango y el jugador puede engancharse. --- */}
+      {isSandbox && snapshot.anchorTargetInRange && snapshot.phase === 'playing' && (
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 translate-y-[34px]">
+          <p className="animate-pulse whitespace-nowrap rounded-full border-2 border-cyan-300 bg-black/80 px-3 py-1 text-[10px] font-black tracking-[0.22em] text-cyan-200 shadow-[0_0_18px_rgba(103,232,249,0.8)]">
+            <span className="text-yellow-300">[ESPACIO]</span> ANCLA
+          </p>
+        </div>
+      )}
 
       {/* --- HITO 3: Indicador direccional de golpe — chevron rojo-amarillo
           brillante orbitando la mira (w-36 h-36) y rotado `directionRad`
@@ -627,7 +845,7 @@ export default function GameHUD({
 
       {/* --- Aviso inicial de Pointer Lock --- */}
       {snapshot.phase === 'playing' && !snapshot.pointerLocked && (
-        <div className="absolute left-1/2 top-24 -translate-x-1/2 animate-pulse rounded-xl border-2 border-yellow-300 bg-[#160b2e]/90 px-5 py-2 text-xs font-black tracking-widest text-yellow-300 shadow-[4px_4px_0_#000]">
+        <div className="absolute left-1/2 top-32 -translate-x-1/2 animate-pulse rounded-xl border-2 border-yellow-300 bg-[#160b2e]/90 px-5 py-2 text-xs font-black tracking-widest text-yellow-300 shadow-[4px_4px_0_#000]">
           HAZ CLIC EN LA PANTALLA PARA CAPTURAR EL RATÓN
         </div>
       )}
