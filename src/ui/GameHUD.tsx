@@ -52,6 +52,70 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none font-sans text-slate-100">
+      {/* --- Overlay cómic: screentone halftone + líneas de velocidad --- */}
+      {(snapshot.speedLinesIntensity ?? 0) > 0.01 && (
+        <div
+          className="absolute inset-0 overflow-hidden"
+          style={{ opacity: snapshot.speedLinesIntensity ?? 0 }}
+        >
+          {/* Trama screentone/halftone estilo manga-P5: puntos radiales en
+              esquinas y bordes, desvanecidos hacia el centro para no tapar
+              la vista (máscara radial). */}
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage:
+                'radial-gradient(circle, rgba(255,255,255,0.5) 1.1px, transparent 1.6px)',
+              backgroundSize: '8px 8px',
+              maskImage:
+                'radial-gradient(ellipse 64% 56% at center, transparent 52%, black 100%)',
+              WebkitMaskImage:
+                'radial-gradient(ellipse 64% 56% at center, transparent 52%, black 100%)',
+            }}
+          />
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage:
+                'radial-gradient(circle, rgba(148,110,255,0.4) 2.2px, transparent 2.8px)',
+              backgroundSize: '17px 17px',
+              maskImage:
+                'radial-gradient(ellipse 70% 62% at center, transparent 58%, black 100%)',
+              WebkitMaskImage:
+                'radial-gradient(ellipse 70% 62% at center, transparent 58%, black 100%)',
+            }}
+          />
+          {/* Líneas radiales de velocidad animadas: el patrón de guiones
+              fluye hacia afuera (dashoffset) para el efecto de rushing. */}
+          <style>{`@keyframes outorbit-speedlines { to { stroke-dashoffset: -32; } }`}</style>
+          <svg
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            className="absolute inset-0 h-full w-full"
+          >
+            {SPEED_LINES.map((line) => {
+              const cos = Math.cos(line.angle);
+              const sin = Math.sin(line.angle);
+              return (
+                <line
+                  key={line.i}
+                  x1={50 + cos * line.inner}
+                  y1={50 + sin * line.inner}
+                  x2={50 + cos * line.outer}
+                  y2={50 + sin * line.outer}
+                  stroke={line.gold ? '#fbbf24' : '#ffffff'}
+                  strokeWidth={line.thick ? 0.7 : 0.35}
+                  strokeLinecap="round"
+                  strokeDasharray="5 11"
+                  opacity={line.gold ? 0.85 : 0.5}
+                  style={{ animation: 'outorbit-speedlines 0.9s linear infinite' }}
+                />
+              );
+            })}
+          </svg>
+        </div>
+      )}
+
       {/* --- Barra superior --- */}
       <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-4">
         <div className="rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-2 shadow-[4px_4px_0_#000]">

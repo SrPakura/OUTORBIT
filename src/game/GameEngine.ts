@@ -156,6 +156,17 @@ export class GameEngine {
   private readonly boundContextMenu = (e: Event) => e.preventDefault();
   private readonly boundPointerLockChange = () => this.onPointerLockChange();
   private readonly boundResize = () => this.onResize();
+  /**
+   * Listener único de pointerdown en window: desbloquea el audio si el
+   * contexto aún no existe (gesto del usuario fuera del canvas) y se retira
+   * solo en cuanto el SynthAudio tiene contexto.
+   */
+  private readonly boundPointerDownUnlock = () => {
+    this.audio.unlock();
+    if (!this.audio.needsUnlock) {
+      window.removeEventListener('pointerdown', this.boundPointerDownUnlock);
+    }
+  };
   private readonly boundPlayerDamage = (amount: number, px: number, py: number, pz: number) => {
     this.player?.takeDamage(amount, px, py, pz);
   };
@@ -327,6 +338,14 @@ export class GameEngine {
     this.audio.unlock();
     this.audio.toggleMute();
     this.emitHud();
+  }
+
+  /**
+   * Desbloquea el AudioContext procedural (seguro llamar en cualquier
+   * momento; el App lo invoca al montar tras pulsar JUGAR).
+   */
+  unlockAudio(): void {
+    this.audio.unlock();
   }
 
   private readonly tick = (nowMs: number): void => {
@@ -921,6 +940,7 @@ export class GameEngine {
     document.addEventListener('mousemove', this.boundMouseMove);
     document.addEventListener('mousedown', this.boundMouseDown);
     document.addEventListener('mouseup', this.boundMouseUp);
+    window.addEventListener('pointerdown', this.boundPointerDownUnlock);
     this.canvas.addEventListener('click', this.boundClick);
     this.canvas.addEventListener('contextmenu', this.boundContextMenu);
   }
@@ -934,6 +954,7 @@ export class GameEngine {
     document.removeEventListener('mousemove', this.boundMouseMove);
     document.removeEventListener('mousedown', this.boundMouseDown);
     document.removeEventListener('mouseup', this.boundMouseUp);
+    window.removeEventListener('pointerdown', this.boundPointerDownUnlock);
     this.canvas.removeEventListener('click', this.boundClick);
     this.canvas.removeEventListener('contextmenu', this.boundContextMenu);
   }
@@ -965,6 +986,7 @@ export class GameEngine {
   }
 
   private onMouseDown(e: MouseEvent): void {
+    this.audio.unlock(); // cualquier clic reanuda el AudioContext si estaba suspendido
     if (!this.pointerLocked || this.phase !== 'playing') return;
     // Clic central (Lock-On): evita el autoscroll del navegador.
     if (e.button === 1) e.preventDefault();

@@ -54,7 +54,6 @@ const LOCK_ON_RANGE = 34;
 const LOCK_ON_DROP_RANGE = 44; // margen antes de perder el objetivo fijado
 const LOCK_ON_AIM_EXP = 6.5; // interpolación exponencial estable (sin saltos por frame)
 const LOCK_ON_PITCH_EXP = 6.5;
-const AUTO_LOCK_RANGE = 28; // auto-Lock-On al atacar sin objetivo fijado
 
 // Colisión contra estructuras (muros, torres, tejados, puentes, plataformas)
 const PLAYER_STRUCTURE_RADIUS = 0.5;
@@ -261,6 +260,8 @@ export class PlayerController {
   private readonly models = new Map<CharacterId, THREE.Group>();
   private readonly parts = new Map<CharacterId, CharacterParts>();
   private readonly bodyRoot = new THREE.Group();
+  /** Pivote de la voltereta: rota alrededor del centro de gravedad (y=0.85). */
+  private readonly flipPivot = new THREE.Group();
   private readonly disguiseOverlay: THREE.Group;
   private readonly anchorFx: THREE.Group;
   private readonly flightFx: THREE.Group;
@@ -270,6 +271,8 @@ export class PlayerController {
   readonly lockRing: THREE.Group;
   private walkPhase = 0;
   private isMoving = false;
+  /** Acumulador de pisadas: suena 'step' cada ~0.35s corriendo en suelo. */
+  private stepAccum = 0;
 
   // Game feel: rotación independiente del personaje + animaciones P5.
   private charYaw = 0;
@@ -321,16 +324,21 @@ export class PlayerController {
     this.lastUp.copy(this._up);
     alignBasisToUp(this.basisQuat, this._up, 1);
 
-    // Jerarquía: root (transform físico) -> bodyRoot (hundimiento del subsuelo)
-    // -> modelos. Así el hundimiento de Digger no ensucia la física.
+    // Jerarquía: root (transform físico) -> bodyRoot (hundimiento del
+    // subsuelo) -> flipPivot (voltereta alrededor del centro de gravedad)
+    // -> modelos. Así el hundimiento de Digger no ensucia la física y la
+    // voltereta 360º gira limpia en el aire sin enterrarse.
     this.root.add(this.bodyRoot);
+    this.flipPivot.position.y = 0.85;
+    this.bodyRoot.add(this.flipPivot);
 
     // Modelos pre-construidos: el cambio 1/2/3 es instantáneo.
     const characterIds: CharacterId[] = ['kitsune', 'digger', 'axel'];
     for (const id of characterIds) {
       const model = buildCharacterModel(id);
       model.visible = id === this.activeCharacter;
-      this.bodyRoot.add(model);
+      model.position.y = -0.85; // compensa el pivote: los pies siguen en y=0
+      this.flipPivot.add(model);
       this.models.set(id, model);
       this.parts.set(id, {
         head: model.getObjectByName('head') ?? model,
@@ -348,7 +356,8 @@ export class PlayerController {
 
     // Uniforme robado (visible solo con isDisguised).
     this.disguiseOverlay = buildDisguiseOverlay();
-    this.bodyRoot.add(this.disguiseOverlay);
+    this.disguiseOverlay.position.y = -0.85;
+    this.flipPivot.add(this.disguiseOverlay);
 
     // FX del Ancla Gravitatoria: orbe brillante + haz hacia delante.
     this.anchorFx = new THREE.Group();
@@ -646,23 +655,7 @@ export class PlayerController {
       // fijado (Lock-On) o la mira; con 0 objetos, golpe melee rápido.
       if (!down) return;
       if (this.inFlight || this.isSwimming || this.coreDiveActive || this.isBurrowing) return;
-      // Lock-On obligatorio para atacar: sin objetivo fijado, fija
-      // automáticamente al enemigo/barril/generador más cercano del cono
-      // frontal (< 28 m) si hay uno válido.
-      if (!this.lockedTarget) {
-        this.getAimForward(this._v1);
-        const auto = this.world.findLockOnTarget(
-          this.pos,
-          this._v1,
-          AUTO_LOCK_RANGE,
-          null,
-          0
-        );
-        if (auto) {
-          this.lockedTarget = auto;
-          this.world.getLockOnPos(auto, this.lockedTargetPos);
-        }
-      }
+      // Lock-On 100% manual: solo Q/Tab/V/clic central fijan objetivo.
       if (this.world.held > 0) {
         this.throwOneStasis();
       } else {
@@ -722,6 +715,7 @@ export class PlayerController {
     this.invulnTimer = INVULN_TIME;
     this.hp = Math.max(0, this.hp - amount);
     this.behavior.damageTaken += amount;
+    this.onSound?.('hurt');
     this.isDisguised = false;
     this.disguiseTimer = 0;
     this.anchorBurst.x += pushX;
@@ -952,14 +946,15 @@ export class PlayerController {
       this.grounded && this.isMoving && !this.isBurrowing ? RUN_LEAN_ANGLE : 0;
     this.leanAngle += (leanTarget - this.leanAngle) * Math.min(1, dt * 10);
 
-    // Voltereta 360º (doble salto / Ancla): giro completo hacia adelante.
+    // Voltereta 360º (doble salto / Ancla): giro completo hacia adelante
+    // alrededor del pivote del centro de gravedad (y=0.85), no de los pies.
     let flipAngle = 0;
     if (this.flipTimer > 0) {
       this.flipTimer -= dt;
       const p = THREE.MathUtils.clamp(1 - this.flipTimer / FLIP_TIME, 0, 1);
       flipAngle = -p * Math.PI * 2;
     }
-    this.bodyRoot.rotation.x = this.leanAngle + flipAngle;
+    this.flipPivot.rotation.x = this.leanAngle + flipAngle;
 
     // Ondeo de la capa/bufanda: más flujo al moverse rápido.
     const flowTarget = this.isMoving ? 1 : this.isAirborne ? 0.7 : 0.25;
@@ -1120,7 +1115,10 @@ export class PlayerController {
       }
       this.altitude = groundAltitude;
       this.vertVel = 0;
-      if (!this.grounded) this.jumpsUsed = 0;
+      if (!this.grounded) {
+        this.jumpsUsed = 0;
+        this.onSound?.('land'); // aterrizaje suave tras el salto/vuelo
+      }
       this.grounded = true;
     } else {
       this.grounded = false;
@@ -1140,6 +1138,17 @@ export class PlayerController {
       this.walkPhase += dt * speed * 1.35;
     } else {
       this.walkPhase += dt * 1.5;
+    }
+
+    // Pisadas suaves al correr en superficie (cada ~0.35s, sin GC).
+    if (this.isMoving && !this.isBurrowing) {
+      this.stepAccum += dt;
+      if (this.stepAccum >= 0.35) {
+        this.stepAccum -= 0.35;
+        this.onSound?.('step');
+      }
+    } else {
+      this.stepAccum = 0;
     }
   }
 
@@ -1311,6 +1320,7 @@ export class PlayerController {
     this.pos
       .copy(target.centerVec)
       .addScaledVector(up, target.spec.radius);
+    this.onSound?.('land');
   }
 
   /**
@@ -1687,6 +1697,7 @@ export class PlayerController {
 
   private meleeStrike(): void {
     this.slashTimer = SLASH_TIME; // tajo de ataque melee
+    this.onSound?.('melee');
     this.getMoveForward(this._forward);
     const hit = this.world.meleeStrike(this.pos, this._forward);
     if (hit === 'guard') {

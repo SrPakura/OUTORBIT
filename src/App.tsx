@@ -27,6 +27,7 @@ export default function App() {
     if (!canvas) return;
     const engine = new GameEngine(canvas, setHud);
     engineRef.current = engine;
+    engine.unlockAudio(); // montaje tras JUGAR: crea el AudioContext cuanto antes
     engine.start();
     return () => {
       engine.dispose();

@@ -170,6 +170,11 @@ const KRONOS_POSTURE_RING_COLORS = [0xf97316, 0xfacc15, 0x22d3ee, 0xa78bfa];
 const GRAB_STATE_IDLE = 0;
 const GRAB_STATE_HELD = 1;
 const GRAB_STATE_FLYING = 2;
+const GRAB_STATE_CONSUMED = 3;
+
+/** Arena del jefe: barriles/rocas reaparecen tras este tiempo (s). */
+const GRAB_RESPAWN_KRONOS_SEC = 14;
+const KRONOS_ARENA_PLANET_ID = 'kronos-trono';
 
 const GUARD_STATE_PATROL = 0;
 const GUARD_STATE_CHASE = 1;
@@ -473,7 +478,7 @@ function makeSeededRandom(seed: number): () => number {
 // Lock-On (Hito 3A): guardias, barriles y generadores fijables
 // ============================================================================
 
-export type LockOnKind = 'guard' | 'barrel' | 'generator';
+export type LockOnKind = 'guard' | 'barrel' | 'generator' | 'wall';
 
 export interface LockOnHandle {
   kind: LockOnKind;
@@ -483,13 +488,26 @@ export interface LockOnHandle {
 const LOCK_KIND_GUARD = 0;
 const LOCK_KIND_BARREL = 1;
 const LOCK_KIND_GENERATOR = 2;
+const LOCK_KIND_WALL = 3;
 
 function lockCodeToKind(code: number): LockOnKind {
-  return code === LOCK_KIND_GUARD ? 'guard' : code === LOCK_KIND_BARREL ? 'barrel' : 'generator';
+  return code === LOCK_KIND_GUARD
+    ? 'guard'
+    : code === LOCK_KIND_BARREL
+      ? 'barrel'
+      : code === LOCK_KIND_WALL
+        ? 'wall'
+        : 'generator';
 }
 
 function lockKindToCode(kind: LockOnKind): number {
-  return kind === 'guard' ? LOCK_KIND_GUARD : kind === 'barrel' ? LOCK_KIND_BARREL : LOCK_KIND_GENERATOR;
+  return kind === 'guard'
+    ? LOCK_KIND_GUARD
+    : kind === 'barrel'
+      ? LOCK_KIND_BARREL
+      : kind === 'wall'
+        ? LOCK_KIND_WALL
+        : LOCK_KIND_GENERATOR;
 }
 
 // Candidatos preasignados (cero allocations al fijar/ciclar objetivos).
@@ -523,6 +541,11 @@ interface GrabObject {
   radius: number;
   state: number;
   spin: number;
+  /** Consumido (explotó/rompió): > 0 = segundos hasta reaparecer. */
+  respawnT: number;
+  /** Punto de spawn original (respawn en la arena de KRONOS). */
+  spawnPos: THREE.Vector3;
+  spawnPlanet: PlanetRuntime;
 }
 
 interface GeneratorObj {
@@ -1246,6 +1269,9 @@ export class WorldObjectsManager {
         radius: spec.radius ?? GRAB_RADIUS[kind],
         state: GRAB_STATE_IDLE,
         spin: 1.5 + (spec.id.length % 5) * 0.4,
+        respawnT: 0,
+        spawnPos: pos.clone(),
+        spawnPlanet: planet,
       });
     } else if (spec.kind === 'generator') {
       const { group, core } = buildGeneratorMesh();
@@ -2184,7 +2210,7 @@ export class WorldObjectsManager {
       this.dialogueData.speaker = npc.spec.name;
       this.dialogueData.role = npc.spec.role;
       this.dialogueData.text = lines > 0 ? npc.spec.dialogue[npc.dialogueIdx] : '';
-      this.onSound?.('stasisGrab');
+      this.onSound?.('npcTalk');
       return this.dialogueData;
     }
     return null;
@@ -2309,7 +2335,7 @@ export class WorldObjectsManager {
     wall.mesh.visible = false;
     this.spawnExplosion(wall.pos, 4.5, 0xfb923c);
     this.spawnExplosion(wall.pos, 3, 0xfbbf24);
-    this.onSound?.('explosion');
+    this.onSound?.('wallBreak');
     this.emitNoise(wall.pos, wall.planet);
     return true;
   }
@@ -2493,6 +2519,13 @@ export class WorldObjectsManager {
         !this.generators[handle.index].destroyed
       );
     }
+    if (handle.kind === 'wall') {
+      return (
+        handle.index >= 0 &&
+        handle.index < this.breakableWalls.length &&
+        !this.breakableWalls[handle.index].broken
+      );
+    }
     return (
       handle.index >= 0 &&
       handle.index < this.grabs.length &&
@@ -2506,6 +2539,7 @@ export class WorldObjectsManager {
     if (!this.isLockOnValid(handle)) return false;
     if (handle.kind === 'guard') out.copy(this.enemies[handle.index].pos);
     else if (handle.kind === 'generator') out.copy(this.generators[handle.index].pos);
+    else if (handle.kind === 'wall') out.copy(this.breakableWalls[handle.index].pos);
     else out.copy(this.grabs[handle.index].pos);
     return true;
   }
@@ -2513,6 +2547,7 @@ export class WorldObjectsManager {
   getLockOnName(handle: LockOnHandle): string {
     if (handle.kind === 'generator') return 'Generador';
     if (handle.kind === 'barrel') return 'Barril explosivo';
+    if (handle.kind === 'wall') return 'Muro agrietado';
     const enemy = this.enemies[handle.index];
     if (!enemy) return 'Objetivo';
     switch (enemy.kind) {
@@ -2555,6 +2590,12 @@ export class WorldObjectsManager {
     for (let i = 0; i < this.generators.length && n < LOCK_CANDIDATE_MAX; i++) {
       if (this.generators[i].destroyed) continue;
       if (this.pushLockCandidate(pos, forward, rangeSq, this.generators[i].pos, LOCK_KIND_GENERATOR, i, n)) n++;
+    }
+    // FASE B: paredes rompibles intactas — fijables con Q para reventarlas
+    // con barriles/rocas de Estasis.
+    for (let i = 0; i < this.breakableWalls.length && n < LOCK_CANDIDATE_MAX; i++) {
+      if (this.breakableWalls[i].broken) continue;
+      if (this.pushLockCandidate(pos, forward, rangeSq, this.breakableWalls[i].pos, LOCK_KIND_WALL, i, n)) n++;
     }
     if (n === 0) return null;
 
@@ -2795,6 +2836,7 @@ export class WorldObjectsManager {
     this.kronosCharacter = state.characterId;
     this.updateHeld(dt, state);
     this.updateFlying(dt, state, onPlayerDamage);
+    this.updateGrabRespawns(dt);
     this.updateGates(dt, state, onPlayerDamage);
     this.updateLockedGates(dt);
     this.updateEnemies(dt, state, onPlayerDamage);
@@ -2915,12 +2957,19 @@ export class WorldObjectsManager {
       grab.mesh.rotation.z += dt * grab.spin * 0.6;
 
       // Impacto contra enemigos (Estasis: los brutes caen, los cascos resisten 1).
+      // Barril: explota; caja/bola de nieve: se rompen; roca: rebota al suelo.
       let settled = false;
       for (const enemy of this.enemies) {
         if (enemy.state === GUARD_STATE_KO) continue;
         if (grab.pos.distanceToSquared(enemy.pos) < 3.6) {
-          this.koEnemy(enemy, 'stasis');
-          this.settleGrab(grab, planet);
+          if (grab.kind === 'barrel_explosive') {
+            this.explode(grab.pos, state, onPlayerDamage);
+            this.consumeGrab(grab);
+          } else {
+            this.koEnemy(enemy, 'stasis');
+            if (grab.kind === 'crate' || grab.kind === 'snowball') this.consumeGrab(grab);
+            else this.settleGrab(grab, planet);
+          }
           settled = true;
           break;
         }
@@ -2930,8 +2979,14 @@ export class WorldObjectsManager {
       // Impacto contra KRONOS (objeto de Estasis lanzado).
       const kronos = this.kronos;
       if (!settled && kronos && !kronos.defeated && grab.pos.distanceToSquared(kronos.pos) < 7.2) {
-        this.damageKronos(1, grab.pos, 'stasis');
-        this.settleGrab(grab, planet);
+        if (grab.kind === 'barrel_explosive') {
+          this.explode(grab.pos, state, onPlayerDamage);
+          this.consumeGrab(grab);
+        } else {
+          this.damageKronos(1, grab.pos, 'stasis');
+          if (grab.kind === 'crate' || grab.kind === 'snowball') this.consumeGrab(grab);
+          else this.settleGrab(grab, planet);
+        }
         settled = true;
       }
       if (settled) continue;
@@ -2940,8 +2995,13 @@ export class WorldObjectsManager {
       for (const gen of this.generators) {
         if (gen.destroyed) continue;
         if (grab.pos.distanceToSquared(gen.pos) < 5.6) {
-          this.damageGenerator(gen, 2);
-          this.settleGrab(grab, planet);
+          if (grab.kind === 'barrel_explosive') {
+            this.explode(grab.pos, state, onPlayerDamage);
+            this.consumeGrab(grab);
+          } else {
+            this.damageGenerator(gen, 2);
+            this.settleGrab(grab, planet);
+          }
           settled = true;
           break;
         }
@@ -2963,13 +3023,19 @@ export class WorldObjectsManager {
       if (settled) continue;
 
       // FASE B: impacto contra paredes rompibles — 2 golpes de roca o
-      // 1 barril explosivo directo.
+      // 1 barril explosivo directo (el barril explota y la caja/bola se rompen).
       for (const wall of this.breakableWalls) {
         if (wall.broken) continue;
         const hitR = wall.collider.halfX + BREAKABLE_WALL_HIT_MARGIN;
         if (grab.pos.distanceToSquared(wall.pos) > hitR * hitR) continue;
-        this.damageBreakableWall(wall, grab.kind === 'barrel_explosive' ? 2 : 1);
-        this.settleGrab(grab, planet);
+        if (grab.kind === 'barrel_explosive') {
+          this.explode(grab.pos, state, onPlayerDamage);
+          this.consumeGrab(grab);
+        } else {
+          this.damageBreakableWall(wall, 1);
+          if (grab.kind === 'crate' || grab.kind === 'snowball') this.consumeGrab(grab);
+          else this.settleGrab(grab, planet);
+        }
         settled = true;
         break;
       }
@@ -2982,10 +3048,46 @@ export class WorldObjectsManager {
       if (surfaceDist <= planet.spec.radius + grab.radius) {
         if (grab.kind === 'barrel_explosive') {
           this.explode(grab.pos, state, onPlayerDamage);
+          this.emitNoise(grab.pos, planet);
+          this.consumeGrab(grab);
+        } else {
+          this.emitNoise(grab.pos, planet);
+          this.settleGrab(grab, planet);
         }
-        this.emitNoise(grab.pos, planet);
-        this.settleGrab(grab, planet);
       }
+    }
+  }
+
+  /**
+   * Consume un barril/caja/bola al explotar o romperse: desaparece del mundo
+   * (en la arena de KRONOS reaparece a los 14s para no quedarte sin munición).
+   */
+  private consumeGrab(grab: GrabObject): void {
+    if (grab.state === GRAB_STATE_HELD) this.heldCount--; // seguridad Estasis
+    grab.state = GRAB_STATE_CONSUMED;
+    grab.mesh.visible = false;
+    grab.vel.set(0, 0, 0);
+    grab.respawnT =
+      grab.spawnPlanet.spec.id === KRONOS_ARENA_PLANET_ID ? GRAB_RESPAWN_KRONOS_SEC : 0;
+  }
+
+  /** Respawn de los objetos consumidos (solo arena de KRONOS: 14s). */
+  private updateGrabRespawns(dt: number): void {
+    for (const grab of this.grabs) {
+      if (grab.state !== GRAB_STATE_CONSUMED || grab.respawnT <= 0) continue;
+      grab.respawnT -= dt;
+      if (grab.respawnT > 0) continue;
+      grab.respawnT = 0;
+      grab.state = GRAB_STATE_IDLE;
+      grab.vel.set(0, 0, 0);
+      grab.pos.copy(grab.spawnPos);
+      grab.mesh.position.copy(grab.pos);
+      _v1.copy(grab.spawnPos).sub(grab.spawnPlanet.centerVec);
+      if (_v1.lengthSq() < 1e-6) _v1.set(0, 1, 0);
+      _v1.normalize();
+      _q1.setFromUnitVectors(_upAxis, _v1);
+      grab.mesh.quaternion.copy(_q1);
+      grab.mesh.visible = true;
     }
   }
 

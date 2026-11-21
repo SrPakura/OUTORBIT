@@ -20,9 +20,15 @@ export type GameSoundKind =
   | 'victory'
   | 'keycard'
   | 'switchClick'
-  | 'gateOpen';
+  | 'gateOpen'
+  | 'step'
+  | 'land'
+  | 'melee'
+  | 'hurt'
+  | 'wallBreak'
+  | 'npcTalk';
 
-const MASTER_VOLUME = 0.18;
+const MASTER_VOLUME = 0.36;
 
 /**
  * Sintetizador procedural: osciladores con envolventes cortas + ruido filtrado
@@ -37,6 +43,11 @@ export class SynthAudio {
 
   get muted(): boolean {
     return this._muted;
+  }
+
+  /** True mientras no exista AudioContext (el GameEngine mantiene un listener de pointerdown). */
+  get needsUnlock(): boolean {
+    return this.ctx === null;
   }
 
   /** Crea/reanuda el AudioContext (llamar en el primer gesto del usuario). */
@@ -67,6 +78,8 @@ export class SynthAudio {
   /** Reproduce un sonido por su tipo (no-op si está silenciado o sin contexto). */
   play(kind: GameSoundKind): void {
     if (this._muted || !this.ctx || !this.master) return;
+    // Autoplay policy: si el navegador suspendió el contexto, reanuda.
+    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
     switch (kind) {
       case 'jump':
         this.playJump();
@@ -106,6 +119,24 @@ export class SynthAudio {
         break;
       case 'gateOpen':
         this.playGateOpen();
+        break;
+      case 'step':
+        this.playStep();
+        break;
+      case 'land':
+        this.playLand();
+        break;
+      case 'melee':
+        this.playMelee();
+        break;
+      case 'hurt':
+        this.playHurt();
+        break;
+      case 'wallBreak':
+        this.playWallBreak();
+        break;
+      case 'npcTalk':
+        this.playNpcTalk();
         break;
     }
   }
@@ -248,5 +279,42 @@ export class SynthAudio {
   playGateOpen(): void {
     this.tone('sawtooth', 140, 420, 0.3, 0.45);
     this.tone('sine', 560, 840, 0.18, 0.35, 0.08);
+  }
+
+  /** Pisada suave muy sutil al correr (cada ~0.35s). */
+  playStep(): void {
+    this.tone('sine', 150, 95, 0.045, 0.16);
+    this.noise(0.03, 0.06, 420);
+  }
+
+  /** Aterrizaje suave: golpe grave amortiguado. */
+  playLand(): void {
+    this.tone('sine', 190, 60, 0.14, 0.5);
+    this.noise(0.07, 0.16, 380);
+  }
+
+  /** Melee: whoosh de barrido + golpe seco. */
+  playMelee(): void {
+    this.noise(0.12, 0.4, 1600);
+    this.tone('triangle', 340, 120, 0.1, 0.5, 0.02);
+  }
+
+  /** Golpe recibido: zarpazo áspero descendente. */
+  playHurt(): void {
+    this.tone('square', 240, 110, 0.16, 0.55);
+    this.noise(0.09, 0.28, 700);
+  }
+
+  /** Pared rompible: crujido de roca + explosión media. */
+  playWallBreak(): void {
+    this.noise(0.28, 0.7, 750);
+    this.tone('sine', 110, 42, 0.26, 0.7);
+    this.tone('sawtooth', 90, 55, 0.12, 0.3, 0.03);
+  }
+
+  /** Diálogo de NPC: blip amigable doble. */
+  playNpcTalk(): void {
+    this.tone('sine', 640, 900, 0.07, 0.55);
+    this.tone('sine', 900, 1180, 0.08, 0.4, 0.07);
   }
 }
