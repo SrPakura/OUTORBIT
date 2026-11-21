@@ -736,6 +736,11 @@ export function createHeksevilleSignAtlas(): THREE.CanvasTexture {
     // shader siga compilando y muestreando un color plano.
     const fallback = new THREE.CanvasTexture(canvas);
     fallback.colorSpace = THREE.SRGBColorSpace;
+    fallback.generateMipmaps = true;
+    fallback.minFilter = THREE.LinearMipmapLinearFilter;
+    fallback.magFilter = THREE.LinearFilter;
+    fallback.anisotropy = 8;
+    fallback.needsUpdate = true;
     return fallback;
   }
 
@@ -760,10 +765,13 @@ export function createHeksevilleSignAtlas(): THREE.CanvasTexture {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
+  // Mipmaps de hardware + anisotropía 8: los rótulos vistos en ángulo rasante
+  // (los carteles en A de Pleajeune) se filtran en el hardware en vez de
+  // convertirse en estática rosa de televisor.
+  texture.generateMipmaps = true;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
-  texture.generateMipmaps = true;
-  texture.anisotropy = 4;
+  texture.anisotropy = 8;
   texture.needsUpdate = true;
   return texture;
 }

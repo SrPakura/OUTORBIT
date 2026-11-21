@@ -11,12 +11,27 @@ import { createHeksevilleArchTextures } from './heksevilleArchAtlas';
 // Gravity Rush: cada malla se separa por nombre de bucket semántico
 // (`col_stone`, `col_cliff`, `col_under`, ...) y aquí se le asigna un
 // `ShaderMaterial` cel de OUTORBIT vestido con el atlas de arquitectura
-// (`heksevilleArchAtlas.ts`: tiles 512×512 sin costuras, mipmaps de hardware
-// y anisotropía, cero rejillas `step(fract())` que parpadean a distancia).
-// El resultado es una ciudad legible, vibrante y coherente con el arte cómic
-// de referencia, con como máximo 5 distritos × 9 buckets = 45 materiales
-// compartidos por TODOS los chunks (GPU-friendly, pocos cambios de estado,
-// cero fugas de memoria).
+// (`heksevilleArchAtlas.ts`: 16 tiles 512×512 sin costuras, mipmaps de
+// hardware y anisotropía, cero rejillas `step(fract())` que parpadean).
+//
+// CLAVE DE RENDIMIENTO Y CORRECCIÓN: cada bucket compila SU PROPIO fragment
+// shader y enlaza SOLO las texturas que usa. WebGL garantiza 16 `sampler2D`
+// por shader; aquí el máximo es 6 (muros), así que ningún draw call se acerca
+// al límite y cada superficie recibe el material que le corresponde:
+//
+//   col_stone   → 4 suelos distintos + bóveda de techo        (5 unidades)
+//   col_wall_*  → 2 escaparates + 3 casas + cívico + torres   (6 unidades)
+//   col_roof    → teja de barro + pizarra                     (2 unidades)
+//   col_cliff   → sillería de contención + bóveda             (2 unidades)
+//   col_under   → sillería de contención + bóveda             (2 unidades)
+//   col_metal   → viga remachada                              (1 unidad)
+//   vis_glow    → atlas de rótulos                            (1 unidad)
+//   vis_foliage → corteza + copa                              (2 unidades)
+//
+// Antes TODOS los buckets compartían un único shader con las seis texturas
+// viejas, así que las vigas de acero, los techos vistos desde abajo y las
+// calles mostraban el MISMO adoquín ovalado de 1.5 m (las "rocas rosas" de
+// `media_1795274815493_1a5abb9c.jpg` y `media_1795274909920_b6cc7568.jpg`).
 //
 // Texturas de arquitectura en espacio de mundo (triplanar de 2 ejes: muro y
 // suelo), cero estiramiento de UV, y variación por edificio leída de `COLOR_0`:
@@ -61,13 +76,13 @@ export interface HeksevilleMaterialLibrary {
 }
 
 /**
- * Tinte de niebla atmosférica de Pleajeune: cerúleo-periwinkle a juego con el
- * cielo de cómic, para que las torres lejanas se fundan con la silueta del
- * horizonte sin recorte duro.
+ * Niebla atmosférica de Pleajeune: periwinkle-aqua soñador a juego con el
+ * cielo de fantasía cósmica, para que las torres lejanas se fundan con la
+ * silueta del horizonte sin recorte duro y la ciudad alta respire aire limpio.
  */
-export const HEKSEVILLE_FOG_COLOR = 0x5575b8;
-/** Densidad de la niebla exponencial de Pleajeune. */
-export const HEKSEVILLE_FOG_DENSITY = 0.00028;
+export const HEKSEVILLE_FOG_COLOR = 0x7db7eb;
+/** Densidad de la niebla exponencial de Pleajeune (aire ligero y alegre). */
+export const HEKSEVILLE_FOG_DENSITY = 0.00022;
 
 // ----------------------------------------------------------------------------
 // Orden canónico de buckets y reglas de superficie
@@ -150,25 +165,6 @@ const BUCKET_EMISSIVE: Record<HeksevilleBucketName, number> = {
   col_metal: 0.04,
   vis_glow: 0.34,
   vis_foliage: 0.03,
-};
-
-/**
- * Índice canónico del bucket en `BUCKET_ORDER`, expuesto al shader como
- * `uBucketKind`: 0 adoquín · 1 risco · 2 bajos · 3 tejado · 4/5 muros ·
- * 6 metal · 7 rótulos · 8 follaje. Cada bucket elige su textura de
- * arquitectura y su tinte; la categoría fina (`COLOR_0.r`) solo refina los
- * muros (tienda / casa / cívico).
- */
-const BUCKET_KIND: Record<HeksevilleBucketName, number> = {
-  col_stone: 0,
-  col_cliff: 1,
-  col_under: 2,
-  col_roof: 3,
-  col_wall_a: 4,
-  col_wall_b: 5,
-  col_metal: 6,
-  vis_glow: 7,
-  vis_foliage: 8,
 };
 
 /**
@@ -369,7 +365,7 @@ function normalizeBucket(bucketName: string): HeksevilleBucketName {
 }
 
 // ----------------------------------------------------------------------------
-// Shader cel procedural de ciudad
+// Vertex shader común
 // ----------------------------------------------------------------------------
 
 /**
@@ -414,16 +410,15 @@ const cityVertexShader = /* glsl */ `
   }
 `;
 
+// ----------------------------------------------------------------------------
+// Fragment shader: preludio común (ruido, halftone, paletas) + cuerpo por bucket
+// ----------------------------------------------------------------------------
+
 /**
- * Fragment shader: la ciudad se viste con las texturas de arquitectura del
- * atlas (`heksevilleArchAtlas.ts`, mipmaps de hardware + anisotropía, cero
- * rejillas `step(fract())` que parpadean), proyectadas en espacio de mundo con
- * coordenadas de muro limpias y verticales que NUNCA espejan ventanas ni
- * rótulos en horizontal. Paleta por edificio desde `vMeta`, gradiente vertical
- * de ánimo (arriba vivo, abajo sombrío), 3 bandas cel, halftone cómic
- * desvanecido con la distancia a cámara, rim Fresnel y niebla exponencial.
+ * Uniforms, varyings y utilidades compartidas por los siete fragment shaders.
+ * Cada bucket añade después SOLO sus `sampler2D` y su cuerpo de superficie.
  */
-const cityFragmentShader = /* glsl */ `
+const cityFragmentPrelude = /* glsl */ `
   uniform float uTime;
   uniform vec3 uSunDir;
   uniform vec3 uBaseColor;
@@ -434,16 +429,8 @@ const cityFragmentShader = /* glsl */ `
   uniform float uRimStrength;
   uniform float uEmissiveBoost;
   uniform float uHalftoneEnabled;
-  uniform float uBucketKind;
   uniform vec3 uFogColor;
   uniform float uFogDensity;
-  uniform sampler2D uSignAtlas;
-  uniform sampler2D uTexCobble;
-  uniform sampler2D uTexHouse;
-  uniform sampler2D uTexShop;
-  uniform sampler2D uTexRoof;
-  uniform sampler2D uTexCivic;
-  uniform sampler2D uTexUnder;
 
   varying vec3 vWorldPos;
   varying vec3 vWorldNormal;
@@ -500,31 +487,276 @@ const cityFragmentShader = /* glsl */ `
     r = mix( r, c5, step( 5.0, x ) );
     return r;
   }
+`;
 
-  // Carteles y pantallas: tile del atlas muestreado con las coordenadas de
-  // muro ORIENTADAS (wallUV, nunca espejadas), scanlines y parpadeo. Así el
-  // texto nunca aparece en espejo ("NEPO") en muros en ángulo.
-  vec3 signColor( vec2 wallUV, float seedA, float seedB, float upper ) {
+/** Cuerpo de superficie de `col_stone`: cuatro suelos + bóveda de techo. */
+const stoneSurface = /* glsl */ `
+    // TECHO VISTO DESDE ABAJO: bóveda artesonada, NUNCA adoquín boca abajo.
+    // Toda cara trasera (!gl_FrontFacing) y toda cara que mira al vacío
+    // (N.y < -0.35) lee la bóveda: los techos de
+    // media_1795274815493_1a5abb9c.jpg jamás enseñan adoquines de suelo.
+    if ( !gl_FrontFacing || N.y < -0.35 ) {
+      vec2 vaultUV = wallAxis * ( 1.0 / 5.0 ) + vec2( seedA * 0.37, seedB * 0.21 );
+      surf = texture2D( uTexUnderVault, vaultUV ).rgb * mix( 0.60, 0.98, upperFactor );
+    } else if ( N.y > 0.35 ) {
+      // SUELO: cuatro pavimentos repartidos por manzanas de 48 m. El hash del
+      // bloque elige el pavimento de cada manzana y seedA desplaza la
+      // elección, así plazas, bulevares y patios se ven realmente distintos
+      // a lo largo de la ciudad sin transiciones borrosas.
+      vec2 blockId = floor( vWorldPos.xz / 48.0 );
+      float zone = fract( hash21( blockId ) + seedA * 0.61 );
+      if ( zone < 0.25 ) {
+        surf = texture2D( uTexCobbleFine, vWorldPos.xz / 3.8 ).rgb;
+      } else if ( zone < 0.50 ) {
+        surf = texture2D( uTexPlazaMarble, vWorldPos.xz / 5.0 ).rgb;
+      } else if ( zone < 0.75 ) {
+        surf = texture2D( uTexAvenueSlate, vWorldPos.xz / 4.6 ).rgb;
+      } else {
+        surf = texture2D( uTexParkBrick, vWorldPos.xz / 4.2 ).rgb;
+      }
+      surf *= mix( 0.74, 1.02, upperFactor );
+    } else {
+      // Canto vertical del terreno: adoquín de canto a escala de suelo.
+      vec2 cUV = wallAxis * ( 1.0 / 3.8 ) + vec2( seedA * 0.43, 0.0 );
+      surf = texture2D( uTexCobbleFine, cUV ).rgb * mix( 0.66, 0.98, upperFactor );
+    }
+`;
+
+/** Cuerpo de superficie de `col_wall_a` / `col_wall_b`: seis familias. */
+const wallSurface = /* glsl */ `
+    // Reparto de las seis familias de fachada por categoryCode tal como lo
+    // emite build_hekseville_chunks.mjs (paso 1/12: 0.14 tienda, 0.24
+    // boutique, 0.36 estuco, 0.48 entramado, 0.60 ladrillo, 0.72 cívico,
+    // 0.84 torre art-decó).
+    vec3 wallTex;
+    if ( cat < 0.19 ) {
+      wallTex = texture2D( uTexShopBakery, wallUV ).rgb;
+    } else if ( cat < 0.30 ) {
+      wallTex = texture2D( uTexShopBoutique, wallUV ).rgb;
+    } else if ( cat < 0.42 ) {
+      wallTex = texture2D( uTexHouseStucco, wallUV ).rgb;
+    } else if ( cat < 0.54 ) {
+      wallTex = texture2D( uTexHouseTimber, wallUV ).rgb;
+    } else if ( cat < 0.66 ) {
+      wallTex = texture2D( uTexHouseBrick, wallUV ).rgb;
+    } else if ( cat < 0.78 ) {
+      // Cívico: sillería cincelada fundida con tonos cálidos de arenisca
+      // esculpida (crema/sandstone), nunca una rejilla fría azul/morada.
+      vec3 masonry = texture2D( uTexCliffMasonry, wallUV ).rgb;
+      float band = fbm2( wallUV * 0.9 + seedA * 3.0 );
+      vec3 civicWarm = mix(
+        vec3( 0.98, 0.92, 0.78 ),
+        vec3( 0.93, 0.84, 0.68 ),
+        smoothstep( 0.35, 0.75, band )
+      );
+      wallTex = mix( masonry, civicWarm, 0.45 );
+    } else {
+      // Torres 0.84: art-decó cálido de champán, marfil y pizarra salvia
+      // con costillas verticales suaves (NUNCA rejillas moradas/azules).
+      vec3 stucco = texture2D( uTexHouseStucco, wallUV ).rgb;
+      vec3 masonry = texture2D( uTexCliffMasonry, wallUV ).rgb;
+      float rib = smoothstep( 0.35, 0.65, abs( fract( wallUV.x * 1.4 ) - 0.5 ) * 2.0 );
+      vec3 decoTone = mix( vec3( 1.00, 0.94, 0.80 ), vec3( 0.86, 0.89, 0.80 ), rib );
+      wallTex = mix( stucco, masonry, 0.30 ) * decoTone * 1.05;
+    }
+    // Paleta por casa: cada fachada recibe su propio tinte cálido, nunca una
+    // rejilla azul/morada de cuadrados duros.
+    vec3 wallTint = pick6(
+      seedA,
+      vec3( 1.00, 0.96, 0.90 ),
+      vec3( 0.98, 0.88, 0.74 ),
+      vec3( 0.96, 0.82, 0.78 ),
+      vec3( 0.86, 0.92, 0.82 ),
+      vec3( 0.94, 0.90, 0.80 ),
+      vec3( 1.00, 0.94, 0.86 )
+    );
+    surf = wallTex * wallTint * mix( 0.76, 1.02, upperFactor );
+`;
+
+/** Cuerpo de superficie de `col_roof`: teja de barro vs pizarra verdigris. */
+const roofSurface = /* glsl */ `
+    vec2 roofGround = vWorldPos.xz * ( 1.0 / 5.0 );
+    vec2 roofWall = wallAxis * ( 1.0 / 5.0 ) + vec2( seedA * 0.43, 0.0 );
+    // Teja de barro terracota vs pizarra verdigris, elegida por edificio vía
+    // seedB.
+    float slatePick = fract( seedB * 3.7 );
+    vec3 roofTex;
+    if ( slatePick > 0.55 ) {
+      roofTex = mix(
+        texture2D( uTexRoofSlate, roofWall ).rgb,
+        texture2D( uTexRoofSlate, roofGround ).rgb,
+        upness
+      );
+    } else {
+      roofTex = mix(
+        texture2D( uTexRoofTiles, roofWall ).rgb,
+        texture2D( uTexRoofTiles, roofGround ).rgb,
+        upness
+      );
+    }
+    vec3 roofTint = pick6(
+      fract( seedA * 0.61 + seedB * 0.37 ),
+      vec3( 0.98, 0.86, 0.78 ),
+      vec3( 0.96, 0.90, 0.80 ),
+      vec3( 0.84, 0.90, 0.86 ),
+      vec3( 0.90, 0.82, 0.80 ),
+      vec3( 1.00, 0.92, 0.82 ),
+      vec3( 0.88, 0.92, 0.90 )
+    );
+    surf = roofTex * roofTint * mix( 0.80, 1.06, upperFactor );
+`;
+
+/** Cuerpo de superficie de `col_cliff` / `col_under`: sillería y bóveda. */
+const cliffSurface = /* glsl */ `
+    // Bajos: sillería de contención en los muros verticales y bóveda
+    // artesonada en las caras que miran al vacío o vistas por detrás.
+    bool underHull = ( N.y < -0.30 ) || !gl_FrontFacing;
+    if ( underHull ) {
+      vec2 vaultUV = wallAxis * ( 1.0 / 5.0 ) + vec2( seedA * 0.37, seedB * 0.21 );
+      surf = texture2D( uTexUnderVault, vaultUV ).rgb * mix( 0.52, 0.90, upperFactor );
+    } else {
+      vec2 cliffUV = wallAxis * ( 1.0 / 5.5 ) + vec2( seedA * 0.29, seedB * 0.17 );
+      surf = texture2D( uTexCliffMasonry, cliffUV ).rgb * mix( 0.60, 1.00, upperFactor );
+    }
+`;
+
+/** Cuerpo de superficie de `col_metal`: viga remachada, NUNCA adoquín. */
+const metalSurface = /* glsl */ `
+    // Vigas y celosías: hierro remachado con pernos de bronce. La UV mezcla el
+    // eje de muro (caras laterales) con el plano XZ (alas vistas desde
+    // arriba), así el perfil I nunca se estira en una viga horizontal.
+    vec2 metalUV = mix( wallAxis, vWorldPos.xz, upness ) * ( 1.0 / 3.2 )
+      + vec2( seedA * 0.31, seedB * 0.19 );
+    vec3 girder = texture2D( uTexMetalGirder, metalUV ).rgb;
+    vec3 metalTint = pick6(
+      seedB,
+      vec3( 0.92, 0.94, 1.00 ),
+      vec3( 1.00, 0.88, 0.72 ),
+      vec3( 0.86, 0.94, 0.98 ),
+      vec3( 1.00, 0.82, 0.66 ),
+      vec3( 0.90, 0.92, 0.96 ),
+      vec3( 0.98, 0.90, 0.80 )
+    );
+    surf = girder * metalTint * mix( 0.72, 1.04, upperFactor );
+`;
+
+/** Cuerpo de superficie de `vis_foliage`: corteza de tronco vs copa de hojas. */
+const foliageSurface = /* glsl */ `
+    // Tronco vs copa: la corteza domina en las caras empinadas/verticales y
+    // las hojas en las copas que miran afuera/arriba.
+    float barkMask = 1.0 - smoothstep( 0.25, 0.65, abs( N.y ) );
+    vec2 barkUV = wallUV * 1.4;
+    vec2 leafUV = mix( wallAxis, vWorldPos.xz, upness ) * ( 1.0 / 3.2 )
+      + vec2( seedA * 0.53, seedB * 0.29 );
+    vec3 bark = texture2D( uTexTreeBark, barkUV ).rgb;
+    vec3 leaves = texture2D( uTexTreeLeaves, leafUV ).rgb;
+    // Paleta de copa: esmeralda, lima primavera, cerezo rosa y ámbar dorado.
+    vec3 canopy = pick6(
+      seedA,
+      vec3( 0.22, 0.72, 0.42 ),
+      vec3( 0.62, 0.90, 0.34 ),
+      vec3( 1.00, 0.66, 0.80 ),
+      vec3( 1.00, 0.78, 0.34 ),
+      vec3( 0.30, 0.82, 0.58 ),
+      vec3( 0.88, 0.92, 0.40 )
+    );
+    surf = mix( leaves * canopy, bark * vec3( 1.00, 0.94, 0.86 ), barkMask );
+    surf *= mix( 0.74, 1.06, upperFactor );
+`;
+
+/**
+ * Cuerpo de superficie de `vis_glow`: rótulos nítidos y legibles.
+ *
+ * El bug de la "estática rosa de televisor" (`media_1795274872688_a853cb7f.jpg`)
+ * venía de `sin( wallUV.y * 180.0 )`: una barra de escaneo de 3.5 cm de periodo
+ * que el rasterizador no puede resolver y convierte en ruido. Aquí no hay
+ * ninguna frecuencia espacial alta: solo el tile del atlas, un pulso de neón
+ * lento y un desfase por rótulo.
+ */
+const glowSurface = /* glsl */ `
     float idx = clamp( floor( fract( seedA * 7.0 + seedB * 3.0 ) * 16.0 ), 0.0, 15.0 );
     vec2 tile = vec2( mod( idx, 4.0 ), floor( idx / 4.0 ) );
-    float scroll = uTime * ( 0.03 + 0.05 * seedB );
-    vec2 suv = vec2( fract( wallUV.x * 0.75 + scroll ), fract( wallUV.y * 0.75 ) );
-    suv = clamp( suv, 0.02, 0.98 );
-    vec3 tex = texture2D( uSignAtlas, ( tile + suv ) * 0.25 ).rgb;
-    float scan = 0.86 + 0.14 * sin( wallUV.y * 180.0 - uTime * 5.0 );
-    float flicker = 0.84 + 0.16 * sin( uTime * 11.0 + seedA * 40.0 ) * sin( uTime * 3.1 + seedB * 9.0 );
-    return tex * scan * flicker * mix( 0.72, 1.18, upper );
-  }
+    // Un rótulo por fachada, sin scroll: el cartel se queda quieto y el
+    // hardware filtra el atlas con mipmaps + anisotropía 8.
+    vec2 suv = fract( wallUV * 1.0 );
+    suv = clamp( suv, 0.06, 0.94 );
+    vec3 signTex = texture2D( uSignAtlas, ( tile + suv ) * 0.25 ).rgb;
+    // Pulso de neón cálido y lento: dos senos de baja frecuencia, nunca ruido.
+    float pulse = 0.90 + 0.10 * sin( uTime * 1.6 + seedA * 24.0 );
+    float breathe = 0.94 + 0.06 * sin( uTime * 0.7 + seedB * 11.0 );
+    surf = signTex * vec3( 1.04, 0.99, 0.92 ) * pulse * breathe * mix( 0.78, 1.16, upperFactor );
+`;
 
-  // Follaje: hojas por FBM, más apagado en la ciudad baja.
-  vec3 foliageColor( vec2 uv, float seedA, float seedB, float upper ) {
-    float n = fbm2( uv * 1.7 + seedA * 20.0 );
-    vec3 leaf = mix( vec3( 0.14, 0.46, 0.32 ), vec3( 0.40, 0.80, 0.44 ), smoothstep( 0.30, 0.72, n ) );
-    leaf = mix( leaf, vec3( 0.62, 0.90, 0.52 ), smoothstep( 0.68, 0.95, n ) * 0.55 );
-    return leaf * mix( 0.72, 1.08, upper );
-  }
+/** Texturas que enlaza cada grupo de buckets (máximo 6 unidades). */
+const BUCKET_TEXTURE_UNIFORMS: Record<string, string> = {
+  stone: /* glsl */ `
+  uniform sampler2D uTexCobbleFine;
+  uniform sampler2D uTexPlazaMarble;
+  uniform sampler2D uTexAvenueSlate;
+  uniform sampler2D uTexParkBrick;
+  uniform sampler2D uTexUnderVault;
+`,
+  wall: /* glsl */ `
+  uniform sampler2D uTexShopBakery;
+  uniform sampler2D uTexShopBoutique;
+  uniform sampler2D uTexHouseStucco;
+  uniform sampler2D uTexHouseTimber;
+  uniform sampler2D uTexHouseBrick;
+  uniform sampler2D uTexCliffMasonry;
+`,
+  roof: /* glsl */ `
+  uniform sampler2D uTexRoofTiles;
+  uniform sampler2D uTexRoofSlate;
+`,
+  cliff: /* glsl */ `
+  uniform sampler2D uTexCliffMasonry;
+  uniform sampler2D uTexUnderVault;
+`,
+  metal: /* glsl */ `
+  uniform sampler2D uTexMetalGirder;
+`,
+  glow: /* glsl */ `
+  uniform sampler2D uSignAtlas;
+`,
+  foliage: /* glsl */ `
+  uniform sampler2D uTexTreeBark;
+  uniform sampler2D uTexTreeLeaves;
+`,
+};
 
-  // --- Programa principal ---------------------------------------------------
+/** Cuerpo de superficie de cada grupo de buckets. */
+const BUCKET_SURFACES: Record<string, string> = {
+  stone: stoneSurface,
+  wall: wallSurface,
+  roof: roofSurface,
+  cliff: cliffSurface,
+  metal: metalSurface,
+  glow: glowSurface,
+  foliage: foliageSurface,
+};
+
+/** Grupo de shader al que pertenece cada bucket semántico. */
+const BUCKET_SHADER_GROUP: Record<HeksevilleBucketName, string> = {
+  col_stone: 'stone',
+  col_cliff: 'cliff',
+  col_under: 'cliff',
+  col_roof: 'roof',
+  col_wall_a: 'wall',
+  col_wall_b: 'wall',
+  col_metal: 'metal',
+  vis_glow: 'glow',
+  vis_foliage: 'foliage',
+};
+
+/**
+ * Ensambla el fragment shader de un grupo: preludio común + solo sus texturas +
+ * su cuerpo de superficie + el sombreado cel común (paleta de distrito, ánimo
+ * vertical, 3 bandas, halftone con desvanecido por distancia, rim Fresnel,
+ * emisión y niebla exponencial).
+ */
+function buildCityFragmentShader(group: string): string {
+  return `${cityFragmentPrelude}
+${BUCKET_TEXTURE_UNIFORMS[group]}
 
   void main() {
     vec3 N = normalize( vWorldNormal );
@@ -537,13 +769,12 @@ const cityFragmentShader = /* glsl */ `
 
     // Coordenadas de muro limpias y verticales: cada fachada lee de izquierda
     // a derecha igual vista desde fuera, así ventanas y rótulos NUNCA se
-    // espejan en horizontal. Escala natural de 7.5 m por tile y un desfase
-    // por edificio para que casas vecinas no repitan el corte.
+    // espejan en horizontal. 6 m por tile y un desfase por edificio para que
+    // casas vecinas no repitan el mismo corte.
     vec2 wallAxis = abs( N.x ) > abs( N.z )
       ? vec2( N.x > 0.0 ? -vWorldPos.z : vWorldPos.z, vWorldPos.y )
       : vec2( N.z > 0.0 ? vWorldPos.x : -vWorldPos.x, vWorldPos.y );
-    vec2 wallUV = wallAxis * ( 1.0 / 7.5 ) + vec2( seedA * 0.43, 0.0 );
-    vec2 groundUV = vWorldPos.xz / 7.5;
+    vec2 wallUV = wallAxis * ( 1.0 / 6.2 ) + vec2( seedA * 0.43, 0.0 );
     float upness = smoothstep( 0.55, 0.92, abs( N.y ) );
 
     // Anti-flicker: los halftones se desvanecen suavemente con la distancia a
@@ -551,102 +782,12 @@ const cityFragmentShader = /* glsl */ `
     float camDist = length( cameraPosition - vWorldPos );
     float dotFade = smoothstep( 140.0, 28.0, camDist );
 
-    // Gradiente de ánimo vertical: arriba vivo, abajo mucho más sombrío.
+    // Gradiente de ánimo vertical: Pleajeune alto vivo y soleado, Bajos
+    // (y < 115 m) mucho más sombríos.
     float upperFactor = smoothstep( 72.0, 158.0, vWorldPos.y );
 
-    // Textura de arquitectura por bucket semántico (uBucketKind).
-    float kind = uBucketKind;
     vec3 surf;
-    if ( kind < 0.5 ) {
-      // col_stone: adoquín de arenisca del atlas (triplanar en bordillos),
-      // cálido y soleado arriba, pizarra apagada en los Bajos.
-      vec3 cobbleFloor = texture2D( uTexCobble, groundUV ).rgb;
-      vec3 cobbleWall = texture2D( uTexCobble, wallUV ).rgb;
-      vec3 cobble = mix( cobbleWall, cobbleFloor, upness );
-      vec3 sunnySandstone = vec3( 0.95, 0.90, 0.84 );
-      vec3 mutedSlate = vec3( 0.58, 0.60, 0.68 );
-      surf = cobble * mix( mutedSlate, sunnySandstone, upperFactor );
-    } else if ( kind < 2.5 || ( kind > 5.5 && kind < 6.5 ) ) {
-      // col_cliff / col_under / col_metal: sillería de bajos con veta de
-      // bronce o pizarra según la semilla, más sombría cuanto más abajo.
-      vec2 underUV = mix( wallUV, groundUV, upness );
-      vec3 underTex = texture2D( uTexUnder, underUV ).rgb;
-      vec3 bronze = vec3( 0.62, 0.50, 0.38 );
-      vec3 slate = vec3( 0.46, 0.50, 0.60 );
-      surf = underTex * mix( bronze, slate, seedB ) * mix( 0.66, 1.02, upperFactor );
-    } else if ( kind < 3.5 ) {
-      // col_roof: teja triplanar (XZ en las aguas, muro en los testerios),
-      // tintada de forma única por edificio a través de ambas semillas.
-      vec2 roofGround = vWorldPos.xz / 6.0;
-      vec2 roofWall = wallAxis * ( 1.0 / 6.0 ) + vec2( seedA * 0.43, 0.0 );
-      vec3 roofTex = mix(
-        texture2D( uTexRoof, roofWall ).rgb,
-        texture2D( uTexRoof, roofGround ).rgb,
-        upness
-      );
-      vec3 roofTint = pick6(
-        fract( seedA * 0.61 + seedB * 0.37 ),
-        vec3( 0.94, 0.48, 0.34 ),
-        vec3( 0.90, 0.66, 0.40 ),
-        vec3( 0.62, 0.70, 0.56 ),
-        vec3( 0.44, 0.56, 0.60 ),
-        vec3( 0.98, 0.58, 0.42 ),
-        vec3( 0.52, 0.62, 0.52 )
-      );
-      surf = roofTex * roofTint * mix( 0.80, 1.06, upperFactor );
-    } else if ( kind < 5.5 ) {
-      // col_wall_a / col_wall_b: estilo arquitectónico por categoría de
-      // COLOR_0.r (tiendas ~0.16, casas ~0.32, cívico/torres ~0.48 y ~0.64).
-      if ( cat < 0.24 ) {
-        // Tiendas: escaparate del atlas mezclado con fachada de casa y tinte
-        // alegre y cálido por semilla (coral, mantequilla, menta, melocotón).
-        vec3 shopTex = texture2D( uTexShop, wallUV ).rgb;
-        vec3 houseTex = texture2D( uTexHouse, wallUV ).rgb;
-        vec3 shopTint = pick6(
-          seedA,
-          vec3( 1.00, 0.64, 0.58 ),
-          vec3( 1.00, 0.94, 0.78 ),
-          vec3( 0.74, 0.90, 0.76 ),
-          vec3( 1.00, 0.80, 0.62 ),
-          vec3( 0.90, 0.54, 0.42 ),
-          vec3( 1.00, 0.88, 0.70 )
-        );
-        surf = mix( shopTex, houseTex, 0.35 ) * shopTint;
-      } else if ( cat < 0.40 ) {
-        // Casas: estuco marfil del atlas tintado individualmente por semilla.
-        vec3 houseTex = texture2D( uTexHouse, wallUV ).rgb;
-        vec3 houseTint = pick6(
-          seedA,
-          vec3( 0.98, 0.94, 0.86 ),
-          vec3( 0.90, 0.72, 0.48 ),
-          vec3( 0.88, 0.66, 0.62 ),
-          vec3( 0.70, 0.80, 0.64 ),
-          vec3( 0.92, 0.84, 0.68 ),
-          vec3( 0.96, 0.90, 0.80 )
-        );
-        surf = houseTex * houseTint;
-      } else {
-        // Cívico y rascacielos: caliza tallada en tonos cálidos, nunca
-        // rejillas púrpura/neón.
-        vec3 civicTex = texture2D( uTexCivic, wallUV ).rgb;
-        vec3 civicTint = pick6(
-          seedA,
-          vec3( 0.94, 0.88, 0.76 ),
-          vec3( 0.96, 0.92, 0.82 ),
-          vec3( 0.90, 0.84, 0.70 ),
-          vec3( 0.66, 0.60, 0.56 ),
-          vec3( 0.98, 0.94, 0.86 ),
-          vec3( 0.88, 0.82, 0.72 )
-        );
-        surf = civicTex * civicTint;
-      }
-    } else if ( kind < 7.5 ) {
-      // vis_glow: rótulos y pantallas con el atlas orientado (sin "NEPO").
-      surf = signColor( wallUV, seedA, seedB, upperFactor );
-    } else {
-      // vis_foliage: verdes/teales cel vivos variados por semilla.
-      surf = foliageColor( mix( wallUV, groundUV, upness ) * 7.5, seedA, seedB, upperFactor );
-    }
+${BUCKET_SURFACES[group]}
 
     // Identidad del distrito: tinte suave del color base del bucket.
     surf = mix( surf, surf * uBaseColor * 1.35, 0.30 );
@@ -691,58 +832,106 @@ const cityFragmentShader = /* glsl */ `
     gl_FragColor = vec4( col, 1.0 );
   }
 `;
+}
+
+/** Fragment shaders por grupo, compilados una sola vez por librería. */
+const CITY_FRAGMENT_SHADERS: Record<string, string> = {
+  stone: buildCityFragmentShader('stone'),
+  wall: buildCityFragmentShader('wall'),
+  roof: buildCityFragmentShader('roof'),
+  cliff: buildCityFragmentShader('cliff'),
+  metal: buildCityFragmentShader('metal'),
+  glow: buildCityFragmentShader('glow'),
+  foliage: buildCityFragmentShader('foliage'),
+};
+
+// ----------------------------------------------------------------------------
+// Uniforms compartidos y fábrica de materiales
+// ----------------------------------------------------------------------------
 
 interface CitySharedUniforms {
   uTime: { value: number };
   uSunDir: { value: THREE.Vector3 };
   uHalftoneEnabled: { value: number };
   uSignAtlas: { value: THREE.Texture };
-  uTexCobble: { value: THREE.Texture };
-  uTexHouse: { value: THREE.Texture };
-  uTexShop: { value: THREE.Texture };
-  uTexRoof: { value: THREE.Texture };
-  uTexCivic: { value: THREE.Texture };
-  uTexUnder: { value: THREE.Texture };
+  uTexCobbleFine: { value: THREE.Texture };
+  uTexPlazaMarble: { value: THREE.Texture };
+  uTexAvenueSlate: { value: THREE.Texture };
+  uTexParkBrick: { value: THREE.Texture };
+  uTexCliffMasonry: { value: THREE.Texture };
+  uTexUnderVault: { value: THREE.Texture };
+  uTexMetalGirder: { value: THREE.Texture };
+  uTexHouseStucco: { value: THREE.Texture };
+  uTexHouseTimber: { value: THREE.Texture };
+  uTexHouseBrick: { value: THREE.Texture };
+  uTexShopBakery: { value: THREE.Texture };
+  uTexShopBoutique: { value: THREE.Texture };
+  uTexRoofTiles: { value: THREE.Texture };
+  uTexRoofSlate: { value: THREE.Texture };
+  uTexTreeBark: { value: THREE.Texture };
+  uTexTreeLeaves: { value: THREE.Texture };
   uFogColor: { value: THREE.Color };
   uFogDensity: { value: number };
 }
 
 /**
- * Material cel procedural de ciudad para un bucket concreto. Todos los
- * materiales de la librería comparten `uTime`, `uSunDir`, `uSignAtlas` y la
- * niebla, así que animar la ciudad cuesta un puñado de escrituras por frame.
+ * Texturas que enlaza cada grupo de shader. El máximo es 6 (muros), muy por
+ * debajo de las 16 unidades `sampler2D` que WebGL garantiza: cero riesgo de
+ * desbordar el presupuesto de texturas en móvil o WebGL2.
+ */
+const GROUP_TEXTURE_KEYS: Record<string, ReadonlyArray<keyof CitySharedUniforms>> = {
+  stone: ['uTexCobbleFine', 'uTexPlazaMarble', 'uTexAvenueSlate', 'uTexParkBrick', 'uTexUnderVault'],
+  wall: [
+    'uTexShopBakery',
+    'uTexShopBoutique',
+    'uTexHouseStucco',
+    'uTexHouseTimber',
+    'uTexHouseBrick',
+    'uTexCliffMasonry',
+  ],
+  roof: ['uTexRoofTiles', 'uTexRoofSlate'],
+  cliff: ['uTexCliffMasonry', 'uTexUnderVault'],
+  metal: ['uTexMetalGirder'],
+  glow: ['uSignAtlas'],
+  foliage: ['uTexTreeBark', 'uTexTreeLeaves'],
+};
+
+/**
+ * Material cel procedural de ciudad para un bucket concreto. Cada bucket
+ * compila su propio fragment shader y enlaza solo sus texturas; todos
+ * comparten `uTime`, `uSunDir`, `uHalftoneEnabled` y la niebla, así que animar
+ * la ciudad cuesta un puñado de escrituras por frame.
  */
 function createCityProceduralCelMaterial(
   bucket: HeksevilleBucketName,
   style: BucketStyle,
   shared: CitySharedUniforms
 ): THREE.ShaderMaterial {
-  const material = new THREE.ShaderMaterial({
+  const group = BUCKET_SHADER_GROUP[bucket];
+
+  const uniforms: Record<string, THREE.IUniform> = {
+    uTime: shared.uTime,
+    uSunDir: shared.uSunDir,
+    uHalftoneEnabled: shared.uHalftoneEnabled,
+    uFogColor: shared.uFogColor,
+    uFogDensity: shared.uFogDensity,
+    uBaseColor: { value: new THREE.Color(style.color) },
+    uShadowTint: { value: new THREE.Color(style.shadowTint) },
+    uAccentColor: { value: new THREE.Color(style.rimColor) },
+    uRimColor: { value: new THREE.Color(style.rimColor) },
+    uRimPower: { value: style.rimPower },
+    uRimStrength: { value: style.rimStrength },
+    uEmissiveBoost: { value: style.emissiveBoost },
+    uBucketCategory: { value: BUCKET_CATEGORY[bucket] },
+  };
+  for (const key of GROUP_TEXTURE_KEYS[group]) {
+    uniforms[key] = shared[key];
+  }
+
+  return new THREE.ShaderMaterial({
     vertexShader: cityVertexShader,
-    fragmentShader: cityFragmentShader,
-    uniforms: {
-      uTime: shared.uTime,
-      uSunDir: shared.uSunDir,
-      uHalftoneEnabled: shared.uHalftoneEnabled,
-      uSignAtlas: shared.uSignAtlas,
-      uTexCobble: shared.uTexCobble,
-      uTexHouse: shared.uTexHouse,
-      uTexShop: shared.uTexShop,
-      uTexRoof: shared.uTexRoof,
-      uTexCivic: shared.uTexCivic,
-      uTexUnder: shared.uTexUnder,
-      uFogColor: shared.uFogColor,
-      uFogDensity: shared.uFogDensity,
-      uBaseColor: { value: new THREE.Color(style.color) },
-      uShadowTint: { value: new THREE.Color(style.shadowTint) },
-      uAccentColor: { value: new THREE.Color(style.rimColor) },
-      uRimColor: { value: new THREE.Color(style.rimColor) },
-      uRimPower: { value: style.rimPower },
-      uRimStrength: { value: style.rimStrength },
-      uEmissiveBoost: { value: style.emissiveBoost },
-      uBucketKind: { value: BUCKET_KIND[bucket] },
-      uBucketCategory: { value: BUCKET_CATEGORY[bucket] },
-    },
+    fragmentShader: CITY_FRAGMENT_SHADERS[group],
+    uniforms,
     // `vertexColors` activa USE_COLOR / USE_COLOR_ALPHA: el shader lee
     // `COLOR_0` cuando existe y compila igual cuando no.
     vertexColors: true,
@@ -756,7 +945,6 @@ function createCityProceduralCelMaterial(
       ? { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }
       : {}),
   });
-  return material;
 }
 
 // ----------------------------------------------------------------------------
@@ -969,10 +1157,11 @@ const skyBannerFragmentShader = /* glsl */ `
 
   void main() {
     vec2 tile = vec2( mod( vTile, 4.0 ), floor( vTile / 4.0 ) );
-    vec2 uv = clamp( vUv, 0.02, 0.98 );
+    vec2 uv = clamp( vUv, 0.06, 0.94 );
     vec3 col = texture2D( uSignAtlas, ( tile + uv ) * 0.25 ).rgb;
-    float flicker = 0.86 + 0.14 * sin( uTime * 6.0 + vPhase * 9.0 );
-    gl_FragColor = vec4( col * flicker * 1.12, 1.0 );
+    // Pulso lento y suave: sin frecuencias espaciales altas que aliaseen.
+    float pulse = 0.92 + 0.08 * sin( uTime * 1.4 + vPhase * 9.0 );
+    gl_FragColor = vec4( col * pulse * 1.12, 1.0 );
   }
 `;
 
@@ -993,8 +1182,8 @@ export function createHeksevilleMaterialLibrary(): HeksevilleMaterialLibrary {
   const skyGeometries: THREE.BufferGeometry[] = [];
   const skyMaterials: THREE.Material[] = [];
 
-  // Atlas de rótulos y texturas de arquitectura: una sola copia para toda la
-  // ciudad (se liberan en `dispose`).
+  // Atlas de rótulos y las dieciséis texturas de arquitectura: una sola copia
+  // para toda la ciudad (se liberan en `dispose`).
   const signAtlas = createSignAtlasSafe();
   const archTextures = createHeksevilleArchTextures();
 
@@ -1003,12 +1192,22 @@ export function createHeksevilleMaterialLibrary(): HeksevilleMaterialLibrary {
     uSunDir: sharedShaderState.uSunDir,
     uHalftoneEnabled: sharedShaderState.uHalftoneEnabled,
     uSignAtlas: { value: signAtlas },
-    uTexCobble: { value: archTextures.cobble },
-    uTexHouse: { value: archTextures.house },
-    uTexShop: { value: archTextures.shop },
-    uTexRoof: { value: archTextures.roof },
-    uTexCivic: { value: archTextures.civic },
-    uTexUnder: { value: archTextures.under },
+    uTexCobbleFine: { value: archTextures.cobbleFine },
+    uTexPlazaMarble: { value: archTextures.plazaMarble },
+    uTexAvenueSlate: { value: archTextures.avenueSlate },
+    uTexParkBrick: { value: archTextures.parkBrick },
+    uTexCliffMasonry: { value: archTextures.cliffMasonry },
+    uTexUnderVault: { value: archTextures.underVault },
+    uTexMetalGirder: { value: archTextures.metalGirder },
+    uTexHouseStucco: { value: archTextures.houseStucco },
+    uTexHouseTimber: { value: archTextures.houseTimber },
+    uTexHouseBrick: { value: archTextures.houseBrick },
+    uTexShopBakery: { value: archTextures.shopBakery },
+    uTexShopBoutique: { value: archTextures.shopBoutique },
+    uTexRoofTiles: { value: archTextures.roofTiles },
+    uTexRoofSlate: { value: archTextures.roofSlate },
+    uTexTreeBark: { value: archTextures.treeBark },
+    uTexTreeLeaves: { value: archTextures.treeLeaves },
     uFogColor: { value: new THREE.Color(HEKSEVILLE_FOG_COLOR) },
     uFogDensity: { value: HEKSEVILLE_FOG_DENSITY },
   };

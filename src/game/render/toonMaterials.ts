@@ -243,8 +243,9 @@ export function addComicOutline(
 }
 
 // ============================================================================
-// Fondo espacial: cielo cósmico gradiente diagonal + estrellas titilantes
-// (portado de referencia_visual.html :: createCosmicSky, adaptado por nivel)
+// Fondo espacial: OUTORBIT Cosmic Dreamscape + estrellas titilantes
+// (cielo de fantasía alegre: gradiente dreamscape, planeta anillado, nubes
+// cel, auroras pastel y destellos de 4 puntas)
 // ============================================================================
 
 const SKY_RADIUS = 1800;
@@ -260,12 +261,6 @@ const skyVertexShader = /* glsl */ `
 `;
 
 const skyFragmentShader = /* glsl */ `
-  uniform vec3 uZenith;
-  uniform vec3 uCerulean;
-  uniform vec3 uTurquoise;
-  uniform vec3 uLavender;
-  uniform vec3 uHorizonWarm;
-  uniform vec3 uRoseCoral;
   uniform vec3 uSunDir;
   uniform float uTime;
   uniform float uHalftoneEnabled;
@@ -323,30 +318,34 @@ const skyFragmentShader = /* glsl */ `
     // Altura normalizada: 0.0 = nadir, 0.5 = horizonte, 1.0 = cenit.
     float h = clamp( dir.y * 0.5 + 0.5, 0.0, 1.0 );
 
-    // --- Gradiente vertical de cúpula completa: el cielo cómic cerúleo ->
-    // turquesa -> lavanda suave envuelve TODO el horizonte (h 0.38..0.96)
-    // detrás de la silueta de la ciudad, no solo el cenit ---
-    // h < 0.38: abismo cósmico púrpura-azul profundo, a juego con el mar de
-    // niebla del vacío. Nunca un bloque naranja bajo el horizonte.
-    vec3 col = vec3( 0.07, 0.05, 0.18 );
-    // 0.22..0.38: telón crepuscular cerúleo-lavanda tras la línea de tejados.
-    col = mix( col, mix( uCerulean, uLavender, 0.45 ) * 0.80, smoothstep( 0.22, 0.38, h ) );
-    // Lavanda suave que baja hasta los tejados y enmarca el skyline.
-    col = mix( col, uLavender, smoothstep( 0.38, 0.52, h ) );
-    col = mix( col, uTurquoise, smoothstep( 0.50, 0.64, h ) );
-    col = mix( col, uCerulean, smoothstep( 0.62, 0.78, h ) );
-    col = mix( col, uZenith, smoothstep( 0.80, 0.97, h ) );
-    // Único calor del cielo: brillo pastel melocotón/rosa delicado y sutil
-    // justo en h 0.43..0.48, hundido limpio en el abismo por debajo de 0.38.
-    float apricotGlow = smoothstep( 0.43, 0.455, h ) * ( 1.0 - smoothstep( 0.465, 0.48, h ) );
-    col += mix( uHorizonWarm, uRoseCoral, 0.5 ) * apricotGlow * 0.20;
+    // --- OUTORBIT Cosmic Dreamscape: gradiente de fantasía alegre que envuelve
+    // TODO el horizonte detrás de la ciudad (h 0.36..0.96) ---
+    vec3 zenith = vec3( 0.133, 0.345, 0.800 );      // #2258cc zafiro de ensueño
+    vec3 turquoise = vec3( 0.259, 0.741, 0.910 );   // #42bde8 turquesa luminoso
+    vec3 aquaMint = vec3( 0.478, 0.910, 0.863 );     // #7ae8dc aqua-menta pastel
+    vec3 lavenderPink = vec3( 0.875, 0.624, 1.0 );  // #df9fff lavanda-rosa pastel
+    vec3 peachGold = vec3( 1.0, 0.851, 0.573 );     // #ffd992 melocotón dorado
 
-    // --- Acento diagonal cómic (identidad del nivel, muy sutil) ---
-    float diag = clamp( -dir.y * 0.72 - dir.x * 0.35 + 0.55, 0.0, 1.0 );
-    float diagBand = smoothstep( 0.30, 0.55, diag ) * ( 1.0 - smoothstep( 0.55, 0.88, diag ) );
-    col += uLavender * diagBand * 0.07;
+    // h < 0.36: abismo púrpura-azul profundo, a juego con el mar de niebla
+    // del vacío. Nunca un bloque cálido bajo el horizonte.
+    vec3 col = vec3( 0.08, 0.05, 0.22 );
+    // h 0.36..0.60: línea de tejados iridiscente; melocotón dorado soleado y
+    // lavanda-rosa pastel para que el skyline brille mágico y alegre.
+    col = mix( col, peachGold, smoothstep( 0.36, 0.42, h ) );
+    col = mix( col, lavenderPink, smoothstep( 0.44, 0.54, h ) );
+    // Cielo medio-alto: turquesa luminoso -> aqua-menta pastel.
+    col = mix( col, turquoise, smoothstep( 0.56, 0.68, h ) );
+    col = mix( col, aquaMint, smoothstep( 0.68, 0.80, h ) );
+    // Cenit: zafiro de ensueño rico y luminoso.
+    col = mix( col, zenith, smoothstep( 0.82, 0.96, h ) );
 
-    // --- Sol/luna de cómic: disco nítido + anillos cel concéntricos ---
+    // Iridiscencia pastel de la banda del horizonte (h 0.39..0.60): un FBM
+    // suave pasea lavanda-rosa y turquesa detrás de los tejados.
+    float irid = fbm( dir * 2.1 + vec3( 0.0, uTime * 0.008, 0.0 ) );
+    float iridMask = smoothstep( 0.39, 0.46, h ) * ( 1.0 - smoothstep( 0.54, 0.60, h ) );
+    col += mix( lavenderPink, turquoise, smoothstep( 0.35, 0.75, irid ) ) * iridMask * 0.16;
+
+    // --- Sol de cómic: disco nítido + anillos cel concéntricos ---
     vec3 sunDir = normalize( uSunDir );
     float sd = dot( dir, sunDir );
     float disk = smoothstep( 0.9955, 0.9985, sd );
@@ -354,40 +353,97 @@ const skyFragmentShader = /* glsl */ `
     float ang = acos( clamp( sd, -1.0, 1.0 ) );
     float ring = fract( ang * 7.0 );
     float ringMask = smoothstep( 0.62, 0.98, ring ) * ( 1.0 - smoothstep( 0.55, 1.15, ang ) );
-    col += mix( uHorizonWarm, uRoseCoral, 0.5 ) * ringMask * 0.20;
-    col += uHorizonWarm * halo * 0.55;
-    col += vec3( 1.0, 0.96, 0.86 ) * disk * 1.25;
+    col += mix( peachGold, lavenderPink, 0.5 ) * ringMask * 0.22;
+    col += peachGold * halo * 0.55;
+    col += vec3( 1.0, 0.97, 0.88 ) * disk * 1.25;
 
-    // --- Bandas de nubes cel-stepped (crema, lavanda y melocotón) que enmarcan
-    // el skyline: bajan hasta h 0.39 y suben hasta h 0.90 ---
+    // --- Planeta gigante de fantasía con anillos, alto en el skyline ---
+    vec3 planetDir = normalize( vec3( -0.62, 0.34, -0.70 ) );
+    vec3 pRight = normalize( cross( planetDir, vec3( 0.0, 1.0, 0.0 ) ) );
+    vec3 pUp = cross( pRight, planetDir );
+    float pd = dot( dir, planetDir );
+    vec3 pOffset = dir - planetDir * pd;
+    vec2 pUV = vec2( dot( pOffset, pRight ), dot( pOffset, pUp ) ) / 0.30;
+    float pr = length( pUV );
+
+    // Anillos inclinados: elipse comprimida en el eje vertical del planeta,
+    // con bandas concéntricas perla-oro y cian que pasan por delante de la
+    // esfera en la mitad inferior y quedan ocultas detrás en la superior.
+    float ringR = length( vec2( pUV.x, pUV.y * 2.6 ) );
+    float ringBand = smoothstep( 1.32, 1.50, ringR ) * ( 1.0 - smoothstep( 2.05, 2.30, ringR ) );
+    float ringStripe = 0.5 + 0.5 * sin( ringR * 30.0 );
+    vec3 ringCol = mix( vec3( 1.0, 0.92, 0.72 ), vec3( 0.55, 0.92, 0.98 ), ringStripe );
+    float ringMask = ringBand * ( 0.55 + 0.45 * ringStripe );
+    if ( pUV.y > 0.0 && pr < 1.0 ) ringMask = 0.0;
+
+    // Esfera cel-shaded: bandas de gas pastel (rosa perla, lavanda, crema).
+    if ( pr < 1.0 ) {
+      float pz = sqrt( max( 1.0 - pr * pr, 0.0 ) );
+      vec3 pNormal = normalize( pRight * pUV.x + pUp * pUV.y + planetDir * pz );
+      float pLight = dot( pNormal, sunDir );
+      float gasBands = 0.5 + 0.5 * sin( pUV.y * 9.0 + sin( pUV.x * 2.0 ) * 0.6 );
+      vec3 pBase = mix( vec3( 0.98, 0.84, 0.90 ), vec3( 0.85, 0.78, 0.98 ), gasBands );
+      pBase = mix( pBase, vec3( 0.99, 0.93, 0.82 ), smoothstep( 0.75, 1.0, gasBands ) * 0.5 );
+      vec3 pCol = pBase * 1.12;
+      if ( pLight < 0.12 ) {
+        pCol = mix( pBase, vec3( 0.42, 0.34, 0.62 ), 0.60 );
+      } else if ( pLight < 0.48 ) {
+        pCol = mix( pBase, vec3( 0.55, 0.46, 0.76 ), 0.30 );
+      }
+      col = mix( col, pCol, 1.0 - smoothstep( 0.96, 1.0, pr ) );
+      // Limbo luminoso pastel en el borde del disco.
+      col += vec3( 1.0, 0.92, 0.96 ) * smoothstep( 0.84, 0.99, pr ) * 0.35;
+    }
+
+    // Anillos: halo suave + banda sólida cel-stepped.
+    col += ringCol * ringMask * 0.35;
+    col = mix( col, ringCol * 1.08, smoothstep( 0.35, 0.75, ringMask ) );
+
+    // --- Nubes cel-stepped esponjosas: crema-dorado soleado y rosa
+    // algodón-de-azúcar a lo largo de h 0.40..0.88 ---
     vec2 cuv = dir.xz / max( abs( dir.y ) + 0.35, 0.18 );
     float drift = uTime * 0.012;
     float cloudN = fbm( vec3( cuv * 0.55 + vec2( drift, drift * 0.6 ), drift * 0.5 ) );
     float cel = floor( cloudN * 4.0 ) / 4.0;
-    float bandMask = smoothstep( 0.39, 0.48, h ) * ( 1.0 - smoothstep( 0.86, 0.90, h ) );
+    float bandMask = smoothstep( 0.40, 0.48, h ) * ( 1.0 - smoothstep( 0.84, 0.88, h ) );
     float cloudMask = smoothstep( 0.40, 0.62, cel ) * bandMask;
-    vec3 cloudCol = mix( vec3( 0.98, 0.94, 0.90 ), uLavender, smoothstep( 0.55, 0.85, cel ) );
-    cloudCol = mix( cloudCol, uHorizonWarm, smoothstep( 0.40, 0.48, h ) * 0.30 );
+    vec3 cloudCol = mix( vec3( 1.0, 0.94, 0.80 ), vec3( 1.0, 0.80, 0.88 ), smoothstep( 0.55, 0.85, cel ) );
+    cloudCol = mix( cloudCol, peachGold, smoothstep( 0.40, 0.48, h ) * 0.30 );
     col = mix( col, cloudCol, cloudMask * 0.55 );
 
-    // Segunda capa baja de nubes crepusculares crema-lavanda pegada al
-    // horizonte, detrás de los tejados.
+    // Segunda capa baja pegada al horizonte, detrás de los tejados.
     float lowN = fbm( vec3( cuv * 1.15 + vec2( -drift * 1.4, drift ), drift * 0.8 ) );
     float lowCel = floor( lowN * 3.0 ) / 3.0;
     float lowMask = smoothstep( 0.40, 0.46, h ) * ( 1.0 - smoothstep( 0.52, 0.60, h ) );
-    col = mix( col, mix( uLavender, vec3( 1.0, 0.94, 0.90 ), 0.55 ), smoothstep( 0.45, 0.72, lowCel ) * lowMask * 0.40 );
+    col = mix( col, mix( lavenderPink, vec3( 1.0, 0.95, 0.88 ), 0.55 ), smoothstep( 0.45, 0.72, lowCel ) * lowMask * 0.40 );
 
-    // --- Nebulosa y cintas de aurora SOLO en el cielo alto (modo cósmico) ---
+    // --- Nebulosa y cintas de aurora arcoíris pastel SOLO en el cielo alto ---
     float highMask = smoothstep( 0.720, 0.980, h );
     float nebula = fbm( dir * 2.35 + vec3( 0.0, uTime * 0.010, uTime * 0.007 ) );
     col = mix(
       col,
-      mix( uLavender, uTurquoise, 0.5 ) * 1.10,
-      smoothstep( 0.55, 0.95, nebula ) * highMask * 0.22
+      mix( lavenderPink, turquoise, 0.5 ) * 1.10,
+      smoothstep( 0.55, 0.95, nebula ) * highMask * 0.20
     );
     float ribbonBand = dir.y * 3.15 + dir.x * 1.75 + uTime * 0.05;
     float ribbon = pow( 0.5 + 0.5 * sin( ribbonBand * 2.0 ), 3.0 );
-    col += uTurquoise * ribbon * 0.10 * highMask;
+    float hueWalk = fract( ribbonBand * 0.25 + uTime * 0.02 );
+    vec3 auroraCol = mix( vec3( 0.62, 0.95, 0.80 ), vec3( 0.98, 0.74, 0.90 ), smoothstep( 0.0, 0.5, hueWalk ) );
+    auroraCol = mix( auroraCol, vec3( 0.72, 0.86, 1.0 ), smoothstep( 0.5, 1.0, hueWalk ) );
+    col += auroraCol * ribbon * 0.12 * highMask;
+
+    // --- Destellos de estrella de 4 puntas repartidos por la bóveda ---
+    float az = atan( dir.z, dir.x );
+    float el = asin( clamp( dir.y, -1.0, 1.0 ) );
+    vec2 sGrid = vec2( az * 22.0, el * 44.0 );
+    vec2 sCell = floor( sGrid );
+    vec2 sUv = fract( sGrid ) - 0.5;
+    float sHash = hash31( vec3( sCell, 7.0 ) );
+    float twinkle = 0.5 + 0.5 * sin( uTime * 2.2 + sHash * 40.0 );
+    float starCross = max( exp( -abs( sUv.x ) * 24.0 ), exp( -abs( sUv.y ) * 24.0 ) );
+    float starCore = exp( -length( sUv ) * 20.0 );
+    float glint = ( starCross * 0.7 + starCore ) * step( 0.86, sHash ) * twinkle;
+    col += vec3( 1.0, 0.98, 0.92 ) * glint * 0.55 * smoothstep( 0.42, 0.70, h );
 
     // --- Halftone cómic SOLO en las transiciones de banda ---
     float transition =
@@ -396,7 +452,7 @@ const skyFragmentShader = /* glsl */ `
     if ( uHalftoneEnabled > 0.5 && transition > 0.02 ) {
       float dots = halftoneDots( gl_FragCoord.xy, 7.0 );
       if ( dots < transition * 0.5 ) {
-        col = mix( col, uRoseCoral * 0.9 + vec3( 0.05, 0.02, 0.10 ), 0.18 );
+        col = mix( col, lavenderPink * 0.9 + vec3( 0.05, 0.02, 0.10 ), 0.18 );
       }
     }
 
@@ -442,19 +498,24 @@ const STAR_TINTS: ReadonlyArray<readonly [number, number, number]> = [
 ];
 
 /**
- * Crea el fondo del nivel: cielo de cómic multi-tono de cúpula completa
- * (índigo cósmico en el cenit -> azul cerúleo -> turquesa eléctrica -> lavanda
- * suave que envuelve el horizonte hasta detrás del skyline, con un único
- * brillo pastel melocotón/rosa sutil junto al horizonte y abismo púrpura-azul
- * profundo bajo h 0.38 a juego con el mar de niebla del vacío) con disco de
- * sol/luna y anillos cel concéntricos, bandas de nubes cel-stepped (crema,
- * lavanda, melocotón) que bajan hasta h 0.39 para enmarcar la silueta de la
- * ciudad, nebulosa y auroras sutiles en el cielo alto, y halftone cómic
- * únicamente en las transiciones de banda; más un campo de 900 estrellas
- * instanciadas con tinte propio (oro pálido, cian hielo, cuarzo rosa, blanco)
- * que titilan y destellan por fase. El grupo sigue la posición de la cámara
- * cada frame (`update(dt, cameraPos)`) para que el jugador NUNCA salga de la
- * esfera del cielo al volar lejos. Devuelve handle con update/dispose.
+ * Crea el fondo del nivel: el OUTORBIT Cosmic Dreamscape, un cielo de fantasía
+ * alegre de cúpula completa (cenit zafiro de ensueño #2258cc -> turquesa
+ * luminoso #42bde8 -> aqua-menta pastel #7ae8dc, y una banda de horizonte
+ * iridiscente con lavanda-rosa pastel #df9fff y melocotón dorado #ffd992 que
+ * envuelve el skyline entre h 0.39..0.60; bajo h 0.36 se funde en el abismo
+ * púrpura-azul a juego con el mar de niebla del vacío), con un planeta gigante
+ * pastel con anillos inclinados perla-oro y cian alto en el skyline, sol de
+ * cómic con anillos cel concéntricos, nubes cel-stepped crema-dorado y rosa
+ * algodón-de-azúcar (h 0.40..0.88), cintas de aurora arcoíris pastel,
+ * destellos de estrella de 4 puntas y halftone cómic únicamente en las
+ * transiciones de banda; más un campo de 900 estrellas instanciadas con tinte
+ * propio (oro pálido, cian hielo, cuarzo rosa, blanco) que titilan y
+ * destellan por fase. La paleta del dreamscape vive fijada en el shader: es la
+ * identidad del cielo de OUTORBIT y no depende de los colores del nivel, así
+ * que `topColor`/`bottomColor` se conservan solo por compatibilidad de firma.
+ * El grupo sigue la posición de la cámara cada frame (`update(dt,
+ * cameraPos)`) para que el jugador NUNCA salga de la esfera del cielo al volar
+ * lejos. Devuelve handle con update/dispose.
  */
 export function createSpaceBackdrop(
   scene: THREE.Scene,
@@ -464,29 +525,10 @@ export function createSpaceBackdrop(
   const group = new THREE.Group();
   group.name = 'spaceBackdrop';
 
-  // --- Paleta de cómic: 6 paradas derivadas de los colores del nivel ---
-  // El color superior del nivel tiñe el cenit y el cerúleo; el inferior solo
-  // aporta la cinta cálida del horizonte, así el cielo nunca se inunda de
-  // naranja/rojo (el bug del "cielo rojo puro").
-  const top = new THREE.Color(topColor);
-  const bottom = new THREE.Color(bottomColor);
-  const zenith = top.clone().lerp(new THREE.Color(0x12194f), 0.55);
-  const cerulean = top.clone().lerp(new THREE.Color(0x2969c7), 0.72);
-  const turquoise = new THREE.Color(0x4fb8d9).lerp(bottom, 0.12);
-  const lavender = new THREE.Color(0x8a6de8).lerp(top, 0.18);
-  const horizonWarm = new THREE.Color(0xffb877).lerp(bottom, 0.4);
-  const roseCoral = new THREE.Color(0xff8fa3).lerp(bottom, 0.25);
-
   const skyMaterial = new THREE.ShaderMaterial({
     vertexShader: skyVertexShader,
     fragmentShader: skyFragmentShader,
     uniforms: {
-      uZenith: { value: zenith },
-      uCerulean: { value: cerulean },
-      uTurquoise: { value: turquoise },
-      uLavender: { value: lavender },
-      uHorizonWarm: { value: horizonWarm },
-      uRoseCoral: { value: roseCoral },
       uSunDir: globalShaderState.uSunDir,
       // Reloj compartido: nubes, nebulosa y auroras derivan con el tiempo.
       uTime: globalShaderState.uTime,

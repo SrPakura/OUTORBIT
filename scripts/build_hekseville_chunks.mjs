@@ -182,97 +182,153 @@ function hashStrToUnit(str) {
 }
 
 // ----------------------------------------------------------------------------
-// Metadatos por instancia (COLOR_0, VEC4 float): [categoryCode, seedA, seedB, flag]
+// Metadatos por instancia (COLOR_0, VEC4 Uint8 normalized):
+// [categoryCode, seedA, seedB, flag]
 //
-// - categoryCode (r): familia arquitectónica (0.00 terreno, 0.16 tiendas,
-//   0.32 residencial, 0.48 mansiones/cívicos, 0.64 rascacielos, 0.80 puentes/
-//   rails/escaleras/metal, 0.96 letreros/neón).
-// - seedA (g): hash del nombre + traslación mundial -> CADA casa/tienda/torre
-//   individual recibe una semilla procedural única.
+// - categoryCode (r): familia arquitectónica resuelta con el CONTEXTO del
+//   grupo edificable (building_*, uji_*, *_build*, shop*/prop_*, cívicos)
+//   heredado por walk(), no solo con el prefijo de la malla hoja:
+//     0.00 terreno/plazas (base_dt_*/gake_*, semillas únicas por plaza)
+//     0.14 café/panadería   0.24 boutique/arcade (building_sf_*, stalls bajos)
+//     0.36 estuco crema      0.48 entramado europeo   0.60 ladrillo terracota
+//     0.72 piedra caliza cívica (building_ms_*/pd_*, arcos, monumentos, fuentes)
+//     0.84 torre art-decó (building_sn_*, bounds de malla > 24 m)
+//     0.80 metal (vigas/puentes/rails/soportes, propio o heredado)
+//     0.96 letreros/neón (tv_*/sign_*)
+// - seedA (g): hash del grupo + traslación mundial -> cada instancia recibe
+//   una semilla procedural única y CONSISTENTE entre todas sus partes.
 // - seedB (b): segundo hash independiente -> variación secundaria de
 //   tejado/remate/letrero.
-// - flag (a): 1.0 en letreros animados y landmarks, 0.5 en el resto.
+// - flag (a): 1.0 en letreros animados y landmarks cívicos, 0.5 en el resto.
 // ----------------------------------------------------------------------------
 
 const DEFAULT_NODE_META = [0.0, 0.0, 0.0, 0.5];
 
-function computeNodeMeta(name, world) {
-  if (!name) return null;
-  const lower = name.toLowerCase();
-  let category = -1;
-  if (lower.startsWith('tv_') || lower.startsWith('sign_')) {
-    category = 0.96;
-  } else if (
-    lower.startsWith('bridge_') ||
-    lower.startsWith('trainrail') ||
-    lower.startsWith('stairs_') ||
-    lower.startsWith('pipe_') ||
-    lower.startsWith('support_')
-  ) {
-    category = 0.8;
-  } else if (
-    lower.startsWith('building_sn_') ||
-    lower.startsWith('tower_') ||
-    lower.startsWith('structure_')
-  ) {
-    category = 0.64;
-  } else if (
+// Tokens de metal/viga/rail: si el nombre del nodo O DE CUALQUIER ANCESTRO los
+// contiene, el nodo se clasifica como metal (col_metal) y NUNCA como adoquín.
+const METAL_TOKENS = [
+  'bridge',
+  'trainrail',
+  'rail_',
+  'pipe_',
+  'antenna_',
+  'chimn',
+  'watertank',
+  'elevator',
+  'handrail',
+  'support_',
+  'pillar_',
+  'tower',
+  'structure_',
+  'ironbar',
+  'duct',
+];
+
+function isMetalName(lower) {
+  return METAL_TOKENS.some((t) => lower.includes(t));
+}
+
+const SHOP_CODES = [0.14, 0.24];
+const RESIDENTIAL_CODES = [0.36, 0.48, 0.6];
+const CIVIC_CODE = 0.72;
+const TOWER_CODE = 0.84;
+const METAL_CODE = 0.8;
+const GLOW_CODE = 0.96;
+// Paleta arquitectónica completa para muros verticales de estructuras sin
+// grupo edificable explícito (sub-mallas bajo base_dt/stairs/etc.).
+const WALL_CODE_PALETTE = [0.14, 0.24, 0.36, 0.48, 0.6, 0.72, 0.84];
+
+const LOW_SHOP_WORLD_Y = 168;
+const TALL_BUILDING_HEIGHT = 24;
+
+/** Tipo semántico del nodo por su nombre (walk() decide la herencia). */
+function semanticKind(lower) {
+  if (lower.startsWith('tv_') || lower.startsWith('sign_')) return 'glow';
+  if (isMetalName(lower)) return 'metal';
+  if (lower.startsWith('building_sn_')) return 'tower';
+  if (lower.startsWith('building_sf_')) return 'shop';
+  if (
     lower.startsWith('building_ms_') ||
     lower.startsWith('building_pd_') ||
     lower.startsWith('arch_') ||
     lower.startsWith('monument') ||
     lower.startsWith('fountain')
   ) {
-    category = 0.48;
-  } else if (
+    return 'civic';
+  }
+  if (
     lower.startsWith('building_kk_') ||
     lower.startsWith('building_yy_') ||
-    lower.startsWith('uji_')
+    lower.startsWith('uji_') ||
+    lower.startsWith('building_')
   ) {
-    category = 0.32;
-  } else if (lower.startsWith('building_sf_')) {
-    category = 0.16;
-  } else if (lower.startsWith('building_')) {
-    // Edificio sin sufijo de familia: variación residencial por defecto.
-    category = 0.32;
-  } else if (lower.startsWith('base_') || lower.startsWith('gake_')) {
-    category = 0.0;
+    return 'residential';
   }
-  if (category < 0) return null;
+  if (lower.startsWith('shop') || lower.startsWith('prop_') || lower.startsWith('stall')) {
+    return 'shop';
+  }
+  if (lower.includes('build')) return 'residential';
+  if (lower.startsWith('base_') || lower.startsWith('gake_')) return 'terrain';
+  return null;
+}
 
-  const seedA = hashStrToUnit(`${name}${Math.round(world[12] * 2)}_${Math.round(world[14] * 2)}`);
-  const seedB = hashStrToUnit(`${seedA * 17 + name.length}`);
-  const isAnimatedOrLandmark =
-    lower.startsWith('tv_') ||
-    lower.startsWith('sign_') ||
-    lower.startsWith('monument') ||
-    lower.startsWith('fountain') ||
-    lower.startsWith('arch_');
-  return [category, seedA, seedB, isAnimatedOrLandmark ? 1.0 : 0.5];
+/** Clave determinística de instancia: nombre + traslación mundial cuantizada. */
+function instanceKey(name, world) {
+  return `${name}|${Math.round(world[12] * 2)}_${Math.round(world[14] * 2)}`;
+}
+
+function instanceSeeds(inst) {
+  return [hashStrToUnit(inst), hashStrToUnit(`${inst}#b`)];
+}
+
+/**
+ * Metadatos de un grupo edificable: el categoryCode sale del sub-tipo del
+ * grupo (más la altura de la malla para rascacielos) y las semillas del
+ * grupo + su traslación mundial, así TODAS las partes de una misma
+ * instancia comparten familia y semillas mientras edificios vecinos
+ * (shops, casas, torres) reciben variaciones distintas.
+ */
+function buildingMeta(group, worldHeight) {
+  const inst = `${group.name}|${Math.round(group.world[12] * 2)}_${Math.round(group.world[14] * 2)}`;
+  const h = hashStrToUnit(inst);
+  let code;
+  if (group.kind === 'tower' || worldHeight > TALL_BUILDING_HEIGHT) {
+    code = TOWER_CODE;
+  } else if (group.kind === 'civic') {
+    code = CIVIC_CODE;
+  } else if (group.kind === 'shop') {
+    const isLowShop = group.name.startsWith('building_sf_') || group.world[13] < LOW_SHOP_WORLD_Y;
+    code = isLowShop ? SHOP_CODES[h < 0.5 ? 0 : 1] : RESIDENTIAL_CODES[Math.min(2, Math.floor(h * 3))];
+  } else {
+    code = RESIDENTIAL_CODES[Math.min(2, Math.floor(h * 3))];
+  }
+  const [seedA, seedB] = instanceSeeds(inst);
+  return [code, seedA, seedB, group.kind === 'civic' ? 1.0 : 0.5];
+}
+
+/** Altura en mundo del AABB de la malla del nodo (0 si no tiene malla). */
+function meshWorldHeight(node, world, meshBounds) {
+  if (node.mesh === undefined) return 0;
+  const b = meshBounds[node.mesh];
+  if (!b || !isFinite(b.min[0]) || !isFinite(b.max[0])) return 0;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let c = 0; c < 8; c++) {
+    const x = c & 1 ? b.max[0] : b.min[0];
+    const y = c & 2 ? b.max[1] : b.min[1];
+    const z = c & 4 ? b.max[2] : b.min[2];
+    const wy = world[1] * x + world[5] * y + world[9] * z + world[13];
+    if (wy < minY) minY = wy;
+    if (wy > maxY) maxY = wy;
+  }
+  return maxY - minY;
 }
 
 function classifyNodeCategory(nodeName) {
   const lower = nodeName.toLowerCase();
   if (lower.startsWith('tree_') || lower.startsWith('fance')) return 'foliage';
   if (lower.startsWith('tv_') || lower.startsWith('sign_')) return 'glow';
-  if (
-    lower.startsWith('bridge_') ||
-    lower.startsWith('trainrail') ||
-    lower.startsWith('pipe_') ||
-    lower.startsWith('antenna_') ||
-    lower.startsWith('chimn') ||
-    lower.startsWith('watertank') ||
-    lower.startsWith('elevator') ||
-    lower.startsWith('handrail') ||
-    lower.startsWith('gate_') ||
-    lower.startsWith('ironbar') ||
-    lower.startsWith('duct') ||
-    lower.startsWith('tower_') ||
-    lower.startsWith('structure_') ||
-    lower.startsWith('support_')
-  ) {
-    return 'metal';
-  }
+  if (isMetalName(lower)) return 'metal';
   if (lower.startsWith('base_') || lower.startsWith('gake_')) return 'terrain';
   return 'building';
 }
@@ -748,6 +804,15 @@ function processDistrict(cfg) {
 
   let rawTris = 0;
   let skippedLodTris = 0;
+  // Distribución de categoryCode (r) del distrito: total y solo muros
+  // verticales (col_wall_a/b), para verificar que los muros reparten
+  // 0.14..0.84 entre familias en lugar de quedarse clavados en 0.00.
+  const catCodeTris = new Map();
+  const wallCodeTris = new Map();
+  const bumpCodeCount = (map, code) => {
+    const key = code.toFixed(2);
+    map.set(key, (map.get(key) || 0) + 1);
+  };
   const pleajeuneSpawnCandidates = [];
   // Filtro de cielo abierto del spawn: AABBs de los triángulos sólidos en
   // una ventana holgada alrededor del bulevar, indexados en una rejilla XZ
@@ -765,6 +830,8 @@ function processDistrict(cfg) {
     const tiles = new Map();
     rawTris = 0;
     skippedLodTris = 0;
+    catCodeTris.clear();
+    wallCodeTris.clear();
     pleajeuneSpawnCandidates.length = 0;
     openSkyTriMin.length = 0;
     openSkyTriMax.length = 0;
@@ -780,26 +847,72 @@ function processDistrict(cfg) {
     return t;
   }
 
-  function walk(nodeIdx, parentMat, variantBias, activeMeta) {
+  function walk(nodeIdx, parentMat, variantBias, ctx) {
     const node = nodes[nodeIdx];
     const name = node.name || '';
     if (shouldSkipNode(name)) return;
 
     const local = nodeLocalMat4(node);
     const world = mulMat4(parentMat, local);
-    const nextVariant = name.startsWith('building_') || name.startsWith('uji_')
-      ? hashNameColorVariant(name)
+
+    // Contexto semántico que baja por la jerarquía: el metal se hereda de
+    // cualquier ancestro con token de viga/rail/puente/soporte (una viga
+    // bajo base_dt NUNCA se pinta como adoquín) y el grupo edificable más
+    // cercano (building_*, uji_*, *_build*, shop*/prop_*, cívicos) fija la
+    // familia arquitectónica y las semillas de toda la instancia.
+    const lower = name.toLowerCase();
+    const kind = semanticKind(lower);
+    const metal = kind === 'metal' || (ctx.metal && kind !== 'terrain');
+    const group =
+      !metal && (kind === 'shop' || kind === 'residential' || kind === 'civic' || kind === 'tower')
+        ? { name: lower, kind, world }
+        : ctx.group;
+
+    const nextVariant = group
+      ? hashNameColorVariant(`${group.name}${Math.round(group.world[12])}_${Math.round(group.world[14])}`)
       : variantBias;
-    // Metadatos COLOR_0: cada nodo arquitectónico calcula los suyos a partir
-    // del nombre + traslación mundial; el resto hereda los del ancestro.
-    const meta = computeNodeMeta(name, world) || activeMeta;
-    const metaR = meta[0];
-    const metaG = meta[1];
-    const metaB = meta[2];
-    const metaA = meta[3];
+
+    // Metadatos COLOR_0 del nodo a partir del contexto: letreros y metal
+    // calculan los suyos; los nodos con grupo edificable derivan familia +
+    // semillas del grupo (consistentes entre todas las partes del edificio);
+    // el terreno lleva semillas únicas por plaza; el resto hereda.
+    let meta;
+    if (kind === 'glow') {
+      const [seedA, seedB] = instanceSeeds(instanceKey(name, world));
+      meta = [GLOW_CODE, seedA, seedB, 1.0];
+    } else if (metal) {
+      const [seedA, seedB] = instanceSeeds(instanceKey(name, world));
+      meta = [METAL_CODE, seedA, seedB, 0.5];
+    } else if (group) {
+      meta = buildingMeta(group, meshWorldHeight(node, world, meshBounds));
+    } else if (kind === 'terrain') {
+      const [seedA, seedB] = instanceSeeds(instanceKey(name, world));
+      meta = [0.0, seedA, seedB, 0.5];
+    } else {
+      meta = ctx.meta;
+    }
+
+    // Red de seguridad anti-textura-idéntica: TODO muro vertical
+    // (col_wall_a/b) de una estructura sin grupo edificable recibe un
+    // código arquitectónico rico determinístico en vez de heredar el 0.00
+    // del terreno (el bug de que TODOS los edificios compartieran textura).
+    let wallMeta = null;
+    if (node.mesh !== undefined && meta[0] < 0.005) {
+      const inst = `${instanceKey(name, world)}#wall`;
+      const [seedA, seedB] = instanceSeeds(inst);
+      wallMeta = [
+        WALL_CODE_PALETTE[
+          Math.min(WALL_CODE_PALETTE.length - 1, Math.floor(hashStrToUnit(inst) * WALL_CODE_PALETTE.length))
+        ],
+        seedA,
+        seedB,
+        0.5,
+      ];
+    }
 
     if (node.mesh !== undefined) {
-      const cat = classifyNodeCategory(name);
+      const selfCat = classifyNodeCategory(name);
+      const cat = selfCat === 'foliage' || selfCat === 'glow' ? selfCat : metal ? 'metal' : selfCat;
       const prims = parsedMeshes[node.mesh];
 
       const m0 = world[0], m1 = world[1], m2 = world[2];
@@ -855,6 +968,10 @@ function processDistrict(cfg) {
 
           rawTris++;
           const bIdx = pickTriBucket(cat, fny, nextVariant);
+          const isWall = bIdx === BUCKET_INDEX.col_wall_a || bIdx === BUCKET_INDEX.col_wall_b;
+          const triMeta = isWall && wallMeta ? wallMeta : meta;
+          bumpCodeCount(catCodeTris, triMeta[0]);
+          if (isWall) bumpCodeCount(wallCodeTris, triMeta[0]);
 
           // Candidato caminable del bulevar exterior de Pleajeune (piedra
           // casi horizontal en la zona de cielo abierto junto a la noria).
@@ -909,10 +1026,11 @@ function processDistrict(cfg) {
           const bkt = tile.buckets[bIdx];
 
           bkt.pos.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+          const mr = triMeta[0], mg = triMeta[1], mb = triMeta[2], ma = triMeta[3];
           bkt.col.push(
-            metaR, metaG, metaB, metaA,
-            metaR, metaG, metaB, metaA,
-            metaR, metaG, metaB, metaA
+            mr, mg, mb, ma,
+            mr, mg, mb, ma,
+            mr, mg, mb, ma
           );
           bkt.tris++;
           tile.totalTris++;
@@ -926,7 +1044,7 @@ function processDistrict(cfg) {
         skippedLodTris++;
         continue;
       }
-      walk(ch, world, nextVariant, meta);
+      walk(ch, world, nextVariant, { metal, group, meta });
     }
   }
 
@@ -935,7 +1053,7 @@ function processDistrict(cfg) {
   for (const r of rootNodes) {
     const rname = (nodes[r].name || '').toLowerCase();
     if (SKIP_ROOT_SUBSTR.some((s) => rname.includes(s))) continue;
-    walk(r, ident, 0, DEFAULT_NODE_META);
+    walk(r, ident, 0, { metal: false, group: null, meta: DEFAULT_NODE_META });
   }
 
   const bigTiles = [...tiles.values()].filter((t) => t.totalTris >= 700);
@@ -985,6 +1103,18 @@ function processDistrict(cfg) {
     maxEstimate = 0;
     for (const t of tiles.values()) maxEstimate = Math.max(maxEstimate, estimateTileTris(t));
   }
+
+  // Chequeo de diversidad arquitectónica: los muros verticales (col_wall_a/b)
+  // deben repartir 0.14..0.84 entre familias, no quedarse en 0.00.
+  const fmtCodeDist = (m) =>
+    [...m.entries()]
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([code, count]) => `${code}=${count.toLocaleString()}`)
+      .join('  ');
+  console.log(`[${cfg.id}] categoryCode tris: ${fmtCodeDist(catCodeTris)}`);
+  const wallTotal = [...wallCodeTris.values()].reduce((s, v) => s + v, 0);
+  const wallZeroPct = wallTotal > 0 ? (((wallCodeTris.get('0.00') || 0) / wallTotal) * 100).toFixed(1) : '0.0';
+  console.log(`[${cfg.id}] col_wall categoryCodes: ${fmtCodeDist(wallCodeTris)} | ${wallZeroPct}% en 0.00`);
 
   // Cielo abierto garantizado: se descarta todo candidato con CUALQUIER
   // triángulo sólido en la columna (|x-cx| < 4, |z-cz| < 4) entre cy + 1.5 y
