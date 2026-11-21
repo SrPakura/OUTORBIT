@@ -91,6 +91,20 @@ export interface GrassZoneSpec {
   angularRadius: number;
 }
 
+/**
+ * Zona restringida de un planeta (Hito 1): recintos fortificados, templos
+ * sellados, reactores y la arena de KRONOS. Estar dentro (`trespassing`)
+ * convierte cualquier avistamiento en infracción de escalada rápida;
+ * aldeas, senderos, playas y campamentos quedan zonas públicas.
+ */
+export interface RestrictedZoneSpec {
+  id: string;
+  planetId: string;
+  sphericalDir: [number, number, number];
+  angularRadius: number;
+  label: string;
+}
+
 export type InteractableKind =
   | 'rock'
   | 'barrel_explosive'
@@ -201,7 +215,13 @@ export type EnemySkin =
   | 'cyber_drone'
   | 'cyber_mech';
 
-export type EnemyAlertState = 'patrol' | 'suspicious' | 'searching' | 'combat' | 'knocked_out';
+export type EnemyAlertState =
+  | 'patrol'
+  | 'suspicious'
+  | 'warning'
+  | 'searching'
+  | 'combat'
+  | 'knocked_out';
 
 export interface EnemySpawnSpec {
   kind: EnemyKind;
@@ -286,6 +306,8 @@ export interface GalaxySpec {
   structures: StructureSpec[];
   waterBubbles: WaterBubbleSpec[];
   grassZones: GrassZoneSpec[];
+  /** Zonas restringidas (patios fortificados, templos, reactores, arena). */
+  restrictedZones?: RestrictedZoneSpec[];
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
   /** NPCs amigables con diálogo (pistas de puzle sin pausar el juego). */
@@ -373,6 +395,11 @@ export interface HudSnapshot {
   keycardsCollected?: number;
   /** Un lockdown de compuertas saltó por la alarma (aviso HUD). */
   gateLockdownActive?: boolean;
+  /**
+   * Hito 1 — Banner de VIGILANCIA: un enemigo en modo WARNING te está
+   * avisando (cono ámbar + chirp). null: ningún aviso activo.
+   */
+  warningBanner?: { speaker: string; text: string } | null;
 }
 
 // ============================================================================

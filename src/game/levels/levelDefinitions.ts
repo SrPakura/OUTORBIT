@@ -9,6 +9,7 @@ import type {
   PlanetSpec,
   PropKind,
   PropSpec,
+  RestrictedZoneSpec,
   StructureKind,
   StructureSpec,
   WaterBubbleSpec,
@@ -501,6 +502,7 @@ function lunaContent(): {
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
   grass: GrassZoneSpec[];
+  zones: RestrictedZoneSpec[];
   npcs: NpcSpec[];
 } {
   const planet = GALAXY_PLANETS[0];
@@ -561,6 +563,19 @@ function lunaContent(): {
     { id: 'luna-hierba-spawn', planetId: planet.id, sphericalDir: frameDir(gf, 20, -6), angularRadius: 0.18 },
   ];
 
+  // Hito 1 — Zona restringida: el patio interior del Puesto Vigía y su
+  // entorno inmediato. El centro se retrasa 1 m respecto al fuerte para que
+  // la cresta del spawn y el NPC Kuro queden fuera (zona pública).
+  const zones: RestrictedZoneSpec[] = [
+    {
+      id: 'luna-zona-puesto',
+      planetId: planet.id,
+      sphericalDir: frameDir(gf, -1, 0),
+      angularRadius: 0.24,
+      label: 'Puesto Avanzado Vigía',
+    },
+  ];
+
   const npcs: NpcSpec[] = [
     {
       id: 'kuro',
@@ -578,7 +593,7 @@ function lunaContent(): {
     },
   ];
 
-  return { structures, objects, enemies, grass, npcs };
+  return { structures, objects, enemies, grass, zones, npcs };
 }
 
 // ----------------------------------------------------------------------------
@@ -598,6 +613,7 @@ function verdantContent(): {
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
   grass: GrassZoneSpec[];
+  zones: RestrictedZoneSpec[];
   bubbles: WaterBubbleSpec[];
   props: PropSpec[];
   npcs: NpcSpec[];
@@ -745,6 +761,25 @@ function verdantContent(): {
     { id: 'vd-jungla-zig-oeste', planetId: planet.id, sphericalDir: frameDir(fA, -26, 0), angularRadius: 0.18 },
   ];
 
+  // Hito 1 — Zonas restringidas: solo los recintos sellados. El campamento
+  // del Dr. Solís y los senderos abiertos de la selva quedan públicos.
+  const zones: RestrictedZoneSpec[] = [
+    {
+      id: 'vd-zona-ruina-oeste',
+      planetId: planet.id,
+      sphericalDir: frameDir(fR, 0, 0),
+      angularRadius: 0.22,
+      label: 'Ruina Oeste',
+    },
+    {
+      id: 'vd-zona-zigurat',
+      planetId: planet.id,
+      sphericalDir: frameDir(fA, 0, 0),
+      angularRadius: 0.26,
+      label: 'Gran Zigurat',
+    },
+  ];
+
   // Lagunas de agua conectadas entre zonas (el agua rodea los templos, nunca
   // los inunda) + cadena de burbujas hasta la terraza superior (Axel).
   const lagR = (t: number) => midDir([0.05, 0.3, 0.95], [0.68, 0.42, 0.42], t);
@@ -880,7 +915,7 @@ function verdantContent(): {
     },
   ];
 
-  return { structures, objects, enemies, grass, bubbles, props, npcs };
+  return { structures, objects, enemies, grass, zones, bubbles, props, npcs };
 }
 
 // ----------------------------------------------------------------------------
@@ -902,6 +937,7 @@ function cryoContent(): {
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
   grass: GrassZoneSpec[];
+  zones: RestrictedZoneSpec[];
   bubbles: WaterBubbleSpec[];
   props: PropSpec[];
   npcs: NpcSpec[];
@@ -1046,6 +1082,27 @@ function cryoContent(): {
     { id: 'kg-hierba-lago', planetId: planet.id, sphericalDir: frameDir(f, 31, 20), angularRadius: 0.18 },
   ];
 
+  // Hito 1 — Zonas restringidas: el Castillo del Shogun (patio interior +
+  // perímetro de su muralla exterior) y el Santuario Flotante orbital, que
+  // custodia un vigía samurái. La aldea, el Maestro Takeshi, el Dojo y las
+  // sendas nevadas principales quedan zonas públicas.
+  const zones: RestrictedZoneSpec[] = [
+    {
+      id: 'kg-zona-castillo',
+      planetId: planet.id,
+      sphericalDir: frameDir(f, 0, -20),
+      angularRadius: 0.27,
+      label: 'Castillo del Shogun',
+    },
+    {
+      id: 'kg-zona-santuario-orbital',
+      planetId: planet.id,
+      sphericalDir: frameDir(f, 0, -59),
+      angularRadius: 0.08,
+      label: 'Santuario Celestial',
+    },
+  ];
+
   // Cadena de 3 burbujas de agua espaciales desde la torre norte hasta el
   // Santuario Flotante (Axel / Gravity Dash / Ancla) + burbuja del lago helado.
   const bubbles: WaterBubbleSpec[] = [
@@ -1170,7 +1227,7 @@ function cryoContent(): {
     },
   ];
 
-  return { structures, objects, enemies, grass, bubbles, props, npcs };
+  return { structures, objects, enemies, grass, zones, bubbles, props, npcs };
 }
 
 // ----------------------------------------------------------------------------
@@ -1193,6 +1250,7 @@ function bastionContent(): {
   structures: StructureSpec[];
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
+  zones: RestrictedZoneSpec[];
   bubbles: WaterBubbleSpec[];
   props: PropSpec[];
   npcs: NpcSpec[];
@@ -1469,6 +1527,20 @@ function bastionContent(): {
     lookout(planet.id, frameDir(f, -18, -14), 8.65, frameDir(f, 0, -2), 'cyber_guard'),
   ];
 
+  // Hito 1 — Zona restringida: la Ciudadela de Reactores (recinto interior
+  // + patios de reactores). El centro se ancla en el muro norte del recinto
+  // interior para que, con el radio 0.28 exigido, el bulevar de neón y la
+  // plaza exterior de Zero-7 queden fuera (zona pública de aviso).
+  const zones: RestrictedZoneSpec[] = [
+    {
+      id: 'bs-zona-ciudadela',
+      planetId: planet.id,
+      sphericalDir: frameDir(f, 0, -14),
+      angularRadius: 0.28,
+      label: 'Ciudadela de Reactores',
+    },
+  ];
+
   // Burbujas: pasarela del reactor 1 y cadena hasta la torre del reactor 3.
   const bubbles: WaterBubbleSpec[] = [
     orbitBubble('bs-bub-pasarela', planet, frameDir(f, 9, 6), 2.5, 6),
@@ -1649,7 +1721,7 @@ function bastionContent(): {
     },
   ];
 
-  return { structures, objects, enemies, bubbles, props, npcs };
+  return { structures, objects, enemies, zones, bubbles, props, npcs };
 }
 
 // ----------------------------------------------------------------------------
@@ -1665,6 +1737,7 @@ function kronosContent(): {
   structures: StructureSpec[];
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
+  zones: RestrictedZoneSpec[];
   bubbles: WaterBubbleSpec[];
   props: PropSpec[];
 } {
@@ -1714,6 +1787,17 @@ function kronosContent(): {
     { kind: 'kronos', planetId: planet.id, patrolDirs: [[-0.25, -0.85, -0.45]] },
   ];
 
+  // Hito 1 — Zona restringida: toda la meseta del trono es terreno del jefe.
+  const zones: RestrictedZoneSpec[] = [
+    {
+      id: 'kr-zona-trono',
+      planetId: planet.id,
+      sphericalDir: frameDir(f, 0, 0),
+      angularRadius: 0.85,
+      label: 'Trono de KRONOS',
+    },
+  ];
+
   // Burbujas orbitales para maniobras de nado contra el jefe.
   const bubbles: WaterBubbleSpec[] = [
     orbitBubble('kr-bub-1', planet, frameDir(f, 30, 18), 14, 10),
@@ -1746,7 +1830,7 @@ function kronosContent(): {
     prop(planet.id, 'kr-antena-4', 'antenna', frameDir(f, -36, -12)),
   ];
 
-  return { structures, objects, enemies, bubbles, props };
+  return { structures, objects, enemies, zones, bubbles, props };
 }
 
 // ----------------------------------------------------------------------------
@@ -1772,6 +1856,13 @@ export const GALAXY_SPEC: GalaxySpec = {
   ],
   waterBubbles: [...verdant.bubbles, ...cryo.bubbles, ...bastion.bubbles, ...kronos.bubbles],
   grassZones: [...luna.grass, ...verdant.grass, ...cryo.grass],
+  restrictedZones: [
+    ...luna.zones,
+    ...verdant.zones,
+    ...cryo.zones,
+    ...bastion.zones,
+    ...kronos.zones,
+  ],
   props: [...verdant.props, ...cryo.props, ...bastion.props, ...kronos.props],
   objects: [
     ...luna.objects,

@@ -194,6 +194,29 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
         </div>
       )}
 
+      {/* --- HITO 1: Banner de VIGILANCIA (un enemigo en modo WARNING te
+          avisa: cono ámbar + chirp). Cede su carril si hay transmisión de
+          radio y nunca roza la guía de controles (bottom-14). --- */}
+      {snapshot.phase === 'playing' && snapshot.warningBanner && (
+        <div
+          className={`absolute left-1/2 w-[min(560px,86vw)] -translate-x-1/2 ${
+            snapshot.radioToast ? 'top-[140px]' : 'top-[76px]'
+          }`}
+        >
+          <div
+            className="rounded-lg border-2 border-amber-400 bg-[#160b2e]/92 px-4 py-2 shadow-[4px_4px_0_#000]"
+            style={{ transform: 'skewX(-6deg)' }}
+          >
+            <p className="animate-pulse text-[11px] font-black tracking-[0.28em] text-amber-400">
+              ⚠ VIGILANCIA · {snapshot.warningBanner.speaker.toUpperCase()}
+            </p>
+            <p className="mt-0.5 text-xs font-bold leading-snug text-amber-100">
+              &ldquo;{snapshot.warningBanner.text}&rdquo;
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* --- Botón rápido M: Audio --- */}
       {onToggleMute && (
         <button

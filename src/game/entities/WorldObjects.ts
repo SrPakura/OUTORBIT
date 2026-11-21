@@ -13,6 +13,7 @@ import type {
   PlanetRuntime,
   PlayerBehaviorVector,
   PropSpec,
+  RestrictedZoneSpec,
   WaterBubbleSpec,
   WorldObjectSpec,
 } from '../types';
@@ -79,7 +80,6 @@ const VISION_MIN_DOT = 0.25; // semicírculo frontal (~75° de semiángulo)
 const GRASS_HIDE_DIST = 2.5; // la hierba alta oculta salvo a quemarropa
 const CURVATURE_CLEARANCE = 0.25; // margen del horizonte esférico
 const OFFICER_UNMASK_RANGE = 6.0; // el oficial delata al disfrazado cerca
-const SPRINT_SUSPICION_RATE = 1.5; // sospecha por segundo al correr con Shift
 const SUSPICION_DECAY = 0.22;
 const SEARCH_DURATION = 7.0; // segundos buscando antes de volver a patrullar
 const RADIO_ALERT_RANGE = 22.0; // alcance de la alerta por radio
@@ -107,6 +107,37 @@ const TELEPORT_COOLDOWN = 2.5;
 const KEYCARD_PICKUP_RADIUS = 2.4;
 const ADAPTED_SPAWN_BASE = 3; // semilla determinista para spawns de adaptación;
 
+// --- HITO 1: IA justa y orgánica (aviso, zonas, sospecha gradual) ---
+const WARNING_SUSPICION_THRESHOLD = 0.38; // PATROL -> WARNING (cono ámbar)
+const WARNING_SUSPICION_CAP = 0.78; // tope sin infracción: avisa, no ataca
+const WARNING_IGNORE_DIST = 5.5; // ignoró el aviso a quemarropa...
+const WARNING_IGNORE_TIME = 1.8; // ...demasiado tiempo -> sin tope
+const WARNING_MELEE_PUSH_DIST = 5.2; // se mete en distancia melee...
+const WARNING_MELEE_PUSH_TIME = 1.5; // ...más de 1.5s -> combate
+const WARNING_GAZE_HOLD = 0.6; // mirada breve al perderlo de vista
+const WARNING_SEARCH_TIME = 3.5; // búsqueda corta tras un aviso
+const WARNING_SOUND_COOLDOWN = 3.5; // el chirp de aviso no spamea
+const WARNING_BANNER_HOLD = 0.5; // banner HUD activo tras refrescar
+const HOSTILE_RECENT_SEC = 3.5; // infracción reciente del jugador
+const CALM_SUSPICION_RAMP = 0.42; // rampa suave sin infracción (aviso)
+const INFRACTION_SUSPICION_RAMP = 1.25; // rampa rápida con infracción
+const CALM_DISGUISED_DECAY = 0.32; // disfrazado calmado: el guardia relaja
+const CONE_COLOR_WARNING = 0xf59e0b; // ámbar del modo WARNING
+const WINDUP_WHIFF_MARGIN = 0.9; // esquivado: fuera de attackRange + 0.9
+const WINDUP_WHIFF_AIR_MIN_DIST = 2.2; // ...o saltando con margen > 2.2 m
+
+// --- HITO 1: steering tangente multi-rayo anti "chunk cuadrado" ---
+const STEER_LOOKAHEAD = 3.2; // m de sondeo por delante
+const STEER_LIFT = 0.9; // m sobre la superficie (la curvatura no da falsos)
+const STEER_PROBE_ANGLES = [0, 0.45, -0.45, 0.9, -0.9, 1.45, -1.45]; // rad
+const ENEMY_MAX_TURN_RAD_PER_SEC = 3.4; // giro suave del forward (caminantes)
+const DRONE_MAX_TURN_RAD_PER_SEC = 5.0; // los drones giran más rápido
+const ENEMY_SEPARATION_RANGE = 2.8; // m de separación tangente enemigo-enemigo
+const ENEMY_SEPARATION_STRENGTH = 0.42; // desvío lateral del objetivo
+const FLANK_MILD_ANGLE = 0.22; // rad de flanqueo suave (solo a media distancia)
+const FLANK_MIN_DIST = 5;
+const FLANK_MAX_DIST = 11;
+
 // --- FASE B: puzle, sigilo y acción táctica ---
 const LOCKED_GATE_INTERACT_RANGE = 4.0; // [E] cerca de la compuerta
 const SWITCH_LEVER_RANGE = 3.5; // [E] cerca de la palanca
@@ -133,7 +164,6 @@ const OBJECTIVE_TARGET_MAX = 8; // buffer preasignado de marcadores de objetivo
 const INTERCEPTOR_STEER_SPEED = 95.0; // m/s de persecución hacia la trayectoria
 const INTERCEPTOR_RETURN_SPEED = 60.0; // m/s de regreso a la órbita
 const INTERCEPTOR_HIT_MARGIN = 2.2; // margen sobre el radio del asteroide
-const INTERCEPTOR_FLANK_ANGLE = 0.55; // rad de desvío tangencial al flanquear
 
 // --- Jefe final KRONOS (Hito 4): red MLP híbrida + combate ---
 const KRONOS_MAX_HP = 12;
@@ -178,6 +208,8 @@ const GUARD_STATE_CHASE = 1;
 const GUARD_STATE_WINDUP = 2;
 const GUARD_STATE_KO = 3;
 const GUARD_STATE_SEARCH = 4;
+/** HITO 1 — Modo aviso: se detiene, encara al jugador y le da una oportunidad. */
+const GUARD_STATE_WARNING = 5;
 
 /** Parámetros de detección/combate por tipo de enemigo. */
 interface EnemyParams {
@@ -286,6 +318,21 @@ interface EnemyObj {
   lookoutPhase: number;
   /** FASE B: tangente de mirada base del vigía (el barrido orbita sobre ella). */
   baseForward: THREE.Vector3;
+  /** HITO 1: tiempo acumulado en GUARD_STATE_WARNING. */
+  warningT: number;
+  /** HITO 1: mirada fija al perder al jugador en WARNING (0.6s). */
+  warningGazeT: number;
+  /** HITO 1: tiempo que el jugador lleva invadiendo la distancia melee. */
+  warningCloseT: number;
+  /** HITO 1: cooldown del chirp/banner de aviso (sin spam por frame). */
+  warningCooldown: number;
+  /** HITO 1: lado persistente de steering (+1/-1) al rodear muros. */
+  steerBias: number;
+  /** HITO 1: velocidad de giro aplicada al forward (rad/s, suavizado). */
+  turnVel: number;
+  /** HITO 1: anillo de telegraph del windup sobre el suelo (caminantes). */
+  windupRing: THREE.Mesh | null;
+  windupRingMaterial: THREE.MeshBasicMaterial | null;
 }
 
 /**
@@ -467,6 +514,15 @@ const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _upAxis = new THREE.Vector3(0, 1, 0);
 const _dummy = new THREE.Object3D();
+// HITO 1: scratch dedicado de steering/separación (cero allocations en el loop).
+const _steerTangent = new THREE.Vector3();
+const _steerProbe = new THREE.Vector3();
+const _steerStart = new THREE.Vector3();
+const _steerEnd = new THREE.Vector3();
+const _steerGoal = new THREE.Vector3();
+const _sepGoal = new THREE.Vector3();
+const _sep = new THREE.Vector3();
+const _chaseGoal = new THREE.Vector3();
 
 /** PRNG determinista para los spawns dinámicos de la adaptación. */
 function makeSeededRandom(seed: number): () => number {
@@ -586,6 +642,17 @@ interface GrassZoneObj {
   cosThreshold: number;
 }
 
+/**
+ * HITO 1 — Zona restringida en runtime: dirección y coseno del umbral
+ * precomputados para un test por punto (dot > cos) sin allocations.
+ */
+interface RestrictedZoneRuntime {
+  spec: RestrictedZoneSpec;
+  planetId: string;
+  dir: THREE.Vector3;
+  cosThreshold: number;
+}
+
 interface ExplosionFx {
   mesh: THREE.Mesh;
   material: THREE.MeshBasicMaterial;
@@ -613,6 +680,10 @@ export interface WorldPlayerState {
   flightTargetPlanetId: string | null;
   /** Personaje activo del escuadrón (entrada one-hot de la red MLP de KRONOS). */
   characterId: CharacterId;
+  /** HITO 1: lleva un objeto de Estasis (contrabando ante los guardias). */
+  holdingContraband: boolean;
+  /** HITO 1: acción hostil reciente ~3.5s (ataque, Estasis, explosión...). */
+  hostileRecent: boolean;
 }
 
 export type PlayerDamageFn = (
@@ -986,6 +1057,18 @@ export class WorldObjectsManager {
   private teleportCooldown = 0;
   private predictiveShields = false;
   private alertBoost = 0; // escalado de detección por baseAlertLevel
+  // --- HITO 1: zonas restringidas, infracciones y banner de aviso ---
+  private readonly restrictedZones: RestrictedZoneRuntime[] = [];
+  /** Cache por frame/planeta de la zona restringida bajo el jugador. */
+  private zoneCachePlanetId: string | null = null;
+  private zoneCacheResult: RestrictedZoneSpec | null = null;
+  /** Infracción hostil reciente (3.5s tras ataque/Estasis/explosión/muro). */
+  private recentHostileTimer = 0;
+  /** Banner de VIGILANCIA preasignado (sin GC por frame). */
+  private readonly warningBannerData = { speaker: '', text: '' };
+  private warningBannerT = 0;
+  /** Cambia al aparecer/cambiar/caducar el banner (clave discreta del HUD). */
+  private warningBannerSeq = 0;
 
   generatorsDestroyed = 0;
   guardsKnockedOut = 0;
@@ -1053,6 +1136,21 @@ export class WorldObjectsManager {
   /** FASE B: hay compuertas selladas por el LOCKDOWN de la alarma. */
   get gateLockdownActive(): boolean {
     return this.lockdownActive;
+  }
+
+  /** HITO 1 — Banner de VIGILANCIA activo (null si caducó). */
+  get warningBanner(): { speaker: string; text: string } | null {
+    return this.warningBannerT > 0 ? this.warningBannerData : null;
+  }
+
+  /** HITO 1 — Clave discreta del banner (0 = inactivo) para el HUD React. */
+  get warningBannerKey(): number {
+    return this.warningBannerT > 0 ? this.warningBannerSeq : 0;
+  }
+
+  /** HITO 1 — Acción hostil reciente del jugador (infracción ~3.5s). */
+  get playerHostileRecent(): boolean {
+    return this.recentHostileTimer > 0;
   }
 
   // --------------------------------------------------------------------------
@@ -1165,6 +1263,15 @@ export class WorldObjectsManager {
     for (const spec of galaxy.objects) this.spawnObject(spec);
     for (const bubble of galaxy.waterBubbles) this.spawnBubble(bubble);
     for (const zone of galaxy.grassZones ?? []) this.spawnGrass(zone);
+    // HITO 1: zonas restringidas con dirección y coseno precomputados.
+    for (const zone of galaxy.restrictedZones ?? []) {
+      this.restrictedZones.push({
+        spec: zone,
+        planetId: zone.planetId,
+        dir: new THREE.Vector3(...zone.sphericalDir).normalize(),
+        cosThreshold: Math.cos(zone.angularRadius),
+      });
+    }
     for (const enemy of galaxy.enemies) this.spawnEnemy(enemy);
     for (const npc of galaxy.npcs ?? []) this.spawnNpc(npc);
 
@@ -1564,6 +1671,32 @@ export class WorldObjectsManager {
     // Iconos 3D de estado sobre la cabeza ('?' amarillo / '!' rojo).
     const icons = buildStateIcons();
     mesh.add(icons.group);
+    // HITO 1: anillo de telegraph del windup bajo los caminantes (guardia,
+    // oficial, brute): marca el área real del golpe (attackRange + 0.9).
+    let windupRing: THREE.Mesh | null = null;
+    let windupRingMaterial: THREE.MeshBasicMaterial | null = null;
+    if (spec.kind === 'guard' || spec.kind === 'officer' || spec.kind === 'brute') {
+      windupRingMaterial = new THREE.MeshBasicMaterial({
+        color: CONE_COLOR_WARNING,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      windupRing = new THREE.Mesh(
+        new THREE.TorusGeometry(
+          ENEMY_PARAMS[spec.kind].attackRange + WINDUP_WHIFF_MARGIN,
+          0.09,
+          8,
+          40
+        ),
+        windupRingMaterial
+      );
+      windupRing.rotation.x = Math.PI / 2; // tumbado: plano del suelo local (XZ)
+      windupRing.position.y = 0.07;
+      windupRing.visible = false;
+      mesh.add(windupRing);
+    }
     const waypoints: THREE.Vector3[] = [];
     for (const dir of spec.patrolDirs) {
       waypoints.push(new THREE.Vector3(...dir).normalize());
@@ -1617,6 +1750,14 @@ export class WorldObjectsManager {
       dropsKeycard: spec.dropsKeycard ?? false,
       lookoutPhase: spec.kind.length * 0.7,
       baseForward,
+      warningT: 0,
+      warningGazeT: 0,
+      warningCloseT: 0,
+      warningCooldown: 0,
+      steerBias: this.enemies.length % 2 === 0 ? 1 : -1,
+      turnVel: 0,
+      windupRing,
+      windupRingMaterial,
     });
   }
 
@@ -2145,6 +2286,15 @@ export class WorldObjectsManager {
     }
   }
 
+  /**
+   * HITO 1 — El jugador cometió una acción hostil (disparar Estasis, golpe
+   * melee/noqueo, explosión, onda expansiva, embestida con impacto, romper
+   * una pared): durante ~3.5s los enemigos que lo vean escalan rápido.
+   */
+  notifyPlayerHostileAction(): void {
+    this.recentHostileTimer = HOSTILE_RECENT_SEC;
+  }
+
   /** Minas sísmicas: consume la petición de eyección del subsuelo. */
   consumeBurrowEject(): boolean {
     if (!this.burrowEjectPending) return false;
@@ -2327,6 +2477,8 @@ export class WorldObjectsManager {
     this.spawnExplosion(wall.pos, 3, 0xfbbf24);
     this.onSound?.('wallBreak');
     this.emitNoise(wall.pos, wall.planet);
+    // HITO 1: reventar una pared es una acción hostil reciente.
+    this.notifyPlayerHostileAction();
     return true;
   }
 
@@ -2484,6 +2636,8 @@ export class WorldObjectsManager {
       grab.state = GRAB_STATE_FLYING;
       grab.vel.copy(aim).multiplyScalar(THROW_SPEED);
       this.heldCount--;
+      // HITO 1: disparar un objeto de Estasis es una acción hostil.
+      this.notifyPlayerHostileAction();
       return 1;
     }
     return 0;
@@ -2540,30 +2694,7 @@ export class WorldObjectsManager {
     if (handle.kind === 'wall') return 'Muro agrietado';
     const enemy = this.enemies[handle.index];
     if (!enemy) return 'Objetivo';
-    switch (enemy.skin) {
-      case 'panther':
-        return enemy.kind === 'officer' ? 'Alfa de la Ruina' : 'Pantera';
-      case 'monkey':
-        return 'Mono vigía';
-      case 'gorilla':
-        return 'Gorila lomo plateado';
-      case 'wasp':
-        return 'Avispa gigante';
-      default:
-        break;
-    }
-    switch (enemy.kind) {
-      case 'officer':
-        return 'Oficial';
-      case 'drone':
-        return 'Dron';
-      case 'turret':
-        return 'Torreta';
-      case 'brute':
-        return 'Brute élite';
-      default:
-        return 'Guardia';
-    }
+    return this.enemyDisplayName(enemy);
   }
 
   /**
@@ -2660,6 +2791,7 @@ export class WorldObjectsManager {
         _v1.divideScalar(Math.max(dist, 1e-6));
         if (_v1.dot(forward) > 0.15) {
           this.damageKronos(1, pos, 'melee');
+          this.notifyPlayerHostileAction();
           return 'kronos';
         }
       }
@@ -2675,6 +2807,7 @@ export class WorldObjectsManager {
       if (_v1.dot(forward) < 0.15) continue;
       // El brute resiste el melee frontal: solo explosivos, parry o estasis.
       if (enemy.kind === 'brute') continue;
+      this.notifyPlayerHostileAction();
       this.koEnemy(enemy, 'melee');
       return 'guard';
     }
@@ -2682,6 +2815,7 @@ export class WorldObjectsManager {
       if (gen.destroyed) continue;
       if (gen.pos.distanceToSquared(pos) < (MELEE_RANGE + 0.8) ** 2) {
         this.damageGenerator(gen, 1);
+        this.notifyPlayerHostileAction();
         return 'generator';
       }
     }
@@ -2697,7 +2831,10 @@ export class WorldObjectsManager {
       const kDist = _v1.length();
       if (kDist < DASH_HIT_RANGE + 1.4) {
         _v1.divideScalar(Math.max(kDist, 1e-6));
-        if (_v1.dot(forward) > 0.1) this.damageKronos(1, pos, 'dash');
+        if (_v1.dot(forward) > 0.1) {
+          this.damageKronos(1, pos, 'dash');
+          this.notifyPlayerHostileAction();
+        }
       }
     }
     for (const enemy of this.enemies) {
@@ -2708,6 +2845,8 @@ export class WorldObjectsManager {
       if (dist > DASH_HIT_RANGE) continue;
       _v1.divideScalar(Math.max(dist, 1e-6));
       if (_v1.dot(forward) < 0.1) continue;
+      // HITO 1: la embestida conectó con un enemigo — acción hostil.
+      this.notifyPlayerHostileAction();
       this.koEnemy(enemy, 'dash');
     }
     for (const grab of this.grabs) {
@@ -2730,6 +2869,8 @@ export class WorldObjectsManager {
       if (enemy.pos.distanceToSquared(pos) > KNOCKOUT_RANGE * KNOCKOUT_RANGE) continue;
       _v1.copy(pos).sub(enemy.pos).normalize();
       if (enemy.forward.dot(_v1) < -0.1) {
+        // HITO 1: el intento de noqueo conectó — acción hostil reciente.
+        this.notifyPlayerHostileAction();
         return this.koEnemy(enemy, 'knockout');
       }
     }
@@ -2810,6 +2951,8 @@ export class WorldObjectsManager {
   /** Onda expansiva de Digger al aterrizar en Modo Júpiter. */
   shockwave(pos: THREE.Vector3, radius: number): void {
     this.spawnExplosion(pos, radius, 0x67e8f9);
+    // HITO 1: la onda expansiva es un ataque — acción hostil reciente.
+    this.notifyPlayerHostileAction();
     for (const enemy of this.enemies) {
       if (enemy.state === GUARD_STATE_KO) continue;
       if (enemy.kind === 'turret') continue;
@@ -2836,6 +2979,10 @@ export class WorldObjectsManager {
   update(dt: number, state: WorldPlayerState, onPlayerDamage: PlayerDamageFn): void {
     this.clock += dt;
     this.kronosCharacter = state.characterId;
+    // HITO 1: infracción hostil reciente + caducidad del banner de aviso.
+    if (this.recentHostileTimer > 0) this.recentHostileTimer -= dt;
+    if (this.warningBannerT > 0) this.warningBannerT -= dt;
+    this.zoneCachePlanetId = null; // invalida la cache de zona de este frame
     this.updateHeld(dt, state);
     this.updateFlying(dt, state, onPlayerDamage);
     this.updateGrabRespawns(dt);
@@ -3114,6 +3261,8 @@ export class WorldObjectsManager {
   ): void {
     this.spawnExplosion(pos, EXPLOSION_RADIUS, 0xfb923c);
     this.onSound?.('explosion');
+    // HITO 1: una explosión (barril del jugador) es una acción hostil.
+    this.notifyPlayerHostileAction();
     for (const enemy of this.enemies) {
       if (enemy.state === GUARD_STATE_KO) continue;
       if (enemy.pos.distanceToSquared(pos) < EXPLOSION_RADIUS * EXPLOSION_RADIUS) {
@@ -3263,6 +3412,7 @@ export class WorldObjectsManager {
   ): void {
     for (const enemy of this.enemies) {
       enemy.attackCd -= dt;
+      if (enemy.warningCooldown > 0) enemy.warningCooldown -= dt;
       if (enemy.state === GUARD_STATE_KO) {
         // Check-in por radio: demasiado tiempo sin respuesta de un compañero.
         enemy.koTimer += dt;
@@ -3330,20 +3480,80 @@ export class WorldObjectsManager {
     return true;
   }
 
-  /** Sospecha 0..1 del enemigo según lo que ve (disfraces incluidos). */
+  /**
+   * HITO 1 — ¿La dirección radial cae dentro de una zona restringida del
+   * planeta? (patios fortificados, templos sellados, reactores, arena).
+   * Test por punto (dot > cos) SIN allocations.
+   */
+  isPosInRestrictedZone(dir: THREE.Vector3, planetId: string): RestrictedZoneSpec | null {
+    for (let i = 0; i < this.restrictedZones.length; i++) {
+      const zone = this.restrictedZones[i];
+      if (zone.planetId !== planetId) continue;
+      if (dir.dot(zone.dir) > zone.cosThreshold) return zone.spec;
+    }
+    return null;
+  }
+
+  /** Zona restringida bajo el jugador (cacheada por frame y planeta). */
+  private cachedPlayerZone(
+    planet: PlanetRuntime,
+    state: WorldPlayerState
+  ): RestrictedZoneSpec | null {
+    if (this.zoneCachePlanetId !== planet.spec.id) {
+      this.zoneCachePlanetId = planet.spec.id;
+      _v5.copy(state.pos).sub(planet.centerVec);
+      this.zoneCacheResult =
+        _v5.lengthSq() > 1e-6
+          ? this.isPosInRestrictedZone(_v5.normalize(), planet.spec.id)
+          : null;
+    }
+    return this.zoneCacheResult;
+  }
+
+  /**
+   * HITO 1 — Sospecha 0..1 GRADUAL Y JUSTA: eliminado el aggro injusto de
+   * 1 frame (`suspicion = 1` al vernos sin disfraz).
+   *
+   * - Sin infracción (zona pública, calmado): rampa suave 0.42·df con tope
+   *   0.78 — el cono se vuelve ámbar, aparece '?' y el guardia AVISA; solo
+   *   si ignoras el aviso a quemarropa (>1.8s a <5.5m) se quita el tope.
+   * - Con infracción (zona restringida, alarma global, ataque reciente,
+   *   contrabando de Estasis, sprint cerca, oficial que desmonta el
+   *   disfraz): rampa rápida 1.25·df — ~0.4s a quemarropa, 0.9-1.2s a
+   *   distancia, pasando brevemente por WARNING antes del combate.
+   * - Disfrazado calmado: el guardia se relaja (decae).
+   * - Sin línea de visión: decae limpio (SUSPICION_DECAY).
+   */
   private updateSuspicion(enemy: EnemyObj, dt: number, state: WorldPlayerState, playerDist: number, range: number): boolean {
     const sees = this.enemyCanSeePlayer(enemy, state, range, playerDist);
+    const distanceFactor = THREE.MathUtils.clamp(
+      1.35 - playerDist / Math.max(range, 1),
+      0.35,
+      1.5
+    );
     if (sees) {
-      if (!state.disguised) {
-        enemy.suspicion = 1;
-      } else if (enemy.kind === 'officer' && playerDist < OFFICER_UNMASK_RANGE) {
-        // El oficial delata al disfrazado: sospecha al 100%.
-        enemy.suspicion = 1;
-      } else if (state.sprinting) {
-        // Correr con Shift delata al jugador disfrazado.
-        enemy.suspicion += dt * SPRINT_SUSPICION_RATE;
+      const trespassing = this.cachedPlayerZone(enemy.planet, state) !== null;
+      const infraction =
+        trespassing ||
+        this.globalAlert ||
+        state.hostileRecent ||
+        state.holdingContraband ||
+        (state.sprinting && playerDist < 10) ||
+        (enemy.kind === 'officer' && playerDist < OFFICER_UNMASK_RANGE);
+      if (infraction) {
+        // Infracción: escalada rápida pero gradual (jamás = 1 en un frame).
+        enemy.suspicion += dt * INFRACTION_SUSPICION_RAMP * distanceFactor;
+      } else if (state.disguised) {
+        // Disfrazado y calmado: el guardia baja la guardia poco a poco.
+        enemy.suspicion -= dt * CALM_DISGUISED_DECAY;
       } else {
-        enemy.suspicion -= dt * 0.1;
+        // Sospechoso sin infracción: aviso amable con tope (modo WARNING).
+        enemy.suspicion += dt * CALM_SUSPICION_RAMP * distanceFactor;
+        const ignoresWarning =
+          playerDist < WARNING_IGNORE_DIST && enemy.warningT > WARNING_IGNORE_TIME;
+        if (!ignoresWarning && enemy.suspicion > WARNING_SUSPICION_CAP) {
+          enemy.suspicion = WARNING_SUSPICION_CAP;
+        }
       }
     } else {
       enemy.suspicion -= dt * SUSPICION_DECAY;
@@ -3352,7 +3562,97 @@ export class WorldObjectsManager {
     return sees;
   }
 
-  /** Guardias, oficiales y brutes: patrulla, búsqueda, caza y melee. */
+  /**
+   * HITO 1 — Entrada en modo WARNING: el enemigo se detiene, encara al
+   * jugador, suena el chirp crisp (una vez por entrada, con cooldown) y el
+   * HUD muestra el banner de VIGILANCIA. Sin alarma global: solo avisa.
+   */
+  private enterWarning(enemy: EnemyObj, state: WorldPlayerState): void {
+    enemy.state = GUARD_STATE_WARNING;
+    enemy.warningT = 0;
+    enemy.warningGazeT = 0;
+    enemy.warningCloseT = 0;
+    // La búsqueda posterior (si pierde al jugador) va hacia su posición.
+    _v5.copy(state.pos).sub(enemy.planet.centerVec).normalize();
+    enemy.lastSeenDir.copy(_v5);
+    if (enemy.warningCooldown <= 0) {
+      enemy.warningCooldown = WARNING_SOUND_COOLDOWN;
+      this.onSound?.('warning');
+    }
+    this.refreshWarningBanner(enemy, state);
+  }
+
+  /** Sale del modo WARNING limpiando sus temporizadores. */
+  private exitWarning(enemy: EnemyObj, nextState: number): void {
+    enemy.state = nextState;
+    enemy.warningT = 0;
+    enemy.warningGazeT = 0;
+    enemy.warningCloseT = 0;
+  }
+
+  /**
+   * HITO 1 — Banner de VIGILANCIA del HUD: texto según el contexto (zona
+   * restringida vs. actitud sospechosa) y altavoz según la skin del enemigo.
+   */
+  private refreshWarningBanner(enemy: EnemyObj, state: WorldPlayerState): void {
+    const trespassing = this.cachedPlayerZone(enemy.planet, state) !== null;
+    const text = trespassing
+      ? 'Zona restringida — no te acerques'
+      : '¡Alto! Actitud sospechosa — retrocede despacio';
+    const speaker = this.enemyDisplayName(enemy);
+    if (
+      this.warningBannerT <= 0 ||
+      this.warningBannerData.text !== text ||
+      this.warningBannerData.speaker !== speaker
+    ) {
+      this.warningBannerData.speaker = speaker;
+      this.warningBannerData.text = text;
+      this.warningBannerSeq++;
+    }
+    this.warningBannerT = WARNING_BANNER_HOLD;
+  }
+
+  /** Nombre visible del enemigo (banner de aviso y Lock-On). */
+  private enemyDisplayName(enemy: EnemyObj): string {
+    switch (enemy.skin) {
+      case 'panther':
+        return enemy.kind === 'officer' ? 'Alfa de la Ruina' : 'Pantera';
+      case 'monkey':
+        return 'Mono vigía';
+      case 'gorilla':
+        return 'Gorila lomo plateado';
+      case 'wasp':
+        return 'Avispa gigante';
+      case 'samurai':
+        return enemy.kind === 'officer' ? 'Capitán Samurái' : 'Samurái';
+      case 'oni':
+        return 'Oni acorazado';
+      case 'cyber_guard':
+        return 'Cyber Guardia';
+      case 'cyber_officer':
+        return 'Oficial Cyber';
+      case 'cyber_drone':
+        return 'Dron de reconocimiento';
+      case 'cyber_mech':
+        return 'Mech pesado';
+      default:
+        break;
+    }
+    switch (enemy.kind) {
+      case 'officer':
+        return 'Oficial';
+      case 'drone':
+        return 'Dron';
+      case 'turret':
+        return 'Torreta';
+      case 'brute':
+        return 'Brute élite';
+      default:
+        return 'Guardia';
+    }
+  }
+
+  /** Guardias, oficiales y brutes: patrulla, aviso, búsqueda, caza y melee. */
   private updateWalker(
     enemy: EnemyObj,
     dt: number,
@@ -3369,23 +3669,68 @@ export class WorldObjectsManager {
     if (enemy.state === GUARD_STATE_PATROL) {
       // Cuerpo de un compañero descubierto: aviso por radio y búsqueda.
       if (this.checkBodyDiscovery(enemy)) return;
-      if (enemy.stationaryLookout) {
+      if (enemy.suspicion >= WARNING_SUSPICION_THRESHOLD) {
+        // HITO 1: sospecha suficiente -> AVISA (cono ámbar, '?', banner);
+        // nunca más aggro instantáneo por el mero hecho de ser visto.
+        this.enterWarning(enemy, state);
+      } else if (enemy.stationaryLookout) {
         // FASE B: vigía en su puesto — barre ±60º oteando el patio.
         this.updateLookoutScan(enemy, dt);
       } else {
         const target = enemy.waypoints[enemy.waypointIdx];
-        this.moveEnemyTowards(enemy, target, GUARD_PATROL_SPEED * (this.globalAlert ? 1.5 : 1), dt);
+        _v2.copy(target);
+        this.steerAndMoveEnemy(enemy, _v2, GUARD_PATROL_SPEED * (this.globalAlert ? 1.5 : 1), dt);
         if (enemy.dir.angleTo(target) < 0.02) {
           enemy.waypointIdx = (enemy.waypointIdx + 1) % enemy.waypoints.length;
         }
       }
-      if (enemy.suspicion >= 1) this.enterCombat(enemy, state);
+      // Eventos instantáneos legítimos (escáner, habilidad delante de un
+      // guardia, casco golpeado): la sospecha ya llegó a 1 por el suceso.
+      if (enemy.state === GUARD_STATE_PATROL && enemy.suspicion >= 1) {
+        this.enterCombat(enemy, state);
+      }
+    } else if (enemy.state === GUARD_STATE_WARNING) {
+      // HITO 1 — Modo aviso: se detiene y encara al jugador dándole una
+      // oportunidad de retirarse; solo escala si el jugador la ignora.
+      enemy.warningT += dt;
+      if (sees) {
+        enemy.warningGazeT = 0;
+        this.faceEnemyTowardsPlayer(enemy, state, dt);
+        this.refreshWarningBanner(enemy, state);
+        if (playerDist < WARNING_MELEE_PUSH_DIST) {
+          // Se mete en distancia melee demasiado tiempo -> combate.
+          enemy.warningCloseT += dt;
+          if (enemy.warningCloseT > WARNING_MELEE_PUSH_TIME) enemy.suspicion = 1;
+        } else {
+          enemy.warningCloseT = Math.max(0, enemy.warningCloseT - dt);
+        }
+        if (enemy.suspicion >= 1) {
+          this.enterCombat(enemy, state);
+        } else if (enemy.suspicion < WARNING_SUSPICION_THRESHOLD * 0.6) {
+          // Se calmó / se puso el disfraz: vuelve a patrullar en paz.
+          this.exitWarning(enemy, GUARD_STATE_PATROL);
+        }
+      } else {
+        // Perdido de vista: sostiene la mirada 0.6s y decide sin alarma.
+        enemy.warningGazeT += dt;
+        if (enemy.warningGazeT >= WARNING_GAZE_HOLD) {
+          if (enemy.suspicion >= 0.5) {
+            _v1.copy(state.pos).sub(enemy.planet.centerVec).normalize();
+            enemy.lastSeenDir.copy(_v1);
+            this.exitWarning(enemy, GUARD_STATE_SEARCH);
+            enemy.searchT = WARNING_SEARCH_TIME;
+          } else {
+            this.exitWarning(enemy, GUARD_STATE_PATROL);
+          }
+        }
+      }
     } else if (enemy.state === GUARD_STATE_SEARCH) {
       enemy.searchT -= dt;
       if (enemy.stationaryLookout) {
         this.updateLookoutScan(enemy, dt);
       } else {
-        this.moveEnemyTowards(enemy, enemy.lastSeenDir, GUARD_PATROL_SPEED * 1.3, dt);
+        _v2.copy(enemy.lastSeenDir);
+        this.steerAndMoveEnemy(enemy, _v2, GUARD_PATROL_SPEED * 1.3, dt);
       }
       if (this.checkBodyDiscovery(enemy)) return;
       if (enemy.suspicion >= 1) {
@@ -3400,16 +3745,18 @@ export class WorldObjectsManager {
         // voz de alarma por radio (sigue atacando si suben a su puesto).
         _v2.copy(state.pos).sub(enemy.pos);
         _v2.addScaledVector(enemy.dir, -_v2.dot(enemy.dir));
-        if (_v2.lengthSq() > 1e-6) enemy.forward.copy(_v2).normalize();
+        if (_v2.lengthSq() > 1e-6) this.turnEnemyForwardTowards(enemy, _v2.normalize(), dt);
       } else {
-        _v2.copy(state.pos).sub(enemy.planet.centerVec).normalize();
-        // Flanqueo tangencial: en vez de caminar en línea recta contra los
-        // muros, orbita alrededor del jugador hasta acercarse lo suficiente.
-        if (playerDist > enemy.params.attackRange * 2.2) {
-          _q1.setFromAxisAngle(enemy.dir, INTERCEPTOR_FLANK_ANGLE * enemy.flankSide);
-          _v2.applyQuaternion(_q1).normalize();
+        _chaseGoal.copy(state.pos).sub(enemy.planet.centerVec).normalize();
+        // HITO 1: flanqueo suave (±0.22 rad) SOLO a media distancia y con la
+        // ruta verificada — el órbita constante anterior los lanzaba de
+        // lado contra los muros en chunk cuadrado.
+        if (playerDist > FLANK_MIN_DIST && playerDist < FLANK_MAX_DIST) {
+          _q1.setFromAxisAngle(enemy.dir, FLANK_MILD_ANGLE * enemy.flankSide);
+          _v3.copy(_chaseGoal).applyQuaternion(_q1).normalize();
+          if (this.enemyTangentClear(enemy, _v3)) _chaseGoal.copy(_v3);
         }
-        this.moveEnemyTowards(enemy, _v2, enemy.params.chaseSpeed, dt);
+        this.steerAndMoveEnemy(enemy, _chaseGoal, enemy.params.chaseSpeed, dt);
       }
       const lostTrack =
         playerDist > GUARD_GIVEUP_DIST ||
@@ -3417,20 +3764,30 @@ export class WorldObjectsManager {
       if (lostTrack) {
         enemy.state = GUARD_STATE_SEARCH;
         enemy.searchT = SEARCH_DURATION;
-        enemy.lastSeenDir.copy(_v2);
+        enemy.lastSeenDir.copy(_chaseGoal);
       } else if (playerDist < enemy.params.attackRange && enemy.attackCd <= 0) {
         enemy.state = GUARD_STATE_WINDUP;
         enemy.windupT = enemy.params.windupTime;
+        // HITO 1: el anillo arranca en su estado p=0 (sin opacidad/scale
+        // heredados de un windup anterior).
+        this.updateWindupRing(enemy);
+        // HITO 1: cue crisp de telegraph junto al anillo del suelo.
+        this.onSound?.('warning');
       }
     } else if (enemy.state === GUARD_STATE_WINDUP) {
       if (playerDist > GUARD_GIVEUP_DIST) {
         enemy.state = GUARD_STATE_CHASE;
       }
       enemy.windupT -= dt;
+      this.updateWindupRing(enemy);
       if (enemy.windupT <= 0) {
         enemy.state = GUARD_STATE_CHASE;
         enemy.attackCd = enemy.params.attackCdTime;
-        if (playerDist < enemy.params.attackRange + 1.2) {
+        // HITO 1 — Esquiva justa: fuera de alcance (> attackRange + 0.9) o
+        // saltando con margen (> 2.2 m), el barrido falla sin daño.
+        const outOfRange = playerDist > enemy.params.attackRange + WINDUP_WHIFF_MARGIN;
+        const jumpedOver = state.airborne && playerDist > WINDUP_WHIFF_AIR_MIN_DIST;
+        if (!outOfRange && !jumpedOver) {
           _v1.divideScalar(Math.max(playerDist, 1e-6));
           _v1.multiplyScalar(9).addScaledVector(state.up, 4);
           onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
@@ -3455,14 +3812,19 @@ export class WorldObjectsManager {
 
     if (enemy.state === GUARD_STATE_PATROL) {
       const target = enemy.waypoints[enemy.waypointIdx];
-      this.moveEnemyTowards(enemy, target, DRONE_PATROL_SPEED, dt);
+      // HITO 1: separación tangente — los drones se reparten en abanico
+      // en vez de apilarse sobre el mismo waypoint (vuelan, no chocan muros).
+      _v2.copy(target);
+      this.applyEnemySeparation(enemy, _v2);
+      this.moveEnemyTowards(enemy, _v2, DRONE_PATROL_SPEED, dt);
       if (enemy.dir.angleTo(target) < 0.02) {
         enemy.waypointIdx = (enemy.waypointIdx + 1) % enemy.waypoints.length;
       }
       if (enemy.suspicion >= 1) this.enterCombat(enemy, state);
     } else if (enemy.state === GUARD_STATE_CHASE) {
-      _v2.copy(state.pos).sub(enemy.planet.centerVec).normalize();
-      this.moveEnemyTowards(enemy, _v2, enemy.params.chaseSpeed, dt);
+      _chaseGoal.copy(state.pos).sub(enemy.planet.centerVec).normalize();
+      this.applyEnemySeparation(enemy, _chaseGoal);
+      this.moveEnemyTowards(enemy, _chaseGoal, enemy.params.chaseSpeed, dt);
       const lostTrack =
         playerDist > GUARD_GIVEUP_DIST + 4 ||
         (state.disguised && !sees && playerDist > 12);
@@ -3471,6 +3833,9 @@ export class WorldObjectsManager {
         enemy.suspicion = 0.4;
       } else if (playerDist < DRONE_ZAP_RANGE && enemy.attackCd <= 0) {
         enemy.attackCd = enemy.params.attackCdTime;
+        // _v1 fue sobreescrito por moveEnemyTowards: se recalcula el
+        // empuje del zap desde el offset real jugador-dron.
+        _v1.copy(state.pos).sub(enemy.pos);
         _v1.divideScalar(Math.max(playerDist, 1e-6));
         _v1.multiplyScalar(7).addScaledVector(state.up, 4);
         onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
@@ -3677,9 +4042,178 @@ export class WorldObjectsManager {
     _v1.normalize();
     _q1.setFromAxisAngle(_v1, step);
     enemy.dir.applyQuaternion(_q1).normalize();
-    // Avance tangente = componente tangencial de targetDir.
+    // Avance tangente = componente tangencial de targetDir, con giro SUAVE
+    // (HITO 1): sin snap instantáneo al cambiar de waypoint o perseguir.
     _v2.copy(targetDir).addScaledVector(enemy.dir, -THREE.MathUtils.clamp(targetDir.dot(enemy.dir), -1, 1));
-    if (_v2.lengthSq() > 1e-10) enemy.forward.copy(_v2).normalize();
+    if (_v2.lengthSq() > 1e-10) this.turnEnemyForwardTowards(enemy, _v2.normalize(), dt);
+  }
+
+  /**
+   * HITO 1 — Giro suave del forward hacia un tangente objetivo con velocidad
+   * angular máxima (rad/s): el cono de visión barre de forma orgánica en vez
+   * de teletransportarse al cambiar de rumbo. `turnVel` guarda la velocidad
+   * aplicada (rad/s) para depurar/afinar el amortiguado.
+   */
+  private turnEnemyForwardTowards(enemy: EnemyObj, target: THREE.Vector3, dt: number): void {
+    const dot = THREE.MathUtils.clamp(enemy.forward.dot(target), -1, 1);
+    const angle = Math.acos(dot);
+    if (angle < 1e-5) {
+      enemy.turnVel = 0;
+      return;
+    }
+    const maxRate =
+      enemy.kind === 'drone' ? DRONE_MAX_TURN_RAD_PER_SEC : ENEMY_MAX_TURN_RAD_PER_SEC;
+    const step = Math.min(maxRate * dt, angle);
+    _v6.copy(enemy.forward).cross(target);
+    if (_v6.lengthSq() < 1e-10) {
+      // Antiparalelo: gira hacia cualquier lado del plano tangente.
+      _v6.set(1, 0, 0).cross(enemy.forward);
+      if (_v6.lengthSq() < 1e-10) _v6.set(0, 1, 0).cross(enemy.forward);
+    }
+    _v6.normalize();
+    _q2.setFromAxisAngle(_v6, step);
+    enemy.forward.applyQuaternion(_q2);
+    // Reproyección al plano tangente (el eje de giro puede tener componente
+    // radial) + renormalizado contra la deriva numérica.
+    enemy.forward.addScaledVector(enemy.dir, -enemy.forward.dot(enemy.dir));
+    if (enemy.forward.lengthSq() > 1e-10) enemy.forward.normalize();
+    enemy.turnVel = step / Math.max(dt, 1e-4);
+  }
+
+  /**
+   * HITO 1 — Steering tangente multi-rayo: elige la dirección de marcha
+   * sobre la esfera esquivando muros ANTES de chocar con ellos (fin del
+   * movimiento en "chunk cuadrado" contra las paredes).
+   *
+   * Sondea el tangente hacia el objetivo rotado por
+   * [0, ±0.45, ±0.9, ±1.45]·steerBias rad (el lado del bias se prueba
+   * primero), con lookahead 3.2 m y elevado +0.9 m sobre la superficie
+   * para que la curvatura del planeta no dé falsos positivos. El primer
+   * sondeo libre gana; `steerBias` persiste hacia el lado que quedó libre
+   * para rodear esquinas con suavidad en vez de vibrar. Escribe en
+   * `outDir` el punto de la esfera a STEER_LOOKAHEAD metros por el
+   * tangente elegido. SIN allocations.
+   */
+  private steerDirectionOnSphere(
+    enemy: EnemyObj,
+    goalDir: THREE.Vector3,
+    outDir: THREE.Vector3
+  ): void {
+    // Tangente del geodésico hacia el objetivo en la posición actual.
+    _steerTangent.copy(goalDir).addScaledVector(enemy.dir, -goalDir.dot(enemy.dir));
+    if (_steerTangent.lengthSq() < 1e-10) {
+      outDir.copy(goalDir);
+      return;
+    }
+    _steerTangent.normalize();
+    // Punto de partida del sondeo: elevado sobre la superficie local.
+    _steerStart.copy(enemy.pos).addScaledVector(enemy.dir, STEER_LIFT);
+    const angularStep = STEER_LOOKAHEAD / enemy.planet.spec.radius;
+    for (let i = 0; i < STEER_PROBE_ANGLES.length; i++) {
+      const probeAngle = STEER_PROBE_ANGLES[i] * enemy.steerBias;
+      if (probeAngle === 0) {
+        _steerProbe.copy(_steerTangent);
+      } else {
+        _q1.setFromAxisAngle(enemy.dir, probeAngle);
+        _steerProbe.copy(_steerTangent).applyQuaternion(_q1);
+      }
+      _steerEnd.copy(_steerStart).addScaledVector(_steerProbe, STEER_LOOKAHEAD);
+      if (
+        !isLineBlockedByStructures(
+          _steerStart,
+          _steerEnd,
+          this.structureColliders,
+          enemy.planet.spec.id
+        )
+      ) {
+        if (i > 0) enemy.steerBias = probeAngle > 0 ? 1 : -1;
+        outDir.copy(enemy.dir).addScaledVector(_steerProbe, angularStep).normalize();
+        return;
+      }
+    }
+    // Todos los sondeos bloqueados: rumbo directo — el deslizamiento de
+    // colisión de syncEnemyTransform lo lleva junto al muro sin atravesarlo.
+    outDir.copy(enemy.dir).addScaledVector(_steerTangent, angularStep).normalize();
+  }
+
+  /** ¿El camino tangente hacia `targetDir` está libre de muros? */
+  private enemyTangentClear(enemy: EnemyObj, targetDir: THREE.Vector3): boolean {
+    _steerTangent.copy(targetDir).addScaledVector(enemy.dir, -targetDir.dot(enemy.dir));
+    if (_steerTangent.lengthSq() < 1e-10) return true;
+    _steerTangent.normalize();
+    _steerStart.copy(enemy.pos).addScaledVector(enemy.dir, STEER_LIFT);
+    _steerEnd.copy(_steerStart).addScaledVector(_steerTangent, STEER_LOOKAHEAD);
+    return !isLineBlockedByStructures(
+      _steerStart,
+      _steerEnd,
+      this.structureColliders,
+      enemy.planet.spec.id
+    );
+  }
+
+  /**
+   * HITO 1 — Separación tangente enemigo-enemigo: en patrulla y caza se
+   * reparten en abanico en vez de apilarse sobre un mismo punto. Empuje
+   * mayor cuanto más cerca (1 en contacto, 0 en el radio), proyectado al
+   * plano tangente del enemigo y aplicado al objetivo antes del steering.
+   */
+  private applyEnemySeparation(enemy: EnemyObj, goalDir: THREE.Vector3): void {
+    _sep.set(0, 0, 0);
+    for (let i = 0; i < this.enemies.length; i++) {
+      const other = this.enemies[i];
+      if (other === enemy || other.state === GUARD_STATE_KO) continue;
+      if (other.planet !== enemy.planet) continue;
+      _v6.copy(enemy.pos).sub(other.pos);
+      const distSq = _v6.lengthSq();
+      if (distSq >= ENEMY_SEPARATION_RANGE * ENEMY_SEPARATION_RANGE || distSq < 1e-8) {
+        continue;
+      }
+      const dist = Math.sqrt(distSq);
+      _v6.multiplyScalar((1 - dist / ENEMY_SEPARATION_RANGE) / dist);
+      _sep.add(_v6);
+    }
+    if (_sep.lengthSq() < 1e-10) return;
+    _sep.addScaledVector(enemy.dir, -_sep.dot(enemy.dir));
+    if (_sep.lengthSq() < 1e-10) return;
+    _sep.normalize();
+    goalDir.addScaledVector(_sep, ENEMY_SEPARATION_STRENGTH).normalize();
+  }
+
+  /**
+   * Movimiento de caminante con steering multi-rayo + separación: copia el
+   * objetivo a scratch dedicado, lo desplaza para no apilarse y esquiva los
+   * muros por el lado libre persistente.
+   */
+  private steerAndMoveEnemy(
+    enemy: EnemyObj,
+    goalDir: THREE.Vector3,
+    speed: number,
+    dt: number
+  ): void {
+    _sepGoal.copy(goalDir);
+    this.applyEnemySeparation(enemy, _sepGoal);
+    this.steerDirectionOnSphere(enemy, _sepGoal, _steerGoal);
+    this.moveEnemyTowards(enemy, _steerGoal, speed, dt);
+  }
+
+  /** HITO 1 — Modo WARNING: encara suavemente al jugador sin moverse. */
+  private faceEnemyTowardsPlayer(enemy: EnemyObj, state: WorldPlayerState, dt: number): void {
+    _v5.copy(state.pos).sub(enemy.pos);
+    _v5.addScaledVector(enemy.dir, -_v5.dot(enemy.dir));
+    if (_v5.lengthSq() < 1e-6) return;
+    this.turnEnemyForwardTowards(enemy, _v5.normalize(), dt);
+  }
+
+  /** HITO 1 — Anillo de telegraph del windup: expande y pulsa en el suelo. */
+  private updateWindupRing(enemy: EnemyObj): void {
+    const ring = enemy.windupRing;
+    const material = enemy.windupRingMaterial;
+    if (!ring || !material) return;
+    const windupTime = Math.max(enemy.params.windupTime, 0.001);
+    const p = THREE.MathUtils.clamp(1 - Math.max(enemy.windupT, 0) / windupTime, 0, 1);
+    const expand = 0.55 + 0.45 * p;
+    ring.scale.setScalar(expand * (1 + Math.sin(this.clock * 20) * 0.05));
+    material.opacity = 0.3 + 0.3 * p + Math.sin(this.clock * 22) * 0.08;
   }
 
   /** Transform sobre la esfera + hover de dron + tumbado si K.O. */
@@ -3689,6 +4223,10 @@ export class WorldObjectsManager {
       enemy.mesh.scale.setScalar(1 + Math.sin(this.clock * 22) * 0.07);
     } else {
       enemy.mesh.scale.setScalar(1);
+    }
+    // HITO 1: el anillo de telegraph del suelo solo vive durante el windup.
+    if (enemy.windupRing) {
+      enemy.windupRing.visible = enemy.state === GUARD_STATE_WINDUP;
     }
     let altitude = enemy.altitudeOffset;
     if (enemy.kind === 'drone') {
@@ -3764,9 +4302,9 @@ export class WorldObjectsManager {
 
   /**
    * Color/opacidad del cono de visión en tiempo real: verde en patrulla,
-   * amarillo al sospechar o investigar un ruido, rojo en combate/alarma.
-   * Además alterna los iconos 3D de estado: '?' amarillo al investigar y
-   * '!' rojo en combate.
+   * ÁMBAR (0xf59e0b) en modo WARNING (Hito 1), amarillo al investigar un
+   * ruido y rojo en combate/alarma. Además alterna los iconos 3D de estado:
+   * '?' amarillo al avisar/investigar y '!' rojo en combate.
    */
   private updateVisionCone(enemy: EnemyObj): void {
     const cone = enemy.visionCone;
@@ -3774,9 +4312,10 @@ export class WorldObjectsManager {
     const ko = enemy.state === GUARD_STATE_KO;
     const combat =
       enemy.state === GUARD_STATE_CHASE || enemy.state === GUARD_STATE_WINDUP;
+    const warning = enemy.state === GUARD_STATE_WARNING;
     const investigating =
-      !combat && (enemy.state === GUARD_STATE_SEARCH || enemy.suspicion > 0.4);
-    if (enemy.iconQuestion) enemy.iconQuestion.visible = !ko && investigating;
+      !combat && !warning && (enemy.state === GUARD_STATE_SEARCH || enemy.suspicion > 0.4);
+    if (enemy.iconQuestion) enemy.iconQuestion.visible = !ko && (investigating || warning);
     if (enemy.iconAlert) enemy.iconAlert.visible = !ko && combat;
     if (!cone || !material) return;
     cone.visible = !ko;
@@ -3784,11 +4323,13 @@ export class WorldObjectsManager {
     let color = CONE_COLOR_PATROL;
     if (combat) {
       color = CONE_COLOR_COMBAT;
+    } else if (warning) {
+      color = CONE_COLOR_WARNING;
     } else if (investigating) {
       color = CONE_COLOR_SEARCH;
     }
     material.color.set(color);
-    material.opacity = color === CONE_COLOR_COMBAT ? 0.42 : 0.26;
+    material.opacity = combat ? 0.42 : warning ? 0.34 : 0.26;
   }
 
   /**
@@ -3810,8 +4351,10 @@ export class WorldObjectsManager {
       enemy.helmet &&
       (source === 'melee' || source === 'stasis' || source === 'knockout' || source === 'dash')
     ) {
-      // El casco blindado absorbe el primer golpe.
+      // El casco blindado absorbe el primer golpe... pero el enemigo YA
+      // recibió daño: excepción justa de escalada instantánea (Hito 1).
       enemy.helmet = false;
+      enemy.suspicion = 1;
       return false;
     }
     this.killEnemy(enemy);
@@ -4022,6 +4565,15 @@ export class WorldObjectsManager {
     this.predictiveShields = false;
     this.alertBoost = 0;
     this.structureColliders.length = 0;
+    // HITO 1: zonas restringidas, infracciones y banner de aviso.
+    this.restrictedZones.length = 0;
+    this.zoneCachePlanetId = null;
+    this.zoneCacheResult = null;
+    this.recentHostileTimer = 0;
+    this.warningBannerT = 0;
+    this.warningBannerSeq = 0;
+    this.warningBannerData.speaker = '';
+    this.warningBannerData.text = '';
     this.planetGenTotal.clear();
     this.planetGenDestroyed.clear();
     this.planetKeycardTotal.clear();

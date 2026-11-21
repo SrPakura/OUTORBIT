@@ -133,6 +133,8 @@ export class GameEngine {
     airborne: false,
     flightTargetPlanetId: null,
     characterId: 'kitsune',
+    holdingContraband: false,
+    hostileRecent: false,
   };
 
   // Temporales preasignados (sin GC en el loop)
@@ -405,6 +407,10 @@ export class GameEngine {
     this.worldState.flightTargetPlanetId = player.flightTargetPlanetId;
     this.worldState.characterId = player.characterId;
     this.worldState.inGrass = world.isInGrass(player.position, player.planet);
+    // HITO 1: contexto de infracción — contrabando de Estasis y acción
+    // hostil reciente (el mundo lleva el temporizador de 3.5s).
+    this.worldState.holdingContraband = world.held > 0;
+    this.worldState.hostileRecent = world.playerHostileRecent;
 
     // Vector combinado de la run (acumulado + planeta actual) sin allocations:
     // la red MLP de KRONOS lo lee para predecir su postura en tiempo real.
@@ -709,6 +715,8 @@ export class GameEngine {
     // FASE B: bocadillo de diálogo (línea activa) y lockdown de compuertas.
     key = key * 31 + world.dialogueKey;
     key = key * 31 + (world.gateLockdownActive ? 1 : 0);
+    // HITO 1: banner de VIGILANCIA (aparece/cambia/caduca -> emisión inmediata).
+    key = key * 31 + world.warningBannerKey;
 
     if (key !== this.hudKey) {
       this.hudKey = key;
@@ -925,6 +933,9 @@ export class GameEngine {
       activeDialogue: world.activeDialogue ? { ...world.activeDialogue } : null,
       keycardsCollected: world.keycardsCollected,
       gateLockdownActive: world.gateLockdownActive,
+      warningBanner: world.warningBanner
+        ? { speaker: world.warningBanner.speaker, text: world.warningBanner.text }
+        : null,
     });
   }
 

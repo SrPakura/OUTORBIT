@@ -16,6 +16,7 @@ export type GameSoundKind =
   | 'gravityShift'
   | 'explosion'
   | 'alert'
+  | 'warning'
   | 'bossHit'
   | 'victory'
   | 'keycard'
@@ -104,6 +105,9 @@ export class SynthAudio {
         break;
       case 'alert':
         this.playAlert();
+        break;
+      case 'warning':
+        this.playWarning();
         break;
       case 'bossHit':
         this.playBossHit();
@@ -246,6 +250,16 @@ export class SynthAudio {
   playAlert(): void {
     this.tone('square', 660, 660, 0.09, 0.45);
     this.tone('square', 880, 880, 0.12, 0.45, 0.11);
+  }
+
+  /**
+   * Aviso de vigilancia (modo WARNING): chirp crisp de dos tonos estilo
+   * Metal Gear / Persona — el guardia te ha visto pero aún no salta la
+   * alarma. Volumen sutil para no saturar con varios guardias a la vez.
+   */
+  playWarning(): void {
+    this.tone('square', 587, 587, 0.07, 0.3);
+    this.tone('square', 880, 880, 0.11, 0.26, 0.085);
   }
 
   /** Golpe al jefe: impacto grave contundente. */
