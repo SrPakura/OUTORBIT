@@ -7,7 +7,7 @@ import MobileBlocker from '@/ui/MobileBlocker';
 import TitleScreen from '@/ui/TitleScreen';
 import GameHUD from '@/ui/GameHUD';
 import BattleReportScreen from '@/ui/BattleReportScreen';
-import DomeArenaPreview from '@/ui/DomeArenaPreview';
+import DomeGameView from '@/ui/DomeGameView';
 
 type Screen = 'title' | 'game';
 
@@ -147,7 +147,7 @@ export default function App() {
           )}
         </div>
       ) : (
-        <DomeArenaPreview onExit={handleExitToTitle} />
+        <DomeGameView settings={settings} onExit={handleExitToTitle} />
       )}
     </div>
   );
