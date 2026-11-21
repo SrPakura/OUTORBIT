@@ -22,6 +22,7 @@ import {
   raycastCityColliders,
   resolvePlayerCityColliders,
 } from '../math/flatCityPhysics';
+import type { CityCollisionResult } from '../math/flatCityPhysics';
 import { ChunkMeshCollider, getHeksevilleDistrictInfo } from '../physics/ChunkMeshCollider';
 import { getPlanetTerrainOffsetVec } from '../math/terrain';
 import { buildCharacterModel, buildDisguiseOverlay } from '../render/proceduralModels';
@@ -75,6 +76,9 @@ const LOCK_ON_PITCH_EXP = 6.5;
 
 // Colisión contra estructuras (muros, torres, tejados, puentes, plataformas)
 const PLAYER_STRUCTURE_RADIUS = 0.5;
+// Hekseville 1:1: desplazamiento máximo (m) entre resoluciones de colisión
+// (sub-pasos anti-tunneling contra muros finos de una sola cara).
+const FLAT_CITY_MAX_STEP = 0.24;
 
 // Gravity Shift / Gravity Dash (Clic Derecho)
 const GRAVITY_DASH_SPEED = 30;
@@ -346,6 +350,8 @@ export class PlayerController {
   private cityCylinders: readonly CityCylinderCollider[] = [];
   private readonly citySpawnPos = new THREE.Vector3(105, 18.2, 8);
   private readonly flatVelWrap = { value: 0 };
+  /** Hekseville 1:1: desplazamiento horizontal acumulado del frame (se aplica en sub-pasos de colisión). */
+  private readonly _flatDisp = new THREE.Vector3();
   private readonly cityAimPoint = new THREE.Vector3();
   private readonly cityAimNormal = new THREE.Vector3(0, 1, 0);
   private cityAimDistrict: CityDistrictId | null = null;
@@ -1351,12 +1357,12 @@ export class PlayerController {
     }
 
     // Deriva espacial: en ciudad plana basta con respawn si caes muy bajo.
-    // En Hekseville 1:1 los niveles inferiores llegan a y = -280, así que el
-    // umbral de vacío baja a -350.
+    // Hekseville 1:1: la niebla del abismo es un mar púrpura-azulado a
+    // y = -125; caer más abajo respawnea al jugador en el spawn.
     if (this.flatCityEnabled) {
       this.nearestSurfaceDist = 0;
       this.lostInSpace = false;
-      if (this.pos.y < (this.chunkCollider ? -350 : -155)) {
+      if (this.pos.y < (this.chunkCollider ? -125 : -155)) {
         this.respawnFlatCity();
       }
     } else if (this.flightDirected) {
@@ -1584,6 +1590,17 @@ export class PlayerController {
     this.pitch += (targetPitch - this.pitch) * (1 - Math.exp(-LOCK_ON_PITCH_EXP * dt));
   }
 
+  /**
+   * Avance horizontal del paso: en Hekseville 1:1 el desplazamiento se
+   * acumula en `_flatDisp` y se aplica en sub-pasos de colisión (máx
+   * FLAT_CITY_MAX_STEP) dentro del bloque flatCity; en el resto de modos se
+   * aplica directo a `pos` como siempre.
+   */
+  private stepAdvance(disp: THREE.Vector3, k: number): void {
+    if (this.flatCityEnabled) this._flatDisp.addScaledVector(disp, k);
+    else this.pos.addScaledVector(disp, k);
+  }
+
   private updateGrounded(dt: number): void {
     const planet = this.currentPlanet;
     const center = planet.centerVec;
@@ -1594,6 +1611,7 @@ export class PlayerController {
     const inputX = (this.isActionDown('right') ? 1 : 0) - (this.isActionDown('left') ? 1 : 0);
     this._move.set(0, 0, 0).addScaledVector(this._forward, inputZ).addScaledVector(this._right, inputX);
     this.isMoving = this._move.lengthSq() > 1e-8;
+    this._flatDisp.set(0, 0, 0);
 
     let speed = 0;
     const onIce = this.world.isOnIce(this.pos, planet);
@@ -1611,17 +1629,17 @@ export class PlayerController {
         // Hielo resbaladizo: inercia al acelerar/frenar sobre el parche.
         this._v1.copy(this._move).multiplyScalar(speed);
         this.iceVel.lerp(this._v1, Math.min(1, dt * ICE_GRIP));
-        this.pos.addScaledVector(this.iceVel, dt);
+        this.stepAdvance(this.iceVel, dt);
         this.walkDistance += this.iceVel.length() * dt;
       } else {
-        this.pos.addScaledVector(this._move, speed * dt);
+        this.stepAdvance(this._move, speed * dt);
         this.walkDistance += speed * dt;
         this.iceVel.copy(this._move).multiplyScalar(speed);
       }
     } else if (this.iceVel.lengthSq() > 1e-6) {
       // Frenada: sobre hielo se desliza; fuera de él se detiene en seco.
       this.iceVel.multiplyScalar(Math.exp(-(onIce ? ICE_GRIP : 16) * dt));
-      this.pos.addScaledVector(this.iceVel, dt);
+      this.stepAdvance(this.iceVel, dt);
     } else {
       this.iceVel.set(0, 0, 0);
     }
@@ -1631,17 +1649,18 @@ export class PlayerController {
 
     // Impulso residual del Ancla (decae exponencialmente).
     if (this.anchorBurst.lengthSq() > 1e-6) {
-      this.pos.addScaledVector(this.anchorBurst, dt);
+      this.stepAdvance(this.anchorBurst, dt);
       this.anchorBurst.multiplyScalar(Math.exp(-ANCHOR_BURST_DECAY * dt));
     } else {
       this.anchorBurst.set(0, 0, 0);
     }
 
     if (this.flatCityEnabled) {
-      // Hekseville 1:1: hasta que el primer chunk GLB (prioridad 0) está
-      // registrado no hay suelo que colisionar; se congela al jugador en el
-      // spawn en lugar de dejarlo caer al vacío durante la carga.
-      if (this.chunkCollider && this.chunkCollider.chunkCount === 0) {
+      // Hekseville 1:1: hasta que TODOS los chunks de prioridad 0 están
+      // registrados (collider marcado listo) no hay suelo bajo el spawn; se
+      // congela al jugador en el spawn en lugar de dejarlo caer al vacío
+      // durante la carga.
+      if (this.chunkCollider && !this.chunkCollider.isReady) {
         this.pos.copy(this.citySpawnPos);
         this.vertVel = 0;
         this.grounded = true;
@@ -1659,29 +1678,43 @@ export class PlayerController {
       this.vertVel -=
         GRAVITY_BASE * this.profile.gravityScale * (axelGliding ? 0.26 : 1) * dt;
       if (axelGliding) this.vertVel = Math.max(this.vertVel, -3.6);
-      this.pos.addScaledVector(this.lastUp, this.vertVel * dt);
 
       const wasAirborneFlat = !this.grounded;
-      this.flatVelWrap.value = this.vertVel;
-      const cityRes = this.chunkCollider
-        ? this.chunkCollider.resolvePlayer(
+      let cityRes!: CityCollisionResult;
+      if (this.chunkCollider) {
+        // Sub-pasos anti-tunneling: nunca desplazar más de 0.24 m entre
+        // resoluciones de colisión para no atravesar muros finos de una
+        // sola cara (sprint/salto con desplazamiento grande por frame).
+        const moveDist = this._flatDisp.length();
+        const steps = Math.max(1, Math.ceil(moveDist / FLAT_CITY_MAX_STEP));
+        for (let i = 0; i < steps; i++) {
+          this.pos.addScaledVector(this._flatDisp, 1 / steps);
+          this.pos.addScaledVector(this.lastUp, (this.vertVel * dt) / steps);
+          this.flatVelWrap.value = this.vertVel;
+          cityRes = this.chunkCollider.resolvePlayer(
             this.pos,
             this.flatVelWrap,
             this.lastUp,
             this.isBurrowing,
             PLAYER_STRUCTURE_RADIUS,
             1.65
-          )
-        : resolvePlayerCityColliders(
-            this.pos,
-            this.flatVelWrap,
-            this.lastUp,
-            this.isBurrowing,
-            this.cityBoxes,
-            this.cityCylinders,
-            PLAYER_STRUCTURE_RADIUS
           );
-      this.vertVel = this.flatVelWrap.value;
+          this.vertVel = this.flatVelWrap.value;
+        }
+      } else {
+        this.pos.addScaledVector(this.lastUp, this.vertVel * dt);
+        this.flatVelWrap.value = this.vertVel;
+        cityRes = resolvePlayerCityColliders(
+          this.pos,
+          this.flatVelWrap,
+          this.lastUp,
+          this.isBurrowing,
+          this.cityBoxes,
+          this.cityCylinders,
+          PLAYER_STRUCTURE_RADIUS
+        );
+        this.vertVel = this.flatVelWrap.value;
+      }
       if (cityRes.grounded) {
         if (wasAirborneFlat) {
           this.jumpsUsed = 0;
@@ -1893,30 +1926,42 @@ export class PlayerController {
       this.flightTime += dt;
       // Gravedad activa en dirección `-lastUp` (suelo, pared o techo).
       this.flightVel.addScaledVector(this.lastUp, -GRAVITY_BASE * 0.65 * dt);
-      this.pos.addScaledVector(this.flightVel, dt);
-      if (this.world.getBubbleAt(this.pos)) {
-        this.enterSwim();
-        return;
-      }
-      this.flatVelWrap.value = this.flightVel.dot(this.lastUp);
-      const cityRes = this.chunkCollider
-        ? this.chunkCollider.resolvePlayer(
+      let cityRes!: CityCollisionResult;
+      if (this.chunkCollider) {
+        // Sub-pasos anti-tunneling: nunca desplazar más de 0.24 m entre
+        // resoluciones de colisión para no atravesar muros finos de una
+        // sola cara durante el vuelo rápido.
+        const moveDist = this.flightVel.length() * dt;
+        const steps = Math.max(1, Math.ceil(moveDist / FLAT_CITY_MAX_STEP));
+        for (let i = 0; i < steps; i++) {
+          this.pos.addScaledVector(this.flightVel, dt / steps);
+          this.flatVelWrap.value = this.flightVel.dot(this.lastUp);
+          cityRes = this.chunkCollider.resolvePlayer(
             this.pos,
             this.flatVelWrap,
             this.lastUp,
             false,
             PLAYER_STRUCTURE_RADIUS,
             1.65
-          )
-        : resolvePlayerCityColliders(
-            this.pos,
-            this.flatVelWrap,
-            this.lastUp,
-            false,
-            this.cityBoxes,
-            this.cityCylinders,
-            PLAYER_STRUCTURE_RADIUS
           );
+        }
+      } else {
+        this.pos.addScaledVector(this.flightVel, dt);
+        this.flatVelWrap.value = this.flightVel.dot(this.lastUp);
+        cityRes = resolvePlayerCityColliders(
+          this.pos,
+          this.flatVelWrap,
+          this.lastUp,
+          false,
+          this.cityBoxes,
+          this.cityCylinders,
+          PLAYER_STRUCTURE_RADIUS
+        );
+      }
+      if (this.world.getBubbleAt(this.pos)) {
+        this.enterSwim();
+        return;
+      }
       if (cityRes.grounded && this.flightTime > 0.08) {
         this.lastUp.copy(cityRes.groundNormal);
         this.inFlight = false;

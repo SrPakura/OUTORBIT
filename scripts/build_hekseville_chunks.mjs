@@ -6,9 +6,9 @@ import { MeshoptSimplifier } from 'meshoptimizer';
 const SRC_DIR = '/home/pakura/Proyectos/OUTORBIT/referencias y base/Blender_exports/ciudad_hekseville';
 const OUT_DIR = '/home/pakura/Proyectos/OUTORBIT/public/chunks/hekseville';
 
+// El mundo es 100% Pleajeune: Vendecentre se retiró por completo.
 const DISTRICTS = [
-  { id: 'pleajeune', file: 'Pleajeune_base_dt.glb', priority: 0, cellSize: 115, minY: -200, maxY: 420 },
-  { id: 'vendecentre', file: 'Vendecentre_base_id.glb', priority: 1, cellSize: 115, minY: -260, maxY: 320 },
+  { id: 'pleajeune', file: 'Pleajeune_base_dt.glb', priority: 0, cellSize: 105, minY: -200, maxY: 420 },
 ];
 
 const MAX_ABS_XZ = 720;
@@ -64,10 +64,18 @@ const SKIP_NODE_PREFIXES = [
   'light_',
   'fence_',
   'window_',
+  // Persianas cerradas y cuerdas finas de estribo: abren los arcos y
+  // pasillos de Pleajeune (fance_pd es la variante "fance" del modelo).
+  'door_',
+  'fance_',
+  'gate_',
+  'glass_',
+  'ironbar',
+  'rope',
 ];
 
-// ALTA FIDELIDAD DE VÉRTICES: presupuestos 1:1 reinvertidos en Pleajeune y
-// Vendecentre. La soldadura es SOLO por posición cuantizada (~3 cm), así que
+// ALTA FIDELIDAD DE VÉRTICES: presupuestos 1:1 reinvertidos al 100% en
+// Pleajeune. La soldadura es SOLO por posición cuantizada (~3 cm), así que
 // Meshopt comparte topología entre caras adyacentes, y con ['LockBorder'] +
 // maxError normalizado MUY pequeño (0.6%-2% del extent del chunk) las torres
 // NUNCA se rompen en aletas flotantes ("rotilla"): el borde de cada isla
@@ -161,6 +169,86 @@ function hashNameColorVariant(name) {
     h = Math.imul(h, 16777619);
   }
   return (h >>> 0) & 1;
+}
+
+/** Hash FNV-1a determinista de un string, normalizado a [0, 1). */
+function hashStrToUnit(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) / 4294967296;
+}
+
+// ----------------------------------------------------------------------------
+// Metadatos por instancia (COLOR_0, VEC4 float): [categoryCode, seedA, seedB, flag]
+//
+// - categoryCode (r): familia arquitectónica (0.00 terreno, 0.16 tiendas,
+//   0.32 residencial, 0.48 mansiones/cívicos, 0.64 rascacielos, 0.80 puentes/
+//   rails/escaleras/metal, 0.96 letreros/neón).
+// - seedA (g): hash del nombre + traslación mundial -> CADA casa/tienda/torre
+//   individual recibe una semilla procedural única.
+// - seedB (b): segundo hash independiente -> variación secundaria de
+//   tejado/remate/letrero.
+// - flag (a): 1.0 en letreros animados y landmarks, 0.5 en el resto.
+// ----------------------------------------------------------------------------
+
+const DEFAULT_NODE_META = [0.0, 0.0, 0.0, 0.5];
+
+function computeNodeMeta(name, world) {
+  if (!name) return null;
+  const lower = name.toLowerCase();
+  let category = -1;
+  if (lower.startsWith('tv_') || lower.startsWith('sign_')) {
+    category = 0.96;
+  } else if (
+    lower.startsWith('bridge_') ||
+    lower.startsWith('trainrail') ||
+    lower.startsWith('stairs_') ||
+    lower.startsWith('pipe_') ||
+    lower.startsWith('support_')
+  ) {
+    category = 0.8;
+  } else if (
+    lower.startsWith('building_sn_') ||
+    lower.startsWith('tower_') ||
+    lower.startsWith('structure_')
+  ) {
+    category = 0.64;
+  } else if (
+    lower.startsWith('building_ms_') ||
+    lower.startsWith('building_pd_') ||
+    lower.startsWith('arch_') ||
+    lower.startsWith('monument') ||
+    lower.startsWith('fountain')
+  ) {
+    category = 0.48;
+  } else if (
+    lower.startsWith('building_kk_') ||
+    lower.startsWith('building_yy_') ||
+    lower.startsWith('uji_')
+  ) {
+    category = 0.32;
+  } else if (lower.startsWith('building_sf_')) {
+    category = 0.16;
+  } else if (lower.startsWith('building_')) {
+    // Edificio sin sufijo de familia: variación residencial por defecto.
+    category = 0.32;
+  } else if (lower.startsWith('base_') || lower.startsWith('gake_')) {
+    category = 0.0;
+  }
+  if (category < 0) return null;
+
+  const seedA = hashStrToUnit(`${name}${Math.round(world[12] * 2)}_${Math.round(world[14] * 2)}`);
+  const seedB = hashStrToUnit(`${seedA * 17 + name.length}`);
+  const isAnimatedOrLandmark =
+    lower.startsWith('tv_') ||
+    lower.startsWith('sign_') ||
+    lower.startsWith('monument') ||
+    lower.startsWith('fountain') ||
+    lower.startsWith('arch_');
+  return [category, seedA, seedB, isAnimatedOrLandmark ? 1.0 : 0.5];
 }
 
 function classifyNodeCategory(nodeName) {
@@ -279,7 +367,7 @@ const CREASE_COS_LADDER = [Math.cos((42 * Math.PI) / 180), 0.5, 0.17, -1];
  * separan en vértices distintos (nítidas) y las superficies suaves
  * comparten un único vértice con normal promediada.
  */
-function buildCreaseNormals(posArr, vertCount, indices, creaseCos) {
+function buildCreaseNormals(posArr, colArr, vertCount, indices, creaseCos) {
   const triCount = indices.length / 3;
 
   // Normales de cara unitarias (fallback (0,1,0) en degeneradas).
@@ -334,6 +422,7 @@ function buildCreaseNormals(posArr, vertCount, indices, creaseCos) {
   const cornerGroup = new Int32Array(indices.length);
   const outPos = [];
   const outNorm = [];
+  const outCol = [];
   let outVerts = 0;
   for (let v = 0; v < vertCount; v++) {
     const start = incidentStart[v];
@@ -371,6 +460,7 @@ function buildCreaseNormals(posArr, vertCount, indices, creaseCos) {
       const gid = outVerts++;
       outPos.push(posArr[v * 3], posArr[v * 3 + 1], posArr[v * 3 + 2]);
       outNorm.push(grp.nx / len, grp.ny / len, grp.nz / len);
+      outCol.push(colArr[v * 4], colArr[v * 4 + 1], colArr[v * 4 + 2], colArr[v * 4 + 3]);
       for (const f of grp.faces) {
         for (let k = 0; k < 3; k++) {
           if (indices[f * 3 + k] === v) cornerGroup[f * 3 + k] = gid;
@@ -382,19 +472,23 @@ function buildCreaseNormals(posArr, vertCount, indices, creaseCos) {
   return {
     positions: new Float32Array(outPos),
     normals: new Float32Array(outNorm),
+    colors: new Float32Array(outCol),
     indices: cornerGroup,
     vertexCount: outVerts,
   };
 }
 
-function simplifyBucketGeometry(rawPositions, rawTriCount, ratio, maxError) {
+function simplifyBucketGeometry(rawPositions, rawColors, rawTriCount, ratio, maxError) {
   if (rawTriCount === 0) return null;
 
-  // 1) Soldadura SOLO por posición cuantizada (~3 cm de rejilla): todos los
-  //    triángulos adyacentes comparten topología aunque sus normales difieran
-  //    (esquinas a 90°), de modo que Meshopt puede colapsar aristas de verdad.
+  // 1) Soldadura por posición cuantizada (~3 cm de rejilla) + metadatos
+  //    COLOR_0 (categoryCode a paso 1/12 y seedA a paso 1/16): todos los
+  //    triángulos adyacentes DEL MISMO edificio comparten topología aunque sus
+  //    normales difieran (esquinas a 90°), mientras que edificios vecinos con
+  //    distinta semilla NUNCA sueldan vértices ni mezclan colores entre sí.
   const vertexMap = new Map();
   const weldedPos = [];
+  const weldedCol = [];
   const indices = new Uint32Array(rawTriCount * 3);
 
   const vertCount = rawTriCount * 3;
@@ -402,22 +496,29 @@ function simplifyBucketGeometry(rawPositions, rawTriCount, ratio, maxError) {
 
   for (let i = 0; i < vertCount; i++) {
     const p3 = i * 3;
+    const c4 = i * 4;
     const x = rawPositions[p3];
     const y = rawPositions[p3 + 1];
     const z = rawPositions[p3 + 2];
+    const r = rawColors[c4];
+    const g = rawColors[c4 + 1];
+    const b = rawColors[c4 + 2];
+    const a = rawColors[c4 + 3];
 
-    const key = `${Math.round(x * 32)},${Math.round(y * 32)},${Math.round(z * 32)}`;
+    const key = `${Math.round(x * 32)},${Math.round(y * 32)},${Math.round(z * 32)},${Math.round(r * 12)}|${Math.round(g * 16)}`;
 
     let idx = vertexMap.get(key);
     if (idx === undefined) {
       idx = uniqueCount++;
       vertexMap.set(key, idx);
       weldedPos.push(x, y, z);
+      weldedCol.push(r, g, b, a);
     }
     indices[i] = idx;
   }
 
   const posArr = new Float32Array(weldedPos);
+  const colArr = new Float32Array(weldedCol);
 
   const cleanIdx = [];
   for (let t = 0; t < rawTriCount; t++) {
@@ -457,7 +558,7 @@ function simplifyBucketGeometry(rawPositions, rawTriCount, ratio, maxError) {
   //    vertexCount <= 65535 por primitiva bucket.
   let built = null;
   for (const creaseCos of CREASE_COS_LADDER) {
-    built = buildCreaseNormals(posArr, uniqueCount, finalIndices, creaseCos);
+    built = buildCreaseNormals(posArr, colArr, uniqueCount, finalIndices, creaseCos);
     if (built.vertexCount <= 65535) break;
   }
 
@@ -469,6 +570,7 @@ function simplifyBucketGeometry(rawPositions, rawTriCount, ratio, maxError) {
   return {
     positions: built.positions,
     normals: built.normals,
+    colors: built.colors,
     indices: compactIndices,
     indexComponentType: built.vertexCount <= 65535 ? 5123 : 5125,
     vertexCount: built.vertexCount,
@@ -486,7 +588,7 @@ function writeChunkGlb(outPath, primitivesData) {
   const pad4 = (n) => (n + 3) & ~3;
 
   for (const prim of primitivesData) {
-    const { bucketName, positions, normals, indices, indexComponentType, vertexCount } = prim;
+    const { bucketName, positions, normals, colors, indices, indexComponentType, vertexCount } = prim;
     let minX = Infinity, minY = Infinity, minZ = Infinity;
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
     for (let i = 0; i < vertexCount; i++) {
@@ -528,6 +630,21 @@ function writeChunkGlb(outPath, primitivesData) {
       type: 'VEC3',
     });
 
+    // COLOR_0 (VEC4, Float32): categoryCode (r), seedA (g), seedB (b), flag (a)
+    // para que el shader procedural diferencie cada edificio individual.
+    const colBuf = Buffer.from(colors.buffer, colors.byteOffset, colors.byteLength);
+    const colViewIdx = bufferViews.length;
+    bufferViews.push({ buffer: 0, byteOffset, byteLength: colBuf.length, target: 34962 });
+    binChunks.push(colBuf);
+    byteOffset += colBuf.length;
+    const colorAccIdx = accessors.length;
+    accessors.push({
+      bufferView: colViewIdx,
+      componentType: 5126,
+      count: vertexCount,
+      type: 'VEC4',
+    });
+
     const idxBuf = Buffer.from(indices.buffer, indices.byteOffset, indices.byteLength);
     const idxViewIdx = bufferViews.length;
     bufferViews.push({ buffer: 0, byteOffset, byteLength: idxBuf.length, target: 34963 });
@@ -547,7 +664,7 @@ function writeChunkGlb(outPath, primitivesData) {
     });
 
     gltfPrimitives.push({
-      attributes: { POSITION: posAccIdx, NORMAL: normAccIdx },
+      attributes: { POSITION: posAccIdx, NORMAL: normAccIdx, COLOR_0: colorAccIdx },
       indices: idxAccIdx,
       material: matIdx,
       mode: 4,
@@ -626,6 +743,14 @@ function processDistrict(cfg) {
   let rawTris = 0;
   let skippedLodTris = 0;
   const pleajeuneSpawnCandidates = [];
+  // Filtro de cielo abierto del spawn: AABBs de los triángulos sólidos en
+  // una ventana holgada alrededor del bulevar, indexados en una rejilla XZ
+  // gruesa para el test de columna por candidato (O(1) por consulta).
+  const OS_GRID = 8;
+  const openSkyTriMin = [];
+  const openSkyTriMax = [];
+  let openSkyTriCount = 0;
+  const openSkyGrid = new Map();
 
   // Vuelca la geometría del distrito en tiles de `cellSize` m y fusiona las
   // tiles huérfanas (<700 tris) en la tile grande más cercana. Se re-ejecuta
@@ -635,17 +760,21 @@ function processDistrict(cfg) {
     rawTris = 0;
     skippedLodTris = 0;
     pleajeuneSpawnCandidates.length = 0;
+    openSkyTriMin.length = 0;
+    openSkyTriMax.length = 0;
+    openSkyTriCount = 0;
+    openSkyGrid.clear();
 
     function ensureTile(key) {
     let t = tiles.get(key);
     if (!t) {
-      t = { key, buckets: BUCKETS.map(() => ({ pos: [], tris: 0 })), totalTris: 0 };
+      t = { key, buckets: BUCKETS.map(() => ({ pos: [], col: [], tris: 0 })), totalTris: 0 };
       tiles.set(key, t);
     }
     return t;
   }
 
-  function walk(nodeIdx, parentMat, variantBias) {
+  function walk(nodeIdx, parentMat, variantBias, activeMeta) {
     const node = nodes[nodeIdx];
     const name = node.name || '';
     if (shouldSkipNode(name)) return;
@@ -655,6 +784,13 @@ function processDistrict(cfg) {
     const nextVariant = name.startsWith('building_') || name.startsWith('uji_')
       ? hashNameColorVariant(name)
       : variantBias;
+    // Metadatos COLOR_0: cada nodo arquitectónico calcula los suyos a partir
+    // del nombre + traslación mundial; el resto hereda los del ancestro.
+    const meta = computeNodeMeta(name, world) || activeMeta;
+    const metaR = meta[0];
+    const metaG = meta[1];
+    const metaB = meta[2];
+    const metaA = meta[3];
 
     if (node.mesh !== undefined) {
       const cat = classifyNodeCategory(name);
@@ -697,13 +833,10 @@ function processDistrict(cfg) {
             continue;
           }
 
-          // Recorta los conectores hacia Pilar Central (z=0 / x=0):
-          // - pleajeune: el stub de puente/rail hacia el norte (mz < 124) sin
-          //   tocar las islas a1..l2 (cuyos bounds empiezan en z = 126.8).
-          // - vendecentre: el viaducto este y el loop de rail hacia Pilar
-          //   Central (mx > -178 || mz > 18), preservando a1..e2 (x <= -180, z <= 3).
+          // Recorta el conector de puente/rail hacia Pilar Central (z=0):
+          // pleajeune conserva el stub norte (mz < 124) fuera del build sin
+          // tocar las islas a1..l2 (cuyos bounds empiezan en z = 126.8).
           if (cfg.id === 'pleajeune' && mz < 124) continue;
-          if (cfg.id === 'vendecentre' && (mx > -178 || mz > 18)) continue;
 
           const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
           const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
@@ -717,19 +850,51 @@ function processDistrict(cfg) {
           rawTris++;
           const bIdx = pickTriBucket(cat, fny, nextVariant);
 
-          // Sample candidate walkable Pleajeune central boulevard ground near (15, 145, 220)
+          // Candidato caminable del bulevar exterior de Pleajeune (piedra
+          // casi horizontal en la zona de cielo abierto junto a la noria).
           if (
             cfg.id === 'pleajeune' &&
             bIdx === BUCKET_INDEX.col_stone &&
             fny > 0.92 &&
-            mx > -45 &&
-            mx < 75 &&
-            mz > 165 &&
-            mz < 280 &&
-            my > 115 &&
-            my < 185
+            mx > -25 &&
+            mx < 60 &&
+            mz > 240 &&
+            mz < 325 &&
+            my > 145 &&
+            my < 195
           ) {
             pleajeuneSpawnCandidates.push([mx, my, mz]);
+          }
+
+          // AABB del triángulo sólido si roza la ventana del bulevar: alimenta
+          // el filtro de cielo abierto (columna sobre cada candidato).
+          if (cfg.id === 'pleajeune') {
+            const tMinX = Math.min(ax, bx, cx);
+            const tMaxX = Math.max(ax, bx, cx);
+            const tMinY = Math.min(ay, by, cy);
+            const tMaxY = Math.max(ay, by, cy);
+            const tMinZ = Math.min(az, bz, cz);
+            const tMaxZ = Math.max(az, bz, cz);
+            if (tMaxX > -30 && tMinX < 65 && tMaxZ > 235 && tMinZ < 330) {
+              const tIdx = openSkyTriCount++;
+              openSkyTriMin.push(tMinX, tMinY, tMinZ);
+              openSkyTriMax.push(tMaxX, tMaxY, tMaxZ);
+              const ogx0 = Math.floor(tMinX / OS_GRID);
+              const ogx1 = Math.floor(tMaxX / OS_GRID);
+              const ogz0 = Math.floor(tMinZ / OS_GRID);
+              const ogz1 = Math.floor(tMaxZ / OS_GRID);
+              for (let ogz = ogz0; ogz <= ogz1; ogz++) {
+                for (let ogx = ogx0; ogx <= ogx1; ogx++) {
+                  const okey = ogx * 1000 + ogz;
+                  let olist = openSkyGrid.get(okey);
+                  if (!olist) {
+                    olist = [];
+                    openSkyGrid.set(okey, olist);
+                  }
+                  olist.push(tIdx);
+                }
+              }
+            }
           }
 
           const gx = Math.floor(mx / cellSize);
@@ -738,6 +903,11 @@ function processDistrict(cfg) {
           const bkt = tile.buckets[bIdx];
 
           bkt.pos.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+          bkt.col.push(
+            metaR, metaG, metaB, metaA,
+            metaR, metaG, metaB, metaA,
+            metaR, metaG, metaB, metaA
+          );
           bkt.tris++;
           tile.totalTris++;
         }
@@ -750,7 +920,7 @@ function processDistrict(cfg) {
         skippedLodTris++;
         continue;
       }
-      walk(ch, world, nextVariant);
+      walk(ch, world, nextVariant, meta);
     }
   }
 
@@ -759,7 +929,7 @@ function processDistrict(cfg) {
   for (const r of rootNodes) {
     const rname = (nodes[r].name || '').toLowerCase();
     if (SKIP_ROOT_SUBSTR.some((s) => rname.includes(s))) continue;
-    walk(r, ident, 0);
+    walk(r, ident, 0, DEFAULT_NODE_META);
   }
 
   const bigTiles = [...tiles.values()].filter((t) => t.totalTris >= 700);
@@ -781,6 +951,7 @@ function processDistrict(cfg) {
       for (let i = 0; i < BUCKETS.length; i++) {
         if (st.buckets[i].tris === 0) continue;
         best.buckets[i].pos.push(...st.buckets[i].pos);
+        best.buckets[i].col.push(...st.buckets[i].col);
         best.buckets[i].tris += st.buckets[i].tris;
         best.totalTris += st.buckets[i].tris;
       }
@@ -809,6 +980,45 @@ function processDistrict(cfg) {
     for (const t of tiles.values()) maxEstimate = Math.max(maxEstimate, estimateTileTris(t));
   }
 
+  // Cielo abierto garantizado: se descarta todo candidato con CUALQUIER
+  // triángulo sólido en la columna (|x-cx| < 4, |z-cz| < 4) entre cy + 1.5 y
+  // cy + 18 — así el spawn nunca cae dentro de una arcade ni de un pasillo
+  // techado bajo el bulevar superior.
+  const openSkyKept = [];
+  for (const cand of pleajeuneSpawnCandidates) {
+    const cX = cand[0];
+    const cY = cand[1];
+    const cZ = cand[2];
+    let blocked = false;
+    const ogx0 = Math.floor((cX - 4) / OS_GRID);
+    const ogx1 = Math.floor((cX + 4) / OS_GRID);
+    const ogz0 = Math.floor((cZ - 4) / OS_GRID);
+    const ogz1 = Math.floor((cZ + 4) / OS_GRID);
+    for (let ogz = ogz0; ogz <= ogz1 && !blocked; ogz++) {
+      for (let ogx = ogx0; ogx <= ogx1 && !blocked; ogx++) {
+        const olist = openSkyGrid.get(ogx * 1000 + ogz);
+        if (!olist) continue;
+        for (let k = 0; k < olist.length; k++) {
+          const i3 = olist[k] * 3;
+          if (
+            openSkyTriMax[i3] > cX - 4 &&
+            openSkyTriMin[i3] < cX + 4 &&
+            openSkyTriMax[i3 + 2] > cZ - 4 &&
+            openSkyTriMin[i3 + 2] < cZ + 4 &&
+            openSkyTriMax[i3 + 1] > cY + 1.5 &&
+            openSkyTriMin[i3 + 1] < cY + 18
+          ) {
+            blocked = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!blocked) openSkyKept.push(cand);
+  }
+  pleajeuneSpawnCandidates.length = 0;
+  pleajeuneSpawnCandidates.push(...openSkyKept);
+
   const chunkMetas = [];
   let outDistrictTris = 0;
   let outDistrictBytes = 0;
@@ -823,7 +1033,7 @@ function processDistrict(cfg) {
       const bkt = tile.buckets[i];
       if (bkt.tris === 0) continue;
       const spec = BUCKETS[i];
-      const simp = simplifyBucketGeometry(bkt.pos, bkt.tris, spec.ratio, spec.maxError * ERR_MUL);
+      const simp = simplifyBucketGeometry(bkt.pos, bkt.col, bkt.tris, spec.ratio, spec.maxError * ERR_MUL);
       if (process.env.HEK_DEBUG && simp) {
         console.log(
           `    [debug] ${spec.name}: raw=${bkt.tris} -> ${simp.triCount} (target ${(bkt.tris * spec.ratio).toFixed(0)})`
@@ -885,23 +1095,32 @@ async function main() {
   }
 
   const allChunks = [];
-  let spawnPos = [15, 145, 220];
-  let spawnYaw = Math.atan2(-(75 - spawnPos[0]), -(420 - spawnPos[2]));
+  let spawnPos = [20, 168, 285];
+  let spawnYaw = Math.atan2(-(70 - spawnPos[0]), -(430 - spawnPos[2]));
   for (const cfg of DISTRICTS) {
     const { chunkMetas, pleajeuneSpawnCandidates } = processDistrict(cfg);
     allChunks.push(...chunkMetas);
     if (cfg.id === 'pleajeune' && pleajeuneSpawnCandidates.length > 0) {
-      // Pick walkable stone point closest to (15, 145, 220) in the central boulevard
+      // Bulevar de cielo abierto: candidato caminable más cercano a
+      // (20, 168, 285), ya filtrado sin techos sobre la cabeza.
       pleajeuneSpawnCandidates.sort((a, b) => {
-        const da = (a[0] - 15) ** 2 + (a[1] - 145) ** 2 + (a[2] - 220) ** 2;
-        const db = (b[0] - 15) ** 2 + (b[1] - 145) ** 2 + (b[2] - 220) ** 2;
+        const da = (a[0] - 20) ** 2 + (a[1] - 168) ** 2 + (a[2] - 285) ** 2;
+        const db = (b[0] - 20) ** 2 + (b[1] - 168) ** 2 + (b[2] - 285) ** 2;
         return da - db;
       });
       const pick = pleajeuneSpawnCandidates[0];
-      spawnPos = [Number(pick[0].toFixed(2)), Number((pick[1] + 0.45).toFixed(2)), Number(pick[2].toFixed(2))];
-      // Look south into Pleajeune's Ferris wheel & downtown plaza
-      spawnYaw = Math.atan2(-(75 - pick[0]), -(420 - pick[2]));
+      spawnPos = [Number(pick[0].toFixed(2)), Number((pick[1] + 0.55).toFixed(2)), Number(pick[2].toFixed(2))];
+      // Mirando al sur por el bulevar, hacia la noria de Pleajeune.
+      spawnYaw = Math.atan2(-(70 - pick[0]), -(430 - pick[2]));
     }
+  }
+
+  // Prioridad 0: todos los chunks en un radio horizontal de 240 m del spawn
+  // (carga concurrente completa antes de desbloquear al jugador); el resto
+  // de Pleajeune es prioridad 1.
+  for (const c of allChunks) {
+    c.priority =
+      Math.hypot(c.center[0] - spawnPos[0], c.center[2] - spawnPos[2]) <= 240 ? 0 : 1;
   }
 
   const totalTris = allChunks.reduce((s, c) => s + c.tris, 0);

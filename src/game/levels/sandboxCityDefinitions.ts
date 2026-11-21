@@ -22,7 +22,7 @@ export const SANDBOX_GALAXY_SPEC: GalaxySpec = {
       id: 'hekseville',
       order: 1,
       name: 'Hekseville',
-      subtitle: 'Pleajeune & Vendecentre',
+      subtitle: 'Pleajeune · Ciudad Flotante',
       biome: 'verdant',
       center: [0, -1000, 0],
       radius: 1000,
@@ -39,8 +39,8 @@ export const SANDBOX_GALAXY_SPEC: GalaxySpec = {
   objects: [],
   enemies: [],
   // Coordenadas en el espacio 1:1 de Hekseville (mismo origen que los chunks).
-  // Sin NPCs: el sandbox es exploración pura de Pleajeune y Vendecentre, y los
-  // antiguos vecinos flotaban en coordenadas de distritos ya retirados.
+  // Sin NPCs: el sandbox es exploración pura de Pleajeune, y los antiguos
+  // vecinos flotaban en coordenadas de distritos ya retirados.
   npcs: [],
   props: [],
   collectibles: [],

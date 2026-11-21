@@ -17,6 +17,8 @@ import { buildPlanetModel } from './render/proceduralModels';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
   createHeksevilleMaterialLibrary,
+  HEKSEVILLE_FOG_COLOR,
+  HEKSEVILLE_FOG_DENSITY,
   type HeksevilleDistrictId,
   type HeksevilleMaterialLibrary,
 } from './render/heksevilleChunkMaterials';
@@ -416,7 +418,12 @@ export class GameEngine {
       this.chunkCollider = new ChunkMeshCollider();
       this.chunkMatLib = createHeksevilleMaterialLibrary();
       this.levelGroup.add(this.chunkMatLib.createCloudSeaGroup());
-      this.scene.fog = new THREE.FogExp2(0x28173c, 0.00042);
+      // Niebla cerúleo-índigo a juego con el nuevo cielo de cómic (antes un
+      // marrón-malva 0x28173c que apagaba la ciudad). La niebla GLSL de los
+      // materiales procedurales se sincroniza con la misma pareja color/densidad.
+      this.scene.fog = new THREE.FogExp2(HEKSEVILLE_FOG_COLOR, HEKSEVILLE_FOG_DENSITY);
+      this.chunkMatLib.setFog(HEKSEVILLE_FOG_COLOR, HEKSEVILLE_FOG_DENSITY);
+      this.camera.near = 0.55;
       this.camera.far = 2400;
       this.camera.updateProjectionMatrix();
       for (const spec of galaxy.planets) {
@@ -428,6 +435,9 @@ export class GameEngine {
         });
       }
     } else {
+      this.camera.near = 0.1;
+      this.camera.far = 4000;
+      this.camera.updateProjectionMatrix();
       for (const spec of galaxy.planets) {
         const { group, animTick } = buildPlanetModel(spec);
         this.levelGroup.add(group);
@@ -546,10 +556,14 @@ export class GameEngine {
     const ground = ordered.filter((c) => c.priority === 0);
     const rest = ordered.filter((c) => c.priority !== 0);
 
-    for (const meta of ground) {
-      if (epoch !== this.chunkEpoch) return;
-      await this.loadHeksevilleChunk(loader, meta, epoch);
-    }
+    // TODOS los chunks de prioridad 0 (suelo del spawn y vecinos) se cargan
+    // en paralelo; solo cuando el último está registrado se marca el
+    // collider como listo y el jugador se desbloquea desde el spawn.
+    await Promise.all(
+      ground.map((meta) => this.loadHeksevilleChunk(loader, meta, epoch))
+    );
+    if (epoch !== this.chunkEpoch) return;
+    this.chunkCollider.markReady();
 
     for (let i = 0; i < rest.length; i += CHUNK_BATCH_SIZE) {
       if (epoch !== this.chunkEpoch) return;
@@ -701,9 +715,9 @@ export class GameEngine {
         }
         this.elapsed += dtSim;
 
-        // Hekseville 1:1: los niveles inferiores llegan a y = -280, así que el
-        // umbral de vacío baja a -350 (antes -155 en la ciudad de cajas).
-        if (this.activeGalaxySpec.isFlatCity && player.position.y < -350) {
+        // Hekseville 1:1: la niebla del abismo es un mar púrpura-azulado a
+        // y = -125; caer más abajo respawnea al jugador en el spawn.
+        if (this.activeGalaxySpec.isFlatCity && player.position.y < -125) {
           player.respawnFlatCity();
         }
       }

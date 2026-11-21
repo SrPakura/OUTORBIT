@@ -24,7 +24,7 @@ const SURFACE_SNAP_BAND = 0.55;
 const CHUNK_AABB_MARGIN = 2;
 /** Holgura extra del AABB de la cápsula del jugador. */
 const CAPSULE_PAD = 0.5;
-const SOLVER_ITERATIONS = 3;
+const SOLVER_ITERATIONS = 4;
 /** dot(normalTriángulo, up) por encima del cual la superficie es caminable. */
 const WALKABLE_DOT = 0.48;
 /** dot(normalTriángulo, up) por debajo del cual la superficie es techo. */
@@ -43,40 +43,46 @@ interface DistrictInfoEntry {
   id: CityDistrictId;
   name: string;
   subtitle: string;
-  /** Centro representativo XZ para el fallback por cercanía. */
-  x: number;
-  z: number;
 }
 
-const DISTRICT_ANCHORS: readonly DistrictInfoEntry[] = [
-  { id: 'pleajeune', name: 'Pleajeune', subtitle: 'Bulevares de Neón y Noria', x: 20, z: 320 },
-  { id: 'vendecentre', name: 'Vendecentre', subtitle: 'Rascacielos y Viaducto', x: -290, z: -110 },
-];
-
-/** Devuelve la info del distrito real de Hekseville bajo `pos` (coordenadas mundo). */
-export function getHeksevilleDistrictInfo(pos: THREE.Vector3): {
-  id: CityDistrictId;
-  name: string;
-  subtitle: string;
-} {
+/**
+ * Devuelve la info del distrito real de Hekseville bajo `pos` (coordenadas
+ * mundo). El mundo es 100% Pleajeune: el `id` es siempre `'pleajeune'` y el
+ * nombre/subtítulo describen el sub-barrio de Pleajeune según la posición.
+ */
+export function getHeksevilleDistrictInfo(pos: THREE.Vector3): DistrictInfoEntry {
   const x = pos.x;
+  const y = pos.y;
   const z = pos.z;
-  if (z >= 55 && x > -265) {
-    return { id: 'pleajeune', name: 'Pleajeune', subtitle: 'Bulevares de Neón y Noria' };
+  if (y < 116) {
+    return {
+      id: 'pleajeune',
+      name: 'Pleajeune · Bajos',
+      subtitle: 'Suburbios Sombríos y Pasajes',
+    };
   }
-  // Fallback: distrito representativo más cercano (Pleajeune (20, 320) vs
-  // Vendecentre (-290, -110)); solo existen estos dos distritos.
-  let best = DISTRICT_ANCHORS[0];
-  let bestDist = Infinity;
-  for (let i = 0; i < DISTRICT_ANCHORS.length; i++) {
-    const entry = DISTRICT_ANCHORS[i];
-    const d = (entry.x - x) * (entry.x - x) + (entry.z - z) * (entry.z - z);
-    if (d < bestDist) {
-      bestDist = d;
-      best = entry;
-    }
+  if (x > 55 && z > 280) {
+    return {
+      id: 'pleajeune',
+      name: 'Pleajeune · Noria',
+      subtitle: 'Plaza de la Noria y Mirador',
+    };
   }
-  return { id: best.id, name: best.name, subtitle: best.subtitle };
+  if (z > 410) {
+    return {
+      id: 'pleajeune',
+      name: 'Pleajeune · Bulevar Sur',
+      subtitle: 'Galerías de Neón y Rascacielos',
+    };
+  }
+  if (x < -75) {
+    return {
+      id: 'pleajeune',
+      name: 'Pleajeune · Ala Oeste',
+      subtitle: 'Terrazas y Pasarelas Altas',
+    };
+  }
+  return { id: 'pleajeune', name: 'Pleajeune', subtitle: 'Bulevares de Neón y Tiendas' };
 }
 
 // ----------------------------------------------------------------------------
@@ -290,6 +296,8 @@ function closestPointOnTriangle(
 export class ChunkMeshCollider {
   private chunks: ChunkGridRecord[] = [];
   private _triangleCount = 0;
+  /** True solo cuando TODOS los chunks de prioridad 0 del nivel están registrados. */
+  private _ready = false;
 
   /** Indexa los triángulos `col_*` de un chunk ya cargado en la rejilla espacial. */
   registerChunk(id: string, district: HeksevilleDistrictId, meshes: readonly THREE.Mesh[]): void {
@@ -390,18 +398,26 @@ export class ChunkMeshCollider {
 
     const finalTris = triCount === triCapacity ? tris : tris.slice(0, triCount * 12);
 
-    const gx0 = Math.floor(minX * CELL_INV);
-    const gy0 = Math.floor(minY * CELL_INV);
-    const gz0 = Math.floor(minZ * CELL_INV);
-    const dimX = Math.floor(maxX * CELL_INV) - gx0 + 1;
-    const dimY = Math.floor(maxY * CELL_INV) - gy0 + 1;
-    const dimZ = Math.floor(maxZ * CELL_INV) - gz0 + 1;
+    let gx0 = Math.floor(minX * CELL_INV);
+    let gy0 = Math.floor(minY * CELL_INV);
+    let gz0 = Math.floor(minZ * CELL_INV);
+    let dimX = Math.floor(maxX * CELL_INV) - gx0 + 1;
+    let dimY = Math.floor(maxY * CELL_INV) - gy0 + 1;
+    let dimZ = Math.floor(maxZ * CELL_INV) - gz0 + 1;
     const cellCount = dimX * dimY * dimZ;
 
     let cellStart: Int32Array;
     let cellTris: Int32Array;
     if (cellCount > MAX_GRID_CELLS) {
-      // Rejilla demasiado densa: una sola celda con todo el chunk.
+      // Rejilla demasiado densa: una sola celda con todo el chunk. Las dims
+      // y orígenes se reajustan ANTES de construir la celda única para que
+      // `gatherCandidates` nunca indexe una rejilla inexistente.
+      dimX = 1;
+      dimY = 1;
+      dimZ = 1;
+      gx0 = 0;
+      gy0 = 0;
+      gz0 = 0;
       cellStart = new Int32Array([0, triCount]);
       cellTris = new Int32Array(triCount);
       for (let t = 0; t < triCount; t++) cellTris[t] = t;
@@ -489,6 +505,16 @@ export class ChunkMeshCollider {
   clear(): void {
     this.chunks.length = 0;
     this._triangleCount = 0;
+    this._ready = false;
+  }
+
+  /** Marca el collider como listo: el suelo completo del spawn ya está registrado. */
+  markReady(): void {
+    this._ready = true;
+  }
+
+  get isReady(): boolean {
+    return this._ready;
   }
 
   get chunkCount(): number {
@@ -679,7 +705,33 @@ export class ChunkMeshCollider {
               // Techo sobre la esfera de la cabeza: anular velocidad ascendente.
               if (velAlongUp.value > 0) velAlongUp.value = 0;
             } else if (dUp <= WALKABLE_DOT) {
-              hitWall = true;
+              if (s === 0) {
+                // Bordillo/escalón suave en la esfera de los pies: si el
+                // vértice más alto del triángulo queda a <= 0.45 m sobre
+                // `pos` (riser vertical de acera/escalera de Pleajeune), se
+                // asiste el paso vertical en vez de frenar en seco contra
+                // un "bache invisible".
+                const maxAlongUp = Math.max(
+                  (tris[base] - pos.x) * up.x +
+                    (tris[base + 1] - pos.y) * up.y +
+                    (tris[base + 2] - pos.z) * up.z,
+                  (tris[base + 3] - pos.x) * up.x +
+                    (tris[base + 4] - pos.y) * up.y +
+                    (tris[base + 5] - pos.z) * up.z,
+                  (tris[base + 6] - pos.x) * up.x +
+                    (tris[base + 7] - pos.y) * up.y +
+                    (tris[base + 8] - pos.z) * up.z
+                );
+                if (maxAlongUp > 0.02 && maxAlongUp <= 0.45) {
+                  pos.x += up.x * maxAlongUp;
+                  pos.y += up.y * maxAlongUp;
+                  pos.z += up.z * maxAlongUp;
+                } else {
+                  hitWall = true;
+                }
+              } else {
+                hitWall = true;
+              }
             }
           }
         }
