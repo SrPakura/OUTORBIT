@@ -23,6 +23,7 @@ interface GameHUDProps {
 export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDProps) {
   const shifting = snapshot.isGravityShifting;
   const anchorReady = 1 - snapshot.anchorCooldownRatio;
+  const gravityReady = 1 - (snapshot.gravityShiftCooldownRatio ?? 0);
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none font-sans text-slate-100">
@@ -102,8 +103,8 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
           })}
         </div>
 
-        {/* --- Estasis (0/4) + cooldown del Ancla --- */}
-        <div className="flex items-center gap-3 rounded-lg border-2 border-black bg-[#160b2e]/85 px-3 py-2 shadow-[4px_4px_0_#000]">
+        {/* --- Estasis (0/4) + cooldown del Ancla y del Gravity Shift --- */}
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border-2 border-black bg-[#160b2e]/85 px-3 py-2 shadow-[4px_4px_0_#000]">
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-black tracking-[0.2em] text-cyan-300">
               ESTASIS
@@ -131,6 +132,18 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
               <span
                 className={`block h-full ${anchorReady >= 1 ? 'bg-yellow-300' : 'bg-yellow-600'}`}
                 style={{ width: `${Math.round(anchorReady * 100)}%` }}
+              />
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-black tracking-[0.2em] text-violet-300">
+              GRAV.
+            </span>
+            <span className="h-2.5 w-14 overflow-hidden rounded-full border border-black bg-slate-700">
+              <span
+                className={`block h-full ${gravityReady >= 1 ? 'bg-violet-400' : 'bg-violet-800'}`}
+                style={{ width: `${Math.round(gravityReady * 100)}%` }}
               />
             </span>
           </div>
@@ -172,8 +185,12 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
           <span className="text-yellow-300">1/2/3</span> Escuadrón
         </p>
         <p>
-          <span className="text-yellow-300">CLIC DER.</span> Gravity Shift ·{' '}
-          <span className="text-yellow-300">CLIC IZQ.</span> Estasis
+          <span className="text-yellow-300">R/C</span> Capturar Estasis ·{' '}
+          <span className="text-yellow-300">CLIC IZQ.</span> Disparar 1
+        </p>
+        <p>
+          <span className="text-yellow-300">TAB/V</span> + <span className="text-yellow-300">←/→</span>{' '}
+          Lock-On · <span className="text-yellow-300">CLIC DER.</span> Shift/Dash
         </p>
         <p>
           <span className="text-yellow-300">E</span> Noquear ·{' '}
@@ -202,6 +219,27 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
           <span className="absolute top-1/2 right-0 h-0.5 w-2 -translate-y-1/2 bg-current" />
         </div>
       </div>
+
+      {/* --- Marcador Lock-On proyectado en pantalla --- */}
+      {snapshot.phase === 'playing' &&
+        snapshot.lockOnActive &&
+        snapshot.lockOnScreenX != null &&
+        snapshot.lockOnScreenY != null && (
+          <div
+            className="absolute -translate-x-1/2 -translate-y-1/2"
+            style={{
+              left: `${((snapshot.lockOnScreenX + 1) / 2) * 100}%`,
+              top: `${((1 - snapshot.lockOnScreenY) / 2) * 100}%`,
+            }}
+          >
+            <div className="relative flex flex-col items-center">
+              <div className="h-8 w-8 rotate-45 rounded-sm border-2 border-red-400 shadow-[0_0_14px_rgba(248,113,113,0.8)]" />
+              <p className="mt-2 whitespace-nowrap rounded border-2 border-black bg-black/75 px-1.5 py-0.5 text-[10px] font-black tracking-widest text-red-300">
+                {snapshot.lockedTargetName ?? 'OBJETIVO'}
+              </p>
+            </div>
+          </div>
+        )}
 
       {/* --- Ventana de Parry activa --- */}
       {snapshot.parryWindowActive && (

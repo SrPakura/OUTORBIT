@@ -23,9 +23,11 @@ const CAMERA_BASE_DIST = 10.5;
 const CAMERA_MIN_DIST = 5;
 const CAMERA_MAX_DIST = 20;
 const CAMERA_DISTANCE_SHIFT = 5.2;
-const CAMERA_DISTANCE_CORE_DIVE = 6.5;
+const CAMERA_DISTANCE_CORE_DIVE_FACTOR = 2.2; // zoom-out a radio * 2.2
 const CAMERA_FOV = 70;
 const CAMERA_FOV_SHIFT = 52;
+const CAMERA_FOV_FLIGHT_BOOST = 18; // 70 -> 88 en mitad del cruce
+const CAMERA_FLIGHT_ROLL = 0.12; // giro orbital suave de cámara en vuelo
 const PORTAL_TRIGGER_RADIUS = 6;
 const TRANSITION_DURATION = 2.4;
 
@@ -94,6 +96,7 @@ export class GameEngine {
 
   // Temporales preasignados (sin GC en el loop)
   private readonly _camQuat = new THREE.Quaternion();
+  private readonly _rollQuat = new THREE.Quaternion();
   private readonly _camDir = new THREE.Vector3();
   private readonly _camPos = new THREE.Vector3();
   private readonly _v1 = new THREE.Vector3();
@@ -318,11 +321,13 @@ export class GameEngine {
     this._camDir.set(0, 0, -1).applyQuaternion(this._camQuat);
     player.getHeadPosition(this._camPos);
 
-    // Zoom: rueda del ratón (5-20) + acercamiento en Gravity Shift / cruce de núcleo.
+    // Zoom: rueda del ratón (5-20) + acercamiento en Gravity Shift.
+    // Cruce del núcleo: zoom-out automático a radio * 2.2 para ver el
+    // planeta completo desde fuera (edificios/obstáculos incluidos).
     const targetDist = player.gravityShifting
       ? CAMERA_DISTANCE_SHIFT
       : player.coreDiving
-        ? CAMERA_DISTANCE_CORE_DIVE
+        ? player.planet.spec.radius * CAMERA_DISTANCE_CORE_DIVE_FACTOR
         : this.baseCamDist;
     this.camDist += (targetDist - this.camDist) * Math.min(1, dtReal * 6);
     this.camera.position.copy(this._camPos).addScaledVector(this._camDir, -this.camDist);
@@ -341,10 +346,25 @@ export class GameEngine {
       }
     }
 
-    const targetFov = player.gravityShifting ? CAMERA_FOV_SHIFT : CAMERA_FOV;
+    // FOV: cámara lenta en Gravity Shift; boost dinámico en el vuelo
+    // dirigido (70 -> 88 en mitad del cruce -> 70 al aterrizar).
+    let targetFov = CAMERA_FOV;
+    if (player.gravityShifting) {
+      targetFov = CAMERA_FOV_SHIFT;
+    } else if (player.isDirectedFlight) {
+      targetFov =
+        CAMERA_FOV + CAMERA_FOV_FLIGHT_BOOST * Math.sin(Math.PI * player.flightProgress);
+    }
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dtReal * 6);
       this.camera.updateProjectionMatrix();
+    }
+
+    // Giro orbital suave de cámara durante el vuelo entre planetas.
+    if (player.isDirectedFlight) {
+      const roll = Math.sin(Math.PI * player.flightProgress) * CAMERA_FLIGHT_ROLL;
+      this._rollQuat.setFromAxisAngle(this._camDir, roll);
+      this.camera.quaternion.multiply(this._rollQuat);
     }
   }
 
@@ -474,6 +494,7 @@ export class GameEngine {
     key = key * 31 + world.generatorsDestroyed;
     key = key * 31 + (world.anyGuardInCombat() ? 1 : 0);
     key = key * 31 + this.computePromptKind();
+    key = key * 31 + (player.lockOnActive ? 1 : 0);
 
     if (key !== this.hudKey) {
       this.hudKey = key;
@@ -525,13 +546,26 @@ export class GameEngine {
         prompt = '[F/Q] ¡PARRY AHORA!';
         break;
       case 3:
-        prompt = '[CLIC IZQ.] Mantén pulsado: Campo de Estasis';
+        prompt = '[R/C] Capturar objeto en Estasis';
         break;
       case 4:
         prompt = '[SHIFT] Subsuelo · [ESPACIO] Cruzar el núcleo';
         break;
       default:
         prompt = null;
+    }
+
+    // Marcador Lock-On: proyección 2D de la posición del objetivo fijado.
+    let lockOnScreenX: number | null = null;
+    let lockOnScreenY: number | null = null;
+    let lockedTargetName: string | null = null;
+    if (player.lockOnActive && player.getLockedTargetPos(this._v1)) {
+      lockedTargetName = player.lockedTargetName;
+      this._v1.project(this.camera);
+      if (this._v1.z < 1) {
+        lockOnScreenX = this._v1.x;
+        lockOnScreenY = this._v1.y;
+      }
     }
 
     const behavior: PlayerBehaviorVector = {
@@ -566,6 +600,11 @@ export class GameEngine {
       behaviorVector: behavior,
       bossHpRatio: null,
       bossAdaptedTo: null,
+      gravityShiftCooldownRatio: player.gravityShiftCooldownRatio,
+      lockOnActive: player.lockOnActive,
+      lockedTargetName,
+      lockOnScreenX,
+      lockOnScreenY,
     });
   }
 
@@ -601,7 +640,8 @@ export class GameEngine {
   private onKeyDown(e: KeyboardEvent): void {
     if (e.repeat) return;
     if (this.phase !== 'playing') return;
-    if (e.code === 'Space') e.preventDefault();
+    // Space y Tab: evita scroll y cambio de foco mientras se juega.
+    if (e.code === 'Space' || e.code === 'Tab') e.preventDefault();
     this.player?.handleKey(e.code, true);
   }
 
@@ -617,6 +657,8 @@ export class GameEngine {
 
   private onMouseDown(e: MouseEvent): void {
     if (!this.pointerLocked || this.phase !== 'playing') return;
+    // Clic central (Lock-On): evita el autoscroll del navegador.
+    if (e.button === 1) e.preventDefault();
     this.player?.handleMouseButton(e.button, true);
   }
 

@@ -211,6 +211,17 @@ export interface HudSnapshot {
   behaviorVector: PlayerBehaviorVector;
   bossHpRatio: number | null;    // Solo en nivel Kronos
   bossAdaptedTo: CharacterId | null;
+
+  // --- Hito 3A (opcionales y retrocompatibles) ---
+  /** Cooldown de Gravity Shift / Gravity Dash: 0 = listo, 1 = acaba de usarse. */
+  gravityShiftCooldownRatio?: number;
+  /** Lock-On activo sobre un enemigo, barril o generador. */
+  lockOnActive?: boolean;
+  /** Nombre legible del objetivo fijado (null si no hay Lock-On). */
+  lockedTargetName?: string | null;
+  /** Posición de pantalla del marcador Lock-On en NDC (-1..1); null = fuera/oculto. */
+  lockOnScreenX?: number | null;
+  lockOnScreenY?: number | null;
 }
 
 // ============================================================================

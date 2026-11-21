@@ -64,10 +64,18 @@ interface CharacterPalette {
   secondary: string;
   belly: string;
   accent: string;
+  /** Color del traje/mono de vuelo (Kitsune: azul/cian como en la referencia). */
+  suit?: string;
 }
 
 const CHARACTER_PALETTES: Record<CharacterId, CharacterPalette> = {
-  kitsune: { primary: '#f97316', secondary: '#fff7ed', belly: '#fff7ed', accent: '#dc2626' },
+  kitsune: {
+    primary: '#f97316',
+    secondary: '#fff7ed',
+    belly: '#fff7ed',
+    accent: '#dc2626',
+    suit: '#38bdf8',
+  },
   digger: { primary: '#92400e', secondary: '#d6a15c', belly: '#eab308', accent: '#f472b6' },
   axel: { primary: '#0ea5e9', secondary: '#a5f3fc', belly: '#67e8f9', accent: '#0891b2' },
 };
@@ -83,7 +91,7 @@ function buildEyes(head: THREE.Group): void {
 }
 
 function buildMuzzle(head: THREE.Group, palette: CharacterPalette): void {
-  const muzzle = toonMesh(new THREE.SphereGeometry(0.3, 16, 12), palette.secondary, 0.014);
+  const muzzle = toonMesh(new THREE.SphereGeometry(0.3, 16, 12), palette.secondary, 0.015);
   muzzle.position.set(0, -0.12, 0.36);
   muzzle.scale.set(1.1, 0.85, 0.9);
   head.add(muzzle);
@@ -111,7 +119,7 @@ function buildLimb(
   const capsule = toonMesh(
     new THREE.CapsuleGeometry(radius, length, 6, 10),
     color,
-    THREE.MathUtils.clamp(radius * 0.14, 0.012, 0.018)
+    THREE.MathUtils.clamp(radius * 0.16, 0.015, 0.022)
   );
   capsule.position.y = -(length / 2 + radius) * 0.6;
   limb.add(capsule);
@@ -119,18 +127,27 @@ function buildLimb(
 }
 
 function buildKitsuneHeadExtras(head: THREE.Group, palette: CharacterPalette): void {
-  // Orejas puntiagudas naranjas con interior claro
-  const earGeometry = new THREE.ConeGeometry(0.16, 0.38, 8);
-  const innerGeometry = new THREE.ConeGeometry(0.09, 0.22, 8);
+  // Orejas grandes puntiagudas y nítidas (contorno limpio, sin masa de tinta).
+  const earGeometry = new THREE.ConeGeometry(0.17, 0.42, 8);
+  const innerGeometry = new THREE.ConeGeometry(0.09, 0.24, 8);
   for (const side of [-1, 1]) {
-    const ear = toonMesh(earGeometry, palette.primary, 0.014);
-    ear.position.set(0.28 * side, 0.52, 0);
+    const ear = toonMesh(earGeometry, palette.primary, 0.016);
+    ear.position.set(0.28 * side, 0.54, -0.02);
     ear.rotation.z = -0.28 * side;
     head.add(ear);
     const inner = new THREE.Mesh(innerGeometry, createToonMaterial(palette.secondary));
-    inner.position.set(0.28 * side, 0.5, 0.06);
+    inner.position.set(0.28 * side, 0.52, 0.06);
     inner.rotation.z = -0.28 * side;
     head.add(inner);
+  }
+
+  // Mejillas crema a los lados del hocico (como buildKitsuneHero).
+  const cheekGeometry = new THREE.SphereGeometry(0.15, 12, 10);
+  for (const side of [-1, 1]) {
+    const cheek = new THREE.Mesh(cheekGeometry, createToonMaterial(palette.secondary));
+    cheek.position.set(0.3 * side, -0.08, 0.3);
+    cheek.scale.set(0.85, 0.75, 0.8);
+    head.add(cheek);
   }
 }
 
@@ -146,7 +163,7 @@ function buildDiggerHeadExtras(head: THREE.Group): void {
   const brim = toonMesh(
     new THREE.CylinderGeometry(0.62, 0.62, 0.05, 18),
     '#eab308',
-    0.014
+    0.015
   );
   brim.position.set(0, 0.08, 0);
   head.add(brim);
@@ -176,25 +193,25 @@ function buildTail(id: CharacterId, palette: CharacterPalette): THREE.Group {
   const tail = new THREE.Group();
   tail.name = 'tail';
   if (id === 'kitsune') {
-    // Cola esponjosa: cadena de esferas con punta blanca
+    // Cola esponjosa: cadena de esferas grandes con punta blanca nítida.
     const segments: Array<[number, number, number, number, string]> = [
-      [0, 0.42, -0.42, 0.24, palette.primary],
-      [0, 0.52, -0.68, 0.2, palette.primary],
-      [0, 0.62, -0.88, 0.15, palette.secondary],
+      [0, 0.4, -0.44, 0.27, palette.primary],
+      [0, 0.54, -0.74, 0.22, palette.primary],
+      [0, 0.66, -0.97, 0.16, palette.secondary],
     ];
     for (const [x, y, z, r, color] of segments) {
-      const ball = toonMesh(new THREE.SphereGeometry(r, 14, 10), color, 0.014);
+      const ball = toonMesh(new THREE.SphereGeometry(r, 14, 10), color, 0.018);
       ball.position.set(x, y, z);
       tail.add(ball);
     }
   } else if (id === 'digger') {
     // Cola corta de topo
-    const stub = toonMesh(new THREE.SphereGeometry(0.14, 12, 8), palette.secondary, 0.014);
+    const stub = toonMesh(new THREE.SphereGeometry(0.14, 12, 8), palette.secondary, 0.015);
     stub.position.set(0, 0.4, -0.4);
     tail.add(stub);
   } else {
     // Cola plana de nutria
-    const paddle = toonMesh(new THREE.SphereGeometry(0.22, 14, 10), palette.primary, 0.014);
+    const paddle = toonMesh(new THREE.SphereGeometry(0.22, 14, 10), palette.primary, 0.015);
     paddle.position.set(0, 0.38, -0.55);
     paddle.scale.set(0.7, 0.28, 1.5);
     tail.add(paddle);
@@ -205,23 +222,23 @@ function buildTail(id: CharacterId, palette: CharacterPalette): THREE.Group {
 function buildNeckwear(id: CharacterId, palette: CharacterPalette): THREE.Group {
   const neckwear = new THREE.Group();
   if (id === 'kitsune') {
-    // Pañuelo rojo
-    const scarf = toonMesh(new THREE.TorusGeometry(0.3, 0.08, 10, 20), '#dc2626', 0.014);
+    // Pañuelo dorado (como el scarf de buildKitsuneHero)
+    const scarf = toonMesh(new THREE.TorusGeometry(0.3, 0.085, 10, 20), '#fbbf24', 0.016);
     scarf.rotation.x = Math.PI / 2;
     neckwear.add(scarf);
     // Detalle pequeño: sin contorno.
     const knot = new THREE.Mesh(
       new THREE.SphereGeometry(0.1, 10, 8),
-      createToonMaterial('#b91c1c')
+      createToonMaterial('#d97706')
     );
     knot.position.set(0.22, -0.02, 0.2);
     neckwear.add(knot);
   } else if (id === 'axel') {
     // Bufanda cian con extremo colgante
-    const scarf = toonMesh(new THREE.TorusGeometry(0.3, 0.08, 10, 20), '#22d3ee', 0.014);
+    const scarf = toonMesh(new THREE.TorusGeometry(0.3, 0.08, 10, 20), '#22d3ee', 0.015);
     scarf.rotation.x = Math.PI / 2;
     neckwear.add(scarf);
-    const tailCloth = toonMesh(new THREE.BoxGeometry(0.16, 0.42, 0.06), '#06b6d4', 0.014);
+    const tailCloth = toonMesh(new THREE.BoxGeometry(0.16, 0.42, 0.06), '#06b6d4', 0.015);
     tailCloth.position.set(0.16, -0.24, -0.18);
     tailCloth.rotation.x = -0.3;
     neckwear.add(tailCloth);
@@ -243,7 +260,9 @@ export function buildCharacterModel(id: CharacterId): THREE.Group {
   // --- Cuerpo ---
   const body = new THREE.Group();
   body.name = 'body';
-  const torso = toonMesh(new THREE.CapsuleGeometry(0.34, 0.34, 8, 14), palette.primary, 0.016);
+  // Kitsune luce el traje azul/cian de la referencia; el resto usa su color base.
+  const torsoColor = palette.suit ?? palette.primary;
+  const torso = toonMesh(new THREE.CapsuleGeometry(0.34, 0.34, 8, 14), torsoColor, 0.018);
   torso.position.y = 0.52;
   body.add(torso);
   const belly = new THREE.Mesh(
@@ -260,7 +279,7 @@ export function buildCharacterModel(id: CharacterId): THREE.Group {
   const head = new THREE.Group();
   head.name = 'head';
   head.position.y = 1.32;
-  const skull = toonMesh(new THREE.SphereGeometry(0.52, 20, 16), palette.primary, 0.016);
+  const skull = toonMesh(new THREE.SphereGeometry(0.52, 20, 16), palette.primary, 0.018);
   skull.scale.set(1.06, 0.96, 1);
   head.add(skull);
   buildMuzzle(head, palette);

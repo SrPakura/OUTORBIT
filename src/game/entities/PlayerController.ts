@@ -8,7 +8,7 @@ import {
 } from '../types';
 import { alignBasisToUp, findStrongestGravityPlanet, getTangentAxes } from '../math/spherical';
 import { buildCharacterModel, buildDisguiseOverlay } from '../render/proceduralModels';
-import type { WorldObjectsManager } from './WorldObjects';
+import type { LockOnHandle, WorldObjectsManager } from './WorldObjects';
 
 // ============================================================================
 // Constantes de simulación del jugador
@@ -32,14 +32,27 @@ const ANCHOR_FX_TIME = 0.35;
 const PARRY_WINDOW = 0.32;
 const PARRY_COOLDOWN = 0.85;
 
-// Campo de Estasis (Clic Izquierdo)
+// Campo de Estasis (R/C captura; Clic Izquierdo dispara 1 objeto o melee)
 const STASIS_GRAB_RANGE = 9;
-const STASIS_QUICKCLICK = 0.18;
+
+// Lock-On (Tab/V + Flechas): estilo GTA San Andreas
+const LOCK_ON_RANGE = 34;
+const LOCK_ON_DROP_RANGE = 44; // margen antes de perder el objetivo fijado
+
+// Gravity Shift / Gravity Dash (Clic Derecho)
+const GRAVITY_DASH_SPEED = 30;
+const GRAVITY_DASH_TIME = 0.32;
+const GRAVITY_DASH_HIT_INTERVAL = 0.08;
+const GRAVITY_DASH_COOLDOWN = 0.8; // dash local: cooldown corto
+const GRAVITY_JUMP_COOLDOWN_MIN = 1.8; // salto entre planetas: 1.8s-2.8s
+const GRAVITY_JUMP_COOLDOWN_MAX = 2.8;
+const GRAVITY_JUMP_COOLDOWN_DIST0 = 30; // distancia de referencia del mapeo
 
 // Subsuelo (Digger)
 const BURROW_SPEED_MUL = 0.8;
 const BURROW_SINK = -0.95;
 const CORE_DIVE_SPEED = 55;
+const CORE_DIVE_DEPTH_RATIO = 0.82; // cuánto baja el radio hacia el núcleo
 
 // Nado en burbujas
 const SWIM_BASE_SPEED = 8;
@@ -53,6 +66,7 @@ const FLIGHT_SPEED_DIVISOR = 60;
 const FLIGHT_LANDING_PITCH = 0.12;
 const FLIGHT_ARC_SCALE = 1.15;
 const FLIGHT_ARC_LIFT = 8;
+const FLIGHT_MID_SLOWDOWN = 0.06; // ralentiza el punto medio entre órbitas
 
 // Vuelo libre (tras salir de una burbuja): propulsión + gravedad suave para
 // poder encadenar burbujas/planetas sin caer en picado.
@@ -84,9 +98,13 @@ interface CharacterParts {
  * - Shift: sprint; con Digger en superficie, alterna el subsuelo (`isBurrowing`).
  * - 1/2/3: cambio instantáneo de personaje (Kitsune / Digger / Axel).
  * - Clic Derecho (mantener): Gravity Shift (cámara lenta + apuntado a otro planeta);
- *   al soltar, vuelo orbital cinematográfico con aterrizaje de pie.
- * - Clic Izquierdo: Campo de Estasis (mantener: levita hasta 4 objetos;
- *   soltar: los dispara en abanico; clic rápido sin objetos: golpe melee).
+ *   al soltar, vuelo orbital cinematográfico con aterrizaje de pie. Si no hay
+ *   planeta destino, Gravity Dash local hacia la cámara (empuja guardias/cajas).
+ * - R/C: captura objetos cercanos al Campo de Estasis (hasta 4 en órbita).
+ * - Clic Izquierdo: dispara 1 solo objeto de la Estasis hacia el objetivo
+ *   fijado (Lock-On) o la mira; con 0 objetos, golpe melee rápido.
+ * - Tab/V (o clic central): Lock-On del objetivo válido más cercano;
+ *   Flecha Izquierda/Derecha: cicla el objetivo fijado.
  * - F/Q: Parry (ventana 0.32s, cooldown 0.85s).
  * - E: noqueo por la espalda + robo de uniforme (`isDisguised`).
  *
@@ -147,24 +165,36 @@ export class PlayerController {
   private readonly flightCtrl = new THREE.Vector3();
   private readonly flightEnd = new THREE.Vector3();
 
-  // Cruce del núcleo (Digger).
+  // Cruce del núcleo (Digger): giro de 180º en un solo eje `diveAxis`.
   private coreDiveActive = false;
   private diveTime = 0;
   private diveDuration = 1;
+  private divePrevAngle = 0;
   private readonly diveStart = new THREE.Vector3();
   private readonly diveEnd = new THREE.Vector3();
+  private readonly diveAxis = new THREE.Vector3();
+  private readonly diveUpStart = new THREE.Vector3();
 
   // Habilidades.
   private anchorCooldown = 0;
   private anchorFxTimer = 0;
   private parryTimer = 0;
   private parryCooldown = 0;
-  private stasisHolding = false;
-  private stasisHoldTime = 0;
   private disguiseTimer = 0;
   private invulnTimer = 0;
   private swimBoostTimer = 0;
   private burrowSink = 0;
+
+  // Lock-On (Tab/V + Flechas).
+  private lockedTarget: LockOnHandle | null = null;
+  private readonly lockedTargetPos = new THREE.Vector3();
+
+  // Gravity Shift / Gravity Dash: cooldown proporcional a la distancia.
+  private gravityShiftCooldown = 0;
+  private gravityShiftCooldownMax = 1;
+  private dashTimer = 0;
+  private dashHitTimer = 0;
+  private readonly dashDir = new THREE.Vector3();
 
   private readonly keys = new Set<string>();
   private readonly models = new Map<CharacterId, THREE.Group>();
@@ -172,6 +202,9 @@ export class PlayerController {
   private readonly bodyRoot = new THREE.Group();
   private readonly disguiseOverlay: THREE.Group;
   private readonly anchorFx: THREE.Group;
+  private readonly flightFx: THREE.Group;
+  private readonly flightRingA: THREE.Mesh;
+  private readonly flightRingB: THREE.Mesh;
   private walkPhase = 0;
   private isMoving = false;
 
@@ -266,6 +299,28 @@ export class PlayerController {
     this.anchorFx.rotation.x = -0.5; // elevado hacia arriba-adelante
     this.anchorFx.visible = false;
     this.bodyRoot.add(this.anchorFx);
+
+    // Estela/anillo de energía alrededor del jugador: visible durante el
+    // vuelo dirigido entre planetas y el Gravity Dash.
+    this.flightFx = new THREE.Group();
+    this.flightFx.position.y = 0.8;
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: 0x67e8f9,
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.flightRingA = new THREE.Mesh(new THREE.TorusGeometry(1.05, 0.05, 8, 32), ringMaterial);
+    this.flightRingB = new THREE.Mesh(
+      new THREE.TorusGeometry(1.3, 0.035, 8, 32),
+      ringMaterial.clone()
+    );
+    this.flightRingB.rotation.x = Math.PI / 2.6;
+    this.flightFx.add(this.flightRingA, this.flightRingB);
+    this.flightFx.visible = false;
+    this.bodyRoot.add(this.flightFx);
   }
 
   // --------------------------------------------------------------------------
@@ -301,6 +356,41 @@ export class PlayerController {
 
   get anchorCooldownRatio(): number {
     return THREE.MathUtils.clamp(this.anchorCooldown / ANCHOR_COOLDOWN, 0, 1);
+  }
+
+  /** Cooldown de Gravity Shift/Dash: 0 = listo, 1 = acaba de usarse. */
+  get gravityShiftCooldownRatio(): number {
+    if (this.gravityShiftCooldownMax <= 0) return 0;
+    return THREE.MathUtils.clamp(
+      this.gravityShiftCooldown / this.gravityShiftCooldownMax,
+      0,
+      1
+    );
+  }
+
+  get lockOnActive(): boolean {
+    return this.lockedTarget !== null;
+  }
+
+  get lockedTargetName(): string | null {
+    return this.lockedTarget ? this.world.getLockOnName(this.lockedTarget) : null;
+  }
+
+  /** Vuelo dirigido entre planetas (para FOV boost y roll de cámara). */
+  get isDirectedFlight(): boolean {
+    return this.inFlight && this.flightDirected;
+  }
+
+  /** Progreso 0..1 del vuelo dirigido (mitad del cruce = 0.5). */
+  get flightProgress(): number {
+    if (!this.flightDirected) return 0;
+    return THREE.MathUtils.clamp(this.flightTime / this.flightDuration, 0, 1);
+  }
+
+  /** Posición mundial del objetivo fijado (false si no hay Lock-On válido). */
+  getLockedTargetPos(outVec: THREE.Vector3): boolean {
+    if (!this.lockedTarget) return false;
+    return this.world.getLockOnPos(this.lockedTarget, outVec);
   }
 
   get stealthMultiplier(): number {
@@ -351,6 +441,10 @@ export class PlayerController {
       else if (code === 'KeyE') this.tryKnockout();
       else if (code === 'KeyF' || code === 'KeyQ') this.tryParry();
       else if (code === 'ShiftLeft' || code === 'ShiftRight') this.toggleBurrow();
+      else if (code === 'KeyR' || code === 'KeyC') this.captureStasis();
+      else if (code === 'Tab' || code === 'KeyV') this.toggleLockOn();
+      else if (code === 'ArrowLeft') this.cycleLockOn(-1);
+      else if (code === 'ArrowRight') this.cycleLockOn(1);
     } else {
       this.keys.delete(code);
     }
@@ -365,29 +459,35 @@ export class PlayerController {
 
   handleMouseButton(button: number, down: boolean): void {
     if (button === 0) {
-      // Campo de Estasis / golpe cuerpo a cuerpo.
-      if (down) {
-        if (this.inFlight || this.isSwimming || this.coreDiveActive || this.isBurrowing) return;
-        this.stasisHolding = true;
-        this.stasisHoldTime = 0;
-      } else if (this.stasisHolding) {
-        this.stasisHolding = false;
-        if (this.world.held === 0 && this.stasisHoldTime < STASIS_QUICKCLICK) {
-          this.meleeStrike();
-        } else {
-          this.throwStasis();
-        }
+      // Clic Izquierdo: dispara 1 solo objeto de la Estasis hacia el objetivo
+      // fijado (Lock-On) o la mira; con 0 objetos, golpe melee rápido.
+      if (!down) return;
+      if (this.inFlight || this.isSwimming || this.coreDiveActive || this.isBurrowing) return;
+      if (this.world.held > 0) {
+        this.throwOneStasis();
+      } else {
+        this.meleeStrike();
       }
+    } else if (button === 1) {
+      // Clic central: Lock-On on/off.
+      if (down) this.toggleLockOn();
     } else if (button === 2) {
-      // Gravity Shift.
+      // Gravity Shift (apuntado a otro planeta) / Gravity Dash local.
       if (down) {
-        if (!this.inFlight && !this.isSwimming && !this.coreDiveActive) {
+        if (
+          !this.inFlight &&
+          !this.isSwimming &&
+          !this.coreDiveActive &&
+          this.gravityShiftCooldown <= 0
+        ) {
           this.gravityShifting = true;
         }
       } else if (this.gravityShifting) {
         this.gravityShifting = false;
         if (this.gravityTarget && this.gravityTarget !== this.currentPlanet) {
           this.launchToTarget(this.gravityTarget);
+        } else {
+          this.gravityDash();
         }
         this.gravityTarget = null;
       }
@@ -399,7 +499,6 @@ export class PlayerController {
     this.keys.clear();
     this.gravityShifting = false;
     this.gravityTarget = null;
-    this.stasisHolding = false;
   }
 
   /** Daño recibido (láser, guardias, explosiones) con empuje opcional. */
@@ -437,6 +536,28 @@ export class PlayerController {
     if (this.invulnTimer > 0) this.invulnTimer -= dt;
     if (this.swimBoostTimer > 0) this.swimBoostTimer -= dt;
     if (this.anchorFxTimer > 0) this.anchorFxTimer -= dt;
+    if (this.gravityShiftCooldown > 0) this.gravityShiftCooldown -= dt;
+
+    // Gravity Dash: impulso activo + derribo/empuje de guardias y cajas.
+    if (this.dashTimer > 0) {
+      this.dashTimer -= dt;
+      this.dashHitTimer -= dt;
+      if (this.dashHitTimer <= 0) {
+        this.dashHitTimer = GRAVITY_DASH_HIT_INTERVAL;
+        this.world.dashImpact(this.pos, this.dashDir);
+      }
+    }
+
+    // Lock-On: refresca la posición del objetivo fijado o lo libera.
+    if (this.lockedTarget) {
+      if (
+        !this.world.getLockOnPos(this.lockedTarget, this.lockedTargetPos) ||
+        this.lockedTargetPos.distanceToSquared(this.pos) >
+          LOCK_ON_DROP_RANGE * LOCK_ON_DROP_RANGE
+      ) {
+        this.lockedTarget = null;
+      }
+    }
 
     if (this.isDisguised) {
       this.behavior.disguiseTimeSec += dt;
@@ -454,14 +575,8 @@ export class PlayerController {
       }
     }
 
-    // Campo de Estasis: mientras se mantiene, levita objetos cercanos.
-    if (this.stasisHolding) {
-      this.stasisHoldTime += dt;
-      if (this.world.held < GAME_CONSTANTS.MAX_STASIS_OBJECTS) {
-        this.getMoveForward(this._forward);
-        this.world.grabNearest(this.pos, this._forward, STASIS_GRAB_RANGE);
-      }
-    }
+    // Campo de Estasis: los objetos capturados orbitan solos (sin mantener
+    // pulsado); la captura ocurre en `captureStasis` (R/C).
 
     // Reorientación suave del marco tangente (transporte paralelo continuo).
     alignBasisToUp(this.basisQuat, this.lastUp, 1 - Math.exp(-BASIS_ALIGN_SPEED * dt));
@@ -480,6 +595,17 @@ export class PlayerController {
     this.bodyRoot.position.y = this.burrowSink;
     this.disguiseOverlay.visible = this.isDisguised;
     this.anchorFx.visible = this.anchorFxTimer > 0;
+
+    // Estela/anillo de energía: vuelo dirigido entre planetas o Gravity Dash.
+    const fxActive = this.isDirectedFlight || this.dashTimer > 0;
+    this.flightFx.visible = fxActive;
+    if (fxActive) {
+      this.flightRingA.rotation.z += dt * 5.2;
+      this.flightRingA.rotation.x = Math.sin(this.walkPhase * 2) * 0.4;
+      this.flightRingB.rotation.y += dt * 3.4;
+      const pulse = 1 + Math.sin(this.walkPhase * 6) * 0.08;
+      this.flightFx.scale.setScalar(pulse);
+    }
 
     this.animateLimbs();
 
@@ -662,7 +788,10 @@ export class PlayerController {
   private updateDirectedFlight(dt: number, target: PlanetRuntime): void {
     this.flightTime += dt;
     const t = Math.min(this.flightTime / this.flightDuration, 1);
-    const te = 1 - (1 - t) * (1 - t); // ease-out: desaceleración suave
+    // Ralentiza el punto medio entre órbitas (cruce más épico) y mantiene el
+    // ease-out del aterrizaje.
+    const warped = t + FLIGHT_MID_SLOWDOWN * Math.sin(Math.PI * 2 * t);
+    const te = 1 - (1 - warped) * (1 - warped); // ease-out: desaceleración suave
     const it = 1 - te;
 
     this.pos
@@ -761,6 +890,14 @@ export class PlayerController {
       FLIGHT_MIN_DURATION,
       FLIGHT_MAX_DURATION
     );
+    // Cooldown proporcional a la distancia del salto entre planetas (1.8s-2.8s).
+    this.setGravityShiftCooldown(
+      THREE.MathUtils.lerp(
+        GRAVITY_JUMP_COOLDOWN_MIN,
+        GRAVITY_JUMP_COOLDOWN_MAX,
+        THREE.MathUtils.clamp((dist - GRAVITY_JUMP_COOLDOWN_DIST0) / 150, 0, 1)
+      )
+    );
     this.flightTime = 0;
     this.flightDest = target;
     this.flightDirected = true;
@@ -785,12 +922,23 @@ export class PlayerController {
   private startCoreDive(): void {
     const planet = this.currentPlanet;
     this.diveStart.copy(this.pos);
-    this._v1.copy(this.pos).sub(planet.centerVec).normalize();
+    this.diveUpStart.copy(this.pos).sub(planet.centerVec).normalize();
     this.diveEnd
       .copy(planet.centerVec)
-      .addScaledVector(this._v1, -planet.spec.radius); // polo opuesto
+      .addScaledVector(this.diveUpStart, -planet.spec.radius); // polo opuesto
+    // Eje tangente capturado en el instante del salto: el right del jugador.
+    // Todo el cruce gira 180º alrededor de este ÚNICO eje (sin flip brusco
+    // ni gimbal lock en el centro del planeta).
+    getTangentAxes(this.basisQuat, this.yaw, this._forward, this._right);
+    this.diveAxis.copy(this._right);
+    if (this.diveAxis.lengthSq() < 1e-6) {
+      this.diveAxis.copy(this._forward).cross(this.diveUpStart);
+      if (this.diveAxis.lengthSq() < 1e-6) this.diveAxis.set(1, 0, 0);
+      this.diveAxis.normalize();
+    }
     this.diveDuration = (2 * planet.spec.radius) / CORE_DIVE_SPEED;
     this.diveTime = 0;
+    this.divePrevAngle = 0;
     this.coreDiveActive = true;
     this.isBurrowing = true;
     this.grounded = false;
@@ -804,13 +952,27 @@ export class PlayerController {
     this.diveTime += dt;
     const t = Math.min(this.diveTime / this.diveDuration, 1);
     const smooth = t * t * (3 - 2 * t);
-    this.pos.lerpVectors(this.diveStart, this.diveEnd, smooth);
-
     const planet = this.currentPlanet;
-    this._up.copy(this.pos).sub(planet.centerVec);
-    const upLen = this._up.length();
-    if (upLen > 1.5) {
-      this.lastUp.copy(this._up.divideScalar(upLen));
+
+    // up(t): la normal inicial rota 180º alrededor de diveAxis mientras el
+    // radio baja hacia el núcleo y vuelve a emerger en el polo opuesto.
+    const angle = Math.PI * smooth;
+    this._q1.setFromAxisAngle(this.diveAxis, angle);
+    this._up.copy(this.diveUpStart).applyQuaternion(this._q1);
+    const depth = planet.spec.radius * CORE_DIVE_DEPTH_RATIO;
+    const radius = planet.spec.radius - depth * Math.sin(Math.PI * smooth);
+    this.pos
+      .copy(planet.centerVec)
+      .addScaledVector(this._up, Math.max(radius, planet.spec.radius * 0.12));
+    this.lastUp.copy(this._up);
+
+    // basisQuat acompaña continuamente el giro de 180º alrededor del mismo
+    // eje: sin inversión repentina ni gimbal lock al cruzar el centro.
+    const delta = angle - this.divePrevAngle;
+    if (delta > 0) {
+      this._q1.setFromAxisAngle(this.diveAxis, delta);
+      this.basisQuat.premultiply(this._q1).normalize();
+      this.divePrevAngle = angle;
     }
 
     if (t >= 1) {
@@ -867,14 +1029,90 @@ export class PlayerController {
   }
 
   // ------------------------------------------------------------------------
-  // Estasis, melee, parry y noqueo
+  // Estasis, Lock-On, Gravity Dash, melee, parry y noqueo
   // ------------------------------------------------------------------------
-  private throwStasis(): void {
-    if (this.world.held === 0) return;
+
+  /** R/C: captura/atrae un objeto cercano al Campo de Estasis (sin mantener). */
+  private captureStasis(): void {
+    if (this.inFlight || this.isSwimming || this.coreDiveActive || this.isBurrowing) return;
+    if (this.world.held >= GAME_CONSTANTS.MAX_STASIS_OBJECTS) return;
+    this.getMoveForward(this._forward);
+    this.world.grabNearest(this.pos, this._forward, STASIS_GRAB_RANGE);
+  }
+
+  /** Clic Izquierdo: dispara 1 solo objeto hacia el objetivo fijado o la mira. */
+  private throwOneStasis(): void {
+    if (this.lockedTarget) {
+      this._v1.copy(this.lockedTargetPos).sub(this.pos);
+      if (this._v1.lengthSq() > 1e-6) this._v1.normalize();
+      else this.getAimForward(this._v1);
+    } else {
+      this.getAimForward(this._v1);
+    }
+    const thrown = this.world.releaseThrowOne(this._v1);
+    if (thrown > 0) {
+      this.behavior.stasisThrows += thrown;
+      this.breakDisguise();
+    }
+  }
+
+  /** Tab/V/clic central: fija el objetivo válido más cercano o libera el actual. */
+  private toggleLockOn(): void {
+    if (this.lockedTarget) {
+      this.lockedTarget = null;
+      return;
+    }
     this.getAimForward(this._v1);
-    const thrown = this.world.releaseThrow(this._v1, this.lastUp);
-    this.behavior.stasisThrows += thrown;
-    this.breakDisguise();
+    this.lockedTarget = this.world.findLockOnTarget(
+      this.pos,
+      this._v1,
+      LOCK_ON_RANGE,
+      null,
+      0
+    );
+    if (this.lockedTarget) {
+      this.world.getLockOnPos(this.lockedTarget, this.lockedTargetPos);
+    }
+  }
+
+  /** Flecha Izquierda/Derecha: cicla el objetivo fijado (o fija el más cercano). */
+  private cycleLockOn(dir: 1 | -1): void {
+    this.getAimForward(this._v1);
+    this.lockedTarget = this.world.findLockOnTarget(
+      this.pos,
+      this._v1,
+      LOCK_ON_RANGE,
+      this.lockedTarget,
+      dir
+    );
+    if (this.lockedTarget) {
+      this.world.getLockOnPos(this.lockedTarget, this.lockedTargetPos);
+    }
+  }
+
+  /**
+   * Gravity Dash local: impulso rápido hacia donde apunta la cámara para
+   * recorrer el planeta y derribar/empujar guardias o cajas al chocar.
+   * Cooldown corto (0.8s).
+   */
+  private gravityDash(): void {
+    if (this.gravityShiftCooldown > 0) return;
+    if (this.inFlight || this.isSwimming || this.coreDiveActive) return;
+    this.getAimForward(this._v1);
+    // Proyección al plano tangente: el dash discurre por la superficie.
+    this._v1.addScaledVector(this.lastUp, -this._v1.dot(this.lastUp));
+    if (this._v1.lengthSq() < 1e-6) this.getMoveForward(this._v1);
+    this._v1.normalize();
+    this.dashDir.copy(this._v1);
+    this.anchorBurst.copy(this._v1).multiplyScalar(GRAVITY_DASH_SPEED);
+    this.dashTimer = GRAVITY_DASH_TIME;
+    this.dashHitTimer = 0;
+    this.setGravityShiftCooldown(GRAVITY_DASH_COOLDOWN);
+  }
+
+  private setGravityShiftCooldown(seconds: number): void {
+    this.gravityShiftCooldown = seconds;
+    this.gravityShiftCooldownMax = seconds;
   }
 
   private meleeStrike(): void {

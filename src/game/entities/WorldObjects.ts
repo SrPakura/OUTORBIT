@@ -8,7 +8,7 @@ import type {
   WaterBubbleSpec,
   WorldObjectSpec,
 } from '../types';
-import { addComicOutline, createToonMaterial } from '../render/toonMaterials';
+import { addComicOutline, createComicCelMaterial, createToonMaterial } from '../render/toonMaterials';
 import { buildGuardModel } from '../render/proceduralModels';
 import { findStrongestGravityPlanet } from '../math/spherical';
 
@@ -33,6 +33,9 @@ const GUARD_CHASE_SPEED = 4.5;
 const LASER_GATE_RADIUS = 3.0;
 const LASER_GATE_CD = 1.3;
 const GRASS_BLADES_PER_ZONE = 170;
+const DASH_HIT_RANGE = 3.2;
+const LOCK_ON_MIN_DOT = 0.0; // objetivo dentro del semiespacio frontal
+const LOCK_CANDIDATE_MAX = 48;
 
 const GRAB_STATE_IDLE = 0;
 const GRAB_STATE_HELD = 1;
@@ -63,6 +66,35 @@ const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _upAxis = new THREE.Vector3(0, 1, 0);
 const _dummy = new THREE.Object3D();
+
+// ============================================================================
+// Lock-On (Hito 3A): guardias, barriles y generadores fijables
+// ============================================================================
+
+export type LockOnKind = 'guard' | 'barrel' | 'generator';
+
+export interface LockOnHandle {
+  kind: LockOnKind;
+  index: number;
+}
+
+const LOCK_KIND_GUARD = 0;
+const LOCK_KIND_BARREL = 1;
+const LOCK_KIND_GENERATOR = 2;
+
+function lockCodeToKind(code: number): LockOnKind {
+  return code === LOCK_KIND_GUARD ? 'guard' : code === LOCK_KIND_BARREL ? 'barrel' : 'generator';
+}
+
+function lockKindToCode(kind: LockOnKind): number {
+  return kind === 'guard' ? LOCK_KIND_GUARD : kind === 'barrel' ? LOCK_KIND_BARREL : LOCK_KIND_GENERATOR;
+}
+
+// Candidatos preasignados (cero allocations al fijar/ciclar objetivos).
+const _candAngle = new Float64Array(LOCK_CANDIDATE_MAX);
+const _candKindCode = new Int32Array(LOCK_CANDIDATE_MAX);
+const _candIndex = new Int32Array(LOCK_CANDIDATE_MAX);
+const _candOrder = new Int32Array(LOCK_CANDIDATE_MAX);
 
 // ============================================================================
 // Estructuras internas (creadas solo al construir el nivel)
@@ -251,9 +283,12 @@ function buildLaserGateMesh(): {
 
 function buildBubbleMesh(radius: number): THREE.Group {
   const group = new THREE.Group();
-  const waterMaterial = createToonMaterial('#7dd3fc');
-  waterMaterial.transparent = true;
-  waterMaterial.opacity = 0.24;
+  const waterMaterial = createComicCelMaterial('#7dd3fc', {
+    transparent: true,
+    opacity: 0.24,
+    rimColor: 0xa5f3fc,
+    rimStrength: 0.7,
+  });
   waterMaterial.depthWrite = false;
   const water = new THREE.Mesh(new THREE.SphereGeometry(radius, 32, 24), waterMaterial);
   group.add(water);
@@ -554,25 +589,140 @@ export class WorldObjectsManager {
     }
   }
 
-  /** Dispara los objetos en órbita en abanico hacia `aim`. Devuelve cuántos. */
-  releaseThrow(aim: THREE.Vector3, up: THREE.Vector3): number {
+  /**
+   * Dispara UN SOLO objeto de los que orbitan en Estasis, recto hacia `aim`
+   * (Lock-On o mira). Devuelve 1 si se lanzó, 0 si no había objetos.
+   */
+  releaseThrowOne(aim: THREE.Vector3): number {
     if (this.heldCount === 0) return 0;
-    _v1.copy(aim).cross(up);
-    if (_v1.lengthSq() < 1e-6) _v1.set(1, 0, 0);
-    _v1.normalize();
-    const total = this.heldCount;
-    let n = 0;
     for (const grab of this.grabs) {
       if (grab.state !== GRAB_STATE_HELD) continue;
       grab.state = GRAB_STATE_FLYING;
-      grab.vel
-        .copy(aim)
-        .multiplyScalar(THROW_SPEED)
-        .addScaledVector(_v1, (n - (total - 1) / 2) * 2.2);
-      n++;
+      grab.vel.copy(aim).multiplyScalar(THROW_SPEED);
+      this.heldCount--;
+      return 1;
     }
-    this.heldCount = 0;
-    return n;
+    return 0;
+  }
+
+  // --------------------------------------------------------------------------
+  // Lock-On (Tab/V + Flechas): guardias, barriles y generadores
+  // --------------------------------------------------------------------------
+
+  /** Un handle sigue siendo válido mientras el objetivo exista y esté activo. */
+  isLockOnValid(handle: LockOnHandle): boolean {
+    if (handle.kind === 'guard') {
+      return (
+        handle.index >= 0 &&
+        handle.index < this.guards.length &&
+        this.guards[handle.index].state !== GUARD_STATE_KO
+      );
+    }
+    if (handle.kind === 'generator') {
+      return (
+        handle.index >= 0 &&
+        handle.index < this.generators.length &&
+        !this.generators[handle.index].destroyed
+      );
+    }
+    return (
+      handle.index >= 0 &&
+      handle.index < this.grabs.length &&
+      this.grabs[handle.index].kind === 'barrel_explosive' &&
+      this.grabs[handle.index].state === GRAB_STATE_IDLE
+    );
+  }
+
+  /** Posición mundial actual del objetivo fijado (false si ya no es válido). */
+  getLockOnPos(handle: LockOnHandle, out: THREE.Vector3): boolean {
+    if (!this.isLockOnValid(handle)) return false;
+    if (handle.kind === 'guard') out.copy(this.guards[handle.index].pos);
+    else if (handle.kind === 'generator') out.copy(this.generators[handle.index].pos);
+    else out.copy(this.grabs[handle.index].pos);
+    return true;
+  }
+
+  getLockOnName(handle: LockOnHandle): string {
+    if (handle.kind === 'guard') return 'Guardia';
+    if (handle.kind === 'generator') return 'Generador';
+    return 'Barril explosivo';
+  }
+
+  /**
+   * Busca el objetivo fijable más cercano dentro del cono frontal (`dir = 0`)
+   * o cicla al siguiente/anterior (`dir = 1 / -1`) en orden angular respecto
+   * a `forward`. Devuelve un handle nuevo o null si no hay candidatos.
+   */
+  findLockOnTarget(
+    pos: THREE.Vector3,
+    forward: THREE.Vector3,
+    range: number,
+    current: LockOnHandle | null,
+    dir: -1 | 0 | 1
+  ): LockOnHandle | null {
+    const rangeSq = range * range;
+    let n = 0;
+    for (let i = 0; i < this.guards.length && n < LOCK_CANDIDATE_MAX; i++) {
+      if (this.guards[i].state === GUARD_STATE_KO) continue;
+      if (this.pushLockCandidate(pos, forward, rangeSq, this.guards[i].pos, LOCK_KIND_GUARD, i, n)) n++;
+    }
+    for (let i = 0; i < this.grabs.length && n < LOCK_CANDIDATE_MAX; i++) {
+      const grab = this.grabs[i];
+      if (grab.kind !== 'barrel_explosive' || grab.state !== GRAB_STATE_IDLE) continue;
+      if (this.pushLockCandidate(pos, forward, rangeSq, grab.pos, LOCK_KIND_BARREL, i, n)) n++;
+    }
+    for (let i = 0; i < this.generators.length && n < LOCK_CANDIDATE_MAX; i++) {
+      if (this.generators[i].destroyed) continue;
+      if (this.pushLockCandidate(pos, forward, rangeSq, this.generators[i].pos, LOCK_KIND_GENERATOR, i, n)) n++;
+    }
+    if (n === 0) return null;
+
+    // Orden angular por inserción (pocos candidatos, sin allocations).
+    for (let i = 0; i < n; i++) _candOrder[i] = i;
+    for (let i = 1; i < n; i++) {
+      const key = _candOrder[i];
+      let j = i - 1;
+      while (j >= 0 && _candAngle[_candOrder[j]] > _candAngle[key]) {
+        _candOrder[j + 1] = _candOrder[j];
+        j--;
+      }
+      _candOrder[j + 1] = key;
+    }
+
+    let slot = 0;
+    if (dir !== 0 && current) {
+      const code = lockKindToCode(current.kind);
+      for (let i = 0; i < n; i++) {
+        if (_candKindCode[_candOrder[i]] === code && _candIndex[_candOrder[i]] === current.index) {
+          slot = i;
+          break;
+        }
+      }
+      slot = dir > 0 ? (slot + 1) % n : (slot - 1 + n) % n;
+    }
+    const c = _candOrder[slot];
+    return { kind: lockCodeToKind(_candKindCode[c]), index: _candIndex[c] };
+  }
+
+  private pushLockCandidate(
+    pos: THREE.Vector3,
+    forward: THREE.Vector3,
+    rangeSq: number,
+    targetPos: THREE.Vector3,
+    kindCode: number,
+    index: number,
+    slot: number
+  ): boolean {
+    _v1.copy(targetPos).sub(pos);
+    const distSq = _v1.lengthSq();
+    if (distSq > rangeSq || distSq < 1e-6) return false;
+    _v1.divideScalar(Math.sqrt(distSq));
+    const dot = THREE.MathUtils.clamp(_v1.dot(forward), -1, 1);
+    if (dot < LOCK_ON_MIN_DOT) return false;
+    _candAngle[slot] = Math.acos(dot);
+    _candKindCode[slot] = kindCode;
+    _candIndex[slot] = index;
+    return true;
   }
 
   /** Golpe cuerpo a cuerpo corto: noquea guardias / daña generadores. */
@@ -595,6 +745,29 @@ export class WorldObjectsManager {
       }
     }
     return null;
+  }
+
+  /** Gravity Dash: derriba guardias y empuja cajas/barriles al chocar. */
+  dashImpact(pos: THREE.Vector3, forward: THREE.Vector3): void {
+    for (const guard of this.guards) {
+      if (guard.state === GUARD_STATE_KO) continue;
+      _v1.copy(guard.pos).sub(pos);
+      const dist = _v1.length();
+      if (dist > DASH_HIT_RANGE) continue;
+      _v1.divideScalar(Math.max(dist, 1e-6));
+      if (_v1.dot(forward) < 0.1) continue;
+      this.koGuard(guard);
+    }
+    for (const grab of this.grabs) {
+      if (grab.state !== GRAB_STATE_IDLE) continue;
+      _v1.copy(grab.pos).sub(pos);
+      const dist = _v1.length();
+      if (dist > DASH_HIT_RANGE + 1.2) continue;
+      _v1.divideScalar(Math.max(dist, 1e-6));
+      if (_v1.dot(forward) < 0.0) continue;
+      grab.state = GRAB_STATE_FLYING;
+      grab.vel.copy(_v1).multiplyScalar(13);
+    }
   }
 
   /** Noqueo por la espalda (E): devuelve true si hubo noqueo (activa disfraz). */
