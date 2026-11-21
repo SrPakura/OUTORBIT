@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { GameEngine } from '@/game/GameEngine';
 import type { HudSnapshot } from '@/game/types';
 import { TUTORIAL_SPECS, type TutorialId } from '@/game/levels/tutorialDefinitions';
+import { loadGameSettings, saveGameSettings, type GameSettings } from '@/game/settings';
 import MobileBlocker from '@/ui/MobileBlocker';
 import TitleScreen from '@/ui/TitleScreen';
 import GameHUD from '@/ui/GameHUD';
@@ -18,14 +19,21 @@ type Screen = 'title' | 'game';
  * PASO B: `activeTutorialId` decide qué se carga — `null` lanza la campaña de
  * 5 planetas y un id lanza ese mini-tutorial. Cada cambio de tutorial (o
  * reintento) incrementa `runKey`, que remonta el engine desde cero.
+ *
+ * PASO C: `settings` es la única fuente de verdad de los ajustes persistentes
+ * (Controles). Se inicializa desde `localStorage`, se guarda al aplicar y se
+ * propaga en vivo al diorama de la portada y al GameEngine.
  */
 export default function App() {
   const [screen, setScreen] = useState<Screen>('title');
   const [activeTutorialId, setActiveTutorialId] = useState<TutorialId | null>(null);
   const [runKey, setRunKey] = useState(0);
   const [hud, setHud] = useState<HudSnapshot | null>(null);
+  const [settings, setSettings] = useState<GameSettings>(() => loadGameSettings());
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<GameEngine | null>(null);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   useEffect(() => {
     if (screen !== 'game') return;
@@ -33,6 +41,7 @@ export default function App() {
     if (!canvas) return;
     const engine = new GameEngine(canvas, setHud, { tutorialId: activeTutorialId });
     engineRef.current = engine;
+    engine.applySettings(settingsRef.current);
     engine.unlockAudio(); // montaje tras JUGAR: crea el AudioContext cuanto antes
     engine.start();
     return () => {
@@ -41,6 +50,17 @@ export default function App() {
       setHud(null);
     };
   }, [screen, runKey, activeTutorialId]);
+
+  // Ajustes en vivo: cualquier cambio en Controles se aplica a la partida.
+  useEffect(() => {
+    engineRef.current?.applySettings(settings);
+  }, [settings]);
+
+  /** Guarda en localStorage y propaga a la portada y al engine. */
+  const handleUpdateSettings = useCallback((next: GameSettings) => {
+    saveGameSettings(next);
+    setSettings(next);
+  }, []);
 
   const handleResume = useCallback(() => {
     engineRef.current?.resume();
@@ -98,7 +118,12 @@ export default function App() {
       <MobileBlocker />
 
       {screen === 'title' ? (
-        <TitleScreen onPlay={handlePlay} onPlayTutorial={handlePlayTutorial} />
+        <TitleScreen
+          onPlay={handlePlay}
+          onPlayTutorial={handlePlayTutorial}
+          settings={settings}
+          onUpdateSettings={handleUpdateSettings}
+        />
       ) : (
         <div className="relative h-screen w-screen overflow-hidden">
           <canvas ref={canvasRef} className="block h-full w-full" />
