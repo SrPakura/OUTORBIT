@@ -156,6 +156,25 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
               DISFRAZADO
             </span>
           )}
+          {(snapshot.isDisguised || snapshot.suspicionRatio > 0.02) && (
+            <div className="flex items-center gap-2 rounded-lg border-2 border-black bg-[#160b2e]/85 px-3 py-1 shadow-[3px_3px_0_#000]">
+              <span className="text-[10px] font-black tracking-[0.2em] text-amber-300">
+                SOSPECHA
+              </span>
+              <span className="h-2.5 w-16 overflow-hidden rounded-full border border-black bg-slate-700">
+                <span
+                  className={`block h-full ${
+                    snapshot.suspicionRatio >= 1
+                      ? 'bg-red-500'
+                      : snapshot.suspicionRatio > 0.6
+                        ? 'bg-amber-400'
+                        : 'bg-emerald-400'
+                  }`}
+                  style={{ width: `${Math.round(snapshot.suspicionRatio * 100)}%` }}
+                />
+              </span>
+            </div>
+          )}
           {snapshot.isBurrowing && (
             <span className="rounded-lg border-2 border-black bg-yellow-500/90 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-black shadow-[3px_3px_0_#000]">
               SUBSUELO

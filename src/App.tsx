@@ -4,6 +4,7 @@ import type { HudSnapshot } from '@/game/types';
 import MobileBlocker from '@/ui/MobileBlocker';
 import TitleScreen from '@/ui/TitleScreen';
 import GameHUD from '@/ui/GameHUD';
+import LevelTransitionModal from '@/ui/LevelTransitionModal';
 
 type Screen = 'title' | 'game';
 
@@ -39,6 +40,10 @@ export default function App() {
     setScreen('title');
   }, []);
 
+  const handleDeployNextPlanet = useCallback(() => {
+    engineRef.current?.advanceToNextPlanet();
+  }, []);
+
   return (
     <div className="relative min-h-screen bg-[#05010f]">
       <MobileBlocker />
@@ -54,6 +59,9 @@ export default function App() {
               onResume={handleResume}
               onExitToTitle={handleExitToTitle}
             />
+          )}
+          {hud && hud.phase === 'planet_transition' && (
+            <LevelTransitionModal snapshot={hud} onDeploy={handleDeployNextPlanet} />
           )}
         </div>
       )}

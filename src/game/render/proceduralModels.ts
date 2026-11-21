@@ -659,6 +659,213 @@ export function buildGuardModel(): THREE.Group {
   return group;
 }
 
+// ============================================================================
+// Red de IA intra-planeta (Hito 3B): oficial, dron, torreta y brute
+// ============================================================================
+
+const OFFICER_GOLD = '#fbbf24';
+
+/**
+ * Oficial detector de disfraces: uniforme azul oscuro con gorra y hombreras
+ * doradas. Desenmascara a cualquier jugador disfrazado que se acerque mucho.
+ */
+export function buildOfficerModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'officer';
+
+  const torso = toonMesh(new THREE.CapsuleGeometry(0.38, 0.38, 8, 14), GUARD_UNIFORM, 0.016);
+  torso.position.y = 0.55;
+  group.add(torso);
+
+  const belt = toonMesh(new THREE.CylinderGeometry(0.4, 0.4, 0.14, 14), OFFICER_GOLD, 0.014);
+  belt.position.y = 0.38;
+  group.add(belt);
+
+  const head = new THREE.Group();
+  head.name = 'head';
+  head.position.y = 1.34;
+  const skull = toonMesh(new THREE.SphereGeometry(0.5, 18, 14), '#b8c0cc', 0.016);
+  head.add(skull);
+  const visor = new THREE.Mesh(
+    new THREE.BoxGeometry(0.56, 0.16, 0.18),
+    new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+  );
+  visor.position.set(0, 0.06, 0.44);
+  head.add(visor);
+  // Gorra de oficial con visera dorada.
+  const cap = toonMesh(
+    new THREE.SphereGeometry(0.54, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2.4),
+    GUARD_UNIFORM_DARK,
+    0.016
+  );
+  cap.position.y = 0.14;
+  head.add(cap);
+  const capBrim = toonMesh(new THREE.CylinderGeometry(0.5, 0.5, 0.05, 14), OFFICER_GOLD, 0.014);
+  capBrim.scale.set(1, 1, 1.25);
+  capBrim.position.set(0, 0.14, 0.22);
+  head.add(capBrim);
+  group.add(head);
+
+  group.add(buildLimb('leftArm', 0.46, 0.74, 0.12, 0.28, GUARD_UNIFORM));
+  group.add(buildLimb('rightArm', -0.46, 0.74, 0.12, 0.28, GUARD_UNIFORM));
+  group.add(buildLimb('leftLeg', 0.18, 0.32, 0.14, 0.18, GUARD_UNIFORM_DARK));
+  group.add(buildLimb('rightLeg', -0.18, 0.32, 0.14, 0.18, GUARD_UNIFORM_DARK));
+
+  // Hombreras doradas: la marca del oficial.
+  for (const side of [-1, 1]) {
+    const pad = toonMesh(new THREE.SphereGeometry(0.18, 10, 8), OFFICER_GOLD, 0.014);
+    pad.position.set(0.46 * side, 0.9, 0);
+    pad.scale.set(1, 0.65, 1);
+    group.add(pad);
+  }
+
+  return group;
+}
+
+/**
+ * Dron rápido de reconocimiento: esfera flotante con anillo de rotor, ojo
+ * rojo escáner y antena. Persigue al jugador deslizando sobre la superficie.
+ */
+export function buildDroneModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'drone';
+
+  const body = toonMesh(new THREE.SphereGeometry(0.42, 16, 12), '#64748b', 0.016);
+  group.add(body);
+
+  const eye = new THREE.Mesh(
+    new THREE.SphereGeometry(0.14, 12, 10),
+    new THREE.MeshBasicMaterial({ color: 0xf87171 })
+  );
+  eye.position.set(0, -0.02, 0.36);
+  group.add(eye);
+
+  const ring = toonMesh(new THREE.TorusGeometry(0.62, 0.07, 8, 24), '#334155', 0.014);
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
+
+  const antenna = toonMesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5, 6), '#94a3b8', 0.012);
+  antenna.position.y = 0.55;
+  group.add(antenna);
+  const beacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.07, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+  );
+  beacon.position.y = 0.82;
+  group.add(beacon);
+
+  return group;
+}
+
+/**
+ * Torreta antiaérea fija: base acorazada, cúpula giratoria y doble cañón que
+ * dispara proyectiles luminosos (parreables con F/Q).
+ */
+export function buildTurretModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'turret';
+
+  const base = toonMesh(new THREE.CylinderGeometry(0.85, 1.05, 0.6, 12), '#1f2937', 0.016);
+  base.position.y = 0.3;
+  group.add(base);
+
+  const dome = toonMesh(new THREE.SphereGeometry(0.55, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2), '#374151', 0.016);
+  dome.position.y = 0.6;
+  group.add(dome);
+
+  const barrelGeometry = new THREE.CylinderGeometry(0.09, 0.11, 1.3, 8);
+  for (const side of [-1, 1]) {
+    const barrel = toonMesh(barrelGeometry, '#4b5563', 0.014);
+    barrel.rotation.x = Math.PI / 2 - 0.5;
+    barrel.position.set(0.2 * side, 0.95, 0.42);
+    group.add(barrel);
+    const muzzle = new THREE.Mesh(
+      new THREE.SphereGeometry(0.1, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xfb923c })
+    );
+    muzzle.position.set(0.2 * side, 1.22, 0.72);
+    group.add(muzzle);
+  }
+
+  const light = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xf97316 })
+  );
+  light.position.set(0, 0.72, 0.42);
+  group.add(light);
+
+  return group;
+}
+
+const BRUTE_RED = '#b91c1c';
+const BRUTE_DARK = '#7f1d1d';
+
+/**
+ * Brute de élite: guardia pesado rojo con maza estilo Kronos. Resiste el
+ * melee frontal y solo cae con explosivos, parry o estasis.
+ */
+export function buildBruteModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'brute';
+
+  const torso = toonMesh(new THREE.CapsuleGeometry(0.52, 0.5, 8, 14), BRUTE_RED, 0.018);
+  torso.position.y = 0.68;
+  torso.scale.set(1.25, 1, 1.15);
+  group.add(torso);
+
+  const belt = toonMesh(new THREE.CylinderGeometry(0.56, 0.56, 0.18, 14), BRUTE_DARK, 0.016);
+  belt.position.y = 0.42;
+  group.add(belt);
+
+  const head = new THREE.Group();
+  head.name = 'head';
+  head.position.y = 1.52;
+  const skull = toonMesh(new THREE.SphereGeometry(0.46, 18, 14), '#9ca3af', 0.018);
+  head.add(skull);
+  const visor = new THREE.Mesh(
+    new THREE.BoxGeometry(0.52, 0.14, 0.16),
+    new THREE.MeshBasicMaterial({ color: 0xf97316 })
+  );
+  visor.position.set(0, 0.04, 0.4);
+  head.add(visor);
+  // Casco blindado con cresta.
+  const helmet = toonMesh(
+    new THREE.SphereGeometry(0.5, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    BRUTE_DARK,
+    0.018
+  );
+  helmet.position.y = 0.08;
+  head.add(helmet);
+  const crest = toonMesh(new THREE.BoxGeometry(0.1, 0.28, 0.5), '#f97316', 0.014);
+  crest.position.set(0, 0.42, -0.05);
+  head.add(crest);
+  group.add(head);
+
+  group.add(buildLimb('leftArm', 0.62, 0.92, 0.16, 0.34, BRUTE_RED));
+  group.add(buildLimb('rightArm', -0.62, 0.92, 0.16, 0.34, BRUTE_RED));
+  group.add(buildLimb('leftLeg', 0.26, 0.4, 0.18, 0.2, BRUTE_DARK));
+  group.add(buildLimb('rightLeg', -0.26, 0.4, 0.18, 0.2, BRUTE_DARK));
+
+  // Maza pesada colgando del brazo derecho.
+  const maceHandle = toonMesh(new THREE.CylinderGeometry(0.05, 0.05, 1.1, 6), '#3f3f46', 0.014);
+  maceHandle.position.set(-0.62, 0.35, 0.25);
+  maceHandle.rotation.x = 0.4;
+  group.add(maceHandle);
+  const maceHead = toonMesh(new THREE.DodecahedronGeometry(0.26, 0), '#52525b', 0.016);
+  maceHead.position.set(-0.62, -0.15, 0.48);
+  group.add(maceHead);
+
+  // Hombreras blindadas.
+  for (const side of [-1, 1]) {
+    const pad = toonMesh(new THREE.SphereGeometry(0.22, 10, 8), BRUTE_DARK, 0.016);
+    pad.position.set(0.62 * side, 1.08, 0);
+    pad.scale.set(1, 0.65, 1);
+    group.add(pad);
+  }
+
+  return group;
+}
+
 /**
  * Casco y chaleco de guardia que se superponen al personaje activo cuando
  * `isDisguised = true` (uniforme robado con el noqueo por la espalda).

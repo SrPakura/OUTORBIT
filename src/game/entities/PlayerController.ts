@@ -79,6 +79,9 @@ const SHOCKWAVE_RADIUS = 7.5;
 const DISGUISE_DURATION = 30;
 const INVULN_TIME = 0.9;
 
+// Hielo resbaladizo (bioma cryo / parches de hielo): baja adherencia al frenar.
+const ICE_GRIP = 1.6;
+
 interface CharacterParts {
   head: THREE.Object3D;
   leftArm: THREE.Object3D;
@@ -150,6 +153,7 @@ export class PlayerController {
   private readonly flightVel = new THREE.Vector3();
   private readonly swimVel = new THREE.Vector3();
   private readonly anchorBurst = new THREE.Vector3();
+  private readonly iceVel = new THREE.Vector3(); // inercia sobre hielo
   private altitude = 0;
   private vertVel = 0;
   private grounded = true;
@@ -402,6 +406,27 @@ export class PlayerController {
     return this.lastUp;
   }
 
+  /** Corriendo con Shift en superficie: delata al jugador disfrazado. */
+  get isSprinting(): boolean {
+    return (
+      this.isMoving &&
+      this.grounded &&
+      !this.isBurrowing &&
+      (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'))
+    );
+  }
+
+  /** En el aire (salto/ancla): objetivo válido de las torretas antiaéreas. */
+  get isAirborne(): boolean {
+    return (
+      !this.grounded &&
+      !this.inFlight &&
+      !this.isSwimming &&
+      !this.coreDiveActive &&
+      !this.isBurrowing
+    );
+  }
+
   /** Orientación de cámara: basisQuat * yaw * pitch (sin gimbal lock). */
   getCameraOrientation(outQuat: THREE.Quaternion): void {
     this._yawQuat.setFromAxisAngle(this._v1.set(0, 1, 0), this.yaw);
@@ -514,6 +539,45 @@ export class PlayerController {
     this.anchorBurst.z += pushZ;
   }
 
+  /**
+   * Tubería de teletransporte (Iron Bastion): recoloca al jugador en la
+   * salida conectada, reorientando el marco tangente a la nueva normal.
+   */
+  teleportTo(x: number, y: number, z: number): void {
+    this.pos.set(x, y, z);
+    const planet = findStrongestGravityPlanet(this.pos, this.planets, this.currentPlanet.spec.id);
+    this.currentPlanet = planet;
+    this._up.copy(this.pos).sub(planet.centerVec);
+    const len = this._up.length();
+    if (len > 1e-6) this._up.divideScalar(len);
+    this.lastUp.copy(this._up);
+    this.pos.copy(planet.centerVec).addScaledVector(this._up, planet.spec.radius);
+    alignBasisToUp(this.basisQuat, this._up, 1);
+    this.grounded = true;
+    this.altitude = 0;
+    this.vertVel = 0;
+    this.jumpsUsed = 0;
+    this.inFlight = false;
+    this.flightDirected = false;
+    this.flightDest = null;
+    this.isSwimming = false;
+    this.iceVel.set(0, 0, 0);
+  }
+
+  /** Mina sísmica: expulsa a Digger del subsuelo hacia arriba. */
+  forceSurfaceEject(): void {
+    this.isBurrowing = false;
+    this.grounded = false;
+    this.altitude = 0.5;
+    this.vertVel = 12;
+    this.jumpsUsed = 1;
+  }
+
+  /** Escáner de puerta: rompe el disfraz desde el mundo. */
+  forceBreakDisguise(): void {
+    this.breakDisguise();
+  }
+
   // --------------------------------------------------------------------------
   // Simulación
   // --------------------------------------------------------------------------
@@ -565,6 +629,11 @@ export class PlayerController {
       if (this.disguiseTimer <= 0) this.isDisguised = false;
     }
     if (this.isBurrowing && !this.coreDiveActive) this.behavior.burrowTimeSec += dt;
+
+    // Mina sísmica: eyección forzada del subsuelo con daño ya aplicado.
+    if (this.isBurrowing && !this.coreDiveActive && this.world.consumeBurrowEject()) {
+      this.forceSurfaceEject();
+    }
 
     // Ventana de Parry: refleja el ataque de cualquier guardia cercano.
     if (this.parryTimer > 0) {
@@ -627,6 +696,7 @@ export class PlayerController {
     this.isMoving = this._move.lengthSq() > 1e-8;
 
     let speed = 0;
+    const onIce = this.world.isOnIce(this.pos, planet);
     if (this.isMoving) {
       this._move.normalize();
       const sprinting = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
@@ -634,8 +704,26 @@ export class PlayerController {
         this.profile.moveSpeed *
         (sprinting ? SPRINT_MULTIPLIER : 1) *
         (this.isBurrowing ? BURROW_SPEED_MUL : 1);
-      this.pos.addScaledVector(this._move, speed * dt);
-      this.walkDistance += speed * dt;
+      if (onIce) {
+        // Hielo resbaladizo: inercia al acelerar/frenar sobre el parche.
+        this._v1.copy(this._move).multiplyScalar(speed);
+        this.iceVel.lerp(this._v1, Math.min(1, dt * ICE_GRIP));
+        this.pos.addScaledVector(this.iceVel, dt);
+        this.walkDistance += this.iceVel.length() * dt;
+      } else {
+        this.pos.addScaledVector(this._move, speed * dt);
+        this.walkDistance += speed * dt;
+        this.iceVel.copy(this._move).multiplyScalar(speed);
+      }
+    } else if (this.iceVel.lengthSq() > 1e-6) {
+      // Frenada: sobre hielo se desliza; fuera de él se detiene en seco.
+      this.iceVel.multiplyScalar(Math.exp(-(onIce ? ICE_GRIP : 16) * dt));
+      this.pos.addScaledVector(this.iceVel, dt);
+    } else {
+      this.iceVel.set(0, 0, 0);
+    }
+    if (this.isBurrowing && this.isMoving) {
+      this.behavior.burrowDistance += speed * dt;
     }
 
     // Impulso residual del Ancla (decae exponencialmente).
@@ -1052,6 +1140,8 @@ export class PlayerController {
     const thrown = this.world.releaseThrowOne(this._v1);
     if (thrown > 0) {
       this.behavior.stasisThrows += thrown;
+      // Estasis delante de un guardia: delata al jugador disfrazado.
+      this.world.reportAbilityUse(this.pos);
       this.breakDisguise();
     }
   }
@@ -1108,6 +1198,8 @@ export class PlayerController {
     this.dashTimer = GRAVITY_DASH_TIME;
     this.dashHitTimer = 0;
     this.setGravityShiftCooldown(GRAVITY_DASH_COOLDOWN);
+    // Gravity Shift delante de un guardia: delata al jugador disfrazado.
+    this.world.reportAbilityUse(this.pos);
   }
 
   private setGravityShiftCooldown(seconds: number): void {

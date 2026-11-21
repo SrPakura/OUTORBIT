@@ -14,6 +14,8 @@ import { buildPlanetModel, buildWarpPortal } from './render/proceduralModels';
 import { PlayerController } from './entities/PlayerController';
 import { WorldObjectsManager, type WorldPlayerState } from './entities/WorldObjects';
 import { LEVELS, createLevelObjectives } from './levels/levelDefinitions';
+import { BehaviorTracker } from './ai/BehaviorTracker';
+import { computePlanetAdaptation } from './ai/AdaptationDirector';
 
 // ============================================================================
 // Constantes de cámara y portal
@@ -29,7 +31,6 @@ const CAMERA_FOV_SHIFT = 52;
 const CAMERA_FOV_FLIGHT_BOOST = 18; // 70 -> 88 en mitad del cruce
 const CAMERA_FLIGHT_ROLL = 0.12; // giro orbital suave de cámara en vuelo
 const PORTAL_TRIGGER_RADIUS = 6;
-const TRANSITION_DURATION = 2.4;
 
 const DEFAULT_ADAPTATION: PlanetAdaptationConfig = {
   baseAlertLevel: 0,
@@ -79,7 +80,11 @@ export class GameEngine {
   private pointerLocked = false;
   private hudAccum = 0;
   private hudKey = 0;
-  private transitionTimer = 0;
+
+  // IA inter-planeta: acumulado de la run + adaptación del nivel activo.
+  private readonly behaviorTracker = new BehaviorTracker();
+  private adaptation: PlanetAdaptationConfig = DEFAULT_ADAPTATION;
+  private pendingAdaptation: PlanetAdaptationConfig = DEFAULT_ADAPTATION;
 
   // Estado del jugador que el mundo necesita (preasignado, sin GC).
   private readonly worldState: WorldPlayerState = {
@@ -92,6 +97,8 @@ export class GameEngine {
     swimming: false,
     parryActive: false,
     stealthMul: 1,
+    sprinting: false,
+    airborne: false,
   };
 
   // Temporales preasignados (sin GC en el loop)
@@ -227,6 +234,15 @@ export class GameEngine {
     this.world = new WorldObjectsManager(this.levelGroup, this.planets);
     this.world.build(this.level);
 
+    // IA inter-planeta: el AdaptationDirector lee la run acumulada y el nivel
+    // se construye con las contramedidas ya desplegadas (patrullas extra,
+    // cascos, drones, parejas, escáneres, minas sísmicas y torretas).
+    this.adaptation = computePlanetAdaptation(
+      this.behaviorTracker.getAccumulated(),
+      this.level.order
+    );
+    this.world.applyAdaptation(this.level, this.adaptation);
+
     this.objectives = createLevelObjectives(this.level.id);
 
     this.player = new PlayerController(
@@ -237,6 +253,17 @@ export class GameEngine {
       new THREE.Vector3(...this.level.spawnDir)
     );
     this.scene.add(this.player.root);
+
+    // Cableado de los eventos del mundo hacia el jugador / la ficha de la IA.
+    this.world.onGlobalAlert = () => {
+      if (this.player) this.player.behavior.alarmsTriggered++;
+    };
+    this.world.onDisguiseBroken = () => {
+      this.player?.forceBreakDisguise();
+    };
+    this.world.onTeleportPlayer = (x, y, z) => {
+      this.player?.teleportTo(x, y, z);
+    };
   }
 
   // --------------------------------------------------------------------------
@@ -250,6 +277,18 @@ export class GameEngine {
   /** Reanuda desde pausa: solicita Pointer Lock (requiere gesto del usuario). */
   resume(): void {
     this.requestPointerLock();
+  }
+
+  /**
+   * Botón DESPLEGAR EN SIGUIENTE PLANETA del LevelTransitionModal: carga el
+   * siguiente planeta (con la adaptación ya calculada) y recaptura el ratón.
+   */
+  advanceToNextPlanet(): void {
+    if (this.phase !== 'planet_transition') return;
+    this.loadLevel(this.levelIndex + 1);
+    this.phase = 'playing';
+    this.requestPointerLock();
+    this.emitHud();
   }
 
   private readonly tick = (nowMs: number): void => {
@@ -283,14 +322,9 @@ export class GameEngine {
       this.checkVictory();
       this.checkGameOver();
     } else if (this.phase === 'planet_transition') {
-      // Congelado cinemático entre niveles; al terminar carga el siguiente.
-      this.transitionTimer -= dtReal;
+      // Congelado cinemático entre niveles: el LevelTransitionModal muestra
+      // el informe de adaptación y avanza con DESPLEGAR EN SIGUIENTE PLANETA.
       this.backdrop?.update(dtReal);
-      if (this.transitionTimer <= 0) {
-        this.loadLevel(this.levelIndex + 1);
-        this.phase = 'playing';
-        this.emitHud();
-      }
     }
 
     this.updateCamera(dtReal);
@@ -310,6 +344,8 @@ export class GameEngine {
     this.worldState.swimming = player.isSwimming;
     this.worldState.parryActive = player.parryWindowActive;
     this.worldState.stealthMul = player.stealthMultiplier;
+    this.worldState.sprinting = player.isSprinting;
+    this.worldState.airborne = player.isAirborne;
     this.worldState.inGrass = world.isInGrass(player.position, player.planet);
   }
 
@@ -391,7 +427,7 @@ export class GameEngine {
         shift.completed = true;
       }
     } else {
-      // Verdant: generadores destruidos + llegada al islote.
+      // Generadores destruidos (Verdant / Cryo / Bastion).
       const generators = this.objectives.find((o) => o.id === 'generators');
       if (generators && !generators.completed) {
         generators.currentCount = this.world?.generatorsDestroyed ?? 0;
@@ -399,6 +435,15 @@ export class GameEngine {
           generators.completed = true;
         }
       }
+      // Tarjetas de acceso recogidas (Iron Bastion).
+      const keycard = this.objectives.find((o) => o.id === 'keycard');
+      if (keycard && !keycard.completed) {
+        keycard.currentCount = Math.min(this.world?.keycardsCollected ?? 0, 1);
+        if (keycard.currentCount >= keycard.targetCount) {
+          keycard.completed = true;
+        }
+      }
+      // Llegada al planeta del portal nadando entre burbujas.
       const bubbles = this.objectives.find((o) => o.id === 'bubbles');
       if (
         bubbles &&
@@ -418,6 +463,9 @@ export class GameEngine {
     if (player.planet.spec.id !== this.level.portalPlanetId) return;
     if (player.position.distanceTo(this.portalPos) > PORTAL_TRIGGER_RADIUS) return;
 
+    // Iron Bastion: el portal solo se habilita con una tarjeta de acceso.
+    if (this.level.id === 'bastion' && (this.world?.keycardsCollected ?? 0) < 1) return;
+
     const portalObjective = this.objectives.find((o) => o.id === 'portal');
     if (portalObjective) {
       portalObjective.currentCount = 1;
@@ -430,9 +478,16 @@ export class GameEngine {
       if (document.pointerLockElement === this.canvas) document.exitPointerLock();
       this.emitHud();
     } else {
-      // Cruce de portal: transición cinemática al siguiente planeta.
+      // Cruce de portal: la IA cierra tu ficha del planeta, calcula las
+      // contramedidas del siguiente y muestra el informe de adaptación.
+      player.behavior.totalTimeSec = this.elapsed;
+      this.behaviorTracker.accumulate(player.behavior);
+      this.pendingAdaptation = computePlanetAdaptation(
+        this.behaviorTracker.getAccumulated(),
+        LEVELS[this.levelIndex + 1].order
+      );
       this.phase = 'planet_transition';
-      this.transitionTimer = TRANSITION_DURATION;
+      if (document.pointerLockElement === this.canvas) document.exitPointerLock();
       this.emitHud();
     }
   }
@@ -495,6 +550,9 @@ export class GameEngine {
     key = key * 31 + (world.anyGuardInCombat() ? 1 : 0);
     key = key * 31 + this.computePromptKind();
     key = key * 31 + (player.lockOnActive ? 1 : 0);
+    key = key * 31 + (world.isGlobalAlert ? 1 : 0);
+    key = key * 31 + Math.round(world.maxSuspicion * 16);
+    key = key * 31 + world.keycardsCollected;
 
     if (key !== this.hudKey) {
       this.hudKey = key;
@@ -568,10 +626,26 @@ export class GameEngine {
       }
     }
 
+    // Vector de comportamiento de la run: acumulado + planeta actual.
+    const runVector = this.behaviorTracker.getAccumulated();
+    const levelVector = player.behavior;
     const behavior: PlayerBehaviorVector = {
-      ...player.behavior,
+      stealthKnockouts: runVector.stealthKnockouts + levelVector.stealthKnockouts,
+      disguiseTimeSec: runVector.disguiseTimeSec + levelVector.disguiseTimeSec,
+      alarmsTriggered: runVector.alarmsTriggered + levelVector.alarmsTriggered,
+      bruteKills: runVector.bruteKills + levelVector.bruteKills,
+      aerialAttacks: runVector.aerialAttacks + levelVector.aerialAttacks,
+      burrowDistance: runVector.burrowDistance + levelVector.burrowDistance,
+      burrowTimeSec: runVector.burrowTimeSec + levelVector.burrowTimeSec,
+      stasisThrows: runVector.stasisThrows + levelVector.stasisThrows,
+      parriesLanded: runVector.parriesLanded + levelVector.parriesLanded,
+      damageTaken: runVector.damageTaken + levelVector.damageTaken,
       totalTimeSec: this.elapsed,
     };
+
+    // Durante la transición se anuncia la adaptación del planeta entrante.
+    const adaptation =
+      this.phase === 'planet_transition' ? this.pendingAdaptation : this.adaptation;
 
     this.onHudSnapshot({
       phase: this.phase,
@@ -582,8 +656,8 @@ export class GameEngine {
       hp: player.hp,
       maxHp: GAME_CONSTANTS.PLAYER_MAX_HP,
       isDisguised: player.isDisguised,
-      suspicionRatio: 0,
-      globalAlert: world.anyGuardInCombat(),
+      suspicionRatio: world.maxSuspicion,
+      globalAlert: world.isGlobalAlert || world.anyGuardInCombat(),
       isGravityShifting: player.gravityShifting,
       gravityTargetName: player.gravityTarget?.spec.name ?? null,
       stasisHeldCount: world.held,
@@ -596,7 +670,7 @@ export class GameEngine {
       elapsedRunSec: this.elapsed,
       pointerLocked: this.pointerLocked,
       interactionPrompt: prompt,
-      adaptation: { ...DEFAULT_ADAPTATION },
+      adaptation: { ...adaptation },
       behaviorVector: behavior,
       bossHpRatio: null,
       bossAdaptedTo: null,
@@ -678,7 +752,13 @@ export class GameEngine {
   }
 
   private requestPointerLock(): void {
-    if (this.phase === 'victory' || this.phase === 'game_over') return;
+    if (
+      this.phase === 'victory' ||
+      this.phase === 'game_over' ||
+      this.phase === 'planet_transition'
+    ) {
+      return;
+    }
     if (document.pointerLockElement !== this.canvas) {
       try {
         const lock = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined;
