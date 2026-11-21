@@ -2,24 +2,26 @@ import * as THREE from 'three';
 import {
   GAME_CONSTANTS,
   type HudSnapshot,
+  type LevelId,
   type LevelObjective,
-  type LevelSpec,
+  type ObjectiveMarker,
   type PlanetAdaptationConfig,
   type PlanetRuntime,
+  type PlanetSpec,
   type PlayerBehaviorVector,
+  type RadioToast,
 } from './types';
-import { orientObjectOnSphere } from './math/spherical';
 import { createSpaceBackdrop } from './render/toonMaterials';
-import { buildPlanetModel, buildWarpPortal } from './render/proceduralModels';
+import { buildPlanetModel } from './render/proceduralModels';
 import { PlayerController } from './entities/PlayerController';
 import { WorldObjectsManager, type WorldPlayerState } from './entities/WorldObjects';
-import { LEVELS, createLevelObjectives } from './levels/levelDefinitions';
-import { BehaviorTracker } from './ai/BehaviorTracker';
+import { GALAXY_SPEC } from './levels/levelDefinitions';
+import { BehaviorTracker, createEmptyBehaviorVector } from './ai/BehaviorTracker';
 import { computePlanetAdaptation } from './ai/AdaptationDirector';
 import { SynthAudio } from './audio/SynthAudio';
 
 // ============================================================================
-// Constantes de cámara y portal
+// Constantes de cámara y HUD de la galaxia continua
 // ============================================================================
 const HUD_INTERVAL = 1 / 15;
 const CAMERA_BASE_DIST = 10.5;
@@ -31,7 +33,8 @@ const CAMERA_FOV = 70;
 const CAMERA_FOV_SHIFT = 52;
 const CAMERA_FOV_FLIGHT_BOOST = 18; // 70 -> 88 en mitad del cruce
 const CAMERA_FLIGHT_ROLL = 0.12; // giro orbital suave de cámara en vuelo
-const PORTAL_TRIGGER_RADIUS = 6;
+const RADIO_TOAST_DURATION = 6; // banner táctico de radio (no bloqueante)
+const MARKER_SCREEN_CLAMP = 0.88; // borde de pantalla para marcadores fuera/detrás
 
 const DEFAULT_ADAPTATION: PlanetAdaptationConfig = {
   baseAlertLevel: 0,
@@ -46,10 +49,11 @@ const DEFAULT_ADAPTATION: PlanetAdaptationConfig = {
 };
 
 /**
- * Orquestador Three.js: monta los niveles de la campaña (Prólogo + Verdant),
- * ejecuta el loop principal, gestiona Pointer Lock / pausa / transiciones de
- * planeta y emite HudSnapshot al callback suscrito (máximo ~15 Hz, o inmediato
- * ante cambios discretos) para que React no se re-renderice por frame.
+ * Orquestador Three.js de la GALAXIA CONTINUA: monta los 5 planetas a la vez
+ * en una sola escena, ejecuta el loop principal, gestiona Pointer Lock /
+ * pausa, detecta el planeta activo del jugador, proyecta los marcadores de
+ * objetivo al HUD y emite HudSnapshot al callback suscrito (máximo ~15 Hz, o
+ * inmediato ante cambios discretos) para que React no se re-renderice por frame.
  */
 export class GameEngine {
   private readonly canvas: HTMLCanvasElement;
@@ -61,15 +65,13 @@ export class GameEngine {
   private readonly planetTicks: Array<(dt: number) => void> = [];
   private backdrop: { update: (dt: number) => void; dispose: () => void } | null = null;
 
-  // Estado por nivel.
-  private levelIndex = 0;
-  private level: LevelSpec = LEVELS[0];
+  // Estado de la galaxia (única carga, sin transiciones de nivel).
   private levelGroup: THREE.Group | null = null;
   private world: WorldObjectsManager | null = null;
   private player: PlayerController | null = null;
   private objectives: LevelObjective[] = [];
-  private portalPos = new THREE.Vector3();
-  private portalTick: ((dt: number) => void) | null = null;
+  /** Clave discreta del estado de objetivos (evita allocations por frame). */
+  private objectivesKey = -1;
 
   private rafId = 0;
   private lastTime = 0;
@@ -82,10 +84,13 @@ export class GameEngine {
   private hudAccum = 0;
   private hudKey = 0;
 
-  // IA inter-planeta: acumulado de la run + adaptación del nivel activo.
+  // IA inter-planeta: acumulado de la run + última adaptación inyectada.
   private readonly behaviorTracker = new BehaviorTracker();
   private adaptation: PlanetAdaptationConfig = DEFAULT_ADAPTATION;
-  private pendingAdaptation: PlanetAdaptationConfig = DEFAULT_ADAPTATION;
+
+  // Banner táctico de radio (no bloqueante) al caer un escudo planetario.
+  private radioToast: RadioToast | null = null;
+  private radioToastT = 0;
 
   // Vector combinado de la run (acumulado + planeta actual), preasignado y
   // actualizado cada frame: es la fuente de entrada de la red MLP de KRONOS.
@@ -128,6 +133,7 @@ export class GameEngine {
   private readonly _camDir = new THREE.Vector3();
   private readonly _camPos = new THREE.Vector3();
   private readonly _v1 = new THREE.Vector3();
+  private readonly _v2 = new THREE.Vector3();
 
   private readonly boundKeyDown = (e: KeyboardEvent) => this.onKeyDown(e);
   private readonly boundKeyUp = (e: KeyboardEvent) => this.onKeyUp(e);
@@ -162,13 +168,13 @@ export class GameEngine {
     );
 
     this.setupLights();
-    this.loadLevel(0);
+    this.loadGalaxy();
     this.attachListeners();
     this.emitHud();
   }
 
   // --------------------------------------------------------------------------
-  // Construcción / reconstrucción del nivel activo
+  // Construcción de la galaxia continua (única carga: los 5 planetas a la vez)
   // --------------------------------------------------------------------------
   private setupLights(): void {
     const sun = new THREE.DirectionalLight(0xfff2d8, 2.4);
@@ -186,6 +192,7 @@ export class GameEngine {
   private disposeLevel(): void {
     if (this.player) {
       this.scene.remove(this.player.root);
+      this.scene.remove(this.player.lockRing);
       this.player.dispose();
       this.player = null;
     }
@@ -212,74 +219,53 @@ export class GameEngine {
     this.world = null;
     this.planets.length = 0;
     this.planetTicks.length = 0;
-    this.portalTick = null;
   }
 
-  private loadLevel(index: number): void {
+  /**
+   * Carga única de GALAXY_SPEC: los 5 planetas coexisten en la misma escena
+   * con sus escudos, bases, guarniciones y el Comandante KRONOS. No hay
+   * pantallas de carga ni transiciones: los escudos caen en vivo.
+   */
+  private loadGalaxy(): void {
     this.disposeLevel();
-    this.levelIndex = index;
-    this.level = LEVELS[index];
 
-    this.scene.background = new THREE.Color(this.level.skyTopColor);
+    this.scene.background = new THREE.Color(GALAXY_SPEC.skyTopColor);
     this.backdrop = createSpaceBackdrop(
       this.scene,
-      this.level.skyTopColor,
-      this.level.skyBottomColor
+      GALAXY_SPEC.skyTopColor,
+      GALAXY_SPEC.skyBottomColor
     );
 
     this.levelGroup = new THREE.Group();
-    this.levelGroup.name = `level-${this.level.id}`;
+    this.levelGroup.name = 'galaxy';
     this.scene.add(this.levelGroup);
 
-    for (const spec of this.level.planets) {
+    for (const spec of GALAXY_SPEC.planets) {
       const { group, animTick } = buildPlanetModel(spec);
       this.levelGroup.add(group);
-      this.planets.push({ spec, mesh: group, centerVec: new THREE.Vector3(...spec.center) });
+      this.planets.push({
+        spec,
+        mesh: group,
+        centerVec: new THREE.Vector3(...spec.center),
+        shielded: false,
+      });
       this.planetTicks.push(animTick);
     }
 
-    // Portal de fin de nivel sobre el planeta destino.
-    const portalPlanet = this.planets.find((p) => p.spec.id === this.level.portalPlanetId);
-    if (portalPlanet) {
-      const portal = buildWarpPortal();
-      const portalDir = new THREE.Vector3(...this.level.portalDir);
-      orientObjectOnSphere(
-        portal.group,
-        portalPlanet.centerVec,
-        portalDir,
-        portalPlanet.spec.radius + 2.2
-      );
-      this.portalPos.copy(portal.group.position);
-      this.levelGroup.add(portal.group);
-      this.portalTick = portal.animTick;
-    }
-
-    // Objetos del mundo: agarrables, generadores, láser, burbujas, hierba, guardias.
+    // Toda la galaxia en una sola escena: estructuras con colisión/LoS,
+    // escudos, balizas, objetos, burbujas, hierba y guarniciones.
     this.world = new WorldObjectsManager(this.levelGroup, this.planets);
-    this.world.build(this.level);
-
-    // IA inter-planeta: el AdaptationDirector lee la run acumulada y el nivel
-    // se construye con las contramedidas ya desplegadas (patrullas extra,
-    // cascos, drones, parejas, escáneres, minas sísmicas y torretas).
-    // La arena de KRONOS no despliega guarnición: el jefe se basta solo.
-    this.adaptation = computePlanetAdaptation(
-      this.behaviorTracker.getAccumulated(),
-      this.level.order
-    );
-    if (this.level.id !== 'kronos') {
-      this.world.applyAdaptation(this.level, this.adaptation);
-    }
-
-    this.objectives = createLevelObjectives(this.level.id);
+    this.world.buildGalaxy(GALAXY_SPEC, this.planets);
 
     this.player = new PlayerController(
       this.planets,
       this.camera,
       this.world,
-      this.level.spawnPlanetId,
-      new THREE.Vector3(...this.level.spawnDir)
+      GALAXY_SPEC.spawnPlanetId,
+      new THREE.Vector3(...GALAXY_SPEC.spawnDir)
     );
     this.scene.add(this.player.root);
+    this.scene.add(this.player.lockRing);
 
     // Cableado de los eventos del mundo hacia el jugador / la ficha de la IA.
     this.world.onGlobalAlert = () => {
@@ -291,11 +277,14 @@ export class GameEngine {
     this.world.onTeleportPlayer = (x, y, z) => {
       this.player?.teleportTo(x, y, z);
     };
-    // Hito 4: audio procedural + victoria por derrota del jefe final.
     this.world.onSound = (kind) => this.audio.play(kind);
     this.world.onKronosDefeated = () => this.onKronosDefeated();
+    // Oleada 2: un escudo cayó en vivo -> la Red de IA adapta ese planeta.
+    this.world.onPlanetUnlocked = (nextPlanet) => this.onPlanetUnlocked(nextPlanet);
     this.world.setKronosBehaviorSource(this.kronosBehavior);
     this.player.onSound = (kind) => this.audio.play(kind);
+
+    this.objectives = this.buildObjectives(GALAXY_SPEC.spawnPlanetId);
   }
 
   // --------------------------------------------------------------------------
@@ -315,18 +304,6 @@ export class GameEngine {
   toggleMute(): void {
     this.audio.unlock();
     this.audio.toggleMute();
-    this.emitHud();
-  }
-
-  /**
-   * Botón DESPLEGAR EN SIGUIENTE PLANETA del LevelTransitionModal: carga el
-   * siguiente planeta (con la adaptación ya calculada) y recaptura el ratón.
-   */
-  advanceToNextPlanet(): void {
-    if (this.phase !== 'planet_transition') return;
-    this.loadLevel(this.levelIndex + 1);
-    this.phase = 'playing';
-    this.requestPointerLock();
     this.emitHud();
   }
 
@@ -354,16 +331,15 @@ export class GameEngine {
       }
 
       for (const animTick of this.planetTicks) animTick(dtReal);
-      if (this.portalTick) this.portalTick(dtReal);
       this.backdrop?.update(dtReal);
 
-      this.updateObjectives();
-      this.checkVictory();
+      // Banner táctico de radio: caduca a los 6s (no bloquea la partida).
+      if (this.radioToastT > 0) {
+        this.radioToastT -= dtReal;
+        if (this.radioToastT <= 0) this.radioToast = null;
+      }
+
       this.checkGameOver();
-    } else if (this.phase === 'planet_transition') {
-      // Congelado cinemático entre niveles: el LevelTransitionModal muestra
-      // el informe de adaptación y avanza con DESPLEGAR EN SIGUIENTE PLANETA.
-      this.backdrop?.update(dtReal);
     }
 
     this.updateCamera(dtReal);
@@ -460,67 +436,97 @@ export class GameEngine {
   }
 
   // --------------------------------------------------------------------------
-  // Objetivos, victoria y derrota
+  // Objetivos dinámicos del planeta activo, victoria y derrota
   // --------------------------------------------------------------------------
-  private updateObjectives(): void {
+  /**
+   * Objetivos dinámicos del planeta activo, deducidos de los contadores
+   * reales del mundo: Luna 1 generador, Verdant/Cryo 3 generadores,
+   * Bastion 1 tarjeta + 3 generadores, Kronos derrotar al Comandante.
+   */
+  private buildObjectives(planetId: string): LevelObjective[] {
+    const world = this.world;
+    if (!world) return [];
+    if (planetId === 'kronos-trono') {
+      const defeated = world.kronosDefeated ? 1 : 0;
+      return [
+        {
+          id: 'kronos',
+          description: 'Derrota al Comandante KRONOS',
+          completed: defeated >= 1,
+          currentCount: defeated,
+          targetCount: 1,
+        },
+      ];
+    }
+    const genTotal = world.getGeneratorTotalOn(planetId);
+    const genDestroyed = Math.min(world.getGeneratorsDestroyedOn(planetId), genTotal);
+    const cardTotal = world.getKeycardTotalOn(planetId);
+    const cardCollected = Math.min(world.getKeycardsCollectedOn(planetId), cardTotal);
+    const out: LevelObjective[] = [];
+    if (cardTotal > 0) {
+      out.push({
+        id: 'keycard',
+        description: 'Roba la Tarjeta Maestra (habilita el asalto final)',
+        completed: cardCollected >= cardTotal,
+        currentCount: cardCollected,
+        targetCount: cardTotal,
+      });
+    }
+    if (genTotal > 0) {
+      out.push({
+        id: 'generators',
+        description:
+          genTotal === 1
+            ? 'Destruye el generador de escudo'
+            : `Destruye los ${genTotal} generadores de escudo`,
+        completed: genDestroyed >= genTotal,
+        currentCount: genDestroyed,
+        targetCount: genTotal,
+      });
+    }
+    if (out.length === 0) {
+      out.push({
+        id: 'explore',
+        description: 'Explora y viaja con Gravity Shift (Clic Derecho)',
+        completed: false,
+        currentCount: 0,
+        targetCount: 1,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Oleada 2: el escudo de un planeta cayó en vivo. La IA cierra la ficha del
+   * planeta completado, calcula la adaptación con la Red Estadística, inyecta
+   * sus contramedidas en el planeta recién desbloqueado y avisa por radio
+   * (banner no bloqueante) mientras el jugador sigue jugando.
+   */
+  private onPlanetUnlocked(nextPlanet: PlanetRuntime): void {
     const player = this.player;
-    if (!player) return;
-
-    if (this.level.id === 'kronos') {
-      // Clímax: el único objetivo es derrotar al Comandante KRONOS.
-      const boss = this.objectives.find((o) => o.id === 'kronos');
-      if (boss && !boss.completed) {
-        boss.currentCount = this.world?.kronosDefeated ? 1 : 0;
-        if (boss.currentCount >= boss.targetCount) {
-          boss.completed = true;
-        }
-      }
-      return;
+    if (player) {
+      player.behavior.totalTimeSec = this.elapsed;
+      this.behaviorTracker.accumulate(player.behavior);
+      // La ficha del planeta completado queda cerrada: el vector en vivo se
+      // reinicia para el planeta recién desbloqueado.
+      Object.assign(player.behavior, createEmptyBehaviorVector());
     }
-
-    if (this.level.id === 'prologue') {
-      const explore = this.objectives[0];
-      if (explore && !explore.completed && player.walkDistance >= 15) {
-        explore.currentCount = 1;
-        explore.completed = true;
-      }
-      const shift = this.objectives[1];
-      if (
-        shift &&
-        !shift.completed &&
-        player.planet.spec.id === this.level.portalPlanetId
-      ) {
-        shift.currentCount = 1;
-        shift.completed = true;
-      }
-    } else {
-      // Generadores destruidos (Verdant / Cryo / Bastion).
-      const generators = this.objectives.find((o) => o.id === 'generators');
-      if (generators && !generators.completed) {
-        generators.currentCount = this.world?.generatorsDestroyed ?? 0;
-        if (generators.currentCount >= generators.targetCount) {
-          generators.completed = true;
-        }
-      }
-      // Tarjetas de acceso recogidas (Iron Bastion).
-      const keycard = this.objectives.find((o) => o.id === 'keycard');
-      if (keycard && !keycard.completed) {
-        keycard.currentCount = Math.min(this.world?.keycardsCollected ?? 0, 1);
-        if (keycard.currentCount >= keycard.targetCount) {
-          keycard.completed = true;
-        }
-      }
-      // Llegada al planeta del portal nadando entre burbujas.
-      const bubbles = this.objectives.find((o) => o.id === 'bubbles');
-      if (
-        bubbles &&
-        !bubbles.completed &&
-        player.planet.spec.id === this.level.portalPlanetId
-      ) {
-        bubbles.currentCount = 1;
-        bubbles.completed = true;
-      }
+    const adaptation = computePlanetAdaptation(
+      this.behaviorTracker.getAccumulated(),
+      nextPlanet.spec.order
+    );
+    // La arena de KRONOS no despliega guarnición: el jefe se basta solo.
+    if (nextPlanet.spec.biome !== 'kronos') {
+      this.world?.applyPlanetAdaptation(nextPlanet, adaptation);
     }
+    this.adaptation = adaptation;
+    this.radioToast = {
+      title: `ESCUDO DE ${nextPlanet.spec.name.toUpperCase()} DESACTIVADO`,
+      lines: adaptation.summaryReasons,
+      accent: '#22d3ee',
+    };
+    this.radioToastT = RADIO_TOAST_DURATION;
+    this.emitHud();
   }
 
   /**
@@ -539,44 +545,6 @@ export class GameEngine {
     this.timeScale = 1;
     if (document.pointerLockElement === this.canvas) document.exitPointerLock();
     this.emitHud();
-  }
-
-  private checkVictory(): void {
-    if (this.phase !== 'playing') return;
-    // Clímax: la victoria no llega por el portal, sino derrotando a KRONOS.
-    if (this.level.id === 'kronos') return;
-    const player = this.player;
-    if (!player) return;
-    if (player.planet.spec.id !== this.level.portalPlanetId) return;
-    if (player.position.distanceTo(this.portalPos) > PORTAL_TRIGGER_RADIUS) return;
-
-    // Iron Bastion: el portal solo se habilita con una tarjeta de acceso.
-    if (this.level.id === 'bastion' && (this.world?.keycardsCollected ?? 0) < 1) return;
-
-    const portalObjective = this.objectives.find((o) => o.id === 'portal');
-    if (portalObjective) {
-      portalObjective.currentCount = 1;
-      portalObjective.completed = true;
-    }
-
-    if (this.levelIndex >= LEVELS.length - 1) {
-      // Último nivel del hito: pantalla de hito completado.
-      this.phase = 'victory';
-      if (document.pointerLockElement === this.canvas) document.exitPointerLock();
-      this.emitHud();
-    } else {
-      // Cruce de portal: la IA cierra tu ficha del planeta, calcula las
-      // contramedidas del siguiente y muestra el informe de adaptación.
-      player.behavior.totalTimeSec = this.elapsed;
-      this.behaviorTracker.accumulate(player.behavior);
-      this.pendingAdaptation = computePlanetAdaptation(
-        this.behaviorTracker.getAccumulated(),
-        LEVELS[this.levelIndex + 1].order
-      );
-      this.phase = 'planet_transition';
-      if (document.pointerLockElement === this.canvas) document.exitPointerLock();
-      this.emitHud();
-    }
   }
 
   private checkGameOver(): void {
@@ -615,15 +583,29 @@ export class GameEngine {
     const world = this.world;
     if (!player || !world) return;
 
+    // Objetivos dinámicos del planeta activo (detectado vía player.planet):
+    // solo se reconstruyen cuando cambia el planeta o algún contador.
+    const planetId = player.planet.spec.id;
+    const objectivesKey =
+      this.planets.indexOf(player.planet) * 100 +
+      world.getGeneratorsDestroyedOn(planetId) * 10 +
+      world.getKeycardsCollectedOn(planetId) * 5 +
+      (world.kronosDefeated ? 1 : 0);
+    if (objectivesKey !== this.objectivesKey) {
+      this.objectivesKey = objectivesKey;
+      this.objectives = this.buildObjectives(planetId);
+    }
+
     // Clave numérica discreta (sin allocations por frame).
     let completed = 0;
     for (let i = 0; i < this.objectives.length; i++) {
       if (this.objectives[i].completed) completed++;
     }
-    let key = this.levelIndex * 7 + this.phaseCode();
+    let key = this.phaseCode();
     key = key * 31 + (player.characterId === 'kitsune' ? 0 : player.characterId === 'digger' ? 1 : 2);
     key = key * 31 + this.planets.indexOf(player.planet);
     key = key * 31 + (player.gravityTarget ? this.planets.indexOf(player.gravityTarget) + 2 : 0);
+    key = key * 31 + (player.gravityTargetBlockedReason ? 1 : 0);
     key = key * 31 + (player.gravityShifting ? 1 : 0);
     key = key * 31 + (this.pointerLocked ? 1 : 0);
     key = key * 31 + completed;
@@ -645,6 +627,8 @@ export class GameEngine {
     key = key * 31 + (world.kronosAdaptedTo === 'kitsune' ? 1 : world.kronosAdaptedTo === 'digger' ? 2 : world.kronosAdaptedTo === 'axel' ? 3 : 0);
     key = key * 31 + world.kronosUpdates;
     key = key * 31 + (this.audio.muted ? 1 : 0);
+    // Oleada 2: banner de radio al caer un escudo planetario.
+    key = key * 31 + (this.radioToast ? 1 : 0);
 
     if (key !== this.hudKey) {
       this.hudKey = key;
@@ -664,8 +648,6 @@ export class GameEngine {
         return 0;
       case 'paused':
         return 1;
-      case 'planet_transition':
-        return 2;
       case 'game_over':
         return 3;
       case 'victory':
@@ -675,17 +657,83 @@ export class GameEngine {
     }
   }
 
+  /** LevelId del HUD deducido del bioma del planeta activo. */
+  private planetLevelId(spec: PlanetSpec): LevelId {
+    switch (spec.biome) {
+      case 'tutorial':
+        return 'prologue';
+      case 'verdant':
+        return 'verdant';
+      case 'cryo':
+        return 'cryo';
+      case 'bastion':
+        return 'bastion';
+      default:
+        return 'kronos';
+    }
+  }
+
+  /**
+   * Proyección 2D de los marcadores de objetivo del planeta activo: si el
+   * objetivo está detrás de la cámara o fuera de pantalla, se clampea al
+   * borde [-0.88, 0.88] apuntando en su dirección, con distancia en metros.
+   */
+  private projectObjectiveMarkers(player: PlayerController): ObjectiveMarker[] {
+    const world = this.world;
+    if (!world) return [];
+    const result = world.getObjectiveTargets(player.planet.spec.id);
+    const markers: ObjectiveMarker[] = [];
+    this.camera.getWorldDirection(this._camDir);
+    for (let i = 0; i < result.count; i++) {
+      const target = result.targets[i];
+      this._v1.copy(target.pos).sub(this.camera.position);
+      const inFront = this._v1.dot(this._camDir) > 0;
+      this._v2.copy(target.pos).project(this.camera);
+      let sx = this._v2.x;
+      let sy = this._v2.y;
+      if (!inFront) {
+        // Detrás de la cámara: la proyección se espeja; se voltea para que
+        // el marcador apunte al borde correcto.
+        sx = -sx;
+        sy = -sy;
+      }
+      let maxAbs = Math.max(Math.abs(sx), Math.abs(sy));
+      if (maxAbs < 1e-4) {
+        sx = 0;
+        sy = 1;
+        maxAbs = 1;
+      }
+      if (maxAbs > MARKER_SCREEN_CLAMP || !inFront) {
+        const scale = MARKER_SCREEN_CLAMP / maxAbs;
+        sx *= scale;
+        sy *= scale;
+      }
+      markers.push({
+        id: `obj-${i}-${target.label}`,
+        label: target.label,
+        distanceMeters: player.position.distanceTo(target.pos),
+        screenX: sx,
+        screenY: sy,
+        inFront,
+        color:
+          target.label === 'KRONOS'
+            ? '#f87171'
+            : target.label === 'TARJETA'
+              ? '#fbbf24'
+              : '#4ade80',
+      });
+    }
+    return markers;
+  }
+
   private emitHud(): void {
     const player = this.player;
     const world = this.world;
     if (!player || !world) return;
 
-    // Durante la transición se anuncia el nivel entrante.
-    const announceIndex =
-      this.phase === 'planet_transition' && this.levelIndex < LEVELS.length - 1
-        ? this.levelIndex + 1
-        : this.levelIndex;
-    const announced = LEVELS[announceIndex];
+    // Planeta activo detectado dinámicamente (la galaxia es continua).
+    const activePlanet = player.planet;
+    const onKronos = activePlanet.spec.biome === 'kronos';
 
     let prompt: string | null = null;
     switch (this.computePromptKind()) {
@@ -693,7 +741,7 @@ export class GameEngine {
         prompt = '[E] Noquear y robar uniforme';
         break;
       case 2:
-        prompt = '[F/Q] ¡PARRY AHORA!';
+        prompt = '[F] ¡PARRY AHORA!';
         break;
       case 3:
         prompt = '[R/C] Capturar objeto en Estasis';
@@ -719,11 +767,10 @@ export class GameEngine {
     }
 
     // Vector de comportamiento de la run: si ya se cerró el planeta actual
-    // (planet_transition / victory), ya está acumulado en behaviorTracker.
+    // (victory), ya está acumulado en behaviorTracker.
     const runVector = this.behaviorTracker.getAccumulated();
     const levelVector = player.behavior;
-    const includeCurrent =
-      this.phase !== 'planet_transition' && this.phase !== 'victory';
+    const includeCurrent = this.phase !== 'victory';
     const behavior: PlayerBehaviorVector = includeCurrent
       ? {
           stealthKnockouts: runVector.stealthKnockouts + levelVector.stealthKnockouts,
@@ -740,14 +787,13 @@ export class GameEngine {
         }
       : { ...runVector, totalTimeSec: this.elapsed };
 
-    // Durante la transición se anuncia la adaptación del planeta entrante.
-    const adaptation =
-      this.phase === 'planet_transition' ? this.pendingAdaptation : this.adaptation;
+    // La adaptación inyectada más recientemente por la Red de IA.
+    const adaptation = this.adaptation;
 
     this.onHudSnapshot({
       phase: this.phase,
-      levelId: announced.id,
-      levelTitle: `${announced.title} — ${announced.subtitle}`,
+      levelId: this.planetLevelId(activePlanet.spec),
+      levelTitle: `${activePlanet.spec.name} · ${activePlanet.spec.subtitle}`,
       activeCharacter: player.characterId,
       unlockedCharacters: ['kitsune', 'digger', 'axel'],
       hp: player.hp,
@@ -757,20 +803,21 @@ export class GameEngine {
       globalAlert: world.isGlobalAlert || world.anyGuardInCombat(),
       isGravityShifting: player.gravityShifting,
       gravityTargetName: player.gravityTarget?.spec.name ?? null,
+      gravityTargetBlockedReason: player.gravityTargetBlockedReason,
       stasisHeldCount: world.held,
       isBurrowing: player.isBurrowing,
       isSwimming: player.isSwimming,
       anchorCooldownRatio: player.anchorCooldownRatio,
       parryWindowActive: player.parryWindowActive,
-      activePlanetName: player.planet.spec.name,
+      activePlanetName: activePlanet.spec.name,
       objectives: this.objectives.map((o) => ({ ...o })),
       elapsedRunSec: this.elapsed,
       pointerLocked: this.pointerLocked,
       interactionPrompt: prompt,
       adaptation: { ...adaptation },
       behaviorVector: behavior,
-      bossHpRatio: this.level.id === 'kronos' ? world.kronosHpRatio : null,
-      bossAdaptedTo: this.level.id === 'kronos' ? world.kronosAdaptedTo : null,
+      bossHpRatio: onKronos ? world.kronosHpRatio : null,
+      bossAdaptedTo: onKronos ? world.kronosAdaptedTo : null,
       gravityShiftCooldownRatio: player.gravityShiftCooldownRatio,
       lockOnActive: player.lockOnActive,
       lockedTargetName,
@@ -778,6 +825,8 @@ export class GameEngine {
       lockOnScreenY,
       muted: this.audio.muted,
       kronosUpdates: world.kronosUpdates,
+      objectiveMarkers: this.projectObjectiveMarkers(player),
+      radioToast: this.radioToast ? { ...this.radioToast, lines: [...this.radioToast.lines] } : null,
     });
   }
 
@@ -859,11 +908,7 @@ export class GameEngine {
   }
 
   private requestPointerLock(): void {
-    if (
-      this.phase === 'victory' ||
-      this.phase === 'game_over' ||
-      this.phase === 'planet_transition'
-    ) {
+    if (this.phase === 'victory' || this.phase === 'game_over') {
       return;
     }
     if (document.pointerLockElement !== this.canvas) {

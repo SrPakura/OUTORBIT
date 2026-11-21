@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { GAME_CONSTANTS, type CharacterId, type PlanetSpec } from '../types';
-import { addComicOutline, createToonMaterial } from './toonMaterials';
+import { GAME_CONSTANTS, type CharacterId, type PlanetSpec, type StructureSpec } from '../types';
+import { orientObjectOnSphere } from '../math/spherical';
+import { addComicOutline, createComicCelMaterial, createToonMaterial, type ComicCelOptions } from './toonMaterials';
 
 // ============================================================================
 // Utilidades
@@ -1023,4 +1024,459 @@ export function buildDisguiseOverlay(): THREE.Group {
 
   group.visible = false;
   return group;
+}
+
+// ============================================================================
+// Estructuras con colisión real (OUTORBIT 2.0): murallas, torres, búnkers,
+// arcos, plataformas, pilares y puentes. Convención de `StructureSpec`:
+// size = [halfX, heightY, halfZ], origen del grupo en la base (superficie +
+// altitudeOffset), +Y = normal del planeta, yaw alrededor de la normal.
+// ============================================================================
+
+const _structDir = new THREE.Vector3();
+
+/** Mesh cel de 3 bandas con contorno cómic fino (tinta limpia). */
+function celMesh(
+  geometry: THREE.BufferGeometry,
+  color: string | number,
+  outlineThickness: number,
+  options?: ComicCelOptions
+): THREE.Mesh {
+  const mesh = new THREE.Mesh(geometry, createComicCelMaterial(color, options));
+  addComicOutline(mesh, outlineThickness);
+  return mesh;
+}
+
+/** Color de acento: mismo tono, más luminoso (bandas, barandillas, remates). */
+function lighten(color: string | number, amount = 0.18): number {
+  return new THREE.Color(color).offsetHSL(0, 0.04, amount).getHex();
+}
+
+function buildWallMesh(
+  group: THREE.Group,
+  halfX: number,
+  heightY: number,
+  halfZ: number,
+  color: string
+): void {
+  const body = celMesh(new THREE.BoxGeometry(halfX * 2, heightY, halfZ * 2), color, 0.028);
+  body.position.y = heightY / 2;
+  group.add(body);
+
+  // Banda superior de acento blindado.
+  const band = celMesh(
+    new THREE.BoxGeometry(halfX * 2 * 1.02, 0.55, halfZ * 2 * 1.06),
+    lighten(color),
+    0.02
+  );
+  band.position.y = heightY - 0.55;
+  group.add(band);
+
+  // Almenas a lo largo del adarve.
+  const merlonCount = Math.max(2, Math.round(halfX));
+  const merlonWidth = (halfX * 2) / (merlonCount * 2 - 1);
+  for (let i = 0; i < merlonCount; i++) {
+    const merlon = celMesh(
+      new THREE.BoxGeometry(merlonWidth, 0.55, halfZ * 2 * 1.05),
+      color,
+      0.02
+    );
+    merlon.position.set(-halfX + merlonWidth * 0.5 + i * merlonWidth * 2, heightY + 0.28, 0);
+    group.add(merlon);
+  }
+}
+
+function buildTowerMesh(
+  group: THREE.Group,
+  halfX: number,
+  heightY: number,
+  halfZ: number,
+  color: string
+): void {
+  // Fuste elevado.
+  const shaft = celMesh(
+    new THREE.BoxGeometry(halfX * 1.5, heightY - 1.4, halfZ * 1.5),
+    color,
+    0.028
+  );
+  shaft.position.y = (heightY - 1.4) / 2;
+  group.add(shaft);
+
+  // Plataforma de vigilancia arriba (tejado caminable).
+  const accent = lighten(color);
+  const deck = celMesh(
+    new THREE.BoxGeometry(halfX * 2.6, 0.7, halfZ * 2.6),
+    accent,
+    0.024
+  );
+  deck.position.y = heightY - 0.7;
+  group.add(deck);
+
+  // Barandilla perimetral.
+  const railHeight = 0.75;
+  const railGeoX = new THREE.BoxGeometry(halfX * 2.6, railHeight, 0.12);
+  const railGeoZ = new THREE.BoxGeometry(0.12, railHeight, halfZ * 2.6);
+  for (const side of [-1, 1]) {
+    const railA = celMesh(railGeoX, accent, 0.018);
+    railA.position.set(0, heightY + railHeight / 2 - 0.35, halfZ * 1.3 * side);
+    group.add(railA);
+    const railB = celMesh(railGeoZ, accent, 0.018);
+    railB.position.set(halfX * 1.3 * side, heightY + railHeight / 2 - 0.35, 0);
+    group.add(railB);
+  }
+
+  // Lámpara de vigilancia.
+  const lamp = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+  );
+  lamp.position.y = heightY + 0.25;
+  group.add(lamp);
+}
+
+function buildBunkerMesh(
+  group: THREE.Group,
+  halfX: number,
+  heightY: number,
+  halfZ: number,
+  color: string
+): void {
+  const body = celMesh(new THREE.BoxGeometry(halfX * 2, heightY, halfZ * 2), color, 0.03);
+  body.position.y = heightY / 2;
+  group.add(body);
+
+  // Techo plano accesible con remate perimetral.
+  const roof = celMesh(
+    new THREE.BoxGeometry(halfX * 2 * 1.08, 0.45, halfZ * 2 * 1.08),
+    lighten(color),
+    0.024
+  );
+  roof.position.y = heightY + 0.22;
+  group.add(roof);
+
+  // Ranura de puerta al frente.
+  const doorHeight = Math.min(2.2, heightY * 0.55);
+  const door = celMesh(new THREE.BoxGeometry(1.4, doorHeight, 0.3), '#0f172a', 0.012);
+  door.position.set(0, doorHeight / 2, halfZ + 0.05);
+  group.add(door);
+}
+
+function buildArchGateMesh(
+  group: THREE.Group,
+  halfX: number,
+  heightY: number,
+  halfZ: number,
+  altitude: number,
+  color: string
+): void {
+  // El collider es el dintel flotante (a `altitude` sobre el suelo): se pasa
+  // andando o por debajo. Los pilares son el marco visual.
+  const accent = lighten(color);
+  for (const side of [-1, 1]) {
+    const pillar = celMesh(
+      new THREE.BoxGeometry(0.9, altitude, halfZ * 2),
+      color,
+      0.026
+    );
+    pillar.position.set((halfX - 0.45) * side, -altitude / 2, 0);
+    group.add(pillar);
+    const cap = celMesh(
+      new THREE.BoxGeometry(1.15, 0.35, halfZ * 2 * 1.1),
+      accent,
+      0.02
+    );
+    cap.position.set((halfX - 0.45) * side, -0.18, 0);
+    group.add(cap);
+  }
+
+  // Dintel superior.
+  const lintel = celMesh(new THREE.BoxGeometry(halfX * 2, heightY, halfZ * 2), color, 0.026);
+  lintel.position.y = heightY / 2;
+  group.add(lintel);
+  const crest = celMesh(
+    new THREE.BoxGeometry(halfX * 0.9, 0.5, halfZ * 2 * 0.9),
+    accent,
+    0.02
+  );
+  crest.position.y = heightY + 0.25;
+  group.add(crest);
+}
+
+function buildPlatformMesh(
+  group: THREE.Group,
+  halfX: number,
+  heightY: number,
+  _halfZ: number,
+  color: string
+): void {
+  // Losa hexagonal flotante (orbital o de patio).
+  const slab = celMesh(
+    new THREE.CylinderGeometry(halfX, halfX * 0.92, heightY, 6),
+    color,
+    0.03
+  );
+  slab.position.y = heightY / 2;
+  group.add(slab);
+
+  // Borde luminoso aditivo.
+  const glowColor = lighten(color, 0.25);
+  const edge = new THREE.Mesh(
+    new THREE.TorusGeometry(halfX * 0.98, 0.14, 8, 32),
+    new THREE.MeshBasicMaterial({
+      color: glowColor,
+      transparent: true,
+      opacity: 0.75,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  edge.rotation.x = Math.PI / 2;
+  edge.position.y = heightY + 0.05;
+  group.add(edge);
+
+  // Emisor antigravitatorio colgante.
+  const emitter = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.28, 0.55, 1.6, 8),
+    new THREE.MeshBasicMaterial({
+      color: glowColor,
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  emitter.position.y = -0.9;
+  group.add(emitter);
+}
+
+function buildPillarMesh(
+  group: THREE.Group,
+  halfX: number,
+  heightY: number,
+  halfZ: number,
+  color: string
+): void {
+  const body = celMesh(
+    new THREE.CylinderGeometry(halfX, halfX * 1.15, heightY, 8),
+    color,
+    0.028
+  );
+  body.position.y = heightY / 2;
+  group.add(body);
+  const cap = celMesh(
+    new THREE.BoxGeometry(halfX * 2.4, 0.4, halfZ * 2.4),
+    lighten(color),
+    0.02
+  );
+  cap.position.y = heightY + 0.2;
+  group.add(cap);
+}
+
+function buildBridgeMesh(
+  group: THREE.Group,
+  halfX: number,
+  heightY: number,
+  halfZ: number,
+  altitude: number,
+  color: string
+): void {
+  // Tablero caminable (por debajo se pasa libremente).
+  const deck = celMesh(new THREE.BoxGeometry(halfX * 2, heightY, halfZ * 2), color, 0.028);
+  deck.position.y = heightY / 2;
+  group.add(deck);
+
+  // Barandillas laterales.
+  const accent = lighten(color);
+  for (const side of [-1, 1]) {
+    const rail = celMesh(new THREE.BoxGeometry(halfX * 2, 0.55, 0.12), accent, 0.018);
+    rail.position.set(0, heightY + 0.28, (halfZ - 0.06) * side);
+    group.add(rail);
+  }
+
+  // Pilares de apoyo hasta el suelo cuando la pasarela está elevada.
+  if (altitude > 0.6) {
+    const strutCount = Math.max(2, Math.round(halfX / 4));
+    for (let i = 0; i < strutCount; i++) {
+      const strut = celMesh(new THREE.BoxGeometry(0.35, altitude, 0.35), color, 0.02);
+      const t = strutCount === 1 ? 0.5 : i / (strutCount - 1);
+      strut.position.set(-halfX + 1 + t * (halfX * 2 - 2), -altitude / 2, 0);
+      group.add(strut);
+    }
+  }
+}
+
+/**
+ * Construye el modelo visual de una estructura sobre la superficie de un
+ * planeta. Orienta el grupo sobre la normal de la esfera
+ * (`orientObjectOnSphere`) y aplica el giro `spec.yaw` alrededor de esa
+ * normal — exactamente la misma convención que `createStructureCollider`,
+ * así el visual y la colisión coinciden.
+ */
+export function buildStructureMesh(
+  spec: StructureSpec,
+  planetCenter: THREE.Vector3,
+  planetRadius: number
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = `structure-${spec.id}`;
+  const halfX = spec.size[0];
+  const heightY = spec.size[1];
+  const halfZ = spec.size[2];
+  const altitude = spec.altitudeOffset ?? 0;
+
+  switch (spec.kind) {
+    case 'wall':
+      buildWallMesh(group, halfX, heightY, halfZ, spec.color);
+      break;
+    case 'tower':
+      buildTowerMesh(group, halfX, heightY, halfZ, spec.color);
+      break;
+    case 'bunker':
+      buildBunkerMesh(group, halfX, heightY, halfZ, spec.color);
+      break;
+    case 'arch_gate':
+      buildArchGateMesh(group, halfX, heightY, halfZ, altitude, spec.color);
+      break;
+    case 'platform':
+      buildPlatformMesh(group, halfX, heightY, halfZ, spec.color);
+      break;
+    case 'pillar':
+      buildPillarMesh(group, halfX, heightY, halfZ, spec.color);
+      break;
+    case 'bridge':
+      buildBridgeMesh(group, halfX, heightY, halfZ, altitude, spec.color);
+      break;
+  }
+
+  _structDir.set(spec.sphericalDir[0], spec.sphericalDir[1], spec.sphericalDir[2]).normalize();
+  orientObjectOnSphere(group, planetCenter, _structDir, planetRadius + altitude);
+  group.rotateY(spec.yaw ?? 0);
+  return group;
+}
+
+// ============================================================================
+// Escudo planetario, balizas verticales y conos de visión (señalización
+// diegética: el objetivo debe ser obvio a simple vista)
+// ============================================================================
+
+/**
+ * Burbuja de escudo energético translúcida (radius * 1.18) con retícula
+ * facetada brillante: los planetas protegidos se ven claramente escudados
+ * en el cielo desde cualquier parte del sistema.
+ */
+export function buildPlanetShieldMesh(radius: number, color: string): THREE.Mesh {
+  const shield = new THREE.Mesh(
+    new THREE.SphereGeometry(radius * 1.18, 48, 32),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.24,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  shield.name = 'planetShield';
+
+  // Retícula facetada (hexagonal vista desde lejos) para leer "escudo".
+  const lattice = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(radius * 1.185, 3),
+    new THREE.MeshBasicMaterial({
+      color,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
+    })
+  );
+  shield.add(lattice);
+  return shield;
+}
+
+/**
+ * Columna de luz vertical semitransparente aditiva (con halo en la base) para
+ * marcar generadores, tarjetas de acceso y zonas clave: el objetivo es 100%
+ * obvio a simple vista desde cualquier punto del planeta.
+ */
+export function buildBeaconBeam(color: string, height = 16): THREE.Mesh {
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.38, 0.6, height, 10, 1, true),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.32,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  beam.name = 'beaconBeam';
+  beam.position.y = height / 2;
+
+  // Núcleo interior más brillante.
+  const core = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.16, 0.24, height, 8, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  beam.add(core);
+
+  // Halo en la base.
+  const halo = new THREE.Mesh(
+    new THREE.TorusGeometry(1.05, 0.16, 8, 28),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.7,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  halo.rotation.x = Math.PI / 2;
+  halo.position.y = -height / 2 + 0.06;
+  beam.add(halo);
+
+  return beam;
+}
+
+/**
+ * Cono de visión pegado al suelo: sector circular plano en XZ con ápice en
+ * (0, 0.08, 0) abriéndose hacia +Z (el frente del guardia). El material es
+ * básico transparente para recolorearlo en vivo (verde/ámbar patrulla,
+ * amarillo investigando, rojo combate).
+ */
+export function buildVisionConeMesh(
+  range: number,
+  halfAngleRad: number
+): { mesh: THREE.Mesh; material: THREE.MeshBasicMaterial } {
+  const segments = 24;
+  const y = 0.08;
+  const positions: number[] = [0, y, 0];
+  for (let i = 0; i <= segments; i++) {
+    const ang = -halfAngleRad + (i / segments) * halfAngleRad * 2;
+    positions.push(Math.sin(ang) * range, y, Math.cos(ang) * range);
+  }
+  const indices: number[] = [];
+  for (let i = 1; i <= segments; i++) {
+    indices.push(0, i, i + 1);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+
+  const material = new THREE.MeshBasicMaterial({
+    color: 0x4ade80,
+    transparent: true,
+    opacity: 0.28,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'visionCone';
+  return { mesh, material };
 }

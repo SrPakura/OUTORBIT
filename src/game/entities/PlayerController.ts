@@ -6,7 +6,12 @@ import {
   type PlanetRuntime,
   type PlayerBehaviorVector,
 } from '../types';
-import { alignBasisToUp, findStrongestGravityPlanet, getTangentAxes } from '../math/spherical';
+import {
+  alignBasisToUp,
+  findStrongestGravityPlanet,
+  getTangentAxes,
+  resolvePlayerStructures,
+} from '../math/spherical';
 import { buildCharacterModel, buildDisguiseOverlay } from '../render/proceduralModels';
 import type { GameSoundKind } from '../audio/SynthAudio';
 import type { LockOnHandle, WorldObjectsManager } from './WorldObjects';
@@ -29,16 +34,21 @@ const ANCHOR_COOLDOWN = 0.9;
 const ANCHOR_BURST_DECAY = 3.2;
 const ANCHOR_FX_TIME = 0.35;
 
-// Parry (F / Q)
+// Parry (F)
 const PARRY_WINDOW = 0.32;
 const PARRY_COOLDOWN = 0.85;
 
 // Campo de Estasis (R/C captura; Clic Izquierdo dispara 1 objeto o melee)
 const STASIS_GRAB_RANGE = 9;
 
-// Lock-On (Tab/V + Flechas): estilo GTA San Andreas
+// Lock-On (Q/Tab/V + Flechas): estilo GTA San Andreas
 const LOCK_ON_RANGE = 34;
 const LOCK_ON_DROP_RANGE = 44; // margen antes de perder el objetivo fijado
+const LOCK_ON_AIM_SPEED = 4.0; // giro suave de cámara hacia el objetivo fijado
+const LOCK_ON_PITCH_SPEED = 1.6;
+
+// Colisión contra estructuras (muros, torres, tejados, puentes, plataformas)
+const PLAYER_STRUCTURE_RADIUS = 0.5;
 
 // Gravity Shift / Gravity Dash (Clic Derecho)
 const GRAVITY_DASH_SPEED = 30;
@@ -107,9 +117,10 @@ interface CharacterParts {
  * - R/C: captura objetos cercanos al Campo de Estasis (hasta 4 en órbita).
  * - Clic Izquierdo: dispara 1 solo objeto de la Estasis hacia el objetivo
  *   fijado (Lock-On) o la mira; con 0 objetos, golpe melee rápido.
- * - Tab/V (o clic central): Lock-On del objetivo válido más cercano;
- *   Flecha Izquierda/Derecha: cicla el objetivo fijado.
- * - F/Q: Parry (ventana 0.32s, cooldown 0.85s).
+ * - Q/Tab/V (o clic central): Lock-On del objetivo válido más cercano;
+ *   Flecha Izquierda/Derecha: cicla el objetivo fijado; con Lock-On activo la
+ *   cámara gira suavemente hacia el objetivo y un aro 3D lo marca en escena.
+ * - F: Parry (ventana 0.32s, cooldown 0.85s).
  * - E: noqueo por la espalda + robo de uniforme (`isDisguised`).
  *
  * Cero allocations por frame: todos los vectores/cuaterniones son preasignados.
@@ -213,6 +224,8 @@ export class PlayerController {
   private readonly flightFx: THREE.Group;
   private readonly flightRingA: THREE.Mesh;
   private readonly flightRingB: THREE.Mesh;
+  /** Aro/retículo 3D aditivo que gira alrededor del objetivo fijado (Lock-On). */
+  readonly lockRing: THREE.Group;
   private walkPhase = 0;
   private isMoving = false;
 
@@ -329,6 +342,36 @@ export class PlayerController {
     this.flightFx.add(this.flightRingA, this.flightRingB);
     this.flightFx.visible = false;
     this.bodyRoot.add(this.flightFx);
+
+    // Aro de Lock-On: retículo 3D amarillo/cian aditivo que flota girando
+    // alrededor del objetivo fijado (el GameEngine lo añade a la escena).
+    this.lockRing = new THREE.Group();
+    this.lockRing.name = 'lockRing';
+    const lockRingOuter = new THREE.Mesh(
+      new THREE.TorusGeometry(1.15, 0.06, 8, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0xfacc15,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    );
+    const lockRingInner = new THREE.Mesh(
+      new THREE.TorusGeometry(0.82, 0.035, 8, 28),
+      new THREE.MeshBasicMaterial({
+        color: 0x22d3ee,
+        transparent: true,
+        opacity: 0.8,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    );
+    lockRingInner.rotation.x = Math.PI / 2;
+    this.lockRing.add(lockRingOuter, lockRingInner);
+    this.lockRing.visible = false;
   }
 
   // --------------------------------------------------------------------------
@@ -378,6 +421,16 @@ export class PlayerController {
 
   get lockOnActive(): boolean {
     return this.lockedTarget !== null;
+  }
+
+  /** Planeta apuntado con escudo activo: motivo de bloqueo para el retículo. */
+  get gravityTargetBlockedReason(): string | null {
+    const target = this.gravityTarget;
+    if (!target || !target.shielded) return null;
+    const blocker = this.planets.find((p) => p.spec.id === target.spec.unlockedByPlanetId);
+    return `ESCUDO ACTIVO — Destruye objetivos en ${
+      blocker?.spec.name ?? 'el planeta anterior'
+    }`;
   }
 
   get lockedTargetName(): string | null {
@@ -468,10 +521,10 @@ export class PlayerController {
       else if (code === 'Digit2') this.switchCharacter('digger');
       else if (code === 'Digit3') this.switchCharacter('axel');
       else if (code === 'KeyE') this.tryKnockout();
-      else if (code === 'KeyF' || code === 'KeyQ') this.tryParry();
+      else if (code === 'KeyF') this.tryParry();
       else if (code === 'ShiftLeft' || code === 'ShiftRight') this.toggleBurrow();
       else if (code === 'KeyR' || code === 'KeyC') this.captureStasis();
-      else if (code === 'Tab' || code === 'KeyV') this.toggleLockOn();
+      else if (code === 'KeyQ' || code === 'Tab' || code === 'KeyV') this.toggleLockOn();
       else if (code === 'ArrowLeft') this.cycleLockOn(-1);
       else if (code === 'ArrowRight') this.cycleLockOn(1);
     } else {
@@ -513,12 +566,16 @@ export class PlayerController {
         }
       } else if (this.gravityShifting) {
         this.gravityShifting = false;
-        if (this.gravityTarget && this.gravityTarget !== this.currentPlanet) {
-          this.launchToTarget(this.gravityTarget);
+        const target = this.gravityTarget;
+        this.gravityTarget = null;
+        if (target && target.shielded) {
+          // Planeta escudado: NO se lanza al jugador; aviso sonoro solamente.
+          this.onSound?.('alert');
+        } else if (target && target !== this.currentPlanet) {
+          this.launchToTarget(target);
         } else {
           this.gravityDash();
         }
-        this.gravityTarget = null;
       }
     }
   }
@@ -626,6 +683,7 @@ export class PlayerController {
         this.lockedTarget = null;
       }
     }
+    this.updateLockOnAim(dt);
 
     if (this.isDisguised) {
       this.behavior.disguiseTimeSec += dt;
@@ -688,6 +746,51 @@ export class PlayerController {
     }
   }
 
+  /**
+   * Aro 3D de Lock-On flotando alrededor del objetivo fijado + giro suave de
+   * yaw (y un poco de pitch) hacia él mientras Flecha Izq./Der. lo cambian.
+   */
+  private updateLockOnAim(dt: number): void {
+    const locked = this.lockedTarget !== null;
+    this.lockRing.visible = locked;
+    if (!locked) return;
+    this.lockRing.position.copy(this.lockedTargetPos);
+    this.lockRing.rotation.y += dt * 2.4;
+    this.lockRing.rotation.z += dt * 1.1;
+    this.lockRing.scale.setScalar(1 + Math.sin(this.walkPhase * 5) * 0.07);
+
+    if (this.inFlight || this.isSwimming || this.coreDiveActive || this.gravityShifting) {
+      return;
+    }
+
+    // Yaw objetivo: ángulo con signo alrededor del up entre el avance del
+    // marco (yaw 0) y la dirección tangente hacia el objetivo.
+    this._v1.copy(this.lockedTargetPos).sub(this.pos);
+    this._v1.addScaledVector(this.lastUp, -this._v1.dot(this.lastUp));
+    if (this._v1.lengthSq() < 1e-6) return;
+    this._v1.normalize();
+    getTangentAxes(this.basisQuat, 0, this._v2, this._v3);
+    this._v3.copy(this._v2).cross(this._v1);
+    const targetYaw = Math.atan2(this._v3.dot(this.lastUp), this._v2.dot(this._v1));
+    let delta = targetYaw - this.yaw;
+    if (delta > Math.PI) delta -= Math.PI * 2;
+    else if (delta < -Math.PI) delta += Math.PI * 2;
+    this.yaw += delta * Math.min(1, dt * LOCK_ON_AIM_SPEED);
+    if (this.yaw > Math.PI) this.yaw -= Math.PI * 2;
+    else if (this.yaw < -Math.PI) this.yaw += Math.PI * 2;
+
+    // Pitch ligero hacia la altura del objetivo.
+    this._v1.copy(this.lockedTargetPos).sub(this.pos);
+    const dist = this._v1.length();
+    if (dist < 1e-3) return;
+    const targetPitch = THREE.MathUtils.clamp(
+      Math.atan2(this._v1.dot(this.lastUp), dist),
+      PITCH_MIN,
+      PITCH_MAX
+    );
+    this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * LOCK_ON_PITCH_SPEED);
+  }
+
   private updateGrounded(dt: number): void {
     const planet = this.currentPlanet;
     const center = planet.centerVec;
@@ -738,20 +841,35 @@ export class PlayerController {
       this.anchorBurst.set(0, 0, 0);
     }
 
-    // Dinámica vertical (salto / gravedad radial).
+    // Colisión contra las estructuras del planeta actual: empuje lateral
+    // fuera de muros/torres/búnkers y suelo elevado (tejados, puentes,
+    // plataformas). Digger excavando atraviesa los muros passableUnderground.
+    const structureRes = resolvePlayerStructures(
+      this.pos,
+      this.vertVel,
+      this.isBurrowing,
+      this.world.getStructureColliders(),
+      planet.spec.id,
+      PLAYER_STRUCTURE_RADIUS
+    );
+    const groundAltitude = structureRes.groundAltitude;
+
+    // Dinámica vertical (salto / gravedad radial) sobre el suelo efectivo:
+    // planet.radius + groundAltitude cuando se está encima de una estructura.
     const wasAirborne = !this.grounded;
     this.altitude += this.vertVel * dt;
     this.vertVel -= GRAVITY_BASE * this.profile.gravityScale * dt;
-    if (this.altitude <= 0) {
+    if (this.altitude <= groundAltitude) {
       // Aterrizaje en Modo Júpiter (Digger): onda expansiva.
       if (
         wasAirborne &&
+        groundAltitude <= 0.01 &&
         this.vertVel < -SHOCKWAVE_MIN_FALL &&
         this.profile.gravityScale > 1.2
       ) {
         this.world.shockwave(this.pos, SHOCKWAVE_RADIUS);
       }
-      this.altitude = 0;
+      this.altitude = groundAltitude;
       this.vertVel = 0;
       if (!this.grounded) this.jumpsUsed = 0;
       this.grounded = true;
@@ -1259,7 +1377,8 @@ export class PlayerController {
   // ------------------------------------------------------------------------
   /**
    * Selección de planeta apuntado: cono desde la cámara (barato, sin raycaster
-   * ni allocations). Devuelve el planeta visible bajo la mira o null.
+   * ni allocations). Incluye TODOS los planetas visibles, también los
+   * escudados, para que el retículo pueda mostrar si está bloqueado.
    */
   private pickPlanetUnderCrosshair(): PlanetRuntime | null {
     this.camera.getWorldDirection(this._v1);

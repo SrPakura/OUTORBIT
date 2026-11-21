@@ -1,9 +1,197 @@
 import * as THREE from 'three';
-import type { LevelId, LevelObjective, LevelSpec } from '../types';
+import type {
+  EnemySpawnSpec,
+  GalaxySpec,
+  GrassZoneSpec,
+  InteractableKind,
+  PlanetSpec,
+  StructureKind,
+  StructureSpec,
+  WaterBubbleSpec,
+  WorldObjectSpec,
+} from '../types';
 
 // ============================================================================
-// Utilidades de definición de niveles (solo se ejecutan al cargar un nivel)
+// OUTORBIT 2.0 — Galaxia Continua: un único Sistema Solar vivo donde los 5
+// planetas coexisten a la vez. Contrato principal: GALAXY_SPEC.
 // ============================================================================
+
+// ----------------------------------------------------------------------------
+// Utilidades de definición (solo se ejecutan al cargar el módulo)
+// ----------------------------------------------------------------------------
+
+const _up = new THREE.Vector3(0, 1, 0);
+const _q = new THREE.Quaternion();
+const _v = new THREE.Vector3();
+
+function vec(dir: [number, number, number]): THREE.Vector3 {
+  return new THREE.Vector3(dir[0], dir[1], dir[2]).normalize();
+}
+
+/**
+ * Marco tangente de una base sobre un planeta: `n` es la normal en el centro,
+ * `t1`/`t2` los ejes del plano tangente. Las coordenadas (ax, az) del layout
+ * están en METROS sobre ese plano (proyección gnomónica).
+ */
+interface BaseFrame {
+  planetId: string;
+  radius: number;
+  n: THREE.Vector3;
+  t1: THREE.Vector3;
+  t2: THREE.Vector3;
+}
+
+function baseFrame(
+  planetId: string,
+  dir: [number, number, number],
+  radius: number,
+  t1Override?: THREE.Vector3
+): BaseFrame {
+  const n = vec(dir);
+  let axis = t1Override ?? new THREE.Vector3(0, 1, 0).cross(n);
+  if (axis.lengthSq() < 1e-6) axis = new THREE.Vector3(1, 0, 0).cross(n);
+  axis.normalize();
+  const t2 = new THREE.Vector3().crossVectors(n, axis).normalize();
+  return { planetId, radius, n, t1: axis, t2 };
+}
+
+/** Dir de superficie a (ax, az) metros del centro del marco tangente. */
+function frameDir(f: BaseFrame, axM: number, azM: number): [number, number, number] {
+  const k = 1 / f.radius;
+  const d = new THREE.Vector3()
+    .copy(f.n)
+    .addScaledVector(f.t1, axM * k)
+    .addScaledVector(f.t2, azM * k)
+    .normalize();
+  return [d.x, d.y, d.z];
+}
+
+/**
+ * Yaw que alinea el eje X local de la estructura con el tangente `along`.
+ * Debe usar la MISMA convención que createStructureCollider /
+ * buildStructureMesh (setFromUnitVectors(up, dir) * yaw) para que el layout
+ * del plano tangente y la colisión coincidan.
+ */
+function yawAlongX(dir: [number, number, number], along: THREE.Vector3): number {
+  _q.setFromUnitVectors(_up, vec(dir)).invert();
+  _v.copy(along).applyQuaternion(_q);
+  return Math.atan2(-_v.z, _v.x);
+}
+
+interface StructOptions {
+  altitudeOffset?: number;
+  passableUnderground?: boolean;
+  yaw?: number;
+}
+
+function struct(
+  f: BaseFrame,
+  id: string,
+  kind: StructureKind,
+  axM: number,
+  azM: number,
+  along: 't1' | 't2' | null,
+  size: [number, number, number],
+  color: string,
+  options: StructOptions = {}
+): StructureSpec {
+  const dir = frameDir(f, axM, azM);
+  let yaw = options.yaw ?? 0;
+  if (along === 't1') yaw = yawAlongX(dir, f.t1);
+  else if (along === 't2') yaw = yawAlongX(dir, f.t2);
+  return {
+    id,
+    kind,
+    planetId: f.planetId,
+    sphericalDir: dir,
+    altitudeOffset: options.altitudeOffset,
+    yaw,
+    size,
+    color,
+    passableUnderground: options.passableUnderground,
+  };
+}
+
+/** Segmento de muralla: `along` es la dirección en la que corre el muro. */
+function wallSeg(
+  f: BaseFrame,
+  id: string,
+  axM: number,
+  azM: number,
+  along: 't1' | 't2',
+  lengthM: number,
+  heightM: number,
+  color: string,
+  passUnder = true
+): StructureSpec {
+  return struct(f, id, 'wall', axM, azM, along, [lengthM / 2, heightM, 0.7], color, {
+    passableUnderground: passUnder,
+  });
+}
+
+/**
+ * Arco de entrada: el collider es el DINTEL flotante a 4.2 m (se pasa andando
+ * o por debajo); los pilares son el marco visual del builder.
+ */
+function archGate(
+  f: BaseFrame,
+  id: string,
+  axM: number,
+  azM: number,
+  along: 't1' | 't2',
+  spanM: number,
+  color: string
+): StructureSpec {
+  return struct(f, id, 'arch_gate', axM, azM, along, [spanM / 2, 1.6, 0.8], color, {
+    altitudeOffset: 4.2,
+    passableUnderground: true,
+  });
+}
+
+function towerAt(
+  f: BaseFrame,
+  id: string,
+  axM: number,
+  azM: number,
+  color: string,
+  height = 9
+): StructureSpec {
+  return struct(f, id, 'tower', axM, azM, null, [2.4, height, 2.4], color);
+}
+
+function obj(
+  planetId: string,
+  id: string,
+  kind: InteractableKind,
+  dir: [number, number, number],
+  options: { altitudeOffset?: number; yaw?: number } = {}
+): WorldObjectSpec {
+  return {
+    id,
+    kind,
+    planetId,
+    sphericalDir: dir,
+    altitudeOffset: options.altitudeOffset,
+    yaw: options.yaw,
+  };
+}
+
+/** Burbuja de agua en órbita: centro absoluto = planetCenter + dir * (R + alt). */
+function orbitBubble(
+  id: string,
+  planet: PlanetSpec,
+  dir: [number, number, number],
+  altitude: number,
+  radius: number
+): WaterBubbleSpec {
+  const d = vec(dir);
+  const c = new THREE.Vector3(
+    planet.center[0],
+    planet.center[1],
+    planet.center[2]
+  ).addScaledVector(d, planet.radius + altitude);
+  return { id, center: [c.x, c.y, c.z], radius };
+}
 
 /**
  * Genera los waypoints de una patrulla circular sobre la superficie del
@@ -34,574 +222,565 @@ function patrolCircle(
   return out;
 }
 
-// ============================================================================
-// Nivel 0 — Prólogo: Luna Tutorial + Satélite Cristal + burbuja intermedia
-// ============================================================================
+// ----------------------------------------------------------------------------
+// Los 5 planetas del sistema (coexisten en el mismo espacio)
+// ----------------------------------------------------------------------------
 
-export const PROLOGUE_LEVEL: LevelSpec = {
-  id: 'prologue',
-  order: 0,
-  title: 'PRÓLOGO',
-  subtitle: 'Luna Tutorial · Satélite Cristal',
-  skyTopColor: '#05010f',
-  skyBottomColor: '#6d28d9',
-  planets: [
-    {
-      id: 'luna-tutorial',
-      name: 'Luna Tutorial',
-      biome: 'tutorial',
-      center: [0, 0, 0],
-      radius: 60,
-      gravityStrength: 1.0,
-      surfaceColor: '#cbd5e1',
-      patchColor: '#94a3b8',
-      atmosphereColor: '#93c5fd',
-      hasIcePatches: true,
-    },
-    {
-      id: 'satelite-cristal',
-      name: 'Satélite Cristal',
-      biome: 'tutorial',
-      center: [235, 60, -120],
-      radius: 26,
-      gravityStrength: 1.35,
-      surfaceColor: '#7dd3fc',
-      patchColor: '#a78bfa',
-      atmosphereColor: '#c4b5fd',
-      hasOrbitalRings: true,
-      ringColor: '#c4b5fd',
-    },
-  ],
-  // Burbuja intermedia sobre la ruta orbital Luna -> Satélite para probar el nado.
-  waterBubbles: [
-    { id: 'burbuja-ruta', center: [135, 42, -66], radius: 20 },
-  ],
-  grassZones: [],
-  objects: [
-    { id: 'luna-roca-1', kind: 'rock', planetId: 'luna-tutorial', sphericalDir: [0.5, 0.8, 0.3] },
-    { id: 'luna-roca-2', kind: 'rock', planetId: 'luna-tutorial', sphericalDir: [0.7, 0.5, -0.4] },
-    { id: 'luna-roca-3', kind: 'rock', planetId: 'luna-tutorial', sphericalDir: [0.2, 0.9, -0.35] },
-    { id: 'luna-barril-1', kind: 'barrel_explosive', planetId: 'luna-tutorial', sphericalDir: [0.6, 0.7, 0.35] },
-    { id: 'luna-caja-1', kind: 'crate', planetId: 'luna-tutorial', sphericalDir: [0.3, 0.85, 0.5] },
-    { id: 'luna-bola-1', kind: 'snowball', planetId: 'luna-tutorial', sphericalDir: [0.45, 0.75, -0.5] },
-  ],
-  enemies: [],
-  spawnPlanetId: 'luna-tutorial',
-  spawnDir: [0.25, 0.85, 0.45],
-  portalPlanetId: 'satelite-cristal',
-  portalDir: [0.35, 0.9, 0.25],
-  objectiveSummary: 'Domina la gravedad esférica, prueba la Estasis y usa GRAVITY SHIFT para alcanzar el portal.',
-};
-
-// ============================================================================
-// Nivel 1 — Planeta Verdant: pradera, hierba alta, láser, generadores, guardias
-// ============================================================================
-
-export const VERDANT_LEVEL: LevelSpec = {
-  id: 'verdant',
-  order: 1,
-  title: 'PLANETA 1',
-  subtitle: 'Verdant · Bosque/Pradera',
-  skyTopColor: '#04150e',
-  skyBottomColor: '#34d399',
-  planets: [
-    {
-      id: 'verdant-pradera',
-      name: 'Verdant',
-      biome: 'verdant',
-      center: [0, 0, 0],
-      radius: 68,
-      gravityStrength: 1.1,
-      surfaceColor: '#4ade80',
-      patchColor: '#16a34a',
-      atmosphereColor: '#bbf7d0',
-    },
-    {
-      id: 'islote-satelite',
-      name: 'Islote Satélite',
-      biome: 'verdant',
-      center: [250, 80, -140],
-      radius: 20,
-      gravityStrength: 1.25,
-      surfaceColor: '#a3e635',
-      patchColor: '#4d7c0f',
-      atmosphereColor: '#f0fdf4',
-      hasOrbitalRings: true,
-      ringColor: '#bbf7d0',
-    },
-  ],
-  // Burbujas de agua en órbita hacia el islote (ruta de nado de Axel).
-  waterBubbles: [
-    { id: 'verdant-burbuja-1', center: [122, 38, -67], radius: 16 },
-    { id: 'verdant-burbuja-2', center: [187, 60, -105], radius: 15 },
-  ],
-  grassZones: [
-    { id: 'hierba-spawn', planetId: 'verdant-pradera', sphericalDir: [0.1, 0.9, 0.4], angularRadius: 0.18 },
-    { id: 'hierba-este', planetId: 'verdant-pradera', sphericalDir: [0.4, 0.3, 0.85], angularRadius: 0.22 },
-    { id: 'hierba-oeste', planetId: 'verdant-pradera', sphericalDir: [-0.7, 0.5, -0.5], angularRadius: 0.2 },
-  ],
-  objects: [
-    // Generadores a destruir (objetivo del nivel).
-    { id: 'gen-1', kind: 'generator', planetId: 'verdant-pradera', sphericalDir: [0.2, 0.95, 0.2] },
-    { id: 'gen-2', kind: 'generator', planetId: 'verdant-pradera', sphericalDir: [-0.6, 0.5, 0.62] },
-    { id: 'gen-3', kind: 'generator', planetId: 'verdant-pradera', sphericalDir: [0.82, 0.1, -0.55] },
-    // Vallas láser: dañan de pie, pero Digger las cruza por debajo (Shift).
-    { id: 'laser-1', kind: 'laser_gate', planetId: 'verdant-pradera', sphericalDir: [0.78, 0.18, -0.58] },
-    { id: 'laser-2', kind: 'laser_gate', planetId: 'verdant-pradera', sphericalDir: [-0.35, 0.75, 0.55] },
-    // Agarrables para el Campo de Estasis.
-    { id: 'roca-1', kind: 'rock', planetId: 'verdant-pradera', sphericalDir: [0.3, 0.88, 0.35] },
-    { id: 'roca-2', kind: 'rock', planetId: 'verdant-pradera', sphericalDir: [0.15, 0.95, 0.28] },
-    { id: 'roca-3', kind: 'rock', planetId: 'verdant-pradera', sphericalDir: [-0.55, 0.55, 0.62] },
-    { id: 'roca-4', kind: 'rock', planetId: 'verdant-pradera', sphericalDir: [0.75, 0.25, -0.55] },
-    { id: 'roca-5', kind: 'rock', planetId: 'verdant-pradera', sphericalDir: [-0.2, 0.9, -0.4] },
-    { id: 'roca-6', kind: 'rock', planetId: 'verdant-pradera', sphericalDir: [0.6, 0.6, 0.5] },
-    { id: 'barril-1', kind: 'barrel_explosive', planetId: 'verdant-pradera', sphericalDir: [0.25, 0.9, 0.3] },
-    { id: 'barril-2', kind: 'barrel_explosive', planetId: 'verdant-pradera', sphericalDir: [-0.5, 0.6, 0.6] },
-    { id: 'barril-3', kind: 'barrel_explosive', planetId: 'verdant-pradera', sphericalDir: [0.8, 0.2, -0.5] },
-    { id: 'caja-1', kind: 'crate', planetId: 'verdant-pradera', sphericalDir: [0.35, 0.85, 0.4] },
-    { id: 'caja-2', kind: 'crate', planetId: 'verdant-pradera', sphericalDir: [-0.65, 0.45, 0.6] },
-  ],
-  // Centinelas de prueba: 3 guardias patrullando en círculos.
-  enemies: [
-    {
-      kind: 'guard',
-      planetId: 'verdant-pradera',
-      patrolDirs: patrolCircle(0.25, 0.85, 0.45, 0.12, 4),
-    },
-    {
-      kind: 'guard',
-      planetId: 'verdant-pradera',
-      patrolDirs: patrolCircle(0.2, 0.95, 0.2, 0.1, 4),
-    },
-    {
-      kind: 'guard',
-      planetId: 'verdant-pradera',
-      patrolDirs: patrolCircle(0.82, 0.1, -0.55, 0.12, 5),
-    },
-  ],
-  spawnPlanetId: 'verdant-pradera',
-  spawnDir: [0.25, 0.85, 0.45],
-  portalPlanetId: 'islote-satelite',
-  portalDir: [0.4, 0.85, 0.3],
-  objectiveSummary: 'Destruye los generadores, cruza las vallas láser y nada hasta el portal del islote.',
-};
-
-// ============================================================================
-// Nivel 2 — Planeta Cryo-Drop: glaciar resbaladizo, bolas de nieve y burbujas
-// ============================================================================
-
-export const CRYO_LEVEL: LevelSpec = {
-  id: 'cryo',
-  order: 2,
-  title: 'PLANETA 2',
-  subtitle: 'Cryo-Drop · Glaciar y Burbujas',
-  skyTopColor: '#020617',
-  skyBottomColor: '#38bdf8',
-  planets: [
-    {
-      id: 'cryo-glaciar',
-      name: 'Cryo-Drop',
-      biome: 'cryo',
-      center: [0, 0, 0],
-      radius: 64,
-      gravityStrength: 0.95,
-      surfaceColor: '#bae6fd',
-      patchColor: '#f8fafc',
-      atmosphereColor: '#e0f2fe',
-      hasIcePatches: true,
-    },
-    {
-      id: 'luna-cristal',
-      name: 'Luna Cristal',
-      biome: 'cryo',
-      center: [240, 70, -130],
-      radius: 22,
-      gravityStrength: 1.2,
-      surfaceColor: '#7dd3fc',
-      patchColor: '#a78bfa',
-      atmosphereColor: '#cffafe',
-      hasOrbitalRings: true,
-      ringColor: '#bae6fd',
-    },
-  ],
-  // Burbujas de agua en órbita: ruta de nado de Axel hacia la Luna Cristal.
-  waterBubbles: [
-    { id: 'cryo-burbuja-1', center: [118, 34, -64], radius: 17 },
-    { id: 'cryo-burbuja-2', center: [178, 52, -98], radius: 15 },
-    { id: 'cryo-burbuja-3', center: [225, 66, -122], radius: 13 },
-  ],
-  grassZones: [],
-  objects: [
-    // Generadores de la guarnición glacial.
-    { id: 'cryo-gen-1', kind: 'generator', planetId: 'cryo-glaciar', sphericalDir: [0.2, 0.95, 0.2] },
-    { id: 'cryo-gen-2', kind: 'generator', planetId: 'cryo-glaciar', sphericalDir: [-0.55, 0.55, 0.62] },
-    { id: 'cryo-gen-3', kind: 'generator', planetId: 'cryo-glaciar', sphericalDir: [0.82, 0.15, -0.55] },
-    // Bolas de nieve gigantes agarrables para la Estasis.
-    { id: 'cryo-bola-1', kind: 'snowball', planetId: 'cryo-glaciar', sphericalDir: [0.3, 0.88, 0.35] },
-    { id: 'cryo-bola-2', kind: 'snowball', planetId: 'cryo-glaciar', sphericalDir: [0.15, 0.95, 0.28] },
-    { id: 'cryo-bola-3', kind: 'snowball', planetId: 'cryo-glaciar', sphericalDir: [-0.5, 0.6, 0.6] },
-    { id: 'cryo-bola-4', kind: 'snowball', planetId: 'cryo-glaciar', sphericalDir: [0.75, 0.25, -0.55] },
-    // Rocas y barriles para lanzar.
-    { id: 'cryo-roca-1', kind: 'rock', planetId: 'cryo-glaciar', sphericalDir: [0.6, 0.6, 0.5] },
-    { id: 'cryo-roca-2', kind: 'rock', planetId: 'cryo-glaciar', sphericalDir: [-0.2, 0.9, -0.4] },
-    { id: 'cryo-barril-1', kind: 'barrel_explosive', planetId: 'cryo-glaciar', sphericalDir: [0.25, 0.9, 0.3] },
-    { id: 'cryo-barril-2', kind: 'barrel_explosive', planetId: 'cryo-glaciar', sphericalDir: [0.8, 0.2, -0.5] },
-    { id: 'cryo-caja-1', kind: 'crate', planetId: 'cryo-glaciar', sphericalDir: [0.35, 0.85, 0.4] },
-    { id: 'cryo-caja-2', kind: 'crate', planetId: 'cryo-glaciar', sphericalDir: [-0.65, 0.45, 0.6] },
-  ],
-  // Patrullas base del glaciar + oficial detector de disfraces.
-  enemies: [
-    {
-      kind: 'guard',
-      planetId: 'cryo-glaciar',
-      patrolDirs: patrolCircle(0.25, 0.85, 0.45, 0.12, 4),
-    },
-    {
-      kind: 'guard',
-      planetId: 'cryo-glaciar',
-      patrolDirs: patrolCircle(-0.6, 0.5, 0.6, 0.12, 4),
-    },
-    {
-      kind: 'guard',
-      planetId: 'cryo-glaciar',
-      patrolDirs: patrolCircle(0.82, 0.1, -0.55, 0.12, 5),
-    },
-    {
-      kind: 'officer',
-      planetId: 'cryo-glaciar',
-      patrolDirs: patrolCircle(0.2, 0.95, 0.2, 0.08, 4),
-    },
-  ],
-  spawnPlanetId: 'cryo-glaciar',
-  spawnDir: [0.25, 0.85, 0.45],
-  portalPlanetId: 'luna-cristal',
-  portalDir: [0.35, 0.9, 0.25],
-  objectiveSummary:
-    'Destruye los generadores del glaciar, deslízate por el hielo y nada entre burbujas hasta la Luna Cristal.',
-};
-
-// ============================================================================
-// Nivel 3 — Planeta Iron Bastion: fortaleza mecánica de élite
-// ============================================================================
-
-export const BASTION_LEVEL: LevelSpec = {
-  id: 'bastion',
-  order: 3,
-  title: 'PLANETA 3',
-  subtitle: 'Iron Bastion · Fortaleza Mecánica',
-  skyTopColor: '#0a0a0f',
-  skyBottomColor: '#f97316',
-  planets: [
-    {
-      id: 'bastion-fortaleza',
-      name: 'Iron Bastion',
-      biome: 'bastion',
-      center: [0, 0, 0],
-      radius: 66,
-      gravityStrength: 1.15,
-      surfaceColor: '#475569',
-      patchColor: '#1e293b',
-      atmosphereColor: '#fdba74',
-    },
-    {
-      id: 'torre-mando',
-      name: 'Torre de Mando',
-      biome: 'bastion',
-      center: [255, 85, -150],
-      radius: 20,
-      gravityStrength: 1.3,
-      surfaceColor: '#334155',
-      patchColor: '#f97316',
-      atmosphereColor: '#fdba74',
-      hasOrbitalRings: true,
-      ringColor: '#f97316',
-    },
-  ],
-  waterBubbles: [
-    { id: 'bastion-burbuja-1', center: [126, 42, -74], radius: 16 },
-    { id: 'bastion-burbuja-2', center: [196, 66, -116], radius: 14 },
-  ],
-  grassZones: [],
-  objects: [
-    // Generadores blindados del bastión.
-    { id: 'bastion-gen-1', kind: 'generator', planetId: 'bastion-fortaleza', sphericalDir: [0.2, 0.95, 0.2] },
-    { id: 'bastion-gen-2', kind: 'generator', planetId: 'bastion-fortaleza', sphericalDir: [-0.6, 0.5, 0.62] },
-    { id: 'bastion-gen-3', kind: 'generator', planetId: 'bastion-fortaleza', sphericalDir: [0.82, 0.1, -0.55] },
-    // Tarjetas de acceso: habilitan el portal de la Torre de Mando.
-    { id: 'bastion-keycard-1', kind: 'keycard', planetId: 'bastion-fortaleza', sphericalDir: [0.4, 0.3, 0.85] },
-    { id: 'bastion-keycard-2', kind: 'keycard', planetId: 'bastion-fortaleza', sphericalDir: [-0.7, 0.5, -0.5] },
-    // Arcos escáner: rompen disfraces al cruzar.
-    { id: 'bastion-scanner-1', kind: 'scanner_gate', planetId: 'bastion-fortaleza', sphericalDir: [0.78, 0.18, -0.58] },
-    { id: 'bastion-scanner-2', kind: 'scanner_gate', planetId: 'bastion-fortaleza', sphericalDir: [-0.35, 0.75, 0.55] },
-    // Vallas láser perimetrales.
-    { id: 'bastion-laser-1', kind: 'laser_gate', planetId: 'bastion-fortaleza', sphericalDir: [0.55, 0.6, 0.55] },
-    { id: 'bastion-laser-2', kind: 'laser_gate', planetId: 'bastion-fortaleza', sphericalDir: [-0.2, 0.9, -0.4] },
-    // Tuberías de teletransporte conectadas entre puntos del planeta.
-    { id: 'bastion-pipe-1', kind: 'teleport_pipe', planetId: 'bastion-fortaleza', sphericalDir: [0.3, 0.88, 0.35] },
-    { id: 'bastion-exit-1', kind: 'teleporter_exit', planetId: 'bastion-fortaleza', sphericalDir: [0.82, 0.1, -0.55] },
-    { id: 'bastion-pipe-2', kind: 'teleport_pipe', planetId: 'bastion-fortaleza', sphericalDir: [-0.65, 0.45, 0.6] },
-    { id: 'bastion-exit-2', kind: 'teleporter_exit', planetId: 'bastion-fortaleza', sphericalDir: [0.2, 0.95, 0.2] },
-    // Minas sísmicas de superficie.
-    { id: 'bastion-mina-1', kind: 'seismic_mine', planetId: 'bastion-fortaleza', sphericalDir: [0.6, 0.6, 0.5] },
-    { id: 'bastion-mina-2', kind: 'seismic_mine', planetId: 'bastion-fortaleza', sphericalDir: [-0.5, 0.6, 0.6] },
-    // Agarrables para la Estasis.
-    { id: 'bastion-roca-1', kind: 'rock', planetId: 'bastion-fortaleza', sphericalDir: [0.15, 0.95, 0.28] },
-    { id: 'bastion-roca-2', kind: 'rock', planetId: 'bastion-fortaleza', sphericalDir: [-0.55, 0.55, 0.62] },
-    { id: 'bastion-roca-3', kind: 'rock', planetId: 'bastion-fortaleza', sphericalDir: [0.75, 0.25, -0.55] },
-    { id: 'bastion-barril-1', kind: 'barrel_explosive', planetId: 'bastion-fortaleza', sphericalDir: [0.25, 0.9, 0.3] },
-    { id: 'bastion-barril-2', kind: 'barrel_explosive', planetId: 'bastion-fortaleza', sphericalDir: [0.8, 0.2, -0.5] },
-    { id: 'bastion-barril-3', kind: 'barrel_explosive', planetId: 'bastion-fortaleza', sphericalDir: [-0.35, 0.75, 0.55] },
-    { id: 'bastion-caja-1', kind: 'crate', planetId: 'bastion-fortaleza', sphericalDir: [0.35, 0.85, 0.4] },
-    { id: 'bastion-caja-2', kind: 'crate', planetId: 'bastion-fortaleza', sphericalDir: [-0.65, 0.45, 0.6] },
-  ],
-  // Guarnición de élite: guardias en parejas, oficiales, brutes y torreta.
-  enemies: [
-    {
-      kind: 'guard',
-      planetId: 'bastion-fortaleza',
-      patrolDirs: patrolCircle(0.25, 0.85, 0.45, 0.12, 4),
-      pairedWithNext: true,
-    },
-    {
-      kind: 'guard',
-      planetId: 'bastion-fortaleza',
-      patrolDirs: patrolCircle(0.25, 0.85, 0.45, 0.14, 4),
-    },
-    {
-      kind: 'guard',
-      planetId: 'bastion-fortaleza',
-      patrolDirs: patrolCircle(-0.6, 0.5, 0.6, 0.12, 4),
-    },
-    {
-      kind: 'guard',
-      planetId: 'bastion-fortaleza',
-      patrolDirs: patrolCircle(0.82, 0.1, -0.55, 0.12, 5),
-    },
-    {
-      kind: 'officer',
-      planetId: 'bastion-fortaleza',
-      patrolDirs: patrolCircle(0.2, 0.95, 0.2, 0.08, 4),
-    },
-    {
-      kind: 'officer',
-      planetId: 'bastion-fortaleza',
-      patrolDirs: patrolCircle(-0.35, 0.75, 0.55, 0.08, 4),
-    },
-    {
-      kind: 'brute',
-      planetId: 'bastion-fortaleza',
-      patrolDirs: patrolCircle(0.55, 0.6, 0.55, 0.1, 3),
-    },
-    {
-      kind: 'brute',
-      planetId: 'bastion-fortaleza',
-      patrolDirs: patrolCircle(-0.2, 0.9, -0.4, 0.1, 3),
-    },
-    {
-      kind: 'turret',
-      planetId: 'bastion-fortaleza',
-      patrolDirs: [[0.6, 0.6, 0.5]],
-    },
-  ],
-  spawnPlanetId: 'bastion-fortaleza',
-  spawnDir: [0.25, 0.85, 0.45],
-  portalPlanetId: 'torre-mando',
-  portalDir: [0.35, 0.9, 0.25],
-  objectiveSummary:
-    'Roba una tarjeta de acceso, destruye los generadores blindados y cruza las tuberías hasta el portal de la Torre de Mando.',
-};
-
-// ============================================================================
-// Nivel 4 — Clímax: Arena del Comandante KRONOS (jefe final, Hito 4)
-// ============================================================================
-
-export const KRONOS_LEVEL: LevelSpec = {
-  id: 'kronos',
-  order: 4,
-  title: 'CLÍMAX',
-  subtitle: 'Arena de Kronos · Núcleo Volcánico',
-  skyTopColor: '#0b0208',
-  skyBottomColor: '#dc2626',
-  planets: [
-    {
-      id: 'arena-kronos',
-      name: 'Arena de Kronos',
-      biome: 'kronos',
-      center: [0, 0, 0],
-      radius: 54,
-      gravityStrength: 1.2,
-      surfaceColor: '#3f1d2e',
-      patchColor: '#7f1d1d',
-      atmosphereColor: '#fb7185',
-      hasOrbitalRings: true,
-      ringColor: '#ef4444',
-    },
-  ],
-  // Burbujas de agua en órbita: maniobras de nado de Axel para esquivar a Kronos.
-  waterBubbles: [
-    { id: 'kronos-burbuja-1', center: [0, 86, 0], radius: 13 },
-    { id: 'kronos-burbuja-2', center: [58, 42, -34], radius: 11 },
-  ],
-  grassZones: [],
-  objects: [
-    // Rocas para el Campo de Estasis.
-    { id: 'kronos-roca-1', kind: 'rock', planetId: 'arena-kronos', sphericalDir: [0.3, 0.88, 0.35] },
-    { id: 'kronos-roca-2', kind: 'rock', planetId: 'arena-kronos', sphericalDir: [-0.55, 0.55, 0.62] },
-    { id: 'kronos-roca-3', kind: 'rock', planetId: 'arena-kronos', sphericalDir: [0.75, 0.25, -0.55] },
-    { id: 'kronos-roca-4', kind: 'rock', planetId: 'arena-kronos', sphericalDir: [-0.2, 0.9, -0.4] },
-    // Barriles explosivos: la forma rápida de abrirle la guardia a Kronos.
-    { id: 'kronos-barril-1', kind: 'barrel_explosive', planetId: 'arena-kronos', sphericalDir: [0.25, 0.9, 0.3] },
-    { id: 'kronos-barril-2', kind: 'barrel_explosive', planetId: 'arena-kronos', sphericalDir: [0.8, 0.2, -0.5] },
-    { id: 'kronos-barril-3', kind: 'barrel_explosive', planetId: 'arena-kronos', sphericalDir: [-0.35, 0.75, 0.55] },
-    { id: 'kronos-barril-4', kind: 'barrel_explosive', planetId: 'arena-kronos', sphericalDir: [-0.65, 0.45, 0.6] },
-    // Cajas agarrables.
-    { id: 'kronos-caja-1', kind: 'crate', planetId: 'arena-kronos', sphericalDir: [0.35, 0.85, 0.4] },
-    { id: 'kronos-caja-2', kind: 'crate', planetId: 'arena-kronos', sphericalDir: [-0.6, 0.5, 0.62] },
-  ],
-  // El Comandante KRONOS aguarda en el lado opuesto al spawn.
-  enemies: [
-    {
-      kind: 'kronos',
-      planetId: 'arena-kronos',
-      patrolDirs: [[-0.25, -0.85, -0.45]],
-    },
-  ],
-  spawnPlanetId: 'arena-kronos',
-  spawnDir: [0.25, 0.85, 0.45],
-  // El portal no decide el final: la victoria llega al derrotar a KRONOS.
-  portalPlanetId: 'arena-kronos',
-  portalDir: [0, 1, 0],
-  objectiveSummary:
-    'Sobrevive a la lectura en tiempo real de la red MLP de KRONOS: flanquea su escudo, parrea su maza y devuélvele sus orbes.',
-};
-
-// ============================================================================
-// Campaña progresiva del Hito 3B + clímax del Hito 4
-// ============================================================================
-
-export const LEVELS: LevelSpec[] = [
-  PROLOGUE_LEVEL,
-  VERDANT_LEVEL,
-  CRYO_LEVEL,
-  BASTION_LEVEL,
-  KRONOS_LEVEL,
+export const GALAXY_PLANETS: PlanetSpec[] = [
+  {
+    id: 'luna-tutorial',
+    order: 0,
+    name: 'Luna Tutorial',
+    subtitle: 'Micro-base de entrenamiento',
+    biome: 'tutorial',
+    center: [0, 0, 0],
+    radius: 56,
+    gravityStrength: 1.0,
+    surfaceColor: '#cbd5e1',
+    patchColor: '#94a3b8',
+    atmosphereColor: '#93c5fd',
+    hasIcePatches: true,
+    unlockedByPlanetId: null,
+  },
+  {
+    id: 'verdant-pradera',
+    order: 1,
+    name: 'Verdant',
+    subtitle: 'Pradera de los complejos militares',
+    biome: 'verdant',
+    center: [280, 35, -140],
+    radius: 105,
+    gravityStrength: 1.1,
+    surfaceColor: '#4ade80',
+    patchColor: '#16a34a',
+    atmosphereColor: '#bbf7d0',
+    hasWaterShell: true,
+    waterRadius: 106.5,
+    unlockedByPlanetId: 'luna-tutorial',
+  },
+  {
+    id: 'cryo-glaciar',
+    order: 2,
+    name: 'Cryo-Drop',
+    subtitle: 'Glaciar de burbujas orbitales',
+    biome: 'cryo',
+    center: [-150, 115, -420],
+    radius: 112,
+    gravityStrength: 0.95,
+    surfaceColor: '#bae6fd',
+    patchColor: '#f8fafc',
+    atmosphereColor: '#e0f2fe',
+    hasIcePatches: true,
+    unlockedByPlanetId: 'verdant-pradera',
+  },
+  {
+    id: 'bastion-fortaleza',
+    order: 3,
+    name: 'Iron Bastion',
+    subtitle: 'Fortaleza mecánica de doble muralla',
+    biome: 'bastion',
+    center: [180, -85, -730],
+    radius: 120,
+    gravityStrength: 1.15,
+    surfaceColor: '#475569',
+    patchColor: '#1e293b',
+    atmosphereColor: '#fdba74',
+    unlockedByPlanetId: 'cryo-glaciar',
+  },
+  {
+    id: 'kronos-trono',
+    order: 4,
+    name: 'Trono de KRONOS',
+    subtitle: 'Arena volcánica blindada',
+    biome: 'kronos',
+    center: [0, 210, -1040],
+    radius: 82,
+    gravityStrength: 1.2,
+    surfaceColor: '#3f1d2e',
+    patchColor: '#7f1d1d',
+    atmosphereColor: '#fb7185',
+    hasOrbitalRings: true,
+    ringColor: '#ef4444',
+    unlockedByPlanetId: 'bastion-fortaleza',
+  },
 ];
 
-export function getLevelSpec(id: LevelId): LevelSpec {
-  const level = LEVELS.find((l) => l.id === id);
-  if (!level) throw new Error(`levelDefinitions: nivel desconocido "${id}"`);
-  return level;
-}
+// ----------------------------------------------------------------------------
+// Luna Tutorial: micro-base frente al spawn (arco + 2 muros + generador con
+// baliza). Rutas: hierba alta en el flanco, barril explosivo, roca de
+// distracción o excavar con Digger. Al caer el generador, cae el escudo de
+// Verdant.
+// ----------------------------------------------------------------------------
 
-/** Objetivos iniciales (copiados por el GameEngine para no mutar la plantilla). */
-export function createLevelObjectives(id: LevelId): LevelObjective[] {
-  if (id === 'verdant') {
-    return [
-      {
-        id: 'generators',
-        description: 'Destruye los 3 generadores (Estasis o golpe)',
-        completed: false,
-        currentCount: 0,
-        targetCount: 3,
-      },
-      {
-        id: 'bubbles',
-        description: 'Alcanza el Islote Satélite nadando entre burbujas',
-        completed: false,
-        currentCount: 0,
-        targetCount: 1,
-      },
-      {
-        id: 'portal',
-        description: 'Cruza el portal del islote',
-        completed: false,
-        currentCount: 0,
-        targetCount: 1,
-      },
-    ];
-  }
-  if (id === 'cryo') {
-    return [
-      {
-        id: 'generators',
-        description: 'Destruye los 3 generadores del glaciar',
-        completed: false,
-        currentCount: 0,
-        targetCount: 3,
-      },
-      {
-        id: 'bubbles',
-        description: 'Alcanza la Luna Cristal nadando entre burbujas',
-        completed: false,
-        currentCount: 0,
-        targetCount: 1,
-      },
-      {
-        id: 'portal',
-        description: 'Cruza el portal de la Luna Cristal',
-        completed: false,
-        currentCount: 0,
-        targetCount: 1,
-      },
-    ];
-  }
-  if (id === 'bastion') {
-    return [
-      {
-        id: 'keycard',
-        description: 'Roba una tarjeta de acceso (habilita el portal)',
-        completed: false,
-        currentCount: 0,
-        targetCount: 1,
-      },
-      {
-        id: 'generators',
-        description: 'Destruye los 3 generadores blindados',
-        completed: false,
-        currentCount: 0,
-        targetCount: 3,
-      },
-      {
-        id: 'portal',
-        description: 'Cruza el portal de la Torre de Mando',
-        completed: false,
-        currentCount: 0,
-        targetCount: 1,
-      },
-    ];
-  }
-  if (id === 'kronos') {
-    return [
-      {
-        id: 'kronos',
-        description: 'Derrota al Comandante KRONOS (12 HP · parrea su maza con F/Q)',
-        completed: false,
-        currentCount: 0,
-        targetCount: 1,
-      },
-    ];
-  }
-  return [
+function lunaContent(): {
+  structures: StructureSpec[];
+  objects: WorldObjectSpec[];
+  enemies: EnemySpawnSpec[];
+  grass: GrassZoneSpec[];
+} {
+  const planet = GALAXY_PLANETS[0];
+  const f = baseFrame(planet.id, [0.5, 0.68, 0.4], planet.radius);
+  // La puerta de la micro-base mira al spawn: eje t1 = dirección tangente
+  // hacia el punto de aparición del jugador.
+  const spawn = vec([0.25, 0.85, 0.45]);
+  const toSpawn = new THREE.Vector3().copy(spawn).addScaledVector(f.n, -spawn.dot(f.n));
+  if (toSpawn.lengthSq() < 1e-6) toSpawn.copy(f.t1);
+  toSpawn.normalize();
+  const gf = baseFrame(planet.id, [0.5, 0.68, 0.4], planet.radius, toSpawn);
+
+  const structures: StructureSpec[] = [
+    archGate(gf, 'luna-gate', 9, 0, 't2', 12, '#94a3b8'),
+    wallSeg(gf, 'luna-wall-l', 0, 6.7, 't1', 15, 4.5, '#64748b'),
+    wallSeg(gf, 'luna-wall-r', 0, -6.7, 't1', 15, 4.5, '#64748b'),
+  ];
+
+  const objects: WorldObjectSpec[] = [
+    obj(planet.id, 'luna-gen-1', 'generator', frameDir(gf, -3, 0)),
+    obj(planet.id, 'luna-barril-1', 'barrel_explosive', frameDir(gf, 7, 9)),
+    obj(planet.id, 'luna-roca-1', 'rock', frameDir(gf, 11, -8)),
+    obj(planet.id, 'luna-roca-2', 'rock', [0.7, 0.5, 0.3]),
+    obj(planet.id, 'luna-roca-3', 'rock', [-0.3, 0.8, -0.4]),
+    obj(planet.id, 'luna-caja-1', 'crate', [0.15, 0.95, 0.28]),
+  ];
+
+  const enemies: EnemySpawnSpec[] = [
     {
-      id: 'explore',
-      description: 'Muévete con WASD y salta con ESPACIO',
-      completed: false,
-      currentCount: 0,
-      targetCount: 1,
-    },
-    {
-      id: 'gravity-shift',
-      description: 'GRAVITY SHIFT (Clic Derecho): salta hasta el Satélite Cristal',
-      completed: false,
-      currentCount: 0,
-      targetCount: 1,
-    },
-    {
-      id: 'portal',
-      description: 'Alcanza el portal orbital',
-      completed: false,
-      currentCount: 0,
-      targetCount: 1,
+      kind: 'guard',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(gf, 12, 0), 0.05, 4),
     },
   ];
+
+  const grass: GrassZoneSpec[] = [
+    {
+      id: 'luna-hierba-flanco',
+      planetId: planet.id,
+      sphericalDir: frameDir(gf, 2, 20),
+      angularRadius: 0.2,
+    },
+  ];
+
+  return { structures, objects, enemies, grass };
 }
+
+// ----------------------------------------------------------------------------
+// Verdant: gran pradera con 2 complejos militares amurallados + 1 recinto de
+// generador. Hierba alta para Kitsune, vallas láser para Digger, burbujas en
+// escalera hacia plataformas altas/satélites para Axel, barriles junto a las
+// patrullas. 3 Generadores de Escudo -> cae el escudo de Cryo-Drop.
+// ----------------------------------------------------------------------------
+
+function verdantContent(): {
+  structures: StructureSpec[];
+  objects: WorldObjectSpec[];
+  enemies: EnemySpawnSpec[];
+  grass: GrassZoneSpec[];
+  bubbles: WaterBubbleSpec[];
+} {
+  const planet = GALAXY_PLANETS[1];
+  const WALL = '#3e4c3a';
+  const GATE = '#55684d';
+
+  // --- Complejo militar A (36 x 28, dos entradas) ---
+  const fA = baseFrame(planet.id, [0.35, 0.8, 0.42], planet.radius);
+  const structures: StructureSpec[] = [
+    wallSeg(fA, 'vd-a-wall-n', 0, -14, 't1', 36, 5, WALL),
+    wallSeg(fA, 'vd-a-wall-s-l', -11.5, 14, 't1', 13, 5, WALL),
+    wallSeg(fA, 'vd-a-wall-s-r', 11.5, 14, 't1', 13, 5, WALL),
+    archGate(fA, 'vd-a-gate-s', 0, 14, 't1', 12, GATE),
+    wallSeg(fA, 'vd-a-wall-e', 18, 0, 't2', 28, 5, WALL),
+    wallSeg(fA, 'vd-a-wall-w-n', -18, 8.5, 't2', 11, 5, WALL),
+    wallSeg(fA, 'vd-a-wall-w-s', -18, -8.5, 't2', 11, 5, WALL),
+    archGate(fA, 'vd-a-gate-w', -18, 0, 't2', 8, GATE),
+    towerAt(fA, 'vd-a-tower-ne', 18, -14, WALL),
+    towerAt(fA, 'vd-a-tower-se', 18, 14, WALL),
+    towerAt(fA, 'vd-a-tower-nw', -18, -14, WALL),
+    towerAt(fA, 'vd-a-tower-sw', -18, 14, WALL),
+    struct(fA, 'vd-a-platform', 'platform', 10, -7, null, [4, 1.1, 4], GATE, {
+      altitudeOffset: 7.5,
+    }),
+  ];
+
+  // --- Complejo militar B (30 x 24, una entrada + torres) ---
+  const fB = baseFrame(planet.id, [-0.6, 0.45, 0.62], planet.radius);
+  structures.push(
+    wallSeg(fB, 'vd-b-wall-n', 0, -12, 't1', 30, 5, WALL),
+    wallSeg(fB, 'vd-b-wall-s-l', -10, 12, 't1', 10, 5, WALL),
+    wallSeg(fB, 'vd-b-wall-s-r', 10, 12, 't1', 10, 5, WALL),
+    archGate(fB, 'vd-b-gate-s', 0, 12, 't1', 10, GATE),
+    wallSeg(fB, 'vd-b-wall-e', 15, 0, 't2', 24, 5, WALL),
+    wallSeg(fB, 'vd-b-wall-w', -15, 0, 't2', 24, 5, WALL),
+    towerAt(fB, 'vd-b-tower-ne', 15, -12, WALL),
+    towerAt(fB, 'vd-b-tower-se', 15, 12, WALL),
+    towerAt(fB, 'vd-b-tower-nw', -15, -12, WALL),
+    towerAt(fB, 'vd-b-tower-sw', -15, 12, WALL)
+  );
+
+  // --- Recinto C del tercer generador (U abierta con valla láser) ---
+  const fC = baseFrame(planet.id, [0.8, 0.15, -0.55], planet.radius);
+  structures.push(
+    wallSeg(fC, 'vd-c-wall-back', 0, -8, 't1', 20, 4.5, WALL),
+    wallSeg(fC, 'vd-c-wall-l', -10, -2, 't2', 12, 4.5, WALL),
+    wallSeg(fC, 'vd-c-wall-r', 10, -2, 't2', 12, 4.5, WALL)
+  );
+
+  // --- Plataformas satélite orbitales (ruta de burbujas de Axel) ---
+  structures.push(
+    struct(fA, 'vd-orb-platform-1', 'platform', 30, 12, null, [5, 1.2, 5], GATE, {
+      altitudeOffset: 26,
+    }),
+    struct(fB, 'vd-orb-platform-2', 'platform', 24, 0, null, [4.5, 1.1, 4.5], GATE, {
+      altitudeOffset: 20,
+    })
+  );
+
+  const objects: WorldObjectSpec[] = [
+    obj(planet.id, 'vd-gen-1', 'generator', frameDir(fA, -6, -5)),
+    obj(planet.id, 'vd-gen-2', 'generator', frameDir(fB, 0, 0)),
+    obj(planet.id, 'vd-gen-3', 'generator', frameDir(fC, 0, -3)),
+    // Vallas láser: dañan de pie, Digger las cruza por debajo (Shift).
+    obj(planet.id, 'vd-laser-c', 'laser_gate', frameDir(fC, 0, 3)),
+    obj(planet.id, 'vd-laser-mid', 'laser_gate', [-0.25, 0.68, 0.65]),
+    // Barriles explosivos junto a las patrullas.
+    obj(planet.id, 'vd-barril-1', 'barrel_explosive', frameDir(fA, 8, 12)),
+    obj(planet.id, 'vd-barril-2', 'barrel_explosive', frameDir(fB, 4, 8)),
+    obj(planet.id, 'vd-barril-3', 'barrel_explosive', frameDir(fC, 3, 8)),
+    obj(planet.id, 'vd-barril-4', 'barrel_explosive', [0.2, 0.92, 0.3]),
+    // Agarrables para la Estasis.
+    obj(planet.id, 'vd-roca-1', 'rock', frameDir(fA, 26, -6)),
+    obj(planet.id, 'vd-roca-2', 'rock', frameDir(fB, -20, 8)),
+    obj(planet.id, 'vd-roca-3', 'rock', [0.3, 0.88, 0.35]),
+    obj(planet.id, 'vd-roca-4', 'rock', [-0.2, 0.95, 0.25]),
+    obj(planet.id, 'vd-roca-5', 'rock', [0.6, 0.55, 0.55]),
+    obj(planet.id, 'vd-roca-6', 'rock', [-0.4, 0.75, -0.5]),
+    obj(planet.id, 'vd-caja-1', 'crate', [0.1, 0.9, 0.4]),
+    obj(planet.id, 'vd-caja-2', 'crate', frameDir(fB, 8, -6)),
+    obj(planet.id, 'vd-caja-3', 'crate', frameDir(fC, -6, 6)),
+  ];
+
+  const enemies: EnemySpawnSpec[] = [
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, 5, 5), 0.05, 4) },
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, -8, 6), 0.05, 4) },
+    { kind: 'officer', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, 0, 10), 0.04, 4) },
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fB, 6, -5), 0.05, 4) },
+    { kind: 'brute', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fB, -6, 5), 0.06, 3) },
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fC, 4, 6), 0.05, 4) },
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(0.15, 0.9, 0.35, 0.1, 4) },
+  ];
+
+  const grass: GrassZoneSpec[] = [
+    { id: 'vd-grass-spawn', planetId: planet.id, sphericalDir: [0.15, 0.9, 0.35], angularRadius: 0.2 },
+    { id: 'vd-grass-flank-a', planetId: planet.id, sphericalDir: frameDir(fA, 34, 10), angularRadius: 0.22 },
+    { id: 'vd-grass-mid', planetId: planet.id, sphericalDir: [0.05, 0.72, 0.62], angularRadius: 0.18 },
+    { id: 'vd-grass-c', planetId: planet.id, sphericalDir: frameDir(fC, 0, 18), angularRadius: 0.16 },
+  ];
+
+  // Burbujas de agua en escalera hacia las plataformas satélite (Axel).
+  const bubbles: WaterBubbleSpec[] = [
+    orbitBubble('vd-bub-1', planet, frameDir(fA, 10, 4), 8, 9),
+    orbitBubble('vd-bub-2', planet, frameDir(fA, 18, 8), 15, 8),
+    orbitBubble('vd-bub-3', planet, frameDir(fA, 24, 10), 21, 7.5),
+    orbitBubble('vd-bub-4', planet, frameDir(fB, 8, 0), 7, 8),
+    orbitBubble('vd-bub-5', planet, frameDir(fB, 16, 0), 14, 7),
+  ];
+
+  return { structures, objects, enemies, grass, bubbles };
+}
+
+// ----------------------------------------------------------------------------
+// Cryo-Drop: glaciar con parches de hielo resbaladizo, complejo con muros,
+// torres, búnkers conectados por un puente y plataformas satélite orbitales
+// alcanzables con burbujas de agua flotantes. 3 Generadores -> cae el escudo
+// de Iron Bastion.
+// ----------------------------------------------------------------------------
+
+function cryoContent(): {
+  structures: StructureSpec[];
+  objects: WorldObjectSpec[];
+  enemies: EnemySpawnSpec[];
+  bubbles: WaterBubbleSpec[];
+} {
+  const planet = GALAXY_PLANETS[2];
+  const WALL = '#5b7f99';
+  const GATE = '#7dd3fc';
+
+  const f = baseFrame(planet.id, [0.3, 0.82, 0.42], planet.radius);
+  const structures: StructureSpec[] = [
+    // Complejo glaciar principal (24 x 20).
+    wallSeg(f, 'cy-wall-n', 0, -10, 't1', 24, 5, WALL),
+    wallSeg(f, 'cy-wall-s-l', -11.5, 10, 't1', 13, 5, WALL),
+    wallSeg(f, 'cy-wall-s-r', 11.5, 10, 't1', 13, 5, WALL),
+    archGate(f, 'cy-gate-s', 0, 10, 't1', 12, GATE),
+    wallSeg(f, 'cy-wall-e', 12, 0, 't2', 20, 5, WALL),
+    wallSeg(f, 'cy-wall-w', -12, 0, 't2', 20, 5, WALL),
+    towerAt(f, 'cy-tower-ne', 12, -10, WALL, 8),
+    towerAt(f, 'cy-tower-se', 12, 10, WALL, 8),
+    towerAt(f, 'cy-tower-nw', -12, -10, WALL, 8),
+    towerAt(f, 'cy-tower-sw', -12, 10, WALL, 8),
+    struct(f, 'cy-bunker-main', 'bunker', 0, 0, null, [4, 4.5, 4], WALL),
+    // Búnker oeste conectado por pasarela elevada.
+    struct(f, 'cy-bunker-west', 'bunker', -24, 6, null, [3.5, 4, 3.5], WALL),
+    struct(f, 'cy-bridge-west', 'bridge', -18, 6, 't1', [6, 0.8, 1.5], GATE, {
+      altitudeOffset: 4.2,
+      passableUnderground: true,
+    }),
+    // Plataformas satélite orbitales (burbujas flotantes de Axel).
+    struct(f, 'cy-orb-platform-1', 'platform', 30, -18, null, [5, 1.2, 5], GATE, {
+      altitudeOffset: 24,
+    }),
+    struct(f, 'cy-orb-platform-2', 'platform', -28, -14, null, [4, 1.1, 4], GATE, {
+      altitudeOffset: 18,
+    }),
+  ];
+
+  const objects: WorldObjectSpec[] = [
+    obj(planet.id, 'cy-gen-1', 'generator', frameDir(f, 6, -5)),
+    obj(planet.id, 'cy-gen-2', 'generator', frameDir(f, -24, 11)),
+    // Generador 3 sobre la plataforma satélite orbital.
+    obj(planet.id, 'cy-gen-3', 'generator', frameDir(f, 30, -18), { altitudeOffset: 25.2 }),
+    // Bolas de nieve gigantes para la Estasis.
+    obj(planet.id, 'cy-bola-1', 'snowball', frameDir(f, 8, 16)),
+    obj(planet.id, 'cy-bola-2', 'snowball', frameDir(f, -8, -16)),
+    obj(planet.id, 'cy-bola-3', 'snowball', [0.15, 0.95, 0.28]),
+    obj(planet.id, 'cy-bola-4', 'snowball', [0.6, 0.6, 0.5]),
+    obj(planet.id, 'cy-bola-5', 'snowball', [-0.4, 0.8, -0.4]),
+    obj(planet.id, 'cy-roca-1', 'rock', frameDir(f, 16, 8)),
+    obj(planet.id, 'cy-roca-2', 'rock', [-0.2, 0.9, -0.4]),
+    obj(planet.id, 'cy-roca-3', 'rock', [0.45, 0.75, -0.5]),
+    obj(planet.id, 'cy-barril-1', 'barrel_explosive', frameDir(f, 4, 14)),
+    obj(planet.id, 'cy-barril-2', 'barrel_explosive', frameDir(f, -20, 10)),
+    obj(planet.id, 'cy-caja-1', 'crate', [0.25, 0.85, 0.45]),
+    obj(planet.id, 'cy-caja-2', 'crate', frameDir(f, -16, -8)),
+  ];
+
+  const enemies: EnemySpawnSpec[] = [
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 4, 4), 0.05, 4) },
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -6, 5), 0.05, 4) },
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -20, 8), 0.05, 4) },
+    { kind: 'officer', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 0, 14), 0.04, 4) },
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(0.25, 0.85, 0.45, 0.1, 4) },
+  ];
+
+  // Burbujas flotantes en escalera hacia las plataformas satélite.
+  const bubbles: WaterBubbleSpec[] = [
+    orbitBubble('cy-bub-1', planet, frameDir(f, 10, -6), 8, 9),
+    orbitBubble('cy-bub-2', planet, frameDir(f, 17, -10), 15, 8),
+    orbitBubble('cy-bub-3', planet, frameDir(f, 24, -14), 21, 7.5),
+    orbitBubble('cy-bub-4', planet, frameDir(f, -18, -9), 10, 8),
+  ];
+
+  return { structures, objects, enemies, bubbles };
+}
+
+// ----------------------------------------------------------------------------
+// Iron Bastion: enorme fortaleza mecánica oscura de doble muralla, torres,
+// puentes entre adarves, búnkers conectados por tuberías de teletransporte,
+// escáneres en las puertas y vallas láser. 1 Tarjeta Maestra + 3 Generadores
+// -> cae el escudo rojo de KRONOS.
+// ----------------------------------------------------------------------------
+
+function bastionContent(): {
+  structures: StructureSpec[];
+  objects: WorldObjectSpec[];
+  enemies: EnemySpawnSpec[];
+} {
+  const planet = GALAXY_PLANETS[3];
+  const WALL = '#334155';
+  const GATE = '#475569';
+
+  const f = baseFrame(planet.id, [0.32, 0.78, 0.5], planet.radius);
+  const structures: StructureSpec[] = [
+    // Muralla exterior (64 x 48) con puerta principal.
+    wallSeg(f, 'bs-wall-n', 0, -24, 't1', 64, 6, WALL),
+    wallSeg(f, 'bs-wall-s-l', -19, 24, 't1', 26, 6, WALL),
+    wallSeg(f, 'bs-wall-s-r', 19, 24, 't1', 26, 6, WALL),
+    archGate(f, 'bs-gate-main', 0, 24, 't1', 12, GATE),
+    wallSeg(f, 'bs-wall-e', 32, 0, 't2', 48, 6, WALL),
+    wallSeg(f, 'bs-wall-w', -32, 0, 't2', 48, 6, WALL),
+    towerAt(f, 'bs-tower-ne', 32, -24, WALL, 11),
+    towerAt(f, 'bs-tower-se', 32, 24, WALL, 11),
+    towerAt(f, 'bs-tower-nw', -32, -24, WALL, 11),
+    towerAt(f, 'bs-tower-sw', -32, 24, WALL, 11),
+    // Muralla interior (36 x 28) con puerta escaneada.
+    wallSeg(f, 'bs-wall-in-n', 0, -14, 't1', 36, 5, WALL),
+    wallSeg(f, 'bs-wall-in-s-l', -11.5, 14, 't1', 13, 5, WALL),
+    wallSeg(f, 'bs-wall-in-s-r', 11.5, 14, 't1', 13, 5, WALL),
+    archGate(f, 'bs-gate-inner', 0, 14, 't1', 12, GATE),
+    wallSeg(f, 'bs-wall-in-e', 18, 0, 't2', 28, 5, WALL),
+    wallSeg(f, 'bs-wall-in-w', -18, 0, 't2', 28, 5, WALL),
+    towerAt(f, 'bs-tower-in-ne', 18, -14, WALL, 9),
+    towerAt(f, 'bs-tower-in-se', 18, 14, WALL, 9),
+    towerAt(f, 'bs-tower-in-nw', -18, -14, WALL, 9),
+    towerAt(f, 'bs-tower-in-sw', -18, 14, WALL, 9),
+    // Puentes entre los adarves de las dos murallas.
+    struct(f, 'bs-bridge-e', 'bridge', 25, 0, 't1', [7, 0.8, 1.5], GATE, {
+      altitudeOffset: 5.2,
+      passableUnderground: true,
+    }),
+    struct(f, 'bs-bridge-s', 'bridge', 0, 19, 't2', [5, 0.8, 1.5], GATE, {
+      altitudeOffset: 5.2,
+      passableUnderground: true,
+    }),
+    // Búnkers del patio exterior (conectados por tubería de teletransporte).
+    struct(f, 'bs-bunker-1', 'bunker', -26, 16, null, [4, 4.5, 4], WALL),
+    struct(f, 'bs-bunker-2', 'bunker', 26, -16, null, [4, 4.5, 4], WALL),
+  ];
+
+  const objects: WorldObjectSpec[] = [
+    // Tarjeta Maestra (habilita el asalto final).
+    obj(planet.id, 'bs-keycard', 'keycard', frameDir(f, 8, -6)),
+    // Generadores blindados.
+    obj(planet.id, 'bs-gen-1', 'generator', frameDir(f, -6, 6)),
+    obj(planet.id, 'bs-gen-2', 'generator', frameDir(f, -22, 12)),
+    obj(planet.id, 'bs-gen-3', 'generator', frameDir(f, 22, -12)),
+    // Escáneres en las puertas principales (rompen disfraces).
+    obj(planet.id, 'bs-scanner-main', 'scanner_gate', frameDir(f, 0, 26)),
+    obj(planet.id, 'bs-scanner-inner', 'scanner_gate', frameDir(f, 0, 16)),
+    // Vallas láser perimetrales.
+    obj(planet.id, 'bs-laser-1', 'laser_gate', frameDir(f, 24, 24)),
+    obj(planet.id, 'bs-laser-2', 'laser_gate', frameDir(f, -24, -24)),
+    // Tuberías de teletransporte entre búnkers.
+    obj(planet.id, 'bs-pipe-1', 'teleport_pipe', frameDir(f, -26, 20)),
+    obj(planet.id, 'bs-exit-1', 'teleporter_exit', frameDir(f, 26, -20)),
+    // Agarrables y explosivos.
+    obj(planet.id, 'bs-roca-1', 'rock', frameDir(f, 28, 8)),
+    obj(planet.id, 'bs-roca-2', 'rock', frameDir(f, -28, -8)),
+    obj(planet.id, 'bs-roca-3', 'rock', [0.15, 0.95, 0.28]),
+    obj(planet.id, 'bs-barril-1', 'barrel_explosive', frameDir(f, 4, 20)),
+    obj(planet.id, 'bs-barril-2', 'barrel_explosive', frameDir(f, -20, 14)),
+    obj(planet.id, 'bs-barril-3', 'barrel_explosive', frameDir(f, 20, -14)),
+    obj(planet.id, 'bs-barril-4', 'barrel_explosive', frameDir(f, -4, -20)),
+    obj(planet.id, 'bs-caja-1', 'crate', frameDir(f, 12, 8)),
+    obj(planet.id, 'bs-caja-2', 'crate', frameDir(f, -12, -8)),
+  ];
+
+  const enemies: EnemySpawnSpec[] = [
+    // Pareja de guardias en la puerta principal.
+    {
+      kind: 'guard',
+      planetId: planet.id,
+      patrolDirs: patrolCircle(...frameDir(f, 0, 30), 0.05, 4),
+      pairedWithNext: true,
+    },
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 0, 30), 0.07, 4) },
+    // Patrullas del patio interior.
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 8, 8), 0.05, 4) },
+    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -8, -8), 0.05, 4) },
+    // Oficiales: puerta interior + zona de la tarjeta maestra.
+    { kind: 'officer', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 0, 18), 0.04, 4) },
+    { kind: 'officer', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 10, -4), 0.04, 4) },
+    // Drones de reconocimiento en el patio exterior.
+    { kind: 'drone', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 24, 8), 0.08, 4) },
+    { kind: 'drone', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -24, -8), 0.08, 4) },
+    // Brutes custodiando los generadores exteriores.
+    { kind: 'brute', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, -20, 14), 0.06, 3) },
+    { kind: 'brute', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(f, 20, -14), 0.06, 3) },
+    // Torreta antiaérea en la muralla norte.
+    { kind: 'turret', planetId: planet.id, patrolDirs: [frameDir(f, 30, -18)] },
+  ];
+
+  return { structures, objects, enemies };
+}
+
+// ----------------------------------------------------------------------------
+// Trono de KRONOS: arena volcánica blindada con pilares de cobertura,
+// plataformas laterales, barriles, rocas y 2 burbujas orbitales para
+// maniobrar contra el Comandante KRONOS.
+// ----------------------------------------------------------------------------
+
+function kronosContent(): {
+  structures: StructureSpec[];
+  objects: WorldObjectSpec[];
+  enemies: EnemySpawnSpec[];
+  bubbles: WaterBubbleSpec[];
+} {
+  const planet = GALAXY_PLANETS[4];
+  const PILLAR = '#3f3f46';
+  const PLATFORM = '#52525b';
+
+  const f = baseFrame(planet.id, [0.25, 0.85, 0.45], planet.radius);
+  const structures: StructureSpec[] = [
+    // Pilares de cobertura por la arena.
+    struct(f, 'kr-pillar-1', 'pillar', 14, 10, null, [1.4, 4.5, 1.4], PILLAR),
+    struct(f, 'kr-pillar-2', 'pillar', -14, 10, null, [1.4, 4.5, 1.4], PILLAR),
+    struct(f, 'kr-pillar-3', 'pillar', 14, -10, null, [1.4, 4.5, 1.4], PILLAR),
+    struct(f, 'kr-pillar-4', 'pillar', -14, -10, null, [1.4, 4.5, 1.4], PILLAR),
+    struct(f, 'kr-pillar-5', 'pillar', 0, 18, null, [1.4, 4.5, 1.4], PILLAR),
+    struct(f, 'kr-pillar-6', 'pillar', 0, -18, null, [1.4, 4.5, 1.4], PILLAR),
+    // Plataformas laterales elevadas.
+    struct(f, 'kr-platform-e', 'platform', 26, 0, null, [5, 1.1, 5], PLATFORM, {
+      altitudeOffset: 7,
+    }),
+    struct(f, 'kr-platform-w', 'platform', -26, 0, null, [5, 1.1, 5], PLATFORM, {
+      altitudeOffset: 7,
+    }),
+  ];
+
+  const objects: WorldObjectSpec[] = [
+    obj(planet.id, 'kr-barril-1', 'barrel_explosive', frameDir(f, 10, 4)),
+    obj(planet.id, 'kr-barril-2', 'barrel_explosive', frameDir(f, -10, -4)),
+    obj(planet.id, 'kr-barril-3', 'barrel_explosive', frameDir(f, 18, -12)),
+    obj(planet.id, 'kr-barril-4', 'barrel_explosive', frameDir(f, -18, 12)),
+    obj(planet.id, 'kr-roca-1', 'rock', frameDir(f, 8, -12)),
+    obj(planet.id, 'kr-roca-2', 'rock', frameDir(f, -8, 12)),
+    obj(planet.id, 'kr-roca-3', 'rock', frameDir(f, 22, 6)),
+    obj(planet.id, 'kr-roca-4', 'rock', frameDir(f, -22, -6)),
+    obj(planet.id, 'kr-caja-1', 'crate', frameDir(f, 5, 15)),
+    obj(planet.id, 'kr-caja-2', 'crate', frameDir(f, -5, -15)),
+  ];
+
+  const enemies: EnemySpawnSpec[] = [
+    // El Comandante KRONOS aguarda en el lado opuesto al spawn.
+    { kind: 'kronos', planetId: planet.id, patrolDirs: [[-0.25, -0.85, -0.45]] },
+  ];
+
+  // Burbujas orbitales para maniobras de nado contra el jefe.
+  const bubbles: WaterBubbleSpec[] = [
+    orbitBubble('kr-bub-1', planet, frameDir(f, 30, 18), 14, 10),
+    orbitBubble('kr-bub-2', planet, frameDir(f, -30, -18), 14, 10),
+  ];
+
+  return { structures, objects, enemies, bubbles };
+}
+
+// ----------------------------------------------------------------------------
+// GALAXY_SPEC: contrato principal de la Oleada 2
+// ----------------------------------------------------------------------------
+
+const luna = lunaContent();
+const verdant = verdantContent();
+const cryo = cryoContent();
+const bastion = bastionContent();
+const kronos = kronosContent();
+
+export const GALAXY_SPEC: GalaxySpec = {
+  skyTopColor: '#05010f',
+  skyBottomColor: '#6d28d9',
+  planets: GALAXY_PLANETS,
+  structures: [
+    ...luna.structures,
+    ...verdant.structures,
+    ...cryo.structures,
+    ...bastion.structures,
+    ...kronos.structures,
+  ],
+  waterBubbles: [...verdant.bubbles, ...cryo.bubbles, ...kronos.bubbles],
+  grassZones: [...luna.grass, ...verdant.grass],
+  objects: [
+    ...luna.objects,
+    ...verdant.objects,
+    ...cryo.objects,
+    ...bastion.objects,
+    ...kronos.objects,
+  ],
+  enemies: [
+    ...luna.enemies,
+    ...verdant.enemies,
+    ...cryo.enemies,
+    ...bastion.enemies,
+    ...kronos.enemies,
+  ],
+  spawnPlanetId: 'luna-tutorial',
+  spawnDir: [0.25, 0.85, 0.45],
+};
+

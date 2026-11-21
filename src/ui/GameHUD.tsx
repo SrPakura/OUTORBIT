@@ -17,13 +17,13 @@ interface GameHUDProps {
 }
 
 /**
- * HUD del Hito 2/3: barra superior (planeta, objetivos, reloj), selector de
- * escuadrón, HP, indicadores de Estasis (0/4), Disfraz, Subsuelo, Nado,
- * ventana de Parry y cooldown del Ancla, prompt contextual de interacción,
- * transición de planeta y pantallas de pausa/game over.
- *
- * Hito 4: barra prominente del COMANDANTE KRONOS (vida + personaje que su
- * red MLP está contrarrestando) e indicador M: Audio.
+ * HUD táctico de la Galaxia Continua (Oleada 2): barra superior (planeta
+ * activo, objetivos dinámicos, reloj), marcadores direccionales de objetivos
+ * proyectados en pantalla/bordes con distancia en metros, transmisión de
+ * radio no bloqueante cuando la IA adapta un planeta recién desbloqueado,
+ * aviso de ESCUDO ACTIVO al apuntar con Gravity Shift, selector de
+ * escuadrón, HP, Estasis, Disfraz, Subsuelo, Nado, Parry, prompt contextual,
+ * barra del COMANDANTE KRONOS y pantallas de pausa/game over.
  */
 export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMute }: GameHUDProps) {
   const shifting = snapshot.isGravityShifting;
@@ -88,6 +88,24 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
               className="h-full bg-gradient-to-r from-red-600 to-orange-400 transition-all"
               style={{ width: `${Math.round(snapshot.bossHpRatio * 100)}%` }}
             />
+          </div>
+        </div>
+      )}
+
+      {/* --- Transmisión de radio: la IA adapta el siguiente planeta --- */}
+      {snapshot.phase === 'playing' && snapshot.radioToast && (
+        <div className="absolute left-1/2 top-[76px] w-[min(620px,86vw)] -translate-x-1/2">
+          <div className="rounded-lg border-2 border-cyan-300 bg-[#160b2e]/92 px-4 py-2 shadow-[4px_4px_0_#000]">
+            <p className="text-[11px] font-black tracking-[0.28em] text-cyan-300">
+              {snapshot.radioToast.title}
+            </p>
+            <ul className="mt-1 space-y-0.5">
+              {snapshot.radioToast.lines.map((line, i) => (
+                <li key={i} className="text-[10px] font-semibold leading-snug text-slate-300">
+                  - {line}
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       )}
@@ -235,26 +253,25 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
       <div className="absolute bottom-4 right-4 rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-3 text-[10px] font-semibold leading-relaxed text-slate-300 shadow-[4px_4px_0_#000]">
         <p>
           <span className="text-yellow-300">WASD</span> Mover ·{' '}
-          <span className="text-yellow-300">ESPACIO</span> Salto/Ancla (aire)
+          <span className="text-yellow-300">ESPACIO</span> Salto/Ancla
         </p>
         <p>
-          <span className="text-yellow-300">SHIFT</span> Sprint/Subsuelo (Digger) ·{' '}
-          <span className="text-yellow-300">1/2/3</span> Escuadrón
+          <span className="text-yellow-300">SHIFT</span> Sprint/Subsuelo ·{' '}
+          <span className="text-yellow-300">R/C</span> Capturar Estasis
         </p>
         <p>
-          <span className="text-yellow-300">R/C</span> Capturar Estasis ·{' '}
-          <span className="text-yellow-300">CLIC IZQ.</span> Disparar 1
+          <span className="text-yellow-300">CLIC IZQ</span> Disparar 1 ·{' '}
+          <span className="text-yellow-300">Q</span> Fijar objetivo (
+          <span className="text-yellow-300">←/→</span>)
         </p>
         <p>
-          <span className="text-yellow-300">TAB/V</span> + <span className="text-yellow-300">←/→</span>{' '}
-          Lock-On · <span className="text-yellow-300">CLIC DER.</span> Shift/Dash
-        </p>
-        <p>
+          <span className="text-yellow-300">F</span> Parry ·{' '}
           <span className="text-yellow-300">E</span> Noquear ·{' '}
-          <span className="text-yellow-300">F/Q</span> Parry ·{' '}
-          <span className="text-yellow-300">RUEDA</span> Zoom
+          <span className="text-yellow-300">CLIC DER</span> Gravity Shift
         </p>
         <p>
+          <span className="text-yellow-300">1/2/3</span> Escuadrón ·{' '}
+          <span className="text-yellow-300">RUEDA</span> Zoom ·{' '}
           <span className="text-yellow-300">M</span> Audio{' '}
           {snapshot.muted ? '(silenciado)' : '(activado)'}
         </p>
@@ -280,6 +297,39 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
           <span className="absolute top-1/2 right-0 h-0.5 w-2 -translate-y-1/2 bg-current" />
         </div>
       </div>
+
+      {/* --- Marcadores direccionales de objetivos (pantalla/bordes) --- */}
+      {snapshot.phase === 'playing' &&
+        snapshot.objectiveMarkers?.map((marker) => (
+          <div
+            key={marker.id}
+            className="absolute -translate-x-1/2 -translate-y-1/2"
+            style={{
+              left: `${((marker.screenX + 1) / 2) * 100}%`,
+              top: `${((1 - marker.screenY) / 2) * 100}%`,
+            }}
+          >
+            <div className="flex flex-col items-center">
+              <div
+                className={`rounded border-2 px-1.5 py-0.5 text-[10px] font-black tracking-widest ${
+                  marker.inFront ? '' : 'opacity-70 saturate-50'
+                }`}
+                style={{
+                  borderColor: marker.color,
+                  color: marker.color,
+                  background: 'rgba(5,1,15,0.78)',
+                  boxShadow: `0 0 10px ${marker.color}66`,
+                }}
+              >
+                {marker.inFront ? '' : '> '}
+                {marker.label}
+              </div>
+              <span className="mt-0.5 font-mono text-[9px] font-bold text-white drop-shadow-[1px_1px_0_#000]">
+                {Math.round(marker.distanceMeters)}m
+              </span>
+            </div>
+          </div>
+        ))}
 
       {/* --- Marcador Lock-On proyectado en pantalla --- */}
       {snapshot.phase === 'playing' &&
@@ -329,20 +379,16 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
               Objetivo: {snapshot.gravityTargetName}
             </p>
           )}
-        </div>
-      )}
-
-      {/* --- Transición entre planetas --- */}
-      {snapshot.phase === 'planet_transition' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-[#05010f]/70">
-          <div className="rounded-2xl border-4 border-cyan-300 bg-[#160b2e] px-12 py-8 text-center shadow-[10px_10px_0_#000]">
-            <p className="mb-2 text-[10px] font-black tracking-[0.5em] text-cyan-300">
-              SALTANDO DE ÓRBITA
-            </p>
-            <h2 className="text-4xl font-black tracking-widest text-white drop-shadow-[3px_3px_0_#000]">
-              {snapshot.levelTitle}
-            </h2>
-          </div>
+          {snapshot.gravityTargetBlockedReason && (
+            <div className="mt-1.5 flex flex-col items-center gap-0.5">
+              <p className="animate-pulse rounded-lg border-2 border-red-500 bg-black/80 px-3 py-1 text-xs font-black tracking-[0.25em] text-red-400 shadow-[0_0_16px_rgba(248,113,113,0.55)]">
+                ESCUDO ACTIVO
+              </p>
+              <p className="max-w-[420px] text-[10px] font-bold leading-snug text-red-300 drop-shadow-[1px_1px_0_#000]">
+                {snapshot.gravityTargetBlockedReason}
+              </p>
+            </div>
+          )}
         </div>
       )}
 

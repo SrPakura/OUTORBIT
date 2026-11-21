@@ -4,7 +4,6 @@ import type { HudSnapshot } from '@/game/types';
 import MobileBlocker from '@/ui/MobileBlocker';
 import TitleScreen from '@/ui/TitleScreen';
 import GameHUD from '@/ui/GameHUD';
-import LevelTransitionModal from '@/ui/LevelTransitionModal';
 import BattleReportScreen from '@/ui/BattleReportScreen';
 
 type Screen = 'title' | 'game';
@@ -44,10 +43,6 @@ export default function App() {
     setScreen('title');
   }, []);
 
-  const handleDeployNextPlanet = useCallback(() => {
-    engineRef.current?.advanceToNextPlanet();
-  }, []);
-
   const handleToggleMute = useCallback(() => {
     engineRef.current?.toggleMute();
   }, []);
@@ -74,9 +69,6 @@ export default function App() {
               onExitToTitle={handleExitToTitle}
               onToggleMute={handleToggleMute}
             />
-          )}
-          {hud && hud.phase === 'planet_transition' && (
-            <LevelTransitionModal snapshot={hud} onDeploy={handleDeployNextPlanet} />
           )}
           {hud && hud.phase === 'victory' && (
             <BattleReportScreen

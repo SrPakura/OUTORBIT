@@ -14,22 +14,54 @@ export interface CharacterProfile {
   accentColor: string;
   moveSpeed: number;
   jumpImpulse: number;
-  gravityScale: number;       // Kitsune < 1 (lunar), Digger > 1 (júpiter)
-  anchorRange: number;        // Axel tiene mayor alcance
-  canBurrow: boolean;         // Solo Digger
-  swimSpeedMultiplier: number;// Axel supersónico en agua/burbujas
-  stealthMultiplier: number;  // Kitsune casi indetectable en sigilo/hierba
+  gravityScale: number;
+  anchorRange: number;
+  canBurrow: boolean;
+  swimSpeedMultiplier: number;
+  stealthMultiplier: number;
 }
 
 // ============================================================================
-// 2. PLANETAS, ENTORNOS Y OBJETOS DEL MUNDO
+// 2. PLANETAS, ESTRUCTURAS (EDIFICIOS), ENTORNOS Y OBJETOS DEL MUNDO
 // ============================================================================
 
 export type BiomeType = 'tutorial' | 'verdant' | 'cryo' | 'bastion' | 'kronos';
 
+export type StructureKind =
+  | 'wall'
+  | 'tower'
+  | 'bunker'
+  | 'arch_gate'
+  | 'platform'
+  | 'pillar'
+  | 'bridge';
+
+/**
+ * Edificio o estructura sobre la superficie de un planeta (o en órbita baja).
+ * Define colisión real en espacio tangente local (halfExtents [x, height, z])
+ * y bloquea la línea de visión de los enemigos.
+ */
+export interface StructureSpec {
+  id: string;
+  kind: StructureKind;
+  planetId: string;
+  sphericalDir: [number, number, number];
+  /** Desplazamiento radial sobre la superficie (ej. plataformas aéreas). */
+  altitudeOffset?: number;
+  /** Giro local alrededor de la normal del planeta (radianes). */
+  yaw?: number;
+  /** Semi-anchos locales [halfWidthX, fullHeightY, halfDepthZ]. */
+  size: [number, number, number];
+  color: string;
+  /** Si Digger puede cruzar por debajo excavando (muros/puertas). */
+  passableUnderground?: boolean;
+}
+
 export interface PlanetSpec {
   id: string;
+  order: number;
   name: string;
+  subtitle: string;
   biome: BiomeType;
   center: [number, number, number];
   radius: number;
@@ -42,6 +74,8 @@ export interface PlanetSpec {
   hasIcePatches?: boolean;
   hasOrbitalRings?: boolean;
   ringColor?: string;
+  /** Planeta anterior necesario para desbloquear el escudo (null si abierto). */
+  unlockedByPlanetId: string | null;
 }
 
 export interface WaterBubbleSpec {
@@ -50,15 +84,11 @@ export interface WaterBubbleSpec {
   radius: number;
 }
 
-/**
- * Zona de hierba alta sobre un planeta: casquete esférico de briznas instanciadas
- * que otorga sigilo total (especialmente a Kitsune) a quien esté dentro.
- */
 export interface GrassZoneSpec {
   id: string;
   planetId: string;
   sphericalDir: [number, number, number];
-  angularRadius: number; // radianes: radio angular del casquete de hierba
+  angularRadius: number;
 }
 
 export type InteractableKind =
@@ -78,15 +108,18 @@ export interface WorldObjectSpec {
   id: string;
   kind: InteractableKind;
   planetId: string;
-  sphericalDir: [number, number, number]; // Vector unitario desde el centro del planeta
+  sphericalDir: [number, number, number];
   altitudeOffset?: number;
   radius?: number;
+  yaw?: number;
 }
 
 export interface PlanetRuntime {
   spec: PlanetSpec;
   mesh: THREE.Group;
   centerVec: THREE.Vector3;
+  shielded: boolean;
+  shieldMesh?: THREE.Mesh;
 }
 
 // ============================================================================
@@ -120,15 +153,15 @@ export interface PlayerBehaviorVector {
 }
 
 export interface BehaviorPercentages {
-  stealth: number;   // 0..100
-  aggression: number;// 0..100
-  aerial: number;    // 0..100
-  subterranean: number; // 0..100
-  stasis: number;    // 0..100
+  stealth: number;
+  aggression: number;
+  aerial: number;
+  subterranean: number;
+  stasis: number;
 }
 
 export interface PlanetAdaptationConfig {
-  baseAlertLevel: number;        // 0..1
+  baseAlertLevel: number;
   extraPatrolCount: number;
   armoredHelmets: boolean;
   pairGuardPatrols: boolean;
@@ -136,11 +169,11 @@ export interface PlanetAdaptationConfig {
   seismicMines: boolean;
   antiAirTurrets: boolean;
   predictiveShields: boolean;
-  summaryReasons: string[];      // Explicación legible para el Battle Report / transición
+  summaryReasons: string[];
 }
 
 // ============================================================================
-// 4. NIVELES Y CAMPAÑA
+// 4. GALAXIA CONTINUA Y PROGRESIÓN
 // ============================================================================
 
 export type LevelId = 'prologue' | 'verdant' | 'cryo' | 'bastion' | 'kronos';
@@ -153,23 +186,34 @@ export interface LevelObjective {
   targetCount: number;
 }
 
-export interface LevelSpec {
-  id: LevelId;
-  order: number;
-  title: string;
-  subtitle: string;
+export interface GalaxySpec {
   skyTopColor: string;
   skyBottomColor: string;
   planets: PlanetSpec[];
+  structures: StructureSpec[];
   waterBubbles: WaterBubbleSpec[];
-  grassZones?: GrassZoneSpec[];
+  grassZones: GrassZoneSpec[];
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
   spawnPlanetId: string;
   spawnDir: [number, number, number];
-  portalPlanetId: string;
-  portalDir: [number, number, number];
-  objectiveSummary: string;
+}
+
+export interface ObjectiveMarker {
+  id: string;
+  label: string;
+  distanceMeters: number;
+  /** Coordenadas normalizadas en pantalla (-1..1), clampeadas al borde si detrás. */
+  screenX: number;
+  screenY: number;
+  inFront: boolean;
+  color: string;
+}
+
+export interface RadioToast {
+  title: string;
+  lines: string[];
+  accent: string;
 }
 
 // ============================================================================
@@ -180,7 +224,6 @@ export type GamePhase =
   | 'title'
   | 'playing'
   | 'paused'
-  | 'planet_transition'
   | 'game_over'
   | 'victory';
 
@@ -193,14 +236,15 @@ export interface HudSnapshot {
   hp: number;
   maxHp: number;
   isDisguised: boolean;
-  suspicionRatio: number;        // 0..1
+  suspicionRatio: number;
   globalAlert: boolean;
-  isGravityShifting: boolean;    // Slow-mo 0.2x activo
+  isGravityShifting: boolean;
   gravityTargetName: string | null;
-  stasisHeldCount: number;       // 0..4
+  gravityTargetBlockedReason: string | null;
+  stasisHeldCount: number;
   isBurrowing: boolean;
   isSwimming: boolean;
-  anchorCooldownRatio: number;   // 0 listo, 1 en cooldown
+  anchorCooldownRatio: number;
   parryWindowActive: boolean;
   activePlanetName: string;
   objectives: LevelObjective[];
@@ -209,25 +253,17 @@ export interface HudSnapshot {
   interactionPrompt: string | null;
   adaptation: PlanetAdaptationConfig;
   behaviorVector: PlayerBehaviorVector;
-  bossHpRatio: number | null;    // Solo en nivel Kronos
+  bossHpRatio: number | null;
   bossAdaptedTo: CharacterId | null;
-
-  // --- Hito 3A (opcionales y retrocompatibles) ---
-  /** Cooldown de Gravity Shift / Gravity Dash: 0 = listo, 1 = acaba de usarse. */
   gravityShiftCooldownRatio?: number;
-  /** Lock-On activo sobre un enemigo, barril o generador. */
   lockOnActive?: boolean;
-  /** Nombre legible del objetivo fijado (null si no hay Lock-On). */
   lockedTargetName?: string | null;
-  /** Posición de pantalla del marcador Lock-On en NDC (-1..1); null = fuera/oculto. */
   lockOnScreenX?: number | null;
   lockOnScreenY?: number | null;
-
-  // --- Hito 4 (opcionales y retrocompatibles) ---
-  /** Audio silenciado con la tecla M (o el botón rápido del HUD). */
   muted?: boolean;
-  /** Pasos de backpropagation online de la red MLP de KRONOS en la run. */
   kronosUpdates?: number;
+  objectiveMarkers?: ObjectiveMarker[];
+  radioToast?: RadioToast | null;
 }
 
 // ============================================================================
@@ -257,7 +293,7 @@ export const GAME_CONSTANTS = {
   FIXED_MAX_DT: 0.05,
   GRAVITY_SHIFT_TIME_SCALE: 0.2,
   MAX_STASIS_OBJECTS: 4,
-  PLAYER_MAX_HP: 3,              // Alta letalidad: 2-3 golpes
+  PLAYER_MAX_HP: 3,
   CHARACTERS: {
     kitsune: {
       id: 'kitsune',
@@ -265,13 +301,13 @@ export const GAME_CONSTANTS = {
       displayName: 'Kitsune',
       title: 'Sigilo y Disfraces',
       accentColor: '#f97316',
-      moveSpeed: 10.5,
-      jumpImpulse: 13.5,
-      gravityScale: 0.72,        // Modo Lunar
-      anchorRange: 18,
+      moveSpeed: 11.5,
+      jumpImpulse: 14.0,
+      gravityScale: 0.72,
+      anchorRange: 20,
       canBurrow: false,
       swimSpeedMultiplier: 1.0,
-      stealthMultiplier: 0.25,
+      stealthMultiplier: 0.22,
     },
     digger: {
       id: 'digger',
@@ -279,10 +315,10 @@ export const GAME_CONSTANTS = {
       displayName: 'Digger',
       title: 'Subsuelo y Fuerza',
       accentColor: '#eab308',
-      moveSpeed: 9.2,
-      jumpImpulse: 12.0,
-      gravityScale: 1.45,        // Modo Júpiter
-      anchorRange: 14,
+      moveSpeed: 10.2,
+      jumpImpulse: 12.5,
+      gravityScale: 1.45,
+      anchorRange: 15,
       canBurrow: true,
       swimSpeedMultiplier: 0.85,
       stealthMultiplier: 1.0,
@@ -293,12 +329,12 @@ export const GAME_CONSTANTS = {
       displayName: 'Axel',
       title: 'Agua, Aire y Parkour',
       accentColor: '#06b6d4',
-      moveSpeed: 11.4,
-      jumpImpulse: 14.5,
+      moveSpeed: 12.6,
+      jumpImpulse: 15.0,
       gravityScale: 0.92,
-      anchorRange: 28,           // Gran alcance de ancla
+      anchorRange: 30,
       canBurrow: false,
-      swimSpeedMultiplier: 2.35, // Nado supersónico
+      swimSpeedMultiplier: 2.35,
       stealthMultiplier: 0.85,
     },
   } satisfies Record<CharacterId, CharacterProfile>,

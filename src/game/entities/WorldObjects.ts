@@ -4,9 +4,9 @@ import type {
   CharacterId,
   EnemyKind,
   EnemySpawnSpec,
+  GalaxySpec,
   GrassZoneSpec,
   InteractableKind,
-  LevelSpec,
   PlanetAdaptationConfig,
   PlanetRuntime,
   PlayerBehaviorVector,
@@ -15,14 +15,24 @@ import type {
 } from '../types';
 import { addComicOutline, createComicCelMaterial, createToonMaterial } from '../render/toonMaterials';
 import {
+  buildBeaconBeam,
   buildBruteModel,
   buildDroneModel,
   buildGuardModel,
   buildKronosModel,
   buildOfficerModel,
+  buildPlanetShieldMesh,
+  buildStructureMesh,
   buildTurretModel,
+  buildVisionConeMesh,
 } from '../render/proceduralModels';
-import { findStrongestGravityPlanet } from '../math/spherical';
+import {
+  createStructureCollider,
+  findStrongestGravityPlanet,
+  isLineBlockedByStructures,
+  resolvePlayerStructures,
+  type StructureCollider,
+} from '../math/spherical';
 import {
   ANTI_STASIS_INDEX,
   KRONOS_POSTURES,
@@ -91,6 +101,15 @@ const TELEPORT_PIPE_RADIUS = 2.2;
 const TELEPORT_COOLDOWN = 2.5;
 const KEYCARD_PICKUP_RADIUS = 2.4;
 const ADAPTED_SPAWN_BASE = 3; // semilla determinista para spawns de adaptación;
+
+// --- Oleada 2: galaxia continua, conos de visión y distracciones ---
+const NOISE_RADIUS = 13.0; // radio del "ruido" de un objeto lanzado al suelo
+const NOISE_SEARCH_DURATION = 4.5; // investigan el impacto antes de volver a la ruta
+const GUARD_STRUCTURE_RADIUS = 0.6; // radio de colisión guardia vs edificios
+const CONE_COLOR_PATROL = 0x4ade80;
+const CONE_COLOR_SEARCH = 0xfacc15;
+const CONE_COLOR_COMBAT = 0xf87171;
+const OBJECTIVE_TARGET_MAX = 8; // buffer preasignado de marcadores de objetivo
 
 // --- Jefe final KRONOS (Hito 4): red MLP híbrida + combate ---
 const KRONOS_MAX_HP = 12;
@@ -214,6 +233,9 @@ interface EnemyObj {
   koRadioSent: boolean;
   hoverPhase: number; // dron
   params: EnemyParams;
+  /** Cono de visión adherido al suelo (guardias y oficiales). */
+  visionCone: THREE.Mesh | null;
+  visionConeMaterial: THREE.MeshBasicMaterial | null;
 }
 
 /** Proyectil luminoso de torreta (parreable). */
@@ -229,7 +251,9 @@ interface TurretProjectile {
 
 interface KeycardObj {
   mesh: THREE.Group;
+  beacon: THREE.Mesh;
   pos: THREE.Vector3;
+  planet: PlanetRuntime;
   collected: boolean;
 }
 
@@ -348,6 +372,20 @@ const _candIndex = new Int32Array(LOCK_CANDIDATE_MAX);
 const _candOrder = new Int32Array(LOCK_CANDIDATE_MAX);
 
 // ============================================================================
+// Marcadores de objetivos (Oleada 2): buffer preasignado para el HUD
+// ============================================================================
+
+export interface ObjectiveTarget {
+  pos: THREE.Vector3;
+  label: string;
+}
+
+export interface ObjectiveTargetResult {
+  targets: ObjectiveTarget[];
+  count: number;
+}
+
+// ============================================================================
 // Estructuras internas (creadas solo al construir el nivel)
 // ============================================================================
 interface GrabObject {
@@ -364,6 +402,7 @@ interface GeneratorObj {
   mesh: THREE.Group;
   core: THREE.Mesh;
   coreMaterial: THREE.MeshBasicMaterial;
+  beacon: THREE.Mesh;
   pos: THREE.Vector3;
   planet: PlanetRuntime;
   hp: number;
@@ -715,6 +754,17 @@ export class WorldObjectsManager {
     stasis: 0,
   };
   private readonly kronosInput: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  // --- Oleada 2: galaxia continua ---
+  private readonly structureColliders: StructureCollider[] = [];
+  private readonly planetGenTotal = new Map<string, number>();
+  private readonly planetGenDestroyed = new Map<string, number>();
+  private readonly planetKeycardTotal = new Map<string, number>();
+  private readonly planetKeycardCollected = new Map<string, number>();
+  /** Planetas cuya condición de desbloqueo ya se completó. */
+  private readonly completedPlanetIds = new Set<string>();
+  /** Buffer preasignado de marcadores de objetivo (cero allocations). */
+  private readonly objectiveTargets: ObjectiveTarget[] = [];
+  private readonly objectiveTargetResult: ObjectiveTargetResult = { targets: [], count: 0 };
   private heldCount = 0;
   private clock = 0;
   private globalAlert = false;
@@ -735,10 +785,20 @@ export class WorldObjectsManager {
   onSound: ((kind: GameSoundKind) => void) | null = null;
   /** KRONOS derrotado: el GameEngine dispara la victoria y el Battle Report. */
   onKronosDefeated: (() => void) | null = null;
+  /**
+   * Un planeta completó sus objetivos y el escudo del siguiente cayó en vivo:
+   * el GameEngine acumula la ficha de comportamiento, calcula la adaptación
+   * de la Red de IA y la inyecta en el planeta recién desbloqueado.
+   */
+  onPlanetUnlocked: ((planet: PlanetRuntime) => void) | null = null;
 
   constructor(group: THREE.Group, planets: PlanetRuntime[]) {
     this.group = group;
     this.planets = planets;
+    for (let i = 0; i < OBJECTIVE_TARGET_MAX; i++) {
+      this.objectiveTargets.push({ pos: new THREE.Vector3(), label: '' });
+    }
+    this.objectiveTargetResult.targets = this.objectiveTargets;
   }
 
   get held(): number {
@@ -797,13 +857,41 @@ export class WorldObjectsManager {
   }
 
   // --------------------------------------------------------------------------
-  // Construcción desde LevelSpec (allocaciones permitidas: fuera del loop)
+  // Construcción de la galaxia completa (allocaciones permitidas: fuera del loop)
   // --------------------------------------------------------------------------
-  build(level: LevelSpec): void {
-    for (const spec of level.objects) this.spawnObject(spec);
-    for (const bubble of level.waterBubbles) this.spawnBubble(bubble);
-    for (const zone of level.grassZones ?? []) this.spawnGrass(zone);
-    for (const enemy of level.enemies) this.spawnEnemy(enemy);
+  /**
+   * Instancia toda la GALAXY_SPEC en una sola escena: estructuras con su
+   * collider tangente, escudos planetarios sobre los planetas bloqueados,
+   * balizas sobre generadores/tarjetas, objetos, burbujas, hierba y la
+   * guarnición completa de los 5 planetas.
+   */
+  buildGalaxy(galaxy: GalaxySpec, planets: PlanetRuntime[]): void {
+    // Estructuras: mesh visual + collider de colisión/LoS (misma convención).
+    for (const spec of galaxy.structures) {
+      const planet = this.findPlanet(spec.planetId);
+      this.group.add(buildStructureMesh(spec, planet.centerVec, planet.spec.radius));
+      this.structureColliders.push(
+        createStructureCollider(spec, planet.centerVec, planet.spec.radius)
+      );
+    }
+
+    // Escudos planetarios: todo planeta con unlockedByPlanetId nace bloqueado.
+    for (const planet of planets) {
+      if (planet.spec.unlockedByPlanetId === null) continue;
+      planet.shielded = true;
+      const shield = buildPlanetShieldMesh(
+        planet.spec.radius,
+        planet.spec.ringColor ?? planet.spec.atmosphereColor
+      );
+      shield.position.copy(planet.centerVec);
+      this.group.add(shield);
+      planet.shieldMesh = shield;
+    }
+
+    for (const spec of galaxy.objects) this.spawnObject(spec);
+    for (const bubble of galaxy.waterBubbles) this.spawnBubble(bubble);
+    for (const zone of galaxy.grassZones ?? []) this.spawnGrass(zone);
+    for (const enemy of galaxy.enemies) this.spawnEnemy(enemy);
 
     // Pool de explosiones / ondas expansivas (reutilizado, sin GC).
     for (let i = 0; i < 4; i++) {
@@ -913,16 +1001,24 @@ export class WorldObjectsManager {
     } else if (spec.kind === 'generator') {
       const { group, core } = buildGeneratorMesh();
       const pos = this.placeOnPlanet(group, planet, ...spec.sphericalDir, altitude);
+      // Baliza vertical: el generador se ve desde cualquier punto del planeta.
+      const beacon = buildBeaconBeam('#fbbf24', 16);
+      group.add(beacon);
       this.group.add(group);
       this.generators.push({
         mesh: group,
         core,
         coreMaterial: core.material as THREE.MeshBasicMaterial,
+        beacon,
         pos: pos.clone(),
         planet,
         hp: 2,
         destroyed: false,
       });
+      this.planetGenTotal.set(
+        planet.spec.id,
+        (this.planetGenTotal.get(planet.spec.id) ?? 0) + 1
+      );
     } else if (spec.kind === 'laser_gate') {
       const { group, planeMaterial } = buildLaserGateMesh();
       const pos = this.placeOnPlanet(group, planet, ...spec.sphericalDir, altitude);
@@ -938,8 +1034,15 @@ export class WorldObjectsManager {
     } else if (spec.kind === 'keycard') {
       const mesh = buildKeycardMesh();
       const pos = this.placeOnPlanet(mesh, planet, ...spec.sphericalDir, altitude);
+      // Baliza vertical sobre la tarjeta maestra.
+      const beacon = buildBeaconBeam('#fde047', 14);
+      mesh.add(beacon);
       this.group.add(mesh);
-      this.keycards.push({ mesh, pos: pos.clone(), collected: false });
+      this.keycards.push({ mesh, beacon, pos: pos.clone(), planet, collected: false });
+      this.planetKeycardTotal.set(
+        planet.spec.id,
+        (this.planetKeycardTotal.get(planet.spec.id) ?? 0) + 1
+      );
     } else if (spec.kind === 'scanner_gate') {
       const { group, planeMaterial } = buildScannerGateMesh();
       const pos = this.placeOnPlanet(group, planet, ...spec.sphericalDir, altitude);
@@ -1053,6 +1156,18 @@ export class WorldObjectsManager {
       default:
         return;
     }
+    // Cono de visión adherido al suelo delante de guardias y oficiales.
+    let visionCone: THREE.Mesh | null = null;
+    let visionConeMaterial: THREE.MeshBasicMaterial | null = null;
+    if (spec.kind === 'guard' || spec.kind === 'officer') {
+      const cone = buildVisionConeMesh(
+        ENEMY_PARAMS[spec.kind].detectRange,
+        Math.acos(VISION_MIN_DOT)
+      );
+      visionCone = cone.mesh;
+      visionConeMaterial = cone.material;
+      mesh.add(cone.mesh);
+    }
     const waypoints: THREE.Vector3[] = [];
     for (const dir of spec.patrolDirs) {
       waypoints.push(new THREE.Vector3(...dir).normalize());
@@ -1084,6 +1199,8 @@ export class WorldObjectsManager {
       koRadioSent: false,
       hoverPhase: spec.kind.length * 1.3,
       params: ENEMY_PARAMS[spec.kind],
+      visionCone,
+      visionConeMaterial,
     });
   }
 
@@ -1414,16 +1531,16 @@ export class WorldObjectsManager {
   }
 
   /**
-   * Inyección dinámica de la adaptación inter-planeta al construir el nivel:
-   * patrullas extra, cascos blindados, drones, parejas, escáneres, minas
-   * sísmicas y torretas antiaéreas según lo que la IA leyó del jugador.
+   * Inyección dinámica y EN VIVO de la adaptación inter-planeta cuando cae el
+   * escudo de un planeta: patrullas extra, cascos blindados, drones, parejas,
+   * escáneres, minas sísmicas y torretas antiaéreas desplegadas en ese
+   * planeta recién desbloqueado según lo que la IA leyó del jugador.
    */
-  applyAdaptation(level: LevelSpec, adaptation: PlanetAdaptationConfig): void {
+  applyPlanetAdaptation(planet: PlanetRuntime, adaptation: PlanetAdaptationConfig): void {
     this.predictiveShields = adaptation.predictiveShields;
     this.alertBoost = adaptation.baseAlertLevel * 0.5;
-    const planet = this.findPlanet(level.spawnPlanetId);
     const rand = makeSeededRandom(
-      level.id.length * 977 + level.order * 131 + ADAPTED_SPAWN_BASE
+      planet.spec.id.length * 977 + planet.spec.order * 131 + ADAPTED_SPAWN_BASE
     );
     const randomDir = (): [number, number, number] => {
       const u = rand();
@@ -1472,13 +1589,17 @@ export class WorldObjectsManager {
     }
     if (adaptation.armoredHelmets) {
       for (const enemy of this.enemies) {
+        if (enemy.planet !== planet) continue;
         if (enemy.kind === 'guard' || enemy.kind === 'officer') enemy.helmet = true;
       }
     }
     // Abuso de sigilo: los guardias patrullan en parejas (misma ruta, offset).
     if (adaptation.pairGuardPatrols) {
       const walkers = this.enemies.filter(
-        (e) => (e.kind === 'guard' || e.kind === 'officer') && e.state !== GUARD_STATE_KO
+        (e) =>
+          e.planet === planet &&
+          (e.kind === 'guard' || e.kind === 'officer') &&
+          e.state !== GUARD_STATE_KO
       );
       for (let i = 0; i + 1 < walkers.length; i += 2) {
         const leader = walkers[i];
@@ -1612,6 +1733,121 @@ export class WorldObjectsManager {
     if (!this.burrowEjectPending) return false;
     this.burrowEjectPending = false;
     return true;
+  }
+
+  // --------------------------------------------------------------------------
+
+  /** Colliders de todas las estructuras de la galaxia (colisión del jugador). */
+  getStructureColliders(): StructureCollider[] {
+    return this.structureColliders;
+  }
+
+  getGeneratorTotalOn(planetId: string): number {
+    return this.planetGenTotal.get(planetId) ?? 0;
+  }
+
+  getGeneratorsDestroyedOn(planetId: string): number {
+    return this.planetGenDestroyed.get(planetId) ?? 0;
+  }
+
+  getKeycardTotalOn(planetId: string): number {
+    return this.planetKeycardTotal.get(planetId) ?? 0;
+  }
+
+  getKeycardsCollectedOn(planetId: string): number {
+    return this.planetKeycardCollected.get(planetId) ?? 0;
+  }
+
+  /**
+   * Marcadores de objetivo del planeta activo en un buffer preasignado:
+   * generadores restantes (GEN), tarjetas (TARJETA) y KRONOS. Si el planeta
+   * ya completó sus objetivos, apunta al centro del siguiente planeta
+   * desbloqueado.
+   */
+  getObjectiveTargets(activePlanetId: string): ObjectiveTargetResult {
+    let n = 0;
+    for (const gen of this.generators) {
+      if (gen.destroyed || gen.planet.spec.id !== activePlanetId) continue;
+      if (n >= OBJECTIVE_TARGET_MAX) break;
+      this.objectiveTargets[n].pos.copy(gen.pos);
+      this.objectiveTargets[n].label = 'GEN';
+      n++;
+    }
+    for (const card of this.keycards) {
+      if (card.collected || card.planet.spec.id !== activePlanetId) continue;
+      if (n >= OBJECTIVE_TARGET_MAX) break;
+      this.objectiveTargets[n].pos.copy(card.pos);
+      this.objectiveTargets[n].label = 'TARJETA';
+      n++;
+    }
+    const kronos = this.kronos;
+    if (
+      kronos &&
+      !kronos.defeated &&
+      kronos.planet.spec.id === activePlanetId &&
+      n < OBJECTIVE_TARGET_MAX
+    ) {
+      this.objectiveTargets[n].pos.copy(kronos.pos);
+      this.objectiveTargets[n].label = 'KRONOS';
+      n++;
+    }
+    if (n === 0) {
+      // Objetivos del planeta completos: siguiente planeta desbloqueado.
+      const next = this.planets.find(
+        (p) => p.spec.unlockedByPlanetId === activePlanetId && !p.shielded
+      );
+      if (next) {
+        this.objectiveTargets[0].pos.copy(next.centerVec);
+        this.objectiveTargets[0].label = next.spec.name.toUpperCase();
+        n = 1;
+      }
+    }
+    this.objectiveTargetResult.count = n;
+    return this.objectiveTargetResult;
+  }
+
+  /**
+   * Ruido de distracción (objeto de Estasis lanzado al suelo): los guardias
+   * del mismo planeta en patrulla dentro del radio entran en modo
+   * investigación, caminan hacia el punto del impacto y vuelven a su ruta.
+   */
+  private emitNoise(pos: THREE.Vector3, planet: PlanetRuntime): void {
+    for (const enemy of this.enemies) {
+      if (enemy.planet !== planet) continue;
+      if (enemy.state !== GUARD_STATE_PATROL) continue;
+      if (enemy.kind === 'drone' || enemy.kind === 'turret') continue;
+      if (enemy.pos.distanceToSquared(pos) > NOISE_RADIUS * NOISE_RADIUS) continue;
+      enemy.state = GUARD_STATE_SEARCH;
+      enemy.searchT = NOISE_SEARCH_DURATION;
+      _v6.copy(pos).sub(planet.centerVec).normalize();
+      enemy.lastSeenDir.copy(_v6);
+      enemy.suspicion = Math.max(enemy.suspicion, 0.45);
+    }
+  }
+
+  /**
+   * Un planeta completó su condición de desbloqueo (todos sus generadores
+   * destruidos y, en Iron Bastion, la tarjeta maestra recogida): el escudo
+   * del siguiente planeta cae EN VIVO y el GameEngine inyecta allí la
+   * adaptación de la Red de IA.
+   */
+  private checkPlanetUnlock(planetId: string): void {
+    if (this.completedPlanetIds.has(planetId)) return;
+    const genTotal = this.planetGenTotal.get(planetId) ?? 0;
+    if (genTotal === 0) return;
+    if ((this.planetGenDestroyed.get(planetId) ?? 0) < genTotal) return;
+    const cardTotal = this.planetKeycardTotal.get(planetId) ?? 0;
+    if ((this.planetKeycardCollected.get(planetId) ?? 0) < cardTotal) return;
+
+    this.completedPlanetIds.add(planetId);
+    const next = this.planets.find(
+      (p) => p.spec.unlockedByPlanetId === planetId && p.shielded
+    );
+    if (!next) return;
+    next.shielded = false;
+    if (next.shieldMesh) next.shieldMesh.visible = false;
+    this.onSound?.('explosion');
+    this.onPlanetUnlocked?.(next);
   }
 
   // --------------------------------------------------------------------------
@@ -2061,13 +2297,15 @@ export class WorldObjectsManager {
       }
       if (settled) continue;
 
-      // Impacto contra el terreno.
+      // Impacto contra el terreno: ruido de distracción para los guardias
+      // cercanos del mismo planeta (no golpearon a nadie directamente).
       _v2.copy(grab.pos).sub(planet.centerVec);
       const surfaceDist = _v2.length();
       if (surfaceDist <= planet.spec.radius + grab.radius) {
         if (grab.kind === 'barrel_explosive') {
           this.explode(grab.pos, state, onPlayerDamage);
         }
+        this.emitNoise(grab.pos, planet);
         this.settleGrab(grab, planet);
       }
     }
@@ -2200,7 +2438,8 @@ export class WorldObjectsManager {
 
   /**
    * Cono de visión curvo: distancia + ángulo frontal + oclusión por la
-   * curvatura de la esfera + ocultación en hierba alta (a quemarropa se ve).
+   * curvatura de la esfera + muros/edificios en la línea de visión (LoS real
+   * contra los colliders de estructuras) + hierba alta (a quemarropa se ve).
    */
   private enemyCanSeePlayer(
     enemy: EnemyObj,
@@ -2212,6 +2451,17 @@ export class WorldObjectsManager {
     _v5.copy(state.pos).sub(enemy.pos).divideScalar(Math.max(playerDist, 1e-6));
     if (enemy.forward.dot(_v5) < VISION_MIN_DOT) return false;
     if (!this.curvatureLOS(enemy.pos, state.pos, enemy.planet)) return false;
+    // Un muro o edificio en medio corta la línea de visión.
+    if (
+      isLineBlockedByStructures(
+        enemy.pos,
+        state.pos,
+        this.structureColliders,
+        enemy.planet.spec.id
+      )
+    ) {
+      return false;
+    }
     if (state.inGrass && playerDist > GRASS_HIDE_DIST) return false;
     if (state.burrowing || state.swimming) return false;
     return true;
@@ -2521,6 +2771,24 @@ export class WorldObjectsManager {
     enemy.pos
       .copy(enemy.planet.centerVec)
       .addScaledVector(enemy.dir, enemy.planet.spec.radius + altitude);
+    // Colisión contra estructuras: los caminantes no atraviesan muros.
+    if (
+      enemy.state !== GUARD_STATE_KO &&
+      enemy.kind !== 'drone' &&
+      enemy.kind !== 'turret'
+    ) {
+      const res = resolvePlayerStructures(
+        enemy.pos,
+        0,
+        false,
+        this.structureColliders,
+        enemy.planet.spec.id,
+        GUARD_STRUCTURE_RADIUS
+      );
+      if (res.hitWall) {
+        enemy.dir.copy(enemy.pos).sub(enemy.planet.centerVec).normalize();
+      }
+    }
     enemy.mesh.position.copy(enemy.pos);
     _q1.setFromUnitVectors(_upAxis, enemy.dir);
     if (enemy.kind === 'turret') {
@@ -2541,6 +2809,28 @@ export class WorldObjectsManager {
       _q2.setFromAxisAngle(_v3.set(0, 0, 1), 1.45);
       enemy.mesh.quaternion.multiply(_q2);
     }
+    this.updateVisionCone(enemy);
+  }
+
+  /**
+   * Color/opacidad del cono de visión en tiempo real: verde en patrulla,
+   * amarillo al sospechar o investigar un ruido, rojo en combate/alarma.
+   */
+  private updateVisionCone(enemy: EnemyObj): void {
+    const cone = enemy.visionCone;
+    const material = enemy.visionConeMaterial;
+    if (!cone || !material) return;
+    const ko = enemy.state === GUARD_STATE_KO;
+    cone.visible = !ko;
+    if (ko) return;
+    let color = CONE_COLOR_PATROL;
+    if (enemy.state === GUARD_STATE_CHASE || enemy.state === GUARD_STATE_WINDUP) {
+      color = CONE_COLOR_COMBAT;
+    } else if (enemy.state === GUARD_STATE_SEARCH || enemy.suspicion > 0.4) {
+      color = CONE_COLOR_SEARCH;
+    }
+    material.color.set(color);
+    material.opacity = color === CONE_COLOR_COMBAT ? 0.42 : 0.26;
   }
 
   /**
@@ -2593,7 +2883,14 @@ export class WorldObjectsManager {
       if (state.pos.distanceToSquared(card.pos) < KEYCARD_PICKUP_RADIUS * KEYCARD_PICKUP_RADIUS) {
         card.collected = true;
         card.mesh.visible = false;
+        card.beacon.visible = false;
         this.keycardsCollected++;
+        const planetId = card.planet.spec.id;
+        this.planetKeycardCollected.set(
+          planetId,
+          (this.planetKeycardCollected.get(planetId) ?? 0) + 1
+        );
+        this.checkPlanetUnlock(planetId);
       }
     }
   }
@@ -2677,9 +2974,13 @@ export class WorldObjectsManager {
     if (gen.hp <= 0) {
       gen.destroyed = true;
       this.generatorsDestroyed++;
+      const planetId = gen.planet.spec.id;
+      this.planetGenDestroyed.set(planetId, (this.planetGenDestroyed.get(planetId) ?? 0) + 1);
       gen.coreMaterial.color.set(0x334155);
+      gen.beacon.visible = false;
       gen.mesh.rotateZ(0.18);
       this.spawnExplosion(gen.pos, 3.5, 0xfbbf24);
+      this.checkPlanetUnlock(planetId);
     }
   }
 
@@ -2747,11 +3048,19 @@ export class WorldObjectsManager {
     this.teleportCooldown = 0;
     this.predictiveShields = false;
     this.alertBoost = 0;
+    this.structureColliders.length = 0;
+    this.planetGenTotal.clear();
+    this.planetGenDestroyed.clear();
+    this.planetKeycardTotal.clear();
+    this.planetKeycardCollected.clear();
+    this.completedPlanetIds.clear();
+    this.objectiveTargetResult.count = 0;
     this.onGlobalAlert = null;
     this.onDisguiseBroken = null;
     this.onTeleportPlayer = null;
     this.onSound = null;
     this.onKronosDefeated = null;
+    this.onPlanetUnlocked = null;
   }
 
   /**
