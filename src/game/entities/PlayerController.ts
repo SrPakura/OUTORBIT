@@ -20,7 +20,7 @@ import type { LockOnHandle, WorldObjectsManager } from './WorldObjects';
 // Constantes de simulación del jugador
 // ============================================================================
 const GRAVITY_BASE = 22;
-const BASIS_ALIGN_SPEED = 9; // velocidad de reorientación del marco tangente
+const BASIS_ALIGN_SPEED = 28; // reorientación del marco tangente (aire); en suelo = instantánea
 const SPRINT_MULTIPLIER = 1.55;
 const DOUBLE_JUMP_FACTOR = 0.85;
 const MOUSE_SENSITIVITY = 0.0036;
@@ -28,6 +28,12 @@ const PITCH_MIN = -1.25;
 const PITCH_MAX = 1.3;
 const AIM_CONE_MARGIN = 0.32; // rad de tolerancia sobre el radio angular del planeta
 const HEAD_HEIGHT = 1.5;
+
+// Game feel tipo Mario Galaxy / Minecraft: rotación del personaje hacia WASD.
+const CHAR_YAW_SPEED = 18; // interpolación exponencial del giro del personaje
+const RUN_LEAN_ANGLE = 0.16; // inclinación hacia adelante al correr
+const FLIP_TIME = 0.55; // voltereta 360º del doble salto / Ancla
+const SLASH_TIME = 0.3; // tajo de melee
 
 // Ancla gravitatoria (Espacio en el aire)
 const ANCHOR_COOLDOWN = 0.9;
@@ -44,8 +50,9 @@ const STASIS_GRAB_RANGE = 9;
 // Lock-On (Q/Tab/V + Flechas): estilo GTA San Andreas
 const LOCK_ON_RANGE = 34;
 const LOCK_ON_DROP_RANGE = 44; // margen antes de perder el objetivo fijado
-const LOCK_ON_AIM_SPEED = 4.0; // giro suave de cámara hacia el objetivo fijado
-const LOCK_ON_PITCH_SPEED = 1.6;
+const LOCK_ON_AIM_EXP = 6.5; // interpolación exponencial estable (sin saltos por frame)
+const LOCK_ON_PITCH_EXP = 6.5;
+const AUTO_LOCK_RANGE = 28; // auto-Lock-On al atacar sin objetivo fijado
 
 // Colisión contra estructuras (muros, torres, tejados, puentes, plataformas)
 const PLAYER_STRUCTURE_RADIUS = 0.5;
@@ -100,6 +107,13 @@ interface CharacterParts {
   leftLeg: THREE.Object3D;
   rightLeg: THREE.Object3D;
   tail: THREE.Object3D;
+  /** Skin P5: capa/bufanda trasera que ondea con la velocidad. */
+  cape: THREE.Object3D | null;
+  /** Skin P5: broca del taladro de Digger (gira al excavar). */
+  drill: THREE.Object3D | null;
+  /** Skin P5: llamas cian del jetpack de Axel. */
+  flameL: THREE.Object3D | null;
+  flameR: THREE.Object3D | null;
 }
 
 /**
@@ -178,6 +192,8 @@ export class PlayerController {
   private inFlight = false;
   private flightDirected = false;
   private flightDest: PlanetRuntime | null = null;
+  /** Planeta de origen del salto actual (rebote de la Tormenta Orbital). */
+  private flightOrigin: PlanetRuntime | null = null;
   private flightTime = 0;
   private flightDuration = 2;
   private readonly flightStart = new THREE.Vector3();
@@ -228,6 +244,13 @@ export class PlayerController {
   readonly lockRing: THREE.Group;
   private walkPhase = 0;
   private isMoving = false;
+
+  // Game feel: rotación independiente del personaje + animaciones P5.
+  private charYaw = 0;
+  private leanAngle = 0;
+  private flipTimer = 0;
+  private slashTimer = 0;
+  private capeFlow = 0; // 0 parado .. 1 corriendo (ondeo de la capa)
 
   // Temporales preasignados (sin GC en el loop)
   private readonly _up = new THREE.Vector3();
@@ -290,6 +313,10 @@ export class PlayerController {
         leftLeg: model.getObjectByName('leftLeg') ?? model,
         rightLeg: model.getObjectByName('rightLeg') ?? model,
         tail: model.getObjectByName('tail') ?? model,
+        cape: model.getObjectByName('cape') ?? null,
+        drill: model.getObjectByName('drill') ?? null,
+        flameL: model.getObjectByName('flameL') ?? null,
+        flameR: model.getObjectByName('flameR') ?? null,
       });
     }
 
@@ -423,14 +450,24 @@ export class PlayerController {
     return this.lockedTarget !== null;
   }
 
-  /** Planeta apuntado con escudo activo: motivo de bloqueo para el retículo. */
+  /**
+   * Planeta apuntado con Tormenta Orbital activa: aviso para el retículo.
+   * La tormenta NO bloquea el salto: avisa del riesgo y deja pasar.
+   */
   get gravityTargetBlockedReason(): string | null {
     const target = this.gravityTarget;
     if (!target || !target.shielded) return null;
     const blocker = this.planets.find((p) => p.spec.id === target.spec.unlockedByPlanetId);
-    return `ESCUDO ACTIVO — Destruye objetivos en ${
+    return `TORMENTA ORBITAL ACTIVA (¡Riesgo de impacto!) — Destruye los objetivos en ${
       blocker?.spec.name ?? 'el planeta anterior'
-    }`;
+    } para desactivarla`;
+  }
+
+  /** Planeta destino del vuelo dirigido (activa los interceptores de su tormenta). */
+  get flightTargetPlanetId(): string | null {
+    return this.inFlight && this.flightDirected && this.flightDest
+      ? this.flightDest.spec.id
+      : null;
   }
 
   get lockedTargetName(): string | null {
@@ -545,6 +582,23 @@ export class PlayerController {
       // fijado (Lock-On) o la mira; con 0 objetos, golpe melee rápido.
       if (!down) return;
       if (this.inFlight || this.isSwimming || this.coreDiveActive || this.isBurrowing) return;
+      // Lock-On obligatorio para atacar: sin objetivo fijado, fija
+      // automáticamente al enemigo/barril/generador más cercano del cono
+      // frontal (< 28 m) si hay uno válido.
+      if (!this.lockedTarget) {
+        this.getAimForward(this._v1);
+        const auto = this.world.findLockOnTarget(
+          this.pos,
+          this._v1,
+          AUTO_LOCK_RANGE,
+          null,
+          0
+        );
+        if (auto) {
+          this.lockedTarget = auto;
+          this.world.getLockOnPos(auto, this.lockedTargetPos);
+        }
+      }
       if (this.world.held > 0) {
         this.throwOneStasis();
       } else {
@@ -568,10 +622,10 @@ export class PlayerController {
         this.gravityShifting = false;
         const target = this.gravityTarget;
         this.gravityTarget = null;
-        if (target && target.shielded) {
-          // Planeta escudado: NO se lanza al jugador; aviso sonoro solamente.
-          this.onSound?.('alert');
-        } else if (target && target !== this.currentPlanet) {
+        if (target && target !== this.currentPlanet) {
+          // Tormenta Orbital: SÍ te deja saltar, pero avisa del riesgo de
+          // impacto (los interceptores pueden rebotarte al planeta origen).
+          if (target.shielded) this.onSound?.('alert');
           this.launchToTarget(target);
         } else {
           this.gravityDash();
@@ -655,6 +709,12 @@ export class PlayerController {
       this.updateGrounded(dt);
     }
 
+    // Impacto de un interceptor de la Tormenta Orbital: 1 de daño ya
+    // aplicado por el mundo; rebote cinematográfico al planeta de origen.
+    if (this.inFlight && this.world.consumeInterceptorBounce()) {
+      this.bounceFromInterceptor();
+    }
+
     // Temporizadores de habilidades.
     if (this.anchorCooldown > 0) this.anchorCooldown -= dt;
     if (this.parryCooldown > 0) this.parryCooldown -= dt;
@@ -662,6 +722,7 @@ export class PlayerController {
     if (this.swimBoostTimer > 0) this.swimBoostTimer -= dt;
     if (this.anchorFxTimer > 0) this.anchorFxTimer -= dt;
     if (this.gravityShiftCooldown > 0) this.gravityShiftCooldown -= dt;
+    if (this.slashTimer > 0) this.slashTimer -= dt;
 
     // Gravity Dash: impulso activo + derribo/empuje de guardias y cajas.
     if (this.dashTimer > 0) {
@@ -709,11 +770,19 @@ export class PlayerController {
     // Campo de Estasis: los objetos capturados orbitan solos (sin mantener
     // pulsado); la captura ocurre en `captureStasis` (R/C).
 
-    // Reorientación suave del marco tangente (transporte paralelo continuo).
-    alignBasisToUp(this.basisQuat, this.lastUp, 1 - Math.exp(-BASIS_ALIGN_SPEED * dt));
+    // Reorientación del marco tangente (transporte paralelo continuo): en
+    // suelo se alinea CASI al instante (cero tambaleo del horizonte al
+    // moverse lateralmente con A/D); en el aire conserva la suavidad.
+    const alignAlpha = this.grounded ? 1 : 1 - Math.exp(-BASIS_ALIGN_SPEED * dt);
+    alignBasisToUp(this.basisQuat, this.lastUp, alignAlpha);
 
-    // Transform del modelo: mira hacia el forward de cámara.
-    this._yawQuat.setFromAxisAngle(this._v1.set(0, 1, 0), this.yaw);
+    // Rotación independiente del personaje (charYaw): mira hacia la
+    // dirección WASD al correr libremente, hacia el objetivo fijado en
+    // Lock-On/combate y hacia la cámara cuando está parado.
+    this.updateCharYaw(dt);
+
+    // Transform del modelo: el cuerpo gira con charYaw (no con la cámara).
+    this._yawQuat.setFromAxisAngle(this._v1.set(0, 1, 0), this.charYaw);
     this.root.quaternion
       .copy(this.basisQuat)
       .multiply(this._yawQuat)
@@ -739,10 +808,93 @@ export class PlayerController {
     }
 
     this.animateLimbs();
+    this.updateVisualAnim(dt);
 
     // Apuntado Gravity Shift (cono desde la cámara).
     if (this.gravityShifting) {
       this.gravityTarget = this.pickPlanetUnderCrosshair();
+    }
+  }
+
+  /**
+   * Game feel P5/Mario Galaxy: rotación independiente del personaje hacia la
+   * dirección WASD al correr, hacia el objetivo fijado en Lock-On y hacia la
+   * cámara en reposo. Interpolación exponencial limpia (sin saltos).
+   */
+  private updateCharYaw(dt: number): void {
+    let targetYaw = this.yaw;
+    if (this.lockedTarget) {
+      // Mira al objetivo fijado (ángulo tangente hacia su posición).
+      this._v1.copy(this.lockedTargetPos).sub(this.pos);
+      this._v1.addScaledVector(this.lastUp, -this._v1.dot(this.lastUp));
+      if (this._v1.lengthSq() > 1e-6) {
+        this._v1.normalize();
+        getTangentAxes(this.basisQuat, 0, this._v2, this._v3);
+        this._v3.copy(this._v2).cross(this._v1);
+        targetYaw = Math.atan2(this._v3.dot(this.lastUp), this._v2.dot(this._v1));
+      }
+    } else if (this.grounded && !this.isBurrowing && this.isMoving) {
+      // Corriendo libremente: el personaje mira hacia la dirección WASD.
+      getTangentAxes(this.basisQuat, 0, this._v2, this._v3);
+      targetYaw = Math.atan2(-this._move.dot(this._v3), this._move.dot(this._v2));
+    }
+    let delta = targetYaw - this.charYaw;
+    if (delta > Math.PI) delta -= Math.PI * 2;
+    else if (delta < -Math.PI) delta += Math.PI * 2;
+    this.charYaw += delta * (1 - Math.exp(-CHAR_YAW_SPEED * dt));
+    if (this.charYaw > Math.PI) this.charYaw -= Math.PI * 2;
+    else if (this.charYaw < -Math.PI) this.charYaw += Math.PI * 2;
+  }
+
+  /**
+   * Animaciones de la skin P5: inclinación al correr, voltereta 360º del
+   * doble salto/Ancla, giro del taladro al excavar, capa que ondea con la
+   * velocidad y llamas del jetpack de Axel en el aire.
+   */
+  private updateVisualAnim(dt: number): void {
+    // Inclinación hacia adelante al correr (suave, cero tambaleo).
+    const leanTarget =
+      this.grounded && this.isMoving && !this.isBurrowing ? RUN_LEAN_ANGLE : 0;
+    this.leanAngle += (leanTarget - this.leanAngle) * Math.min(1, dt * 10);
+
+    // Voltereta 360º (doble salto / Ancla): giro completo hacia adelante.
+    let flipAngle = 0;
+    if (this.flipTimer > 0) {
+      this.flipTimer -= dt;
+      const p = THREE.MathUtils.clamp(1 - this.flipTimer / FLIP_TIME, 0, 1);
+      flipAngle = -p * Math.PI * 2;
+    }
+    this.bodyRoot.rotation.x = this.leanAngle + flipAngle;
+
+    // Ondeo de la capa/bufanda: más flujo al moverse rápido.
+    const flowTarget = this.isMoving ? 1 : this.isAirborne ? 0.7 : 0.25;
+    this.capeFlow += (flowTarget - this.capeFlow) * Math.min(1, dt * 6);
+
+    const parts = this.parts.get(this.activeCharacter);
+    if (parts) {
+      if (parts.cape) {
+        parts.cape.rotation.x =
+          -0.12 - this.capeFlow * 0.5 + Math.sin(this.walkPhase * 1.7) * 0.14 * this.capeFlow;
+      }
+      // Taladro de Digger: gira a tope mientras excava.
+      if (parts.drill) {
+        if (this.isBurrowing) {
+          parts.drill.rotation.y += dt * 26;
+          parts.drill.rotation.z = Math.sin(this.walkPhase * 12) * 0.06;
+        } else {
+          parts.drill.rotation.z *= Math.max(0, 1 - dt * 8);
+        }
+      }
+      // Jetpack de Axel: llamas cian visibles y pulsantes en el aire/dash.
+      const flamesOn = this.isAirborne || this.dashTimer > 0 || this.isDirectedFlight;
+      if (parts.flameL) {
+        parts.flameL.visible = flamesOn;
+        parts.flameL.scale.y = flamesOn ? 0.85 + Math.sin(this.walkPhase * 9) * 0.3 : 1;
+      }
+      if (parts.flameR) {
+        parts.flameR.visible = flamesOn;
+        parts.flameR.scale.y = flamesOn ? 0.85 + Math.cos(this.walkPhase * 9) * 0.3 : 1;
+      }
     }
   }
 
@@ -775,7 +927,9 @@ export class PlayerController {
     let delta = targetYaw - this.yaw;
     if (delta > Math.PI) delta -= Math.PI * 2;
     else if (delta < -Math.PI) delta += Math.PI * 2;
-    this.yaw += delta * Math.min(1, dt * LOCK_ON_AIM_SPEED);
+    // Interpolación exponencial estable sobre la diferencia angular: sin
+    // saltos bruscos por frame y consistente a cualquier framerate.
+    this.yaw += delta * (1 - Math.exp(-LOCK_ON_AIM_EXP * dt));
     if (this.yaw > Math.PI) this.yaw -= Math.PI * 2;
     else if (this.yaw < -Math.PI) this.yaw += Math.PI * 2;
 
@@ -788,7 +942,7 @@ export class PlayerController {
       PITCH_MIN,
       PITCH_MAX
     );
-    this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * LOCK_ON_PITCH_SPEED);
+    this.pitch += (targetPitch - this.pitch) * (1 - Math.exp(-LOCK_ON_PITCH_EXP * dt));
   }
 
   private updateGrounded(dt: number): void {
@@ -1080,7 +1234,11 @@ export class PlayerController {
       .addScaledVector(up, target.spec.radius);
   }
 
-  private launchToTarget(target: PlanetRuntime): void {
+  /**
+   * Configura el arco Bezier cinematográfico hacia `target` (compartido por
+   * el Gravity Shift y el rebote de la Tormenta Orbital).
+   */
+  private beginDirectedFlight(target: PlanetRuntime): void {
     this.flightStart.copy(this.pos);
     this._v1.copy(this.pos).sub(target.centerVec).normalize();
     this.flightEnd
@@ -1100,14 +1258,6 @@ export class PlayerController {
       FLIGHT_MIN_DURATION,
       FLIGHT_MAX_DURATION
     );
-    // Cooldown proporcional a la distancia del salto entre planetas (1.8s-2.8s).
-    this.setGravityShiftCooldown(
-      THREE.MathUtils.lerp(
-        GRAVITY_JUMP_COOLDOWN_MIN,
-        GRAVITY_JUMP_COOLDOWN_MAX,
-        THREE.MathUtils.clamp((dist - GRAVITY_JUMP_COOLDOWN_DIST0) / 150, 0, 1)
-      )
-    );
     this.flightTime = 0;
     this.flightDest = target;
     this.flightDirected = true;
@@ -1117,7 +1267,40 @@ export class PlayerController {
     this.vertVel = 0;
     this.jumpsUsed = 0;
     this.currentPlanet = target;
+  }
+
+  private launchToTarget(target: PlanetRuntime): void {
+    this.flightOrigin = this.currentPlanet;
+    this.beginDirectedFlight(target);
+    // Cooldown proporcional a la distancia del salto entre planetas (1.8s-2.8s).
+    this.setGravityShiftCooldown(
+      THREE.MathUtils.lerp(
+        GRAVITY_JUMP_COOLDOWN_MIN,
+        GRAVITY_JUMP_COOLDOWN_MAX,
+        THREE.MathUtils.clamp((this.flightStart.distanceTo(this.flightEnd) - GRAVITY_JUMP_COOLDOWN_DIST0) / 150, 0, 1)
+      )
+    );
     this.onSound?.('gravityShift');
+  }
+
+  /**
+   * Impacto con un asteroide interceptor de la Tormenta Orbital: el jugador
+   * sale rebotado de vuelta al planeta de origen (el daño ya lo aplicó el
+   * mundo). Con skill (esquivando en el cruce) se puede colar.
+   */
+  private bounceFromInterceptor(): void {
+    const origin = this.flightOrigin;
+    this.onSound?.('alert');
+    if (!origin) {
+      // Sin origen conocido: vuelo libre de emergencia lejos del planeta.
+      this.flightDirected = false;
+      this.flightDest = null;
+      this.flightTime = 0;
+      this._v1.copy(this.pos).sub(this.currentPlanet.centerVec).normalize();
+      this.flightVel.copy(this._v1).multiplyScalar(40);
+      return;
+    }
+    this.beginDirectedFlight(origin);
   }
 
   // ------------------------------------------------------------------------
@@ -1214,6 +1397,7 @@ export class PlayerController {
     } else if (this.jumpsUsed < 2) {
       this.vertVel = this.profile.jumpImpulse * DOUBLE_JUMP_FACTOR;
       this.jumpsUsed = 2;
+      this.flipTimer = FLIP_TIME; // voltereta 360º del doble salto
       this.onSound?.('jump');
     } else {
       this.tryAnchor();
@@ -1238,6 +1422,7 @@ export class PlayerController {
     this.vertVel = Math.max(this.vertVel, 0) + 6.5;
     this.anchorFx.scale.z = this.profile.anchorRange / 18;
     this.anchorFxTimer = ANCHOR_FX_TIME;
+    this.flipTimer = FLIP_TIME; // voltereta 360º del Ancla Gravitatoria
     this.behavior.aerialAttacks++;
     this.onSound?.('anchor');
   }
@@ -1338,6 +1523,7 @@ export class PlayerController {
   }
 
   private meleeStrike(): void {
+    this.slashTimer = SLASH_TIME; // tajo de ataque melee
     this.getMoveForward(this._forward);
     const hit = this.world.meleeStrike(this.pos, this._forward);
     if (hit === 'guard') {
@@ -1416,25 +1602,44 @@ export class PlayerController {
   private animateLimbs(): void {
     const parts = this.parts.get(this.activeCharacter);
     if (!parts) return;
-    if (this.isSwimming) {
-      // Nado: braceo continuo.
-      const stroke = Math.sin(this.walkPhase * 1.2);
-      parts.leftArm.rotation.x = -1.2 + stroke * 0.9;
-      parts.rightArm.rotation.x = -1.2 - stroke * 0.9;
-      parts.leftLeg.rotation.x = stroke * 0.5;
-      parts.rightLeg.rotation.x = -stroke * 0.5;
-    } else if (this.grounded) {
-      const swing = Math.sin(this.walkPhase) * (this.isMoving ? 0.75 : 0.12);
-      parts.leftArm.rotation.x = swing;
-      parts.rightArm.rotation.x = -swing;
-      parts.leftLeg.rotation.x = -swing;
-      parts.rightLeg.rotation.x = swing;
+    if (this.slashTimer > 0) {
+      // Tajo de melee: barrido rápido del brazo derecho.
+      const p = 1 - this.slashTimer / SLASH_TIME;
+      parts.rightArm.rotation.x = -2.4 + p * 3.2;
+      parts.leftArm.rotation.x = -0.4;
+      parts.leftLeg.rotation.x = 0.2;
+      parts.rightLeg.rotation.x = -0.2;
+    } else if (this.parryTimer > 0) {
+      // Postura de guardia del Parry: brazos en cruz + destello.
+      parts.leftArm.rotation.x = -2.6;
+      parts.rightArm.rotation.x = -2.6;
+      parts.leftArm.rotation.z = 0.9;
+      parts.rightArm.rotation.z = -0.9;
+      parts.leftLeg.rotation.x = 0.35;
+      parts.rightLeg.rotation.x = -0.35;
     } else {
-      // En el aire: brazos arriba, piernas recogidas.
-      parts.leftArm.rotation.x = -2.2;
-      parts.rightArm.rotation.x = -2.2;
-      parts.leftLeg.rotation.x = 0.5;
-      parts.rightLeg.rotation.x = -0.3;
+      parts.leftArm.rotation.z *= 0.6;
+      parts.rightArm.rotation.z *= 0.6;
+      if (this.isSwimming) {
+        // Nado: braceo continuo.
+        const stroke = Math.sin(this.walkPhase * 1.2);
+        parts.leftArm.rotation.x = -1.2 + stroke * 0.9;
+        parts.rightArm.rotation.x = -1.2 - stroke * 0.9;
+        parts.leftLeg.rotation.x = stroke * 0.5;
+        parts.rightLeg.rotation.x = -stroke * 0.5;
+      } else if (this.grounded) {
+        const swing = Math.sin(this.walkPhase) * (this.isMoving ? 0.75 : 0.12);
+        parts.leftArm.rotation.x = swing;
+        parts.rightArm.rotation.x = -swing;
+        parts.leftLeg.rotation.x = -swing;
+        parts.rightLeg.rotation.x = swing;
+      } else {
+        // En el aire: brazos arriba, piernas recogidas.
+        parts.leftArm.rotation.x = -2.2;
+        parts.rightArm.rotation.x = -2.2;
+        parts.leftLeg.rotation.x = 0.5;
+        parts.rightLeg.rotation.x = -0.3;
+      }
     }
     parts.tail.rotation.y = Math.sin(this.walkPhase * 0.7) * 0.45;
     parts.head.rotation.z = Math.sin(this.walkPhase * 0.5) * 0.05;

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GAME_CONSTANTS, type CharacterId, type PlanetSpec, type StructureSpec } from '../types';
+import { GAME_CONSTANTS, type CharacterId, type PlanetSpec, type PropKind, type StructureSpec } from '../types';
 import { orientObjectOnSphere } from '../math/spherical';
 import { addComicOutline, createComicCelMaterial, createToonMaterial, type ComicCelOptions } from './toonMaterials';
 
@@ -247,10 +247,207 @@ function buildNeckwear(id: CharacterId, palette: CharacterPalette): THREE.Group 
   return neckwear;
 }
 
+// ============================================================================
+// Skins temáticas estilo Persona 5 (antifaz, capa, taladro, jetpack)
+// ============================================================================
+
+/**
+ * Extras temáticos P5 por personaje (subgrupos nombrados para animación):
+ * - Kitsune (Ladrón Fantasma): antifaz rojo/negro sobre los ojos, capa larga
+ *   trasera (`cape`) que ondea con la velocidad y kunai en la mano.
+ * - Digger (Minero Mecha): visor luminoso cian/amarillo, mochila taladro con
+ *   broca (`drill`) que gira al excavar y guanteletes pesados.
+ * - Axel (Piloto Espacial): gafas de aviador en la frente, doble propulsor
+ *   jetpack con llamas cian (`flameL`/`flameR`) y bufanda larga (`cape`).
+ */
+function buildCharacterSkinExtras(
+  id: CharacterId,
+  palette: CharacterPalette,
+  group: THREE.Group,
+  head: THREE.Group
+): void {
+  if (id === 'kitsune') {
+    // Antifaz rojo/negro estilo Phantom Thief sobre los ojos.
+    const maskBase = new THREE.Mesh(
+      new THREE.BoxGeometry(0.78, 0.26, 0.18),
+      createToonMaterial('#0b0b12')
+    );
+    maskBase.position.set(0, 0.1, 0.42);
+    head.add(maskBase);
+    const maskRed = new THREE.Mesh(
+      new THREE.BoxGeometry(0.7, 0.18, 0.14),
+      createToonMaterial('#dc2626')
+    );
+    maskRed.position.set(0, 0.1, 0.5);
+    head.add(maskRed);
+    for (const side of [-1, 1]) {
+      const slit = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.05, 0.04),
+        new THREE.MeshBasicMaterial({ color: 0xfff7ed })
+      );
+      slit.position.set(0.2 * side, 0.12, 0.56);
+      head.add(slit);
+    }
+
+    // Capa larga trasera que ondea con la velocidad (animada por el controlador).
+    const cape = new THREE.Group();
+    cape.name = 'cape';
+    cape.position.set(0, 0.92, -0.3);
+    const capeColors = ['#dc2626', '#b91c1c'];
+    for (let i = 0; i < 3; i++) {
+      const panel = toonMesh(
+        new THREE.BoxGeometry(0.62 - i * 0.08, 0.36, 0.05),
+        capeColors[i % 2],
+        0.014
+      );
+      panel.position.set(0, -0.18 - i * 0.3, -0.04 - i * 0.1);
+      cape.add(panel);
+    }
+    group.add(cape);
+
+    // Kunai sujeto en la mano derecha + aura tenue.
+    const rightArm = group.getObjectByName('rightArm');
+    if (rightArm) {
+      const kunai = new THREE.Group();
+      kunai.name = 'kunai';
+      const handle = toonMesh(
+        new THREE.CylinderGeometry(0.03, 0.03, 0.22, 6),
+        '#18181b',
+        0.01
+      );
+      kunai.add(handle);
+      const blade = toonMesh(new THREE.ConeGeometry(0.05, 0.2, 6), '#e2e8f0', 0.01);
+      blade.position.y = 0.2;
+      kunai.add(blade);
+      kunai.position.set(0, -0.36, 0.1);
+      kunai.rotation.x = 0.9;
+      rightArm.add(kunai);
+      const aura = new THREE.Mesh(
+        new THREE.SphereGeometry(0.09, 8, 6),
+        new THREE.MeshBasicMaterial({
+          color: 0xf97316,
+          transparent: true,
+          opacity: 0.5,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      aura.position.set(0, -0.36, 0.1);
+      rightArm.add(aura);
+    }
+  } else if (id === 'digger') {
+    // Visor luminoso cian/amarillo sobre los ojos.
+    const visor = new THREE.Mesh(
+      new THREE.BoxGeometry(0.72, 0.18, 0.14),
+      new THREE.MeshBasicMaterial({ color: 0x22d3ee })
+    );
+    visor.position.set(0, 0.1, 0.46);
+    head.add(visor);
+    for (const side of [-1, 1]) {
+      const lens = new THREE.Mesh(
+        new THREE.BoxGeometry(0.18, 0.06, 0.04),
+        new THREE.MeshBasicMaterial({ color: 0xfde047 })
+      );
+      lens.position.set(0.2 * side, 0.1, 0.52);
+      head.add(lens);
+    }
+
+    // Mochila taladro trasera con broca giratoria (`drill`).
+    const pack = toonMesh(new THREE.BoxGeometry(0.5, 0.5, 0.26), '#3f3f46', 0.016);
+    pack.position.set(0, 0.62, -0.44);
+    group.add(pack);
+    const drill = new THREE.Group();
+    drill.name = 'drill';
+    drill.position.set(0, 0.5, -0.62);
+    drill.rotation.x = Math.PI / 2 + 0.35;
+    const drillShaft = toonMesh(
+      new THREE.CylinderGeometry(0.07, 0.07, 0.3, 8),
+      '#71717a',
+      0.012
+    );
+    drill.add(drillShaft);
+    // Broca de 4 lados: el giro es visible al excavar.
+    const drillBit = toonMesh(new THREE.ConeGeometry(0.13, 0.5, 4), '#facc15', 0.014);
+    drillBit.position.y = 0.38;
+    drill.add(drillBit);
+    group.add(drill);
+
+    // Guanteletes pesados en ambas manos.
+    for (const armName of ['leftArm', 'rightArm']) {
+      const arm = group.getObjectByName(armName);
+      if (!arm) continue;
+      const gauntlet = toonMesh(new THREE.SphereGeometry(0.15, 10, 8), '#52525b', 0.014);
+      gauntlet.position.set(0, -0.34, 0.04);
+      gauntlet.scale.set(1.1, 0.9, 1.2);
+      arm.add(gauntlet);
+    }
+  } else {
+    // Gafas de aviador reposando en la frente.
+    for (const side of [-1, 1]) {
+      const goggle = new THREE.Mesh(
+        new THREE.TorusGeometry(0.11, 0.045, 8, 16),
+        createToonMaterial('#78350f')
+      );
+      goggle.position.set(0.19 * side, 0.36, 0.4);
+      head.add(goggle);
+      const lens = new THREE.Mesh(
+        new THREE.SphereGeometry(0.09, 10, 8),
+        new THREE.MeshBasicMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.75 })
+      );
+      lens.position.set(0.19 * side, 0.36, 0.44);
+      head.add(lens);
+    }
+
+    // Doble propulsor jetpack trasero con llamas cian animables.
+    const pack = toonMesh(new THREE.BoxGeometry(0.46, 0.44, 0.22), '#0c4a6e', 0.016);
+    pack.position.set(0, 0.66, -0.42);
+    group.add(pack);
+    for (const side of [-1, 1]) {
+      const thruster = toonMesh(
+        new THREE.CylinderGeometry(0.09, 0.11, 0.34, 8),
+        '#e0f2fe',
+        0.012
+      );
+      thruster.position.set(0.14 * side, 0.6, -0.52);
+      group.add(thruster);
+      const flame = new THREE.Mesh(
+        new THREE.ConeGeometry(0.09, 0.5, 8),
+        new THREE.MeshBasicMaterial({
+          color: 0x22d3ee,
+          transparent: true,
+          opacity: 0.85,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      flame.name = side < 0 ? 'flameL' : 'flameR';
+      flame.rotation.x = Math.PI - 0.35;
+      flame.position.set(0.14 * side, 0.36, -0.56);
+      flame.visible = false;
+      group.add(flame);
+    }
+
+    // Bufanda larga ondeante trasera (`cape`, animada con la velocidad).
+    const cape = new THREE.Group();
+    cape.name = 'cape';
+    cape.position.set(0, 0.92, -0.28);
+    for (let i = 0; i < 3; i++) {
+      const panel = toonMesh(
+        new THREE.BoxGeometry(0.2, 0.34, 0.05),
+        i % 2 === 0 ? '#22d3ee' : '#0891b2',
+        0.012
+      );
+      panel.position.set((i % 2 === 0 ? -1 : 1) * 0.06, -0.16 - i * 0.3, -0.05 - i * 0.12);
+      cape.add(panel);
+    }
+    group.add(cape);
+  }
+}
+
 /**
  * Construye el modelo modular de un personaje del escuadrón.
  * Subgrupos nombrados para animación: body, head, leftArm, rightArm,
- * leftLeg, rightLeg, tail. El modelo mira hacia +Z.
+ * leftLeg, rightLeg, tail (+ cape/drill/flames de la skin P5). Mira hacia +Z.
  */
 export function buildCharacterModel(id: CharacterId): THREE.Group {
   const profile = GAME_CONSTANTS.CHARACTERS[id];
@@ -315,6 +512,9 @@ export function buildCharacterModel(id: CharacterId): THREE.Group {
   // --- Cola ---
   group.add(buildTail(id, palette));
 
+  // --- Skin temática P5 (antifaz/capa, visor/taladro, goggles/jetpack) ---
+  buildCharacterSkinExtras(id, palette, group, head);
+
   return group;
 }
 
@@ -351,28 +551,348 @@ function buildRock(): THREE.Group {
 }
 
 // ============================================================================
-// Atmósfera con degradado suave (sin cortes poligonales en el horizonte)
+// Props ambientales (Aldea Feudal de Verdant, Cryo-Drop, Iron Bastion)
+// ============================================================================
+
+/** Torii japonés: dos pilares rojos + dintel negro curvado hacia arriba. */
+function buildToriiGate(): THREE.Group {
+  const gate = new THREE.Group();
+  for (const side of [-1, 1]) {
+    const pillar = toonMesh(new THREE.CylinderGeometry(0.22, 0.26, 3.4, 8), '#dc2626', 0.02);
+    pillar.position.set(1.5 * side, 1.7, 0);
+    gate.add(pillar);
+  }
+  const lintel = toonMesh(new THREE.BoxGeometry(4.2, 0.34, 0.4), '#18181b', 0.02);
+  lintel.position.y = 3.5;
+  lintel.rotation.z = 0.03;
+  gate.add(lintel);
+  const lintelTop = toonMesh(new THREE.BoxGeometry(4.6, 0.22, 0.44), '#18181b', 0.02);
+  lintelTop.position.y = 3.78;
+  gate.add(lintelTop);
+  const tieBeam = toonMesh(new THREE.BoxGeometry(3.2, 0.24, 0.3), '#dc2626', 0.018);
+  tieBeam.position.y = 2.9;
+  gate.add(tieBeam);
+  return gate;
+}
+
+/** Casa feudal: base de madera oscura, muros claros y tejado a cuatro aguas. */
+function buildVillageHouse(): THREE.Group {
+  const house = new THREE.Group();
+  const base = toonMesh(new THREE.BoxGeometry(3.2, 0.5, 2.8), '#5b3a1e', 0.024);
+  base.position.y = 0.25;
+  house.add(base);
+  const walls = toonMesh(new THREE.BoxGeometry(2.9, 1.7, 2.5), '#f5e6c8', 0.024);
+  walls.position.y = 1.3;
+  house.add(walls);
+  const beam = toonMesh(new THREE.BoxGeometry(3.0, 0.18, 2.6), '#7c4a21', 0.016);
+  beam.position.y = 2.2;
+  house.add(beam);
+  // Tejado a cuatro aguas (pirámide achatada).
+  const roof = toonMesh(new THREE.ConeGeometry(2.6, 1.3, 4), '#3f2a1a', 0.026);
+  roof.position.y = 2.9;
+  roof.rotation.y = Math.PI / 4;
+  roof.scale.set(1.12, 1, 0.95);
+  house.add(roof);
+  const ridge = toonMesh(new THREE.BoxGeometry(2.4, 0.16, 0.3), '#1f1410', 0.016);
+  ridge.position.y = 3.5;
+  house.add(ridge);
+  // Puerta corredera de papel.
+  const door = toonMesh(new THREE.BoxGeometry(1.0, 1.3, 0.08), '#e8d5a3', 0.014);
+  door.position.set(0, 1.05, 1.28);
+  house.add(door);
+  return house;
+}
+
+/** Pagoda de dos pisos con aleros voladizos. */
+function buildPagodaHouse(): THREE.Group {
+  const pagoda = new THREE.Group();
+  const base = toonMesh(new THREE.CylinderGeometry(2.0, 2.2, 0.5, 8), '#6b4423', 0.024);
+  base.position.y = 0.25;
+  pagoda.add(base);
+  const floor1 = toonMesh(new THREE.CylinderGeometry(1.5, 1.6, 1.6, 8), '#f5e6c8', 0.024);
+  floor1.position.y = 1.3;
+  pagoda.add(floor1);
+  const eaves1 = toonMesh(new THREE.ConeGeometry(2.4, 0.7, 8), '#7f1d1d', 0.024);
+  eaves1.position.y = 2.4;
+  pagoda.add(eaves1);
+  const floor2 = toonMesh(new THREE.CylinderGeometry(1.1, 1.2, 1.2, 8), '#f5e6c8', 0.022);
+  floor2.position.y = 3.3;
+  pagoda.add(floor2);
+  const eaves2 = toonMesh(new THREE.ConeGeometry(1.9, 0.7, 8), '#7f1d1d', 0.022);
+  eaves2.position.y = 4.2;
+  pagoda.add(eaves2);
+  const spire = toonMesh(new THREE.ConeGeometry(0.16, 0.9, 6), '#facc15', 0.016);
+  spire.position.y = 4.9;
+  pagoda.add(spire);
+  return pagoda;
+}
+
+/** Farolillo de papel colgante con luz cálida. */
+function buildPaperLantern(): THREE.Group {
+  const lantern = new THREE.Group();
+  const cord = toonMesh(new THREE.CylinderGeometry(0.03, 0.03, 0.7, 5), '#3f2a1a', 0.01);
+  cord.position.y = 2.35;
+  lantern.add(cord);
+  const body = new THREE.Mesh(
+    new THREE.SphereGeometry(0.42, 12, 10),
+    new THREE.MeshBasicMaterial({ color: 0xffb454, transparent: true, opacity: 0.92 })
+  );
+  body.position.y = 1.85;
+  body.scale.set(1, 1.15, 1);
+  lantern.add(body);
+  for (const dy of [-0.42, 0.42]) {
+    const cap = toonMesh(new THREE.CylinderGeometry(0.2, 0.2, 0.1, 10), '#7f1d1d', 0.012);
+    cap.position.y = 1.85 + dy;
+    lantern.add(cap);
+  }
+  const tassel = toonMesh(new THREE.ConeGeometry(0.08, 0.3, 6), '#facc15', 0.01);
+  tassel.position.y = 1.25;
+  lantern.add(tassel);
+  return lantern;
+}
+
+/** Clúster de bambú: 4-5 tallos verdes con nodos. */
+function buildBambooCluster(): THREE.Group {
+  const cluster = new THREE.Group();
+  for (let i = 0; i < 5; i++) {
+    const height = 2.6 + (i % 3) * 0.7;
+    const stalk = toonMesh(
+      new THREE.CylinderGeometry(0.07, 0.09, height, 6),
+      i % 2 === 0 ? '#4ade80' : '#22c55e',
+      0.014
+    );
+    stalk.position.set(((i % 3) - 1) * 0.28, height / 2, ((i % 2) - 0.5) * 0.3);
+    stalk.rotation.z = ((i % 3) - 1) * 0.06;
+    cluster.add(stalk);
+    const leaves = toonMesh(new THREE.ConeGeometry(0.3, 0.7, 5), '#16a34a', 0.014);
+    leaves.position.set(stalk.position.x + 0.2, height, stalk.position.z);
+    leaves.rotation.z = -0.7;
+    cluster.add(leaves);
+  }
+  return cluster;
+}
+
+/** Camino de piedra: losas planas hexagonales en línea. */
+function buildStonePath(): THREE.Group {
+  const path = new THREE.Group();
+  for (let i = 0; i < 5; i++) {
+    const slab = toonMesh(
+      new THREE.CylinderGeometry(0.55, 0.6, 0.16, 6),
+      i % 2 === 0 ? '#a8a29e' : '#d6d3d1',
+      0.016
+    );
+    slab.position.set(((i % 2) - 0.5) * 0.5, 0.08, i * 1.15 - 2.3);
+    path.add(slab);
+  }
+  return path;
+}
+
+/** Puente de madera decorativo bajo con tablones y cuerdas. */
+function buildWoodBridge(): THREE.Group {
+  const bridge = new THREE.Group();
+  for (let i = 0; i < 6; i++) {
+    const plank = toonMesh(new THREE.BoxGeometry(1.6, 0.12, 0.42), '#a16207', 0.014);
+    plank.position.set(0, 0.35, i * 0.55 - 1.4);
+    bridge.add(plank);
+  }
+  for (const side of [-1, 1]) {
+    const rail = toonMesh(new THREE.CylinderGeometry(0.05, 0.05, 3.4, 5), '#7c4a21', 0.012);
+    rail.rotation.x = Math.PI / 2;
+    rail.position.set(0.85 * side, 0.75, 0);
+    bridge.add(rail);
+    for (const z of [-1.2, 0, 1.2]) {
+      const post = toonMesh(new THREE.CylinderGeometry(0.06, 0.07, 0.7, 5), '#7c4a21', 0.012);
+      post.position.set(0.85 * side, 0.6, z);
+      bridge.add(post);
+    }
+  }
+  return bridge;
+}
+
+/** Cristal de hielo gigante: prismas azul claro translúcidos brillantes. */
+function buildIceCrystal(): THREE.Group {
+  const crystal = new THREE.Group();
+  const shardColors = ['#bae6fd', '#e0f2fe', '#7dd3fc'];
+  for (let i = 0; i < 4; i++) {
+    const height = 2.2 + (i % 3) * 1.3;
+    const shard = toonMesh(
+      new THREE.ConeGeometry(0.42 + (i % 2) * 0.2, height, 5),
+      shardColors[i % 3],
+      0.02
+    );
+    shard.position.set(((i % 3) - 1) * 0.55, height / 2, ((i % 2) - 0.5) * 0.6);
+    shard.rotation.z = ((i % 3) - 1) * 0.14;
+    crystal.add(shard);
+  }
+  return crystal;
+}
+
+/** Iglú/cúpula polar de nieve con túnel de entrada. */
+function buildIgloo(): THREE.Group {
+  const igloo = new THREE.Group();
+  const dome = toonMesh(new THREE.SphereGeometry(1.6, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), '#f8fafc', 0.022);
+  igloo.add(dome);
+  const entrance = toonMesh(
+    new THREE.CylinderGeometry(0.5, 0.5, 1.0, 8, 1, false, 0, Math.PI),
+    '#e2e8f0',
+    0.016
+  );
+  entrance.rotation.z = Math.PI / 2;
+  entrance.position.set(0, 0.45, 1.7);
+  igloo.add(entrance);
+  return igloo;
+}
+
+/** Tubería industrial acodada con bridas. */
+function buildPipe(): THREE.Group {
+  const pipe = new THREE.Group();
+  const horizontal = toonMesh(new THREE.CylinderGeometry(0.3, 0.3, 3.2, 10), '#57534e', 0.018);
+  horizontal.rotation.z = Math.PI / 2;
+  horizontal.position.y = 0.6;
+  pipe.add(horizontal);
+  const vertical = toonMesh(new THREE.CylinderGeometry(0.3, 0.3, 1.6, 10), '#57534e', 0.018);
+  vertical.position.set(1.6, 1.2, 0);
+  pipe.add(vertical);
+  for (const x of [-1.2, 0.4, 1.6]) {
+    const flange = toonMesh(new THREE.CylinderGeometry(0.42, 0.42, 0.14, 10), '#a8a29e', 0.014);
+    flange.rotation.z = Math.PI / 2;
+    flange.position.set(x, 0.6, 0);
+    pipe.add(flange);
+  }
+  return pipe;
+}
+
+/** Antena de comunicaciones con plato y luz roja intermitente. */
+function buildAntenna(): THREE.Group {
+  const antenna = new THREE.Group();
+  const mast = toonMesh(new THREE.CylinderGeometry(0.1, 0.16, 4.2, 8), '#64748b', 0.016);
+  mast.position.y = 2.1;
+  antenna.add(mast);
+  const dish = toonMesh(new THREE.SphereGeometry(0.7, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2.6), '#94a3b8', 0.016);
+  dish.position.set(0, 4.1, 0);
+  dish.rotation.x = -0.7;
+  antenna.add(dish);
+  const beacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.12, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xef4444 })
+  );
+  beacon.position.y = 4.5;
+  antenna.add(beacon);
+  for (const side of [-1, 1]) {
+    const guy = toonMesh(new THREE.CylinderGeometry(0.03, 0.03, 2.6, 5), '#475569', 0.01);
+    guy.position.set(0.7 * side, 1.3, 0);
+    guy.rotation.z = 0.55 * side;
+    antenna.add(guy);
+  }
+  return antenna;
+}
+
+/** Reactor de energía: núcleo brillante entre dos soportes. */
+function buildReactor(): THREE.Group {
+  const reactor = new THREE.Group();
+  for (const side of [-1, 1]) {
+    const leg = toonMesh(new THREE.BoxGeometry(0.4, 1.6, 0.4), '#334155', 0.018);
+    leg.position.set(0.8 * side, 0.8, 0);
+    reactor.add(leg);
+  }
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.75, 1),
+    new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.9 })
+  );
+  core.position.y = 1.9;
+  reactor.add(core);
+  const cage = toonMesh(new THREE.TorusGeometry(0.85, 0.08, 8, 20), '#475569', 0.014);
+  cage.position.y = 1.9;
+  cage.rotation.x = Math.PI / 2;
+  reactor.add(cage);
+  return reactor;
+}
+
+/** Foco de vigilancia sobre poste con haz cálido. */
+function buildSpotlight(): THREE.Group {
+  const spot = new THREE.Group();
+  const pole = toonMesh(new THREE.CylinderGeometry(0.09, 0.12, 3.4, 8), '#334155', 0.016);
+  pole.position.y = 1.7;
+  spot.add(pole);
+  const head = toonMesh(new THREE.CylinderGeometry(0.34, 0.5, 0.5, 10), '#1f2937', 0.016);
+  head.position.set(0, 3.5, 0.1);
+  head.rotation.x = 0.6;
+  spot.add(head);
+  const lens = new THREE.Mesh(
+    new THREE.SphereGeometry(0.2, 10, 8),
+    new THREE.MeshBasicMaterial({ color: 0xfde68a })
+  );
+  lens.position.set(0, 3.35, 0.32);
+  spot.add(lens);
+  return spot;
+}
+
+/** Pino reutilizable como prop (el mismo builder de los planetas). */
+function buildPineTreeProp(): THREE.Group {
+  return buildPineTree();
+}
+
+/**
+ * Construye el mesh de un prop ambiental por su tipo. Los props no tienen
+ * colisión: son set dressing (aldea feudal, cristales, maquinaria).
+ */
+export function buildPropMesh(kind: PropKind): THREE.Group {
+  switch (kind) {
+    case 'torii_gate':
+      return buildToriiGate();
+    case 'pagoda_house':
+      return buildPagodaHouse();
+    case 'village_house':
+      return buildVillageHouse();
+    case 'paper_lantern':
+      return buildPaperLantern();
+    case 'bamboo_cluster':
+      return buildBambooCluster();
+    case 'pine_tree':
+      return buildPineTreeProp();
+    case 'stone_path':
+      return buildStonePath();
+    case 'wood_bridge':
+      return buildWoodBridge();
+    case 'ice_crystal':
+      return buildIceCrystal();
+    case 'igloo':
+      return buildIgloo();
+    case 'pipe':
+      return buildPipe();
+    case 'antenna':
+      return buildAntenna();
+    case 'reactor':
+      return buildReactor();
+    case 'spotlight':
+      return buildSpotlight();
+  }
+}
+
+// ============================================================================
+// Atmósfera con brillo Fresnel aditivo en el borde (referencia_visual.html
+// líneas 420-447): AdditiveBlending + rim = pow(1 - max(dot(vN, vV), 0), 4.2)
+// para que brille SOLO en el limbo del planeta, sin bandas oscuras ni cortes.
 // ============================================================================
 
 const atmosphereVertexShader = /* glsl */ `
-  varying vec3 vNormal;
-  varying vec3 vViewDir;
+  varying vec3 vN;
+  varying vec3 vV;
   void main() {
-    vNormal = normalize( normalMatrix * normal );
-    vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
-    vViewDir = normalize( -mvPosition.xyz );
-    gl_Position = projectionMatrix * mvPosition;
+    vec4 wp = modelMatrix * vec4( position, 1.0 );
+    vN = normalize( mat3( modelMatrix ) * normal );
+    vV = normalize( cameraPosition - wp.xyz );
+    gl_Position = projectionMatrix * viewMatrix * wp;
   }
 `;
 
 const atmosphereFragmentShader = /* glsl */ `
   uniform vec3 uColor;
-  varying vec3 vNormal;
-  varying vec3 vViewDir;
+  varying vec3 vN;
+  varying vec3 vV;
   void main() {
-    float rim = pow( 1.0 - abs( dot( vNormal, vViewDir ) ), 1.5 );
-    float alpha = 0.03 + rim * 0.12;
-    gl_FragColor = vec4( uColor, alpha );
+    float rim = pow( 1.0 - max( dot( vN, vV ), 0.0 ), 4.2 );
+    gl_FragColor = vec4( uColor, rim * 0.55 );
   }
 `;
 
@@ -401,7 +921,7 @@ export function buildPlanetModel(spec: PlanetSpec): {
   sphere.position.copy(center);
   group.add(sphere);
 
-  // --- Atmósfera sutil: 64x48 segmentos + degradado fresnel de baja opacidad ---
+  // --- Atmósfera: brillo Fresnel aditivo solo en el limbo del planeta ---
   const atmosphere = new THREE.Mesh(
     new THREE.SphereGeometry(spec.radius * 1.06, 64, 48),
     new THREE.ShaderMaterial({
@@ -410,6 +930,7 @@ export function buildPlanetModel(spec: PlanetSpec): {
       uniforms: { uColor: { value: new THREE.Color(spec.atmosphereColor) } },
       transparent: true,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
       side: THREE.FrontSide,
       fog: false,
     })
@@ -443,8 +964,11 @@ export function buildPlanetModel(spec: PlanetSpec): {
     group.add(patch);
   }
 
-  // --- Árboles y rocas en superficie ---
-  const propCount = spec.biome === 'cryo' ? 5 : 8;
+  // --- Árboles y rocas en superficie (Verdant luce mucho más poblado) ---
+  let propCount = 8;
+  if (spec.biome === 'verdant') propCount = 16;
+  else if (spec.biome === 'cryo') propCount = 8;
+  else if (spec.biome === 'bastion' || spec.biome === 'kronos') propCount = 6;
   for (let i = 0; i < propCount; i++) {
     const u = random();
     const phi = random() * Math.PI * 2;
@@ -1052,6 +1576,24 @@ function lighten(color: string | number, amount = 0.18): number {
   return new THREE.Color(color).offsetHSL(0, 0.04, amount).getHex();
 }
 
+/** Cimiento que baja 2 m bajo la superficie: ancla visual sobre la esfera curva. */
+const FOUNDATION_DEPTH = 2.0;
+
+function addFoundation(
+  group: THREE.Group,
+  halfX: number,
+  halfZ: number,
+  color: string
+): void {
+  const foundation = celMesh(
+    new THREE.BoxGeometry(halfX * 2 * 1.06, FOUNDATION_DEPTH, halfZ * 2 * 1.06),
+    color,
+    0.02
+  );
+  foundation.position.y = -FOUNDATION_DEPTH / 2;
+  group.add(foundation);
+}
+
 function buildWallMesh(
   group: THREE.Group,
   halfX: number,
@@ -1059,6 +1601,7 @@ function buildWallMesh(
   halfZ: number,
   color: string
 ): void {
+  addFoundation(group, halfX, halfZ, color);
   const body = celMesh(new THREE.BoxGeometry(halfX * 2, heightY, halfZ * 2), color, 0.028);
   body.position.y = heightY / 2;
   group.add(body);
@@ -1093,6 +1636,7 @@ function buildTowerMesh(
   halfZ: number,
   color: string
 ): void {
+  addFoundation(group, halfX * 0.9, halfZ * 0.9, color);
   // Fuste elevado.
   const shaft = celMesh(
     new THREE.BoxGeometry(halfX * 1.5, heightY - 1.4, halfZ * 1.5),
@@ -1141,6 +1685,7 @@ function buildBunkerMesh(
   halfZ: number,
   color: string
 ): void {
+  addFoundation(group, halfX, halfZ, color);
   const body = celMesh(new THREE.BoxGeometry(halfX * 2, heightY, halfZ * 2), color, 0.03);
   body.position.y = heightY / 2;
   group.add(body);
@@ -1170,15 +1715,17 @@ function buildArchGateMesh(
   color: string
 ): void {
   // El collider es el dintel flotante (a `altitude` sobre el suelo): se pasa
-  // andando o por debajo. Los pilares son el marco visual.
+  // andando o por debajo. Los pilares son el marco visual y bajan 2 m extra
+  // para no flotar sobre la esfera curva.
   const accent = lighten(color);
+  const pillarHeight = altitude + FOUNDATION_DEPTH;
   for (const side of [-1, 1]) {
     const pillar = celMesh(
-      new THREE.BoxGeometry(0.9, altitude, halfZ * 2),
+      new THREE.BoxGeometry(0.9, pillarHeight, halfZ * 2),
       color,
       0.026
     );
-    pillar.position.set((halfX - 0.45) * side, -altitude / 2, 0);
+    pillar.position.set((halfX - 0.45) * side, -pillarHeight / 2, 0);
     group.add(pillar);
     const cap = celMesh(
       new THREE.BoxGeometry(1.15, 0.35, halfZ * 2 * 1.1),
@@ -1360,36 +1907,48 @@ export function buildStructureMesh(
 // ============================================================================
 
 /**
- * Burbuja de escudo energético translúcida (radius * 1.18) con retícula
- * facetada brillante: los planetas protegidos se ven claramente escudados
- * en el cielo desde cualquier parte del sistema.
+ * Cinturón de Asteroides Interceptores: 5 rocas grandes rojas/oscuras con
+ * contorno cómic que orbitan rápido alrededor de un planeta "protegido".
+ * Sustituye al antiguo domo de escudo translúcido: el planeta sigue siendo
+ * accesible físicamente, pero cruzar la tormenta tiene riesgo de impacto.
  */
-export function buildPlanetShieldMesh(radius: number, color: string): THREE.Mesh {
-  const shield = new THREE.Mesh(
-    new THREE.SphereGeometry(radius * 1.18, 48, 32),
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.24,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    })
-  );
-  shield.name = 'planetShield';
+export function buildInterceptorBelt(planetRadius: number): {
+  group: THREE.Group;
+  asteroidCount: number;
+  asteroidRadii: number[];
+  orbitRadii: number[];
+  heights: number[];
+  baseAngles: number[];
+  speeds: number[];
+} {
+  const group = new THREE.Group();
+  group.name = 'interceptorBelt';
 
-  // Retícula facetada (hexagonal vista desde lejos) para leer "escudo".
-  const lattice = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(radius * 1.185, 3),
-    new THREE.MeshBasicMaterial({
-      color,
-      wireframe: true,
-      transparent: true,
-      opacity: 0.32,
-      depthWrite: false,
-    })
-  );
-  shield.add(lattice);
-  return shield;
+  const asteroidCount = 5;
+  const asteroidRadii: number[] = [];
+  const orbitRadii: number[] = [];
+  const heights: number[] = [];
+  const baseAngles: number[] = [];
+  const speeds: number[] = [];
+
+  const rockColors = ['#7f1d1d', '#450a0a', '#991b1b', '#5b1113', '#85222a'];
+  for (let i = 0; i < asteroidCount; i++) {
+    const size = planetRadius * (0.085 + (i % 3) * 0.02);
+    const asteroid = toonMesh(
+      new THREE.DodecahedronGeometry(size, 0),
+      rockColors[i % rockColors.length],
+      size * 0.16
+    );
+    asteroid.name = `interceptor-${i}`;
+    group.add(asteroid);
+    asteroidRadii.push(size);
+    orbitRadii.push(planetRadius * (1.3 + (i % 2) * 0.18));
+    heights.push(((i % 3) - 1) * planetRadius * 0.22);
+    baseAngles.push((i / asteroidCount) * Math.PI * 2);
+    speeds.push(0.85 + (i % 2) * 0.28); // rad/s: órbita rápida y visible
+  }
+
+  return { group, asteroidCount, asteroidRadii, orbitRadii, heights, baseAngles, speeds };
 }
 
 /**
@@ -1444,26 +2003,49 @@ export function buildBeaconBeam(color: string, height = 16): THREE.Mesh {
 }
 
 /**
- * Cono de visión pegado al suelo: sector circular plano en XZ con ápice en
- * (0, 0.08, 0) abriéndose hacia +Z (el frente del guardia). El material es
- * básico transparente para recolorearlo en vivo (verde/ámbar patrulla,
- * amarillo investigando, rojo combate).
+ * Cono de visión pegado al suelo: sector circular subdividido en 6 anillos
+ * radiales cuya altura se curva con la esfera (`y = 0.14 - r²/(2·R)`) para que
+ * el cono abrace el planeta y JAMÁS atraviese el horizonte ni apunte al cielo.
+ * El ápice está en (0, 0.14, 0) abriéndose hacia +Z (el frente del guardia).
+ * El material es básico transparente para recolorearlo en vivo (verde/ámbar
+ * patrulla, amarillo investigando, rojo combate).
  */
 export function buildVisionConeMesh(
   range: number,
-  halfAngleRad: number
+  halfAngleRad: number,
+  planetRadius: number
 ): { mesh: THREE.Mesh; material: THREE.MeshBasicMaterial } {
   const segments = 24;
-  const y = 0.08;
-  const positions: number[] = [0, y, 0];
-  for (let i = 0; i <= segments; i++) {
-    const ang = -halfAngleRad + (i / segments) * halfAngleRad * 2;
-    positions.push(Math.sin(ang) * range, y, Math.cos(ang) * range);
+  const rings = 6;
+  const apexY = 0.14;
+  const ringHeight = (r: number): number => apexY - (r * r) / (2 * planetRadius);
+
+  // Vértices: ápice + 6 anillos radiales de `segments + 1` puntos.
+  const positions: number[] = [0, apexY, 0];
+  for (let ring = 1; ring <= rings; ring++) {
+    const r = (ring / rings) * range;
+    const y = ringHeight(r);
+    for (let i = 0; i <= segments; i++) {
+      const ang = -halfAngleRad + (i / segments) * halfAngleRad * 2;
+      positions.push(Math.sin(ang) * r, y, Math.cos(ang) * r);
+    }
   }
+
+  // Índices: abanico del ápice al primer anillo + quads entre anillos.
   const indices: number[] = [];
+  const ringStride = segments + 1;
   for (let i = 1; i <= segments; i++) {
     indices.push(0, i, i + 1);
   }
+  for (let ring = 1; ring < rings; ring++) {
+    const base = 1 + (ring - 1) * ringStride;
+    const next = base + ringStride;
+    for (let i = 0; i < segments; i++) {
+      indices.push(base + i, next + i, base + i + 1);
+      indices.push(base + i + 1, next + i, next + i + 1);
+    }
+  }
+
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setIndex(indices);

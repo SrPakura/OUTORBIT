@@ -381,10 +381,10 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
           )}
           {snapshot.gravityTargetBlockedReason && (
             <div className="mt-1.5 flex flex-col items-center gap-0.5">
-              <p className="animate-pulse rounded-lg border-2 border-red-500 bg-black/80 px-3 py-1 text-xs font-black tracking-[0.25em] text-red-400 shadow-[0_0_16px_rgba(248,113,113,0.55)]">
-                ESCUDO ACTIVO
+              <p className="animate-pulse rounded-lg border-2 border-amber-400 bg-black/80 px-3 py-1 text-xs font-black tracking-[0.25em] text-amber-300 shadow-[0_0_16px_rgba(251,191,36,0.55)]">
+                TORMENTA ORBITAL ACTIVA
               </p>
-              <p className="max-w-[420px] text-[10px] font-bold leading-snug text-red-300 drop-shadow-[1px_1px_0_#000]">
+              <p className="max-w-[420px] text-[10px] font-bold leading-snug text-amber-200 drop-shadow-[1px_1px_0_#000]">
                 {snapshot.gravityTargetBlockedReason}
               </p>
             </div>

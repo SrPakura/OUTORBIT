@@ -5,6 +5,8 @@ import type {
   GrassZoneSpec,
   InteractableKind,
   PlanetSpec,
+  PropKind,
+  PropSpec,
   StructureKind,
   StructureSpec,
   WaterBubbleSpec,
@@ -176,6 +178,24 @@ function obj(
   };
 }
 
+/** Prop ambiental temático (torii, pagoda, farolillo, cristal, reactor...). */
+function prop(
+  planetId: string,
+  id: string,
+  kind: PropKind,
+  dir: [number, number, number],
+  options: { yaw?: number; scale?: number } = {}
+): PropSpec {
+  return {
+    id,
+    kind,
+    planetId,
+    sphericalDir: dir,
+    yaw: options.yaw,
+    scale: options.scale,
+  };
+}
+
 /** Burbuja de agua en órbita: centro absoluto = planetCenter + dir * (R + alt). */
 function orbitBubble(
   id: string,
@@ -234,7 +254,7 @@ export const GALAXY_PLANETS: PlanetSpec[] = [
     subtitle: 'Micro-base de entrenamiento',
     biome: 'tutorial',
     center: [0, 0, 0],
-    radius: 56,
+    radius: 72,
     gravityStrength: 1.0,
     surfaceColor: '#cbd5e1',
     patchColor: '#94a3b8',
@@ -246,16 +266,16 @@ export const GALAXY_PLANETS: PlanetSpec[] = [
     id: 'verdant-pradera',
     order: 1,
     name: 'Verdant',
-    subtitle: 'Pradera de los complejos militares',
+    subtitle: 'Pradera de la aldea feudal y los complejos militares',
     biome: 'verdant',
-    center: [280, 35, -140],
-    radius: 105,
+    center: [300, 40, -150],
+    radius: 135,
     gravityStrength: 1.1,
     surfaceColor: '#4ade80',
     patchColor: '#16a34a',
     atmosphereColor: '#bbf7d0',
     hasWaterShell: true,
-    waterRadius: 106.5,
+    waterRadius: 136.5,
     unlockedByPlanetId: 'luna-tutorial',
   },
   {
@@ -264,8 +284,8 @@ export const GALAXY_PLANETS: PlanetSpec[] = [
     name: 'Cryo-Drop',
     subtitle: 'Glaciar de burbujas orbitales',
     biome: 'cryo',
-    center: [-150, 115, -420],
-    radius: 112,
+    center: [-160, 125, -450],
+    radius: 145,
     gravityStrength: 0.95,
     surfaceColor: '#bae6fd',
     patchColor: '#f8fafc',
@@ -279,8 +299,8 @@ export const GALAXY_PLANETS: PlanetSpec[] = [
     name: 'Iron Bastion',
     subtitle: 'Fortaleza mecánica de doble muralla',
     biome: 'bastion',
-    center: [180, -85, -730],
-    radius: 120,
+    center: [195, -90, -780],
+    radius: 156,
     gravityStrength: 1.15,
     surfaceColor: '#475569',
     patchColor: '#1e293b',
@@ -293,8 +313,8 @@ export const GALAXY_PLANETS: PlanetSpec[] = [
     name: 'Trono de KRONOS',
     subtitle: 'Arena volcánica blindada',
     biome: 'kronos',
-    center: [0, 210, -1040],
-    radius: 82,
+    center: [0, 225, -1110],
+    radius: 106,
     gravityStrength: 1.2,
     surfaceColor: '#3f1d2e',
     patchColor: '#7f1d1d',
@@ -376,6 +396,7 @@ function verdantContent(): {
   enemies: EnemySpawnSpec[];
   grass: GrassZoneSpec[];
   bubbles: WaterBubbleSpec[];
+  props: PropSpec[];
 } {
   const planet = GALAXY_PLANETS[1];
   const WALL = '#3e4c3a';
@@ -484,7 +505,66 @@ function verdantContent(): {
     orbitBubble('vd-bub-5', planet, frameDir(fB, 16, 0), 14, 7),
   ];
 
-  return { structures, objects, enemies, grass, bubbles };
+  // --- Aldea Feudal: torii de entrada, pagoda central, casas, farolillos,
+  // caminos de piedra, puentes de madera y mucha vegetación alrededor. ---
+  const fV = baseFrame(planet.id, [0.05, 0.3, 0.95], planet.radius);
+  const props: PropSpec[] = [
+    prop(planet.id, 'vd-torii-1', 'torii_gate', frameDir(fV, 0, -18)),
+    prop(planet.id, 'vd-torii-2', 'torii_gate', frameDir(fV, 22, -6), { yaw: 1.2 }),
+    prop(planet.id, 'vd-pagoda-1', 'pagoda_house', frameDir(fV, 0, 0)),
+    prop(planet.id, 'vd-pagoda-2', 'pagoda_house', frameDir(fV, -26, 16), { scale: 0.8 }),
+    prop(planet.id, 'vd-casa-1', 'village_house', frameDir(fV, -13, -7), { yaw: 0.4 }),
+    prop(planet.id, 'vd-casa-2', 'village_house', frameDir(fV, 13, -7), { yaw: -0.4 }),
+    prop(planet.id, 'vd-casa-3', 'village_house', frameDir(fV, -13, 9), { yaw: -0.3 }),
+    prop(planet.id, 'vd-casa-4', 'village_house', frameDir(fV, 13, 9), { yaw: 0.3 }),
+    prop(planet.id, 'vd-casa-5', 'village_house', frameDir(fV, 0, 18), { yaw: Math.PI }),
+    prop(planet.id, 'vd-casa-6', 'village_house', frameDir(fV, 28, 10), { yaw: 0.9 }),
+    // Farolillos de papel flanqueando el camino de entrada y la plaza.
+    prop(planet.id, 'vd-farol-1', 'paper_lantern', frameDir(fV, -2.5, -15)),
+    prop(planet.id, 'vd-farol-2', 'paper_lantern', frameDir(fV, 2.5, -15)),
+    prop(planet.id, 'vd-farol-3', 'paper_lantern', frameDir(fV, -2.5, -9)),
+    prop(planet.id, 'vd-farol-4', 'paper_lantern', frameDir(fV, 2.5, -9)),
+    prop(planet.id, 'vd-farol-5', 'paper_lantern', frameDir(fV, -2.5, -3)),
+    prop(planet.id, 'vd-farol-6', 'paper_lantern', frameDir(fV, 2.5, -3)),
+    prop(planet.id, 'vd-farol-7', 'paper_lantern', frameDir(fV, -6, 5)),
+    prop(planet.id, 'vd-farol-8', 'paper_lantern', frameDir(fV, 6, 5)),
+    // Caminos de piedra: acceso al torii y plaza de la pagoda.
+    prop(planet.id, 'vd-camino-1', 'stone_path', frameDir(fV, 0, -12)),
+    prop(planet.id, 'vd-camino-2', 'stone_path', frameDir(fV, 0, 12), { yaw: Math.PI }),
+    prop(planet.id, 'vd-camino-3', 'stone_path', frameDir(fV, -20, -2), { yaw: Math.PI / 2 }),
+    // Puentes de madera entre la aldea y los complejos.
+    prop(planet.id, 'vd-puente-1', 'wood_bridge', frameDir(fV, 19, 0), { yaw: Math.PI / 2 }),
+    prop(planet.id, 'vd-puente-2', 'wood_bridge', frameDir(fV, -19, 0), { yaw: Math.PI / 2 }),
+    // Bambú y árboles alrededor de la aldea y los complejos.
+    prop(planet.id, 'vd-bambu-1', 'bamboo_cluster', frameDir(fV, 17, -13)),
+    prop(planet.id, 'vd-bambu-2', 'bamboo_cluster', frameDir(fV, -17, -13)),
+    prop(planet.id, 'vd-bambu-3', 'bamboo_cluster', frameDir(fV, 9, 20)),
+    prop(planet.id, 'vd-bambu-4', 'bamboo_cluster', frameDir(fV, -9, 20)),
+    prop(planet.id, 'vd-bambu-5', 'bamboo_cluster', frameDir(fA, 24, 16)),
+    prop(planet.id, 'vd-bambu-6', 'bamboo_cluster', frameDir(fB, -22, -10)),
+    prop(planet.id, 'vd-pino-1', 'pine_tree', frameDir(fV, 24, -16), { scale: 1.4 }),
+    prop(planet.id, 'vd-pino-2', 'pine_tree', frameDir(fV, -24, -16), { scale: 1.4 }),
+    prop(planet.id, 'vd-pino-3', 'pine_tree', frameDir(fV, 26, 6), { scale: 1.2 }),
+    prop(planet.id, 'vd-pino-4', 'pine_tree', frameDir(fV, -26, -8), { scale: 1.2 }),
+    prop(planet.id, 'vd-pino-5', 'pine_tree', frameDir(fA, 30, -12), { scale: 1.5 }),
+    prop(planet.id, 'vd-pino-6', 'pine_tree', frameDir(fA, -26, 12), { scale: 1.5 }),
+    prop(planet.id, 'vd-pino-7', 'pine_tree', frameDir(fB, 20, 14), { scale: 1.3 }),
+    prop(planet.id, 'vd-pino-8', 'pine_tree', frameDir(fB, -20, -14), { scale: 1.3 }),
+    prop(planet.id, 'vd-pino-9', 'pine_tree', frameDir(fC, 14, 10), { scale: 1.4 }),
+    prop(planet.id, 'vd-pino-10', 'pine_tree', frameDir(fC, -14, -10), { scale: 1.4 }),
+    prop(planet.id, 'vd-pino-11', 'pine_tree', [0.3, 0.6, 0.5], { scale: 1.6 }),
+    prop(planet.id, 'vd-pino-12', 'pine_tree', [-0.1, 0.5, 0.8], { scale: 1.6 }),
+    prop(planet.id, 'vd-pino-13', 'pine_tree', [0.7, 0.4, 0.2], { scale: 1.5 }),
+    prop(planet.id, 'vd-pino-14', 'pine_tree', [-0.5, 0.2, 0.7], { scale: 1.5 }),
+    prop(planet.id, 'vd-pino-15', 'pine_tree', [0.2, 0.15, 0.9], { scale: 1.7 }),
+    prop(planet.id, 'vd-pino-16', 'pine_tree', [-0.8, 0.5, -0.2], { scale: 1.6 }),
+    // Farolillos sueltos junto a los complejos militares.
+    prop(planet.id, 'vd-farol-9', 'paper_lantern', frameDir(fA, 8, 18)),
+    prop(planet.id, 'vd-farol-10', 'paper_lantern', frameDir(fB, -8, -16)),
+    prop(planet.id, 'vd-farol-11', 'paper_lantern', frameDir(fC, -8, 8)),
+  ];
+
+  return { structures, objects, enemies, grass, bubbles, props };
 }
 
 // ----------------------------------------------------------------------------
@@ -499,6 +579,7 @@ function cryoContent(): {
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
   bubbles: WaterBubbleSpec[];
+  props: PropSpec[];
 } {
   const planet = GALAXY_PLANETS[2];
   const WALL = '#5b7f99';
@@ -569,7 +650,29 @@ function cryoContent(): {
     orbitBubble('cy-bub-4', planet, frameDir(f, -18, -9), 10, 8),
   ];
 
-  return { structures, objects, enemies, bubbles };
+  // --- Ambientación glaciar: cristales de hielo gigantes e iglús/cúpulas. ---
+  const props: PropSpec[] = [
+    prop(planet.id, 'cy-cristal-1', 'ice_crystal', frameDir(f, 16, 14), { scale: 1.8 }),
+    prop(planet.id, 'cy-cristal-2', 'ice_crystal', frameDir(f, -14, -18), { scale: 2.2 }),
+    prop(planet.id, 'cy-cristal-3', 'ice_crystal', frameDir(f, 26, 4), { scale: 1.5 }),
+    prop(planet.id, 'cy-cristal-4', 'ice_crystal', frameDir(f, -30, 10), { scale: 2.0 }),
+    prop(planet.id, 'cy-cristal-5', 'ice_crystal', frameDir(f, 8, -22), { scale: 1.7 }),
+    prop(planet.id, 'cy-cristal-6', 'ice_crystal', [0.1, 0.9, 0.2], { scale: 2.4 }),
+    prop(planet.id, 'cy-cristal-7', 'ice_crystal', [-0.3, 0.7, -0.5], { scale: 2.0 }),
+    prop(planet.id, 'cy-cristal-8', 'ice_crystal', [0.55, 0.5, -0.6], { scale: 1.6 }),
+    prop(planet.id, 'cy-cristal-9', 'ice_crystal', [0.85, 0.3, 0.3], { scale: 1.9 }),
+    prop(planet.id, 'cy-cristal-10', 'ice_crystal', [-0.6, 0.1, 0.75], { scale: 2.1 }),
+    prop(planet.id, 'cy-iglu-1', 'igloo', frameDir(f, 20, 18)),
+    prop(planet.id, 'cy-iglu-2', 'igloo', frameDir(f, -22, -14)),
+    prop(planet.id, 'cy-iglu-3', 'igloo', frameDir(f, -34, -2)),
+    prop(planet.id, 'cy-iglu-4', 'igloo', [0.2, 0.85, 0.4]),
+    prop(planet.id, 'cy-iglu-5', 'igloo', [-0.5, 0.6, 0.55], { scale: 0.85 }),
+    // Farolillos de papel congelados marcando el camino al complejo.
+    prop(planet.id, 'cy-farol-1', 'paper_lantern', frameDir(f, 3, 16)),
+    prop(planet.id, 'cy-farol-2', 'paper_lantern', frameDir(f, -3, 16)),
+  ];
+
+  return { structures, objects, enemies, bubbles, props };
 }
 
 // ----------------------------------------------------------------------------
@@ -583,6 +686,7 @@ function bastionContent(): {
   structures: StructureSpec[];
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
+  props: PropSpec[];
 } {
   const planet = GALAXY_PLANETS[3];
   const WALL = '#334155';
@@ -679,7 +783,30 @@ function bastionContent(): {
     { kind: 'turret', planetId: planet.id, patrolDirs: [frameDir(f, 30, -18)] },
   ];
 
-  return { structures, objects, enemies };
+  // --- Ambientación mecánica: tuberías, antenas, reactores y focos. ---
+  const props: PropSpec[] = [
+    prop(planet.id, 'bs-tuberia-1', 'pipe', frameDir(f, -26, 20), { yaw: 0.4 }),
+    prop(planet.id, 'bs-tuberia-2', 'pipe', frameDir(f, 26, -20), { yaw: -0.8 }),
+    prop(planet.id, 'bs-tuberia-3', 'pipe', frameDir(f, 12, 26), { yaw: 1.6 }),
+    prop(planet.id, 'bs-tuberia-4', 'pipe', frameDir(f, -12, -26), { yaw: 2.4 }),
+    prop(planet.id, 'bs-tuberia-5', 'pipe', frameDir(f, 36, 12)),
+    prop(planet.id, 'bs-tuberia-6', 'pipe', frameDir(f, -36, -12)),
+    prop(planet.id, 'bs-antena-1', 'antenna', frameDir(f, 32, -20)),
+    prop(planet.id, 'bs-antena-2', 'antenna', frameDir(f, -32, 20)),
+    prop(planet.id, 'bs-antena-3', 'antenna', frameDir(f, 20, 30)),
+    prop(planet.id, 'bs-antena-4', 'antenna', [0.15, 0.9, 0.25]),
+    prop(planet.id, 'bs-reactor-1', 'reactor', frameDir(f, -30, 0)),
+    prop(planet.id, 'bs-reactor-2', 'reactor', frameDir(f, 30, 0)),
+    prop(planet.id, 'bs-reactor-3', 'reactor', frameDir(f, 0, -30)),
+    prop(planet.id, 'bs-reactor-4', 'reactor', [0.5, 0.75, -0.3]),
+    prop(planet.id, 'bs-foco-1', 'spotlight', frameDir(f, 0, 28)),
+    prop(planet.id, 'bs-foco-2', 'spotlight', frameDir(f, 24, -24)),
+    prop(planet.id, 'bs-foco-3', 'spotlight', frameDir(f, -24, 24)),
+    prop(planet.id, 'bs-foco-4', 'spotlight', frameDir(f, -8, -28)),
+    prop(planet.id, 'bs-foco-5', 'spotlight', [0.35, 0.8, 0.45]),
+  ];
+
+  return { structures, objects, enemies, props };
 }
 
 // ----------------------------------------------------------------------------
@@ -766,6 +893,7 @@ export const GALAXY_SPEC: GalaxySpec = {
   ],
   waterBubbles: [...verdant.bubbles, ...cryo.bubbles, ...kronos.bubbles],
   grassZones: [...luna.grass, ...verdant.grass],
+  props: [...verdant.props, ...cryo.props, ...bastion.props],
   objects: [
     ...luna.objects,
     ...verdant.objects,

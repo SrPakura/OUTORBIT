@@ -63,7 +63,7 @@ export class GameEngine {
   private readonly camera: THREE.PerspectiveCamera;
   private readonly planets: PlanetRuntime[] = [];
   private readonly planetTicks: Array<(dt: number) => void> = [];
-  private backdrop: { update: (dt: number) => void; dispose: () => void } | null = null;
+  private backdrop: { update: (dt: number, cameraPos: THREE.Vector3) => void; dispose: () => void } | null = null;
 
   // Estado de la galaxia (única carga, sin transiciones de nivel).
   private levelGroup: THREE.Group | null = null;
@@ -124,6 +124,7 @@ export class GameEngine {
     stealthMul: 1,
     sprinting: false,
     airborne: false,
+    flightTargetPlanetId: null,
     characterId: 'kitsune',
   };
 
@@ -164,7 +165,7 @@ export class GameEngine {
       CAMERA_FOV,
       window.innerWidth / Math.max(window.innerHeight, 1),
       0.1,
-      2500
+      4000
     );
 
     this.setupLights();
@@ -331,7 +332,7 @@ export class GameEngine {
       }
 
       for (const animTick of this.planetTicks) animTick(dtReal);
-      this.backdrop?.update(dtReal);
+      this.backdrop?.update(dtReal, this.camera.position);
 
       // Banner táctico de radio: caduca a los 6s (no bloquea la partida).
       if (this.radioToastT > 0) {
@@ -361,6 +362,7 @@ export class GameEngine {
     this.worldState.stealthMul = player.stealthMultiplier;
     this.worldState.sprinting = player.isSprinting;
     this.worldState.airborne = player.isAirborne;
+    this.worldState.flightTargetPlanetId = player.flightTargetPlanetId;
     this.worldState.characterId = player.characterId;
     this.worldState.inGrass = world.isInGrass(player.position, player.planet);
 
@@ -521,7 +523,7 @@ export class GameEngine {
     }
     this.adaptation = adaptation;
     this.radioToast = {
-      title: `ESCUDO DE ${nextPlanet.spec.name.toUpperCase()} DESACTIVADO`,
+      title: `TORMENTA ORBITAL DE ${nextPlanet.spec.name.toUpperCase()} DESACTIVADA`,
       lines: adaptation.summaryReasons,
       accent: '#22d3ee',
     };

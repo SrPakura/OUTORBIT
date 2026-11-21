@@ -10,6 +10,7 @@ import type {
   PlanetAdaptationConfig,
   PlanetRuntime,
   PlayerBehaviorVector,
+  PropSpec,
   WaterBubbleSpec,
   WorldObjectSpec,
 } from '../types';
@@ -19,9 +20,10 @@ import {
   buildBruteModel,
   buildDroneModel,
   buildGuardModel,
+  buildInterceptorBelt,
   buildKronosModel,
   buildOfficerModel,
-  buildPlanetShieldMesh,
+  buildPropMesh,
   buildStructureMesh,
   buildTurretModel,
   buildVisionConeMesh,
@@ -110,6 +112,12 @@ const CONE_COLOR_PATROL = 0x4ade80;
 const CONE_COLOR_SEARCH = 0xfacc15;
 const CONE_COLOR_COMBAT = 0xf87171;
 const OBJECTIVE_TARGET_MAX = 8; // buffer preasignado de marcadores de objetivo
+
+// --- OUTORBIT 2.5: Tormenta de Asteroides Interceptores (soft-lock) ---
+const INTERCEPTOR_STEER_SPEED = 95.0; // m/s de persecución hacia la trayectoria
+const INTERCEPTOR_RETURN_SPEED = 60.0; // m/s de regreso a la órbita
+const INTERCEPTOR_HIT_MARGIN = 2.2; // margen sobre el radio del asteroide
+const INTERCEPTOR_FLANK_ANGLE = 0.55; // rad de desvío tangencial al flanquear
 
 // --- Jefe final KRONOS (Hito 4): red MLP híbrida + combate ---
 const KRONOS_MAX_HP = 12;
@@ -236,6 +244,33 @@ interface EnemyObj {
   /** Cono de visión adherido al suelo (guardias y oficiales). */
   visionCone: THREE.Mesh | null;
   visionConeMaterial: THREE.MeshBasicMaterial | null;
+  /** Lado de flanqueo en combate (+1/-1, alternado al spawn). */
+  flankSide: number;
+  /** Iconos 3D de estado sobre la cabeza: '?' amarillo y '!' rojo. */
+  iconQuestion: THREE.Group | null;
+  iconAlert: THREE.Group | null;
+}
+
+/**
+ * Cinturón de Asteroides Interceptores de un planeta protegido: 5 rocas
+ * grandes orbitando rápido que persiguen la trayectoria del jugador cuando
+ * vuela hacia el planeta con la tormenta aún activa.
+ */
+interface InterceptorObj {
+  planet: PlanetRuntime;
+  group: THREE.Group;
+  meshes: THREE.Mesh[];
+  /** Posiciones mundiales actuales (steering propio, no solo órbita). */
+  pos: THREE.Vector3[];
+  radii: number[];
+  orbitRadii: number[];
+  heights: number[];
+  angles: number[];
+  speeds: number[];
+  /** Base ortonormal del plano de órbita (axisA x axisB = axisN). */
+  axisA: THREE.Vector3;
+  axisB: THREE.Vector3;
+  axisN: THREE.Vector3;
 }
 
 /** Proyectil luminoso de torreta (parreable). */
@@ -454,6 +489,8 @@ export interface WorldPlayerState {
   sprinting: boolean;
   /** En el aire (salto/ancla/vuelo): objetivo válido de las torretas antiaéreas. */
   airborne: boolean;
+  /** Planeta destino del vuelo dirigido (activa la persecución de interceptores). */
+  flightTargetPlanetId: string | null;
   /** Personaje activo del escuadrón (entrada one-hot de la red MLP de KRONOS). */
   characterId: CharacterId;
 }
@@ -722,6 +759,47 @@ function buildBubbleMesh(radius: number): THREE.Group {
   return group;
 }
 
+/**
+ * Iconos 3D de estado sobre la cabeza de un guardia: '?' amarillo al
+ * investigar/sospechar y '!' rojo al entrar en combate/alarma. Ambos ocultos
+ * por defecto; el manager los alterna según el estado del enemigo.
+ */
+function buildStateIcons(): { group: THREE.Group; question: THREE.Group; alert: THREE.Group } {
+  const group = new THREE.Group();
+  group.name = 'stateIcons';
+  group.position.y = 2.35;
+
+  // '?' amarillo: gancho (arco de toro) + punto inferior.
+  const question = new THREE.Group();
+  const questionMaterial = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
+  const hook = new THREE.Mesh(
+    new THREE.TorusGeometry(0.17, 0.055, 8, 14, Math.PI * 1.35),
+    questionMaterial
+  );
+  hook.position.set(0.02, 0.16, 0);
+  hook.rotation.z = Math.PI * 0.85;
+  question.add(hook);
+  const questionDot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), questionMaterial);
+  questionDot.position.set(-0.08, -0.14, 0);
+  question.add(questionDot);
+  question.visible = false;
+  group.add(question);
+
+  // '!' rojo: barra vertical + punto inferior.
+  const alert = new THREE.Group();
+  const alertMaterial = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.34, 0.1), alertMaterial);
+  bar.position.y = 0.14;
+  alert.add(bar);
+  const alertDot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), alertMaterial);
+  alertDot.position.y = -0.16;
+  alert.add(alertDot);
+  alert.visible = false;
+  group.add(alert);
+
+  return { group, question, alert };
+}
+
 // ============================================================================
 // Gestor de objetos interactivos del mundo esférico
 // ============================================================================
@@ -740,6 +818,7 @@ export class WorldObjectsManager {
   private readonly mines: SeismicMineObj[] = [];
   private readonly teleporters: TeleporterObj[] = [];
   private readonly explosions: ExplosionFx[] = [];
+  private readonly interceptors: InterceptorObj[] = [];
   private kronos: KronosObj | null = null;
   private readonly kronosOrbs: TurretProjectile[] = [];
   /** Vector de comportamiento combinado de la run (referencia, sin copiar). */
@@ -769,6 +848,7 @@ export class WorldObjectsManager {
   private clock = 0;
   private globalAlert = false;
   private burrowEjectPending = false;
+  private interceptorBouncePending = false;
   private teleportCooldown = 0;
   private predictiveShields = false;
   private alertBoost = 0; // escalado de detección por baseAlertLevel
@@ -875,18 +955,51 @@ export class WorldObjectsManager {
       );
     }
 
-    // Escudos planetarios: todo planeta con unlockedByPlanetId nace bloqueado.
+    // Tormenta de Asteroides Interceptores: todo planeta con
+    // unlockedByPlanetId nace "protegido" (accesible, pero con riesgo).
     for (const planet of planets) {
       if (planet.spec.unlockedByPlanetId === null) continue;
       planet.shielded = true;
-      const shield = buildPlanetShieldMesh(
-        planet.spec.radius,
-        planet.spec.ringColor ?? planet.spec.atmosphereColor
+      const belt = buildInterceptorBelt(planet.spec.radius);
+      this.group.add(belt.group);
+      planet.shieldMesh = belt.group;
+      const axis = new THREE.Vector3(0.22, 1, 0.14).normalize();
+      const axisA = new THREE.Vector3(1, 0, 0).cross(axis);
+      if (axisA.lengthSq() < 1e-6) axisA.set(0, 0, 1).cross(axis);
+      axisA.normalize();
+      const axisB = new THREE.Vector3().crossVectors(axis, axisA).normalize();
+      const meshes = belt.group.children.filter(
+        (child): child is THREE.Mesh => (child as THREE.Mesh).isMesh
       );
-      shield.position.copy(planet.centerVec);
-      this.group.add(shield);
-      planet.shieldMesh = shield;
+      const pos: THREE.Vector3[] = [];
+      for (let i = 0; i < belt.asteroidCount; i++) {
+        // Posición inicial: el punto de órbita en el ángulo base.
+        const orbitPos = new THREE.Vector3()
+          .copy(planet.centerVec)
+          .addScaledVector(axisA, Math.cos(belt.baseAngles[i]) * belt.orbitRadii[i])
+          .addScaledVector(axisB, Math.sin(belt.baseAngles[i]) * belt.orbitRadii[i])
+          .addScaledVector(axis, belt.heights[i]);
+        pos.push(orbitPos);
+      }
+      this.interceptors.push({
+        planet,
+        group: belt.group,
+        meshes,
+        pos,
+        radii: belt.asteroidRadii,
+        orbitRadii: belt.orbitRadii,
+        heights: belt.heights,
+        angles: belt.baseAngles.slice(),
+        speeds: belt.speeds,
+        axisA,
+        axisB,
+        axisN: axis,
+      });
     }
+
+    // Props ambientales (aldea feudal de Verdant, cristales de Cryo,
+    // maquinaria de Bastion): set dressing sin colisión.
+    for (const prop of galaxy.props ?? []) this.spawnProp(prop);
 
     for (const spec of galaxy.objects) this.spawnObject(spec);
     for (const bubble of galaxy.waterBubbles) this.spawnBubble(bubble);
@@ -1076,6 +1189,16 @@ export class WorldObjectsManager {
     }
   }
 
+  private spawnProp(spec: PropSpec): void {
+    const planet = this.findPlanet(spec.planetId);
+    const mesh = buildPropMesh(spec.kind);
+    mesh.name = `prop-${spec.id}`;
+    mesh.scale.setScalar(spec.scale ?? 1);
+    this.placeOnPlanet(mesh, planet, ...spec.sphericalDir, 0);
+    mesh.rotateY(spec.yaw ?? 0);
+    this.group.add(mesh);
+  }
+
   private spawnBubble(spec: WaterBubbleSpec): void {
     const mesh = buildBubbleMesh(spec.radius);
     mesh.position.set(...spec.center);
@@ -1156,18 +1279,23 @@ export class WorldObjectsManager {
       default:
         return;
     }
-    // Cono de visión adherido al suelo delante de guardias y oficiales.
+    // Cono de visión adherido al suelo delante de guardias y oficiales
+    // (curvado con el radio del planeta para abrazar la esfera).
     let visionCone: THREE.Mesh | null = null;
     let visionConeMaterial: THREE.MeshBasicMaterial | null = null;
     if (spec.kind === 'guard' || spec.kind === 'officer') {
       const cone = buildVisionConeMesh(
         ENEMY_PARAMS[spec.kind].detectRange,
-        Math.acos(VISION_MIN_DOT)
+        Math.acos(VISION_MIN_DOT),
+        planet.spec.radius
       );
       visionCone = cone.mesh;
       visionConeMaterial = cone.material;
       mesh.add(cone.mesh);
     }
+    // Iconos 3D de estado sobre la cabeza ('?' amarillo / '!' rojo).
+    const icons = buildStateIcons();
+    mesh.add(icons.group);
     const waypoints: THREE.Vector3[] = [];
     for (const dir of spec.patrolDirs) {
       waypoints.push(new THREE.Vector3(...dir).normalize());
@@ -1201,6 +1329,9 @@ export class WorldObjectsManager {
       params: ENEMY_PARAMS[spec.kind],
       visionCone,
       visionConeMaterial,
+      flankSide: this.enemies.length % 2 === 0 ? 1 : -1,
+      iconQuestion: icons.question,
+      iconAlert: icons.alert,
     });
   }
 
@@ -2212,6 +2343,7 @@ export class WorldObjectsManager {
     this.updateFlying(dt, state, onPlayerDamage);
     this.updateGates(dt, state, onPlayerDamage);
     this.updateEnemies(dt, state, onPlayerDamage);
+    this.updateInterceptors(dt, state, onPlayerDamage);
     this.updateKronos(dt, state, onPlayerDamage);
     this.updateKronosOrbs(dt, state, onPlayerDamage);
     this.updateBubbles(dt);
@@ -2371,6 +2503,73 @@ export class WorldObjectsManager {
     }
   }
 
+  // --------------------------------------------------------------------------
+  // Tormenta de Asteroides Interceptores (OUTORBIT 2.5): los asteroides del
+  // cinturón de un planeta protegido orbitan rápido y, si el jugador vuela
+  // hacia ese planeta, persiguen su trayectoria para interceptarlo.
+  // --------------------------------------------------------------------------
+  /** Impacto de un interceptor: el jugador rebota al planeta de origen. */
+  consumeInterceptorBounce(): boolean {
+    if (!this.interceptorBouncePending) return false;
+    this.interceptorBouncePending = false;
+    return true;
+  }
+
+  private updateInterceptors(
+    dt: number,
+    state: WorldPlayerState,
+    onPlayerDamage: PlayerDamageFn
+  ): void {
+    if (state.flightTargetPlanetId === null) this.interceptorBouncePending = false;
+    for (const belt of this.interceptors) {
+      const active = belt.planet.shielded;
+      belt.group.visible = active;
+      if (!active) continue;
+      const inbound = state.flightTargetPlanetId === belt.planet.spec.id;
+      const center = belt.planet.centerVec;
+      for (let i = 0; i < belt.meshes.length; i++) {
+        belt.angles[i] += belt.speeds[i] * dt;
+        // Punto de órbita base alrededor del planeta.
+        _v3.copy(center)
+          .addScaledVector(belt.axisA, Math.cos(belt.angles[i]) * belt.orbitRadii[i])
+          .addScaledVector(belt.axisB, Math.sin(belt.angles[i]) * belt.orbitRadii[i])
+          .addScaledVector(belt.axisN, belt.heights[i]);
+
+        // Steering: intercepta la trayectoria del jugador si vuela hacia la
+        // tormenta; si no, regresa a su órbita de guardia.
+        const targetPos = inbound ? state.pos : _v3;
+        _v4.copy(targetPos).sub(belt.pos[i]);
+        const dist = _v4.length();
+        const speed = inbound ? INTERCEPTOR_STEER_SPEED : INTERCEPTOR_RETURN_SPEED;
+        if (dist > 1e-6) {
+          belt.pos[i].addScaledVector(_v4.divideScalar(dist), Math.min(dist, speed * dt));
+        }
+        const mesh = belt.meshes[i];
+        mesh.position.copy(belt.pos[i]);
+        mesh.rotation.x += dt * 0.9;
+        mesh.rotation.y += dt * 0.7;
+
+        // Colisión con el jugador en ruta: 1 de daño + rebote al origen.
+        if (inbound) {
+          const hitRadius = belt.radii[i] + INTERCEPTOR_HIT_MARGIN;
+          if (belt.pos[i].distanceToSquared(state.pos) < hitRadius * hitRadius) {
+            _v4.copy(state.pos)
+              .sub(belt.pos[i])
+              .normalize()
+              .multiplyScalar(14)
+              .addScaledVector(state.up, 6);
+            onPlayerDamage(1, _v4.x, _v4.y, _v4.z);
+            this.interceptorBouncePending = true;
+            this.spawnExplosion(belt.pos[i], belt.radii[i] * 1.6, 0xf97316);
+            this.onSound?.('explosion');
+            // El asteroide vuelve a su órbita tras el impacto.
+            belt.pos[i].copy(_v3);
+          }
+        }
+      }
+    }
+  }
+
   private updateGates(
     dt: number,
     state: WorldPlayerState,
@@ -2524,6 +2723,12 @@ export class WorldObjectsManager {
       }
     } else if (enemy.state === GUARD_STATE_CHASE) {
       _v2.copy(state.pos).sub(enemy.planet.centerVec).normalize();
+      // Flanqueo tangencial: en vez de caminar en línea recta contra los
+      // muros, orbita alrededor del jugador hasta acercarse lo suficiente.
+      if (playerDist > enemy.params.attackRange * 2.2) {
+        _q1.setFromAxisAngle(enemy.dir, INTERCEPTOR_FLANK_ANGLE * enemy.flankSide);
+        _v2.applyQuaternion(_q1).normalize();
+      }
       this.moveEnemyTowards(enemy, _v2, enemy.params.chaseSpeed, dt);
       const lostTrack =
         playerDist > GUARD_GIVEUP_DIST ||
@@ -2762,6 +2967,12 @@ export class WorldObjectsManager {
 
   /** Transform sobre la esfera + hover de dron + tumbado si K.O. */
   private syncEnemyTransform(enemy: EnemyObj, dt: number): void {
+    // Telegraph del ataque: pulso de escala claro durante el windup.
+    if (enemy.state === GUARD_STATE_WINDUP) {
+      enemy.mesh.scale.setScalar(1 + Math.sin(this.clock * 22) * 0.07);
+    } else {
+      enemy.mesh.scale.setScalar(1);
+    }
     let altitude = 0;
     if (enemy.kind === 'drone') {
       enemy.hoverPhase += dt * 3;
@@ -2815,18 +3026,26 @@ export class WorldObjectsManager {
   /**
    * Color/opacidad del cono de visión en tiempo real: verde en patrulla,
    * amarillo al sospechar o investigar un ruido, rojo en combate/alarma.
+   * Además alterna los iconos 3D de estado: '?' amarillo al investigar y
+   * '!' rojo en combate.
    */
   private updateVisionCone(enemy: EnemyObj): void {
     const cone = enemy.visionCone;
     const material = enemy.visionConeMaterial;
-    if (!cone || !material) return;
     const ko = enemy.state === GUARD_STATE_KO;
+    const combat =
+      enemy.state === GUARD_STATE_CHASE || enemy.state === GUARD_STATE_WINDUP;
+    const investigating =
+      !combat && (enemy.state === GUARD_STATE_SEARCH || enemy.suspicion > 0.4);
+    if (enemy.iconQuestion) enemy.iconQuestion.visible = !ko && investigating;
+    if (enemy.iconAlert) enemy.iconAlert.visible = !ko && combat;
+    if (!cone || !material) return;
     cone.visible = !ko;
     if (ko) return;
     let color = CONE_COLOR_PATROL;
-    if (enemy.state === GUARD_STATE_CHASE || enemy.state === GUARD_STATE_WINDUP) {
+    if (combat) {
       color = CONE_COLOR_COMBAT;
-    } else if (enemy.state === GUARD_STATE_SEARCH || enemy.suspicion > 0.4) {
+    } else if (investigating) {
       color = CONE_COLOR_SEARCH;
     }
     material.color.set(color);
@@ -3035,6 +3254,7 @@ export class WorldObjectsManager {
     this.mines.length = 0;
     this.teleporters.length = 0;
     this.explosions.length = 0;
+    this.interceptors.length = 0;
     this.kronos = null;
     this.kronosOrbs.length = 0;
     this.kronosBehavior = null;
@@ -3045,6 +3265,7 @@ export class WorldObjectsManager {
     this.keycardsCollected = 0;
     this.globalAlert = false;
     this.burrowEjectPending = false;
+    this.interceptorBouncePending = false;
     this.teleportCooldown = 0;
     this.predictiveShields = false;
     this.alertBoost = 0;

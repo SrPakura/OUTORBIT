@@ -206,9 +206,9 @@ export function addComicOutline(
 // (portado de referencia_visual.html :: createCosmicSky, adaptado por nivel)
 // ============================================================================
 
-const SKY_RADIUS = 900;
+const SKY_RADIUS = 1800;
 const STAR_COUNT = 700;
-const STAR_SHELL_RADIUS = 820;
+const STAR_SHELL_RADIUS = 1650;
 
 const skyVertexShader = /* glsl */ `
   varying vec3 vWorldDir;
@@ -261,13 +261,15 @@ const starFragmentShader = /* glsl */ `
  * Crea el fondo del nivel: cielo cósmico con gradiente diagonal (índigo
  * espacial -> violeta crepuscular -> salmón/coral cálido, colores derivados
  * del nivel) y un campo de estrellas instanciadas que titilan por fase propia.
+ * El grupo sigue la posición de la cámara cada frame (`update(dt, cameraPos)`)
+ * para que el jugador NUNCA salga de la esfera del cielo al volar lejos.
  * Devuelve handle con update/dispose.
  */
 export function createSpaceBackdrop(
   scene: THREE.Scene,
   topColor: string,
   bottomColor: string
-): { update: (dt: number) => void; dispose: () => void } {
+): { update: (dt: number, cameraPos: THREE.Vector3) => void; dispose: () => void } {
   const group = new THREE.Group();
   group.name = 'spaceBackdrop';
 
@@ -331,8 +333,11 @@ export function createSpaceBackdrop(
   scene.add(group);
 
   return {
-    update(dt: number): void {
+    update(dt: number, cameraPos: THREE.Vector3): void {
       globalShaderState.uTime.value += dt;
+      // Cielo infinito: el backdrop acompaña a la cámara para que el jugador
+      // jamás atraviese la esfera del cielo al volar lejos del origen.
+      group.position.copy(cameraPos);
       stars.rotation.y += dt * 0.004;
       stars.rotation.x += dt * 0.0015;
     },

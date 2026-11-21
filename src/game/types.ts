@@ -114,12 +114,43 @@ export interface WorldObjectSpec {
   yaw?: number;
 }
 
+// ============================================================================
+// PROPS DECORATIVOS DE AMBIENTACIÓN (Aldea Feudal de Verdant, Cryo, Bastion)
+// ============================================================================
+
+export type PropKind =
+  | 'torii_gate'
+  | 'pagoda_house'
+  | 'village_house'
+  | 'paper_lantern'
+  | 'bamboo_cluster'
+  | 'pine_tree'
+  | 'stone_path'
+  | 'wood_bridge'
+  | 'ice_crystal'
+  | 'igloo'
+  | 'pipe'
+  | 'antenna'
+  | 'reactor'
+  | 'spotlight';
+
+/** Prop ambiental sin colisión: puro set dressing sobre la superficie. */
+export interface PropSpec {
+  id: string;
+  kind: PropKind;
+  planetId: string;
+  sphericalDir: [number, number, number];
+  yaw?: number;
+  scale?: number;
+}
+
 export interface PlanetRuntime {
   spec: PlanetSpec;
   mesh: THREE.Group;
   centerVec: THREE.Vector3;
   shielded: boolean;
-  shieldMesh?: THREE.Mesh;
+  /** Cinturón de asteroides interceptores mientras el planeta siga protegido. */
+  shieldMesh?: THREE.Object3D;
 }
 
 // ============================================================================
@@ -195,6 +226,8 @@ export interface GalaxySpec {
   grassZones: GrassZoneSpec[];
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
+  /** Props ambientales (aldea feudal, cristales, maquinaria) sin colisión. */
+  props?: PropSpec[];
   spawnPlanetId: string;
   spawnDir: [number, number, number];
 }
