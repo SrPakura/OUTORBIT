@@ -501,6 +501,13 @@
         </div>
       </div>
       <div class="ctrl">
+        <span class="ctrl__label">ANIMACIÓN (NyxAnimator)</span>
+        <div class="toggles" id="anim-btns">
+          <button class="toggle" id="t-dashdir" type="button" aria-pressed="false">DASH ➜ +X</button>
+          <button class="toggle is-on" id="t-autoloop" type="button" aria-pressed="true">AUTO-REPETIR</button>
+        </div>
+      </div>
+      <div class="ctrl">
         <span class="ctrl__label">RENDER</span>
         <div class="toggles">
           <button class="toggle is-on" id="t-halftone" type="button" aria-pressed="true">HALFTONES</button>
@@ -541,6 +548,49 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+
+// NyxAnimator es TypeScript: se carga con el dev server de Vite (npm run dev).
+// Si no está disponible (build estático) la hoja sigue con las poses clásicas.
+let NyxAnimatorCtor = null;
+let animStateNames = null;
+try {
+  ({ NyxAnimator: NyxAnimatorCtor, NYX_ANIM_STATES: animStateNames } = await import('/src/game/render/nyxAnimator.ts'));
+} catch (err) {
+  console.warn('[character-sheet] nyxAnimator.ts no disponible; solo poses clásicas.', err);
+  document.getElementById('anim-btns')?.closest('.ctrl')?.setAttribute('hidden', '');
+}
+
+// Los botones de animación se generan desde NYX_ANIM_STATES: cualquier estado
+// nuevo del animador (kick_flip, land_recover, …) aparece aquí automáticamente.
+const ANIM_LABELS = {
+  idle: 'IDLE',
+  run: 'RUN',
+  jump_land: 'JUMP LAND',
+  land_recover: 'LAND RECOVER',
+  zero_g_float: 'ZERO G FLOAT',
+  gravity_fall: 'GRAVITY FALL',
+  air_dash: 'AIR DASH',
+  gravity_kick: 'GRAVITY KICK',
+  kick_flip: 'KICK FLIP',
+  stasis_cast: 'STASIS CAST',
+  stasis_throw: 'STASIS THROW',
+  hit_stagger: 'HIT STAGGER',
+  eden_absorb: 'EDEN ABSORB',
+};
+
+if (animStateNames) {
+  const wrap = document.getElementById('anim-btns');
+  const anchor = document.getElementById('t-dashdir');
+  for (const name of animStateNames) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toggle';
+    btn.dataset.anim = name;
+    btn.setAttribute('aria-pressed', 'false');
+    btn.textContent = ANIM_LABELS[name] || name.toUpperCase();
+    wrap.insertBefore(btn, anchor);
+  }
+}
 
 // El shader cel escribe el color final directamente en gl_FragColor (no usa el
 // pipeline de materiales de three), así que desactivamos la gestión de color
@@ -947,10 +997,6 @@ const rigs = []; // { key, model, bones: Map<name, Bone>, hairVel: [x,y,z], hair
 
 let frontModel = null;
 let dynamicPivot = null;
-let orbitGroup = null;
-let orbiters = [];
-let ringA = null;
-let ringB = null;
 let controls = null;
 let center = new THREE.Vector3(0, 0.85, 0);
 
@@ -1062,7 +1108,11 @@ function buildPanels(source, box) {
         }
       }
     });
-    rigs.push({ key: def.key, model, bones, hairPos: [0, 0], hairVel: [0, 0] });
+    let animator = null;
+    if (NyxAnimatorCtor) {
+      try { animator = new NyxAnimatorCtor(model); } catch (e) { console.warn(e); }
+    }
+    rigs.push({ key: def.key, model, bones, animator, hairPos: [0, 0], hairVel: [0, 0] });
 
     const distance = def.orbit ? fitDistance * 0.92 : fitDistance;
     const dir = def.dir.clone().normalize();
@@ -1077,9 +1127,6 @@ function buildPanels(source, box) {
       pivot.add(model);
       scene.add(pivot);
       dynamicPivot = pivot;
-
-      orbitGroup = buildGravityOrbit(center);
-      scene.add(orbitGroup);
 
       controls = new OrbitControls(camera, el);
       controls.target.copy(center);
@@ -1099,52 +1146,6 @@ function buildPanels(source, box) {
 
     panels.push({ key: def.key, el, scene, camera });
   }
-}
-
-function buildGravityOrbit(origin) {
-  const group = new THREE.Group();
-  group.position.copy(origin);
-
-  const cyanMat = createComicCelMaterial('#22d3ee', {
-    rimColor: '#a5f3fc',
-    rimStrength: 0.95,
-    emissiveBoost: 0.55,
-  });
-  const goldMat = createComicCelMaterial('#fbbf24', {
-    rimColor: '#fde68a',
-    rimStrength: 0.95,
-    emissiveBoost: 0.55,
-  });
-
-  ringA = new THREE.Mesh(new THREE.TorusGeometry(0.92, 0.011, 6, 72), cyanMat);
-  ringA.rotation.set(Math.PI * 0.5, 0, 0.32);
-  group.add(ringA);
-
-  ringB = new THREE.Mesh(new THREE.TorusGeometry(1.12, 0.009, 6, 72), goldMat);
-  ringB.rotation.set(Math.PI * 0.5 - 0.42, 0.3, -0.2);
-  group.add(ringB);
-
-  orbiters = [];
-  for (let i = 0; i < 6; i++) {
-    const isGold = i % 2 === 1;
-    const crystal = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.05, 0),
-      isGold ? goldMat : cyanMat
-    );
-    addComicOutline(crystal, 0.006, 0x090b14);
-    group.add(crystal);
-
-    orbiters.push({
-      mesh: crystal,
-      radius: 0.95 + (i % 3) * 0.15,
-      speed: 0.42 + i * 0.11,
-      phase: (i / 6) * Math.PI * 2,
-      tilt: (i % 2 === 0 ? 1 : -1) * 0.38,
-      yOff: ((i % 3) - 1) * 0.24,
-    });
-  }
-
-  return group;
 }
 
 // ============================================================================
@@ -1250,9 +1251,60 @@ for (const btn of poseBtns) {
   });
 }
 
+const animBtns = document.querySelectorAll('#anim-btns [data-anim]');
+const animParams = { speed01: 0.85, turnRate: 0, verticalVel: -14, hairGravityLocal: [0, -1, 0] };
+let animDashDir = 1;
+let animRetriggerAt = 0;
+
+function selectAnim(name) {
+  state.pose = 'anim';
+  state.anim = name;
+  for (const rig of rigs) rig.animator?.setState(name, { dashDir: animDashDir });
+  for (const b of animBtns) {
+    const on = b.dataset.anim === name;
+    b.classList.toggle('is-on', on);
+    b.setAttribute('aria-pressed', String(on));
+  }
+  for (const b of poseBtns) { b.classList.remove('is-on'); b.setAttribute('aria-pressed', 'false'); }
+}
+for (const btn of animBtns) btn.addEventListener('click', () => selectAnim(btn.dataset.anim));
+
+const dashBtn = document.getElementById('t-dashdir');
+dashBtn.addEventListener('click', () => {
+  animDashDir = -animDashDir;
+  dashBtn.textContent = animDashDir > 0 ? 'DASH ➜ +X' : 'DASH ➜ -X';
+  dashBtn.classList.toggle('is-on', animDashDir < 0);
+  dashBtn.setAttribute('aria-pressed', String(animDashDir < 0));
+  if (state.pose === 'anim' && state.anim === 'air_dash') selectAnim('air_dash');
+});
+const loopBtn = document.getElementById('t-autoloop');
+let autoLoop = true;
+loopBtn.addEventListener('click', () => {
+  autoLoop = !autoLoop;
+  loopBtn.classList.toggle('is-on', autoLoop);
+  loopBtn.setAttribute('aria-pressed', String(autoLoop));
+});
+// Al elegir una pose clásica, se desmarca la animación
+for (const btn of poseBtns) {
+  btn.addEventListener('click', () => {
+    for (const b of animBtns) { b.classList.remove('is-on'); b.setAttribute('aria-pressed', 'false'); }
+  });
+}
+
 function updateRigPoseAndHairPhysics(rig, t, dt) {
   const b = rig.bones;
   if (!b.size) return;
+
+  if (state.pose === 'anim' && rig.animator) {
+    const an = rig.animator;
+    an.hairEnabled = state.sway;
+    if (autoLoop && an.isFinished() && t > animRetriggerAt) {
+      animRetriggerAt = t + 0.9; // pausa breve en reposo y se repite
+      if (an.getStateTime() > 1.6) selectAnim(state.anim);
+    }
+    an.update(dt, animParams);
+    return;
+  }
 
   const poseMode = state.pose;
 
@@ -1387,19 +1439,6 @@ function tick(now) {
       -0.32 + Math.sin(t * 0.45) * 0.12,
       -0.14 + Math.sin(t * 0.6) * 0.04
     );
-
-    if (orbitGroup) orbitGroup.position.y = center.y + bob;
-  }
-
-  if (ringA) ringA.rotation.x = Math.PI * 0.5 + Math.sin(t * 0.5) * 0.16;
-  if (ringB) ringB.rotation.x = Math.PI * 0.5 - 0.42 + Math.sin(t * 0.37 + 1.2) * 0.2;
-
-  for (const o of orbiters) {
-    const a = t * o.speed + o.phase;
-    const px = Math.cos(a) * o.radius;
-    const pz = Math.sin(a) * o.radius;
-    o.mesh.position.set(px, o.yOff + pz * Math.sin(o.tilt), pz * Math.cos(o.tilt));
-    o.mesh.rotation.set(a * 1.3, a * 0.9, a * 0.5);
   }
 
   if (controls) controls.update();

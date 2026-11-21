@@ -1,13 +1,16 @@
 import * as THREE from 'three';
 
 // ============================================================================
-// PASO C — Divisor líquido del menú (Persona 5 x Frieren)
+// Divisor líquido del menú — identidad Cosmic Nebula
 // ============================================================================
 //
 // Un quad a pantalla completa (cámara ortográfica) que pinta el "blade"
-// diagonal blanco de la portada: panel de porcelana a la izquierda, trazo de
-// tinta navy y una franja de maná cósmico (cian -> cobalto -> violeta) con
-// trama halftone que se disuelve hacia el espacio del diorama.
+// diagonal de la portada: panel de OBSIDIANA ASTRAL a la izquierda (#080414 ->
+// #120926) con trama estelar y líneas diagonales finas violeta/cian, borde de
+// tinta BLANCO puro brillante y una franja de nebulosa líquida (violeta ->
+// carmesí -> cian) con puntos halftone que se funde hacia el diorama cósmico
+// de la derecha. Sobre el panel oscuro, el logo 3D y los botones resaltan
+// con sus bordes blancos/cian/carmesí.
 //
 // La silueta SIEMPRE es la misma diagonal (arriba ~42% del ancho, abajo ~25%):
 // el borde se desplaza con una onda líquida continua (senos + FBM que fluye
@@ -79,66 +82,42 @@ const dividerFragmentShader = /* glsl */ `
   void main() {
     vec2 uv = vUv;
 
-    // Silueta fija: 42% del ancho arriba, 25% abajo (cuchilla diagonal limpia).
-    float baseEdgeX = mix( 0.42, 0.25, 1.0 - uv.y );
-
-    // --- Onda líquida continua sobre la diagonal (amplitud ~0.016) ---
+    // Silueta diagonal con onda líquida suave y orgánica
+    float baseEdgeX = mix( 0.40, 0.24, 1.0 - uv.y );
     vec2 flow = vec2( uv.x * uAspect, uv.y );
     float t = uTime;
-    float n1 = fbm( vec2( flow.y * 3.4 + t * 0.22, flow.x * 1.6 - t * 0.13 ) );
-    float n2 = fbm( vec2( flow.y * 7.1 - t * 0.31, flow.x * 2.9 + t * 0.19 ) );
-    float wave = sin( uv.y * 11.0 + t * 1.35 ) * 0.45
-               + sin( uv.y * 23.0 - t * 2.10 ) * 0.22
-               + ( n1 - 0.5 ) * 1.15
+    float n1 = fbm( vec2( flow.y * 3.0 + t * 0.22, flow.x * 1.5 - t * 0.12 ) );
+    float n2 = fbm( vec2( flow.y * 6.2 - t * 0.28, flow.x * 2.6 + t * 0.16 ) );
+    float wave = sin( uv.y * 9.0 + t * 1.2 ) * 0.40
+               + ( n1 - 0.5 ) * 1.25
                + ( n2 - 0.5 ) * 0.55;
-    wave /= 1.5;
-    float fluidEdgeX = baseEdgeX + wave * 0.016;
-
-    // Distancia con signo al borde: negativo = dentro del blade blanco.
+    float fluidEdgeX = baseEdgeX + ( wave / 1.5 ) * 0.022;
     float d = uv.x - fluidEdgeX;
 
     vec3 col;
     float alpha;
 
     if ( d < 0.0 ) {
-      // --- Interior: porcelana blanca con violeta pálido al fondo ---
-      vec3 porcelain = vec3( 0.975, 0.985, 1.0 );
-      vec3 paleViolet = vec3( 0.902, 0.878, 0.984 );
-      float bottomMix = smoothstep( 0.46, 0.0, uv.y );
-      col = mix( porcelain, paleViolet, bottomMix * 0.55 );
-
-      // Líneas de velocidad diagonales finas (cómic impreso).
-      float speed = sin( ( uv.x * 1.35 + uv.y * 0.85 ) * 118.0 + t * 0.55 );
-      float lines = smoothstep( 0.972, 1.0, speed );
-      float lineMask = smoothstep( 0.0, 0.07, -d ) * smoothstep( 0.62, 0.02, uv.y );
-      col = mix( col, vec3( 0.760, 0.784, 0.918 ), lines * lineMask * 0.34 );
-      alpha = 1.0;
-    } else if ( d < 0.009 ) {
-      // --- Trazo de tinta navy (cómic) ---
-      col = vec3( 0.0588, 0.0902, 0.1647 ); // #0f172a
-      alpha = 1.0;
-    } else if ( d < 0.072 ) {
-      // --- Franja de maná cósmico que se disuelve hacia el espacio ---
-      float f = ( d - 0.009 ) / 0.063;
-      vec3 cyan = vec3( 0.133, 0.827, 0.933 );   // #22d3ee
-      vec3 cobalt = vec3( 0.145, 0.388, 0.922 ); // cobalto eléctrico
-      vec3 violet = vec3( 0.545, 0.361, 0.965 ); // violeta iris
-      vec3 fringe = mix( cyan, cobalt, smoothstep( 0.0, 0.55, f ) );
-      fringe = mix( fringe, violet, smoothstep( 0.5, 1.0, f ) );
-
-      // Remolinos de maná que fluyen a lo largo de la franja.
-      float swirl = fbm( vec2( uv.y * 6.0 + t * 0.35, f * 4.0 - t * 0.5 ) );
-      fringe += vec3( 0.35, 0.85, 1.0 ) * ( swirl - 0.5 ) * 0.38;
-
-      // Halftone cómic que se disuelve suavemente hacia alpha = 0.
-      float dots = halftoneDots( gl_FragCoord.xy, 7.0 );
-      float dotMask = smoothstep( 0.66, 0.16, f ) * 0.55;
-      if ( dots < dotMask ) {
-        fringe = mix( fringe, vec3( 0.86, 0.97, 1.0 ), 0.55 );
-      }
-
-      col = fringe;
-      alpha = ( 1.0 - smoothstep( 0.32, 1.0, f ) ) * 0.94;
+      // --- Panel izquierdo: velo oscuro translúcido que deja pasar el fluido ---
+      vec3 topCol = vec3( 0.020, 0.022, 0.055 );
+      vec3 botCol = vec3( 0.040, 0.025, 0.075 );
+      col = mix( botCol, topCol, uv.y );
+      alpha = 0.72;
+    } else if ( d < 0.0028 ) {
+      // --- Borde fluido fino cian/blanco sutil (no compite con el contorno de Nyx) ---
+      col = mix( vec3( 0.133, 0.827, 0.933 ), vec3( 0.85, 0.96, 1.0 ), 0.35 );
+      alpha = 0.60;
+    } else if ( d < 0.055 ) {
+      // --- Estela líquida translúcida con halftone sutil ---
+      float f = ( d - 0.0028 ) / 0.0522;
+      float swirl = fbm( vec2( uv.y * 5.0 + t * 0.3, f * 3.5 - t * 0.45 ) );
+      vec3 cian = vec3( 0.08, 0.62, 0.82 );
+      vec3 plum = vec3( 0.48, 0.16, 0.62 );
+      col = mix( cian, plum, smoothstep( 0.2, 0.85, swirl ) );
+      float dots = halftoneDots( gl_FragCoord.xy, 6.5 );
+      float dotMask = smoothstep( 0.7, 0.1, f ) * 0.45;
+      float a = ( dots < dotMask ? 0.36 : 0.14 ) * ( 1.0 - smoothstep( 0.0, 1.0, f ) );
+      alpha = a;
     } else {
       col = vec3( 0.0 );
       alpha = 0.0;
@@ -151,7 +130,7 @@ const dividerFragmentShader = /* glsl */ `
 /**
  * Crea el divisor líquido del menú: quad a pantalla completa + ShaderMaterial
  * transparente (sin depth test/write) que se dibuja DESPUÉS del diorama para
- * superponer el blade blanco sobre el cosmos vivo de la derecha.
+ * superponer el blade de obsidiana astral sobre el cosmos vivo de la derecha.
  */
 export function createMenuFluidDivider(): MenuFluidDivider {
   const material = new THREE.ShaderMaterial({

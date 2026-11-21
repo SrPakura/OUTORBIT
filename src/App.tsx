@@ -7,6 +7,7 @@ import MobileBlocker from '@/ui/MobileBlocker';
 import TitleScreen from '@/ui/TitleScreen';
 import GameHUD from '@/ui/GameHUD';
 import BattleReportScreen from '@/ui/BattleReportScreen';
+import DomeArenaPreview from '@/ui/DomeArenaPreview';
 
 type Screen = 'title' | 'game';
 
@@ -36,7 +37,7 @@ export default function App() {
   settingsRef.current = settings;
 
   useEffect(() => {
-    if (screen !== 'game') return;
+    if (screen !== 'game' || !activeTutorialId) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const engine = new GameEngine(canvas, setHud, { tutorialId: activeTutorialId });
@@ -124,7 +125,7 @@ export default function App() {
           settings={settings}
           onUpdateSettings={handleUpdateSettings}
         />
-      ) : (
+      ) : activeTutorialId ? (
         <div className="relative h-screen w-screen overflow-hidden">
           <canvas ref={canvasRef} className="block h-full w-full" />
           {hud && (
@@ -145,6 +146,8 @@ export default function App() {
             />
           )}
         </div>
+      ) : (
+        <DomeArenaPreview onExit={handleExitToTitle} />
       )}
     </div>
   );
