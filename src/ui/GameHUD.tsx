@@ -1,4 +1,5 @@
 import { GAME_CONSTANTS, type CharacterId, type HudSnapshot } from '@/game/types';
+import { TUTORIAL_SPECS } from '@/game/levels/tutorialDefinitions';
 
 const SQUADRON: CharacterId[] = ['kitsune', 'digger', 'axel'];
 
@@ -34,6 +35,10 @@ interface GameHUDProps {
   onExitToTitle: () => void;
   /** Botón rápido M: Audio (alterna el mute del SynthAudio del GameEngine). */
   onToggleMute?: () => void;
+  /** PASO B: salta al siguiente tutorial del catálogo (si no es el último). */
+  onNextTutorial?: () => void;
+  /** PASO B: reinicia el tutorial activo desde el principio. */
+  onRestartTutorial?: () => void;
 }
 
 /**
@@ -45,7 +50,14 @@ interface GameHUDProps {
  * escuadrón, HP, Estasis, Disfraz, Subsuelo, Nado, Parry, prompt contextual,
  * barra del COMANDANTE KRONOS y pantallas de pausa/game over.
  */
-export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMute }: GameHUDProps) {
+export default function GameHUD({
+  snapshot,
+  onResume,
+  onExitToTitle,
+  onToggleMute,
+  onNextTutorial,
+  onRestartTutorial,
+}: GameHUDProps) {
   const shifting = snapshot.isGravityShifting;
   const anchorReady = 1 - snapshot.anchorCooldownRatio;
   const gravityReady = 1 - (snapshot.gravityShiftCooldownRatio ?? 0);
@@ -53,6 +65,12 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
   const damageFeedback = snapshot.damageFeedback;
   const damageIntensity = damageFeedback?.intensity ?? 0;
   const damageDirection = damageFeedback?.directionRad ?? null;
+  // PASO B: tutorial activo y si queda uno siguiente en el catálogo.
+  const tutorialIndex = snapshot.tutorialId
+    ? TUTORIAL_SPECS.findIndex((spec) => spec.id === snapshot.tutorialId)
+    : -1;
+  const hasNextTutorial =
+    tutorialIndex >= 0 && tutorialIndex < TUTORIAL_SPECS.length - 1;
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none font-sans text-slate-100">
@@ -170,6 +188,30 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
           </p>
         </div>
       </div>
+
+      {/* --- PASO B: checklist del TUTORIAL activo (bajo la tarjeta PLANETA).
+          Tarjeta cian-violeta flotante con los 2-3 pasos de la lección. --- */}
+      {snapshot.phase === 'playing' && snapshot.tutorialId && (
+        <div className="absolute left-4 top-[96px] w-[min(330px,74vw)]">
+          <div className="rounded-lg border-2 border-cyan-300 bg-[#160b2e]/90 px-4 py-2 shadow-[4px_4px_0_#000]">
+            <p className="text-[10px] font-black tracking-[0.26em] text-cyan-300">
+              TUTORIAL · {snapshot.tutorialTitle}
+            </p>
+            <ul className="mt-1.5 space-y-1">
+              {(snapshot.tutorialLessons ?? []).map((lesson, index) => (
+                <li key={index} className="flex items-start gap-2">
+                  <span className="mt-[1px] flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-violet-400 bg-violet-500/30 text-[9px] font-black text-violet-200">
+                    {index + 1}
+                  </span>
+                  <span className="text-[11px] font-semibold leading-snug text-slate-200">
+                    {lesson}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* --- Barra prominente del COMANDANTE KRONOS (Hito 4) --- */}
       {snapshot.bossHpRatio !== null && (
@@ -645,18 +687,85 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
             <p className="mb-6 text-sm font-bold text-slate-300">
               Los centinelas de {snapshot.activePlanetName} te han noqueado.
             </p>
-            <button
-              type="button"
-              onClick={onExitToTitle}
-              className="cursor-pointer rounded-xl border-4 border-black bg-yellow-400 px-8 py-3 text-lg font-black tracking-widest text-black shadow-[6px_6px_0_#000] transition-transform hover:-translate-y-0.5"
-            >
-              VOLVER AL TÍTULO
-            </button>
+            <div className="flex flex-col gap-3">
+              {snapshot.tutorialId && onRestartTutorial && (
+                <button
+                  type="button"
+                  onClick={onRestartTutorial}
+                  className="cursor-pointer rounded-xl border-4 border-black bg-cyan-300 px-8 py-3 text-lg font-black tracking-widest text-black shadow-[6px_6px_0_#000] transition-transform hover:-translate-y-0.5"
+                >
+                  REINTENTAR TUTORIAL
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onExitToTitle}
+                className="cursor-pointer rounded-xl border-4 border-black bg-yellow-400 px-8 py-3 text-lg font-black tracking-widest text-black shadow-[6px_6px_0_#000] transition-transform hover:-translate-y-0.5"
+              >
+                VOLVER AL TÍTULO
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* --- Victoria: el BattleReportScreen (App) toma el relevo --- */}
+      {/* --- PASO B: tarjeta de TUTORIAL COMPLETADO (P5/Frieren). Tres salidas:
+          siguiente tutorial (si no es el último), reintentar y volver al menú.
+          Nunca abre el Battle Report: los tutoriales no puntúan. --- */}
+      {snapshot.tutorialCompleted && (
+        <div className="pointer-events-auto absolute inset-0 flex items-center justify-center bg-[#05010f]/85">
+          <div className="w-[min(560px,92vw)] rounded-2xl border-4 border-cyan-300 bg-[#160b2e] p-8 text-center shadow-[10px_10px_0_#000]">
+            <p className="text-[10px] font-black tracking-[0.4em] text-violet-300">
+              TUTORIAL · {snapshot.tutorialTitle}
+            </p>
+            <h2
+              className="mt-2 text-4xl font-black italic tracking-tight text-transparent"
+              style={{
+                backgroundImage: 'linear-gradient(180deg, #67e8f9 0%, #a78bfa 55%, #f472b6 100%)',
+                WebkitBackgroundClip: 'text',
+                backgroundClip: 'text',
+                WebkitTextStroke: '2px #0b0b14',
+                filter: 'drop-shadow(5px 5px 0 #0b0b14)',
+              }}
+            >
+              ¡TUTORIAL COMPLETADO!
+            </h2>
+            <p className="mt-3 text-xs font-semibold leading-relaxed text-slate-300">
+              Lección superada en {formatTime(snapshot.elapsedRunSec)}. Sin rastro en el
+              leaderboard: los tutoriales no puntúan.
+            </p>
+            <div className="mt-6 flex flex-col gap-3">
+              {hasNextTutorial && onNextTutorial && (
+                <button
+                  type="button"
+                  onClick={onNextTutorial}
+                  className="cursor-pointer rounded-xl border-4 border-black bg-cyan-300 px-8 py-3 text-lg font-black tracking-widest text-black shadow-[6px_6px_0_#000] transition-transform hover:-translate-y-0.5"
+                >
+                  SIGUIENTE TUTORIAL
+                </button>
+              )}
+              {onRestartTutorial && (
+                <button
+                  type="button"
+                  onClick={onRestartTutorial}
+                  className="cursor-pointer rounded-xl border-4 border-black bg-violet-400 px-8 py-3 text-lg font-black tracking-widest text-black shadow-[6px_6px_0_#000] transition-transform hover:-translate-y-0.5"
+                >
+                  REINTENTAR
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onExitToTitle}
+                className="cursor-pointer rounded-xl border-4 border-black bg-yellow-400 px-8 py-3 text-lg font-black tracking-widest text-black shadow-[6px_6px_0_#000] transition-transform hover:-translate-y-0.5"
+              >
+                VOLVER AL MENÚ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- Victoria de campaña: el BattleReportScreen (App) toma el relevo --- */}
     </div>
   );
 }

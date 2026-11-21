@@ -88,9 +88,23 @@ function bump(x: number): number {
 }
 
 /**
+ * Hash determinista del id de planeta (FNV-1a de 32 bits). Siembra el relieve
+ * de los planetas sin bioma propio (los mini-planetas de tutorial `tut-*`):
+ * cada id obtiene sus propias colinas, siempre las mismas entre ejecuciones.
+ */
+function hashPlanetId(planetId: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < planetId.length; i++) {
+    hash ^= planetId.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/**
  * Altura cruda (sin pads) por planeta, en metros. Envolventes garantizadas:
  *  luna [-0.65, +0.85] · verdant [-1.5, +1.65] · cryo [-1.0, +1.9]
- *  bastion [-1.05, +1.45] · kronos [-0.35, +1.25].
+ *  bastion [-1.05, +1.45] · kronos [-0.35, +1.25] · tutorial [-0.5, +0.6].
  */
 function rawTerrainHeight(planetId: string, nx: number, ny: number, nz: number): number {
   switch (planetId) {
@@ -131,7 +145,14 @@ function rawTerrainHeight(planetId: string, nx: number, ny: number, nz: number):
       return 1.25 * bump(ridge) - 0.35 * bump(-dip);
     }
     default: {
-      const o = oct3(nx, ny, nz, 3.0, 0.5);
+      // Planetas de tutorial (`tut-*`) y cualquier id sin bioma propio: colinas
+      // suaves y deterministas sembradas por hash del id, de modo que cada
+      // mini-planeta tiene su propio relieve (siempre el mismo) sin depender
+      // del bioma. Envolvente garantizada [-0.5, +0.6] m.
+      const seed = hashPlanetId(planetId);
+      const phase = ((seed % 997) / 997) * Math.PI * 2;
+      const freq = 2.6 + ((seed >>> 10) % 5) * 0.35;
+      const o = oct3(nx, ny, nz, freq, phase);
       return 0.6 * bump(o) - 0.5 * bump(-o);
     }
   }

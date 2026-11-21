@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import type { TutorialId } from './levels/tutorialDefinitions';
 
 // ============================================================================
 // 1. PERSONAJES Y HABILIDADES DEL ESCUADRÓN
@@ -428,6 +429,14 @@ export interface HudSnapshot {
    * respecto a la cámara e intensidad del flash. null: sin feedback activo.
    */
   damageFeedback?: DamageFeedbackInfo | null;
+  /** PASO B — Tutorial activo (null: campaña principal). */
+  tutorialId?: TutorialId | null;
+  /** Título legible del tutorial activo ("1 · Parkour, Combate y Parry"). */
+  tutorialTitle?: string | null;
+  /** Pasos de la lección del tutorial activo (checklist del HUD). */
+  tutorialLessons?: string[];
+  /** El tutorial activo ya cumplió su meta (tarjeta de victoria del HUD). */
+  tutorialCompleted?: boolean;
 }
 
 // ============================================================================

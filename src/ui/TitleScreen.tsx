@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import * as THREE from 'three';
 import { fetchTopLeaderboard } from '@/api/leaderboard';
 import type { LeaderboardEntryRecord } from '@/game/types';
+import { TUTORIAL_SPECS, type TutorialId } from '@/game/levels/tutorialDefinitions';
 import { createSpaceBackdrop } from '@/game/render/toonMaterials';
 import { buildCharacterModel, buildKronosModel, buildPlanetModel } from '@/game/render/proceduralModels';
 import { orientObjectOnSphere } from '@/game/math/spherical';
@@ -27,6 +28,8 @@ function formatTime(totalSec: number): string {
 
 interface TitleScreenProps {
   onPlay: () => void;
+  /** PASO B: lanza un mini-tutorial jugable desde la portada. */
+  onPlayTutorial?: (id: TutorialId) => void;
 }
 
 /** Spec del planeta miniatura del diorama (Verdant reducido, con anillos). */
@@ -147,7 +150,7 @@ function useTitleDiorama(): React.RefObject<HTMLCanvasElement | null> {
  * vivo de fondo, botón JUGAR (sin login) y panel lateral con el Top 5 del
  * leaderboard de Base44.
  */
-export default function TitleScreen({ onPlay }: TitleScreenProps) {
+export default function TitleScreen({ onPlay, onPlayTutorial }: TitleScreenProps) {
   const [topEntries, setTopEntries] = useState<LeaderboardEntryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const canvasRef = useTitleDiorama();
@@ -219,6 +222,28 @@ export default function TitleScreen({ onPlay }: TitleScreenProps) {
             <span>1/2/3 Escuadrón</span>
             <span>CLIC DER. Gravity Shift</span>
           </div>
+
+          {/* --- PASO B: acceso directo a los 5 mini-tutoriales --- */}
+          {onPlayTutorial && (
+            <div className="mt-6 max-w-lg">
+              <p className="mb-2 text-[10px] font-black tracking-[0.3em] text-cyan-300">
+                TUTORIALES · UNA MECÁNICA POR NIVEL
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {TUTORIAL_SPECS.map((spec) => (
+                  <button
+                    key={spec.id}
+                    type="button"
+                    onClick={() => onPlayTutorial(spec.id)}
+                    title={spec.summary}
+                    className="cursor-pointer rounded-lg border-2 border-black bg-[#160b2e]/80 px-3 py-1.5 text-[10px] font-black tracking-[0.12em] text-cyan-200 shadow-[3px_3px_0_#000] transition-colors hover:bg-[#1d1240] hover:text-white"
+                  >
+                    {spec.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* --- Panel lateral: Top 5 (vidrio espacial translúcido) --- */}

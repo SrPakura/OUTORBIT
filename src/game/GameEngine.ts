@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   GAME_CONSTANTS,
+  type GalaxySpec,
   type HudSnapshot,
   type LevelId,
   type LevelObjective,
@@ -16,6 +17,7 @@ import { buildPlanetModel } from './render/proceduralModels';
 import { PlayerController } from './entities/PlayerController';
 import { WorldObjectsManager, type WorldPlayerState } from './entities/WorldObjects';
 import { GALAXY_SPEC } from './levels/levelDefinitions';
+import { getTutorialSpec, type TutorialId, type TutorialSpec } from './levels/tutorialDefinitions';
 import { initPlanetTerrain, isInLowBasin } from './math/terrain';
 import { BehaviorTracker, createEmptyBehaviorVector } from './ai/BehaviorTracker';
 import { computePlanetAdaptation } from './ai/AdaptationDirector';
@@ -79,6 +81,14 @@ export class GameEngine {
   private objectives: LevelObjective[] = [];
   /** Clave discreta del estado de objetivos (evita allocations por frame). */
   private objectivesKey = -1;
+
+  // PASO B — Tutorial activo (null: campaña principal de 5 planetas).
+  /** Galaxia cargada: GALAXY_SPEC o la GalaxySpec del tutorial activo. */
+  private readonly activeGalaxySpec: GalaxySpec;
+  /** Spec del tutorial en curso (null en campaña). */
+  private readonly tutorialSpec: TutorialSpec | null;
+  /** El tutorial ya cumplió su meta (tarjeta de victoria, sin Battle Report). */
+  private tutorialCompleted = false;
 
   private rafId = 0;
   private lastTime = 0;
@@ -204,9 +214,18 @@ export class GameEngine {
     }
   };
 
-  constructor(canvas: HTMLCanvasElement, onHudSnapshot: (snapshot: HudSnapshot) => void) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    onHudSnapshot: (snapshot: HudSnapshot) => void,
+    launchConfig?: { tutorialId?: TutorialId | null }
+  ) {
     this.canvas = canvas;
     this.onHudSnapshot = onHudSnapshot;
+
+    // PASO B: un tutorial carga SU galaxia mínima; sin id, la campaña entera.
+    const tutorialId = launchConfig?.tutorialId ?? null;
+    this.tutorialSpec = tutorialId ? getTutorialSpec(tutorialId) : null;
+    this.activeGalaxySpec = this.tutorialSpec ? this.tutorialSpec.galaxy : GALAXY_SPEC;
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -294,30 +313,32 @@ export class GameEngine {
   }
 
   /**
-   * Carga única de GALAXY_SPEC: los 5 planetas coexisten en la misma escena
-   * con sus escudos, bases, guarniciones y el Comandante KRONOS. No hay
+   * Carga única de la galaxia activa (GALAXY_SPEC en campaña, la GalaxySpec
+   * mínima del tutorial en modo tutorial): los planetas coexisten en la misma
+   * escena con sus escudos, bases, guarniciones y el Comandante KRONOS. No hay
    * pantallas de carga ni transiciones: los escudos caen en vivo.
    */
   private loadGalaxy(): void {
     this.disposeLevel();
+    const galaxy = this.activeGalaxySpec;
 
     // HITO 2 — Terreno esférico determinista: se inicializa ANTES de
     // construir los modelos de planeta y de instanciar estructuras, props,
     // objetos, enemigos y NPCs (todo el mundo se apoya en él).
-    initPlanetTerrain(GALAXY_SPEC);
+    initPlanetTerrain(galaxy);
 
-    this.scene.background = new THREE.Color(GALAXY_SPEC.skyTopColor);
+    this.scene.background = new THREE.Color(galaxy.skyTopColor);
     this.backdrop = createSpaceBackdrop(
       this.scene,
-      GALAXY_SPEC.skyTopColor,
-      GALAXY_SPEC.skyBottomColor
+      galaxy.skyTopColor,
+      galaxy.skyBottomColor
     );
 
     this.levelGroup = new THREE.Group();
     this.levelGroup.name = 'galaxy';
     this.scene.add(this.levelGroup);
 
-    for (const spec of GALAXY_SPEC.planets) {
+    for (const spec of galaxy.planets) {
       const { group, animTick } = buildPlanetModel(spec);
       this.levelGroup.add(group);
       this.planets.push({
@@ -332,15 +353,17 @@ export class GameEngine {
     // Toda la galaxia en una sola escena: estructuras con colisión/LoS,
     // escudos, balizas, objetos, burbujas, hierba y guarniciones.
     this.world = new WorldObjectsManager(this.levelGroup, this.planets);
-    this.world.buildGalaxy(GALAXY_SPEC, this.planets);
+    this.world.buildGalaxy(galaxy, this.planets);
 
     this.player = new PlayerController(
       this.planets,
       this.camera,
       this.world,
-      GALAXY_SPEC.spawnPlanetId,
-      new THREE.Vector3(...GALAXY_SPEC.spawnDir)
+      galaxy.spawnPlanetId,
+      new THREE.Vector3(...galaxy.spawnDir)
     );
+    // PASO B: el tutorial arranca con su personaje recomendado ya equipado.
+    if (this.tutorialSpec) this.player.setCharacter(this.tutorialSpec.recommendedCharacter);
     this.scene.add(this.player.root);
     this.scene.add(this.player.lockRing);
 
@@ -375,7 +398,7 @@ export class GameEngine {
     this.world.setKronosBehaviorSource(this.kronosBehavior);
     this.player.onSound = (kind) => this.audio.play(kind);
 
-    this.objectives = this.buildObjectives(GALAXY_SPEC.spawnPlanetId);
+    this.objectives = this.buildObjectives(galaxy.spawnPlanetId);
   }
 
   // --------------------------------------------------------------------------
@@ -438,6 +461,7 @@ export class GameEngine {
         if (this.radioToastT <= 0) this.radioToast = null;
       }
 
+      this.checkTutorialCompletion();
       this.checkGameOver();
     }
 
@@ -593,10 +617,15 @@ export class GameEngine {
    * Objetivos dinámicos del planeta activo, deducidos de los contadores
    * reales del mundo: Luna 1 generador, Verdant/Cryo 3 generadores,
    * Bastion 1 tarjeta + 3 generadores, Kronos derrotar al Comandante.
+   *
+   * PASO B: en modo tutorial los objetivos son la meta de la lección
+   * (generadores de entrenamiento o aterrizaje en el planeta destino).
    */
   private buildObjectives(planetId: string): LevelObjective[] {
     const world = this.world;
     if (!world) return [];
+    const tutorial = this.tutorialSpec;
+    if (tutorial) return this.buildTutorialObjectives(tutorial);
     if (planetId === 'kronos-trono') {
       const defeated = world.kronosDefeated ? 1 : 0;
       return [
@@ -645,6 +674,116 @@ export class GameEngine {
       });
     }
     return out;
+  }
+
+  /**
+   * PASO B — Objetivos del tutorial activo: una sola meta cristalina, con el
+   * contador real del mundo (generadores de entrenamiento destruidos o
+   * aterrizaje en el planeta destino).
+   */
+  private buildTutorialObjectives(tutorial: TutorialSpec): LevelObjective[] {
+    const world = this.world;
+    if (!world) return [];
+    if (tutorial.goalMode === 'reach_target_planet') {
+      const targetId = tutorial.targetPlanetId;
+      const total = targetId ? world.getGeneratorTotalOn(targetId) : 0;
+      const destroyed = targetId
+        ? Math.min(world.getGeneratorsDestroyedOn(targetId), total)
+        : 0;
+      const landed = this.tutorialCompleted ? 1 : 0;
+      return [
+        {
+          id: 'tutorial-reach',
+          description: 'Aterriza en el planeta destino con Gravity Shift (Clic Der.)',
+          completed: landed >= 1,
+          currentCount: landed,
+          targetCount: 1,
+        },
+        ...(total > 0
+          ? [
+              {
+                id: 'tutorial-beacon',
+                description: 'O destruye el generador-baliza del destino',
+                completed: destroyed >= total,
+                currentCount: destroyed,
+                targetCount: total,
+              },
+            ]
+          : []),
+      ];
+    }
+    const total = this.tutorialGeneratorTotal();
+    const destroyed = Math.min(this.tutorialGeneratorsDestroyed(), total);
+    return [
+      {
+        id: 'tutorial-generators',
+        description:
+          total === 1
+            ? 'Destruye el generador de entrenamiento'
+            : 'Destruye los generadores de entrenamiento',
+        completed: total > 0 && destroyed >= total,
+        currentCount: destroyed,
+        targetCount: total,
+      },
+    ];
+  }
+
+  /** Generadores de entrenamiento totales de la galaxia del tutorial. */
+  private tutorialGeneratorTotal(): number {
+    const world = this.world;
+    if (!world) return 0;
+    let total = 0;
+    for (const planet of this.activeGalaxySpec.planets) {
+      total += world.getGeneratorTotalOn(planet.id);
+    }
+    return total;
+  }
+
+  /** Generadores de entrenamiento ya destruidos en la galaxia del tutorial. */
+  private tutorialGeneratorsDestroyed(): number {
+    const world = this.world;
+    if (!world) return 0;
+    let destroyed = 0;
+    for (const planet of this.activeGalaxySpec.planets) {
+      destroyed += world.getGeneratorsDestroyedOn(planet.id);
+    }
+    return destroyed;
+  }
+
+  /**
+   * PASO B — Cierre del tutorial: al cumplir la meta se marca la lección como
+   * completada, se libera el cursor, suena la fanfarria y el HUD muestra la
+   * tarjeta de victoria. NO se abre el Battle Report ni se envía nada al
+   * leaderboard: los tutoriales no contaminan las puntuaciones de la campaña.
+   */
+  private checkTutorialCompletion(): void {
+    const tutorial = this.tutorialSpec;
+    if (!tutorial || this.tutorialCompleted || this.phase !== 'playing') return;
+    const player = this.player;
+    const world = this.world;
+    if (!player || !world) return;
+
+    let done: boolean;
+    if (tutorial.goalMode === 'reach_target_planet') {
+      const targetId = tutorial.targetPlanetId;
+      if (!targetId) return;
+      const total = world.getGeneratorTotalOn(targetId);
+      const destroyed = world.getGeneratorsDestroyedOn(targetId);
+      const landed = player.planet.spec.id === targetId && player.isGrounded;
+      done = landed || (total > 0 && destroyed >= total);
+    } else {
+      const total = this.tutorialGeneratorTotal();
+      done = total > 0 && this.tutorialGeneratorsDestroyed() >= total;
+    }
+    if (!done) return;
+
+    this.tutorialCompleted = true;
+    this.phase = 'victory';
+    this.timeScale = 1;
+    this.objectives = this.buildObjectives(player.planet.spec.id);
+    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+    this.audio.play('victory');
+    this.emitHud();
   }
 
   /**
@@ -1022,6 +1161,10 @@ export class GameEngine {
         ? { speaker: world.warningBanner.speaker, text: world.warningBanner.text }
         : null,
       damageFeedback: damageFeedback ? { ...damageFeedback } : null,
+      tutorialId: this.tutorialSpec?.id ?? null,
+      tutorialTitle: this.tutorialSpec?.title ?? null,
+      tutorialLessons: this.tutorialSpec ? [...this.tutorialSpec.lessonSteps] : [],
+      tutorialCompleted: this.tutorialCompleted,
     });
   }
 

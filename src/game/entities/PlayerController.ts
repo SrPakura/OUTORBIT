@@ -532,6 +532,15 @@ export class PlayerController {
     return this.activeCharacter;
   }
 
+  /**
+   * Equipa un personaje del escuadrón sin pasar por el teclado (1/2/3).
+   * Lo usa el GameEngine al cargar un tutorial para arrancar con el
+   * personaje recomendado por la lección.
+   */
+  setCharacter(id: CharacterId): void {
+    this.switchCharacter(id);
+  }
+
   get planet(): PlanetRuntime {
     return this.currentPlanet;
   }
