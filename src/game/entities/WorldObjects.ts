@@ -1562,8 +1562,11 @@ export class WorldObjectsManager {
     const altitudeOffset = spec.altitudeOffset ?? 0;
     const pos = this.placeOnPlanet(mesh, planet, dir.x, dir.y, dir.z, altitudeOffset);
     this.group.add(mesh);
-    // Tangente de mirada base: los vigías barren ±60º alrededor de ella.
+    // Tangente de mirada base: si hay segundo waypoint en vigías, apunta hacia él.
     const baseForward = new THREE.Vector3(0, 0, 1);
+    if (spec.stationaryLookout && waypoints.length >= 2) {
+      baseForward.copy(waypoints[1]).sub(dir);
+    }
     baseForward.addScaledVector(dir, -baseForward.dot(dir));
     if (baseForward.lengthSq() < 1e-6) baseForward.set(1, 0, 0).cross(dir);
     baseForward.normalize();
