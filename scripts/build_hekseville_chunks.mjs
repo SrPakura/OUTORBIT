@@ -83,15 +83,15 @@ const SKIP_NODE_PREFIXES = [
 // Las normales se RECONSTRUYEN tras simplificar con crease de 42° (esquinas
 // arquitectónicas nítidas, superficies curvas suaves).
 const BUCKETS = [
-  { name: 'col_stone', ratio: 0.90, maxError: 0.006 },
-  { name: 'col_cliff', ratio: 0.80, maxError: 0.010 },
-  { name: 'col_under', ratio: 0.72, maxError: 0.012 },
-  { name: 'col_roof', ratio: 0.90, maxError: 0.006 },
-  { name: 'col_wall_a', ratio: 0.85, maxError: 0.008 },
-  { name: 'col_wall_b', ratio: 0.85, maxError: 0.008 },
-  { name: 'col_metal', ratio: 0.78, maxError: 0.010 },
-  { name: 'vis_glow', ratio: 0.75, maxError: 0.012 },
-  { name: 'vis_foliage', ratio: 0.55, maxError: 0.020 },
+  { name: 'col_stone', ratio: 0.80, maxError: 0.007 },
+  { name: 'col_cliff', ratio: 0.68, maxError: 0.011 },
+  { name: 'col_under', ratio: 0.60, maxError: 0.014 },
+  { name: 'col_roof', ratio: 0.80, maxError: 0.007 },
+  { name: 'col_wall_a', ratio: 0.72, maxError: 0.009 },
+  { name: 'col_wall_b', ratio: 0.72, maxError: 0.009 },
+  { name: 'col_metal', ratio: 0.68, maxError: 0.011 },
+  { name: 'vis_glow', ratio: 0.68, maxError: 0.012 },
+  { name: 'vis_foliage', ratio: 0.45, maxError: 0.020 },
 ];
 const BUCKET_INDEX = Object.fromEntries(BUCKETS.map((b, i) => [b.name, i]));
 // Multiplicador experimental de maxError (debug: HEK_ERR_MUL).
@@ -630,9 +630,14 @@ function writeChunkGlb(outPath, primitivesData) {
       type: 'VEC3',
     });
 
-    // COLOR_0 (VEC4, Float32): categoryCode (r), seedA (g), seedB (b), flag (a)
-    // para que el shader procedural diferencie cada edificio individual.
-    const colBuf = Buffer.from(colors.buffer, colors.byteOffset, colors.byteLength);
+    // COLOR_0 (VEC4, Uint8 normalized): categoryCode (r), seedA (g), seedB (b), flag (a)
+    // Ahorra 12 bytes/vértice (4× más compacto que Float32) para respetar el límite de 50 MB.
+    const colU8 = new Uint8Array(colors.length);
+    for (let c = 0; c < colors.length; c++) {
+      const v = colors[c];
+      colU8[c] = v <= 0 ? 0 : v >= 1 ? 255 : Math.round(v * 255);
+    }
+    const colBuf = Buffer.from(colU8.buffer, colU8.byteOffset, colU8.byteLength);
     const colViewIdx = bufferViews.length;
     bufferViews.push({ buffer: 0, byteOffset, byteLength: colBuf.length, target: 34962 });
     binChunks.push(colBuf);
@@ -640,7 +645,8 @@ function writeChunkGlb(outPath, primitivesData) {
     const colorAccIdx = accessors.length;
     accessors.push({
       bufferView: colViewIdx,
-      componentType: 5126,
+      componentType: 5121,
+      normalized: true,
       count: vertexCount,
       type: 'VEC4',
     });
