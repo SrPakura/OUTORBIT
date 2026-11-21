@@ -61,6 +61,9 @@ const OBJ_GRAVITY = 16;
 const THROW_SPEED = 36;
 const EXPLOSION_RADIUS = 6.5;
 const EXPLOSION_DURATION = 0.45;
+// HITO 3: anillo de impacto carmesí en el jugador al recibir daño.
+const DAMAGE_RING_DURATION = 0.5;
+const DAMAGE_RING_MAX_RADIUS = 2.6;
 const STASIS_GRAB_RANGE = 9;
 const MELEE_RANGE = 3.0;
 const KNOCKOUT_RANGE = 2.9;
@@ -95,6 +98,8 @@ const DRONE_PATROL_SPEED = 5.0;
 const DRONE_CHASE_SPEED = 6.5;
 const DRONE_ZAP_RANGE = 1.9;
 const DRONE_ZAP_CD = 1.3;
+// HITO 3: telegraph justo del dron — carga 0.35s (anillo/halo + click) antes del zap.
+const DRONE_WINDUP = 0.35;
 const TURRET_RANGE = 26.0;
 const TURRET_FIRE_CD = 1.6;
 const TURRET_FIRE_CD_PREDICTIVE = 1.0;
@@ -243,7 +248,7 @@ const ENEMY_PARAMS: Record<EnemyKind, EnemyParams> = {
     detectRange: 20,
     chaseSpeed: DRONE_CHASE_SPEED,
     attackRange: DRONE_ZAP_RANGE,
-    windupTime: 0,
+    windupTime: DRONE_WINDUP,
     attackCdTime: DRONE_ZAP_CD,
   },
   turret: {
@@ -370,6 +375,8 @@ interface TurretProjectile {
   active: boolean;
   reflected: boolean;
   life: number;
+  /** HITO 3: motivo del orbe de KRONOS según la postura (ráfaga aérea...). */
+  reason?: string;
 }
 
 interface KeycardObj {
@@ -517,6 +524,8 @@ const _v6 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _upAxis = new THREE.Vector3(0, 1, 0);
+// HITO 3: eje del agujero del torus del anillo de daño (local Z -> up tangente).
+const _zAxis = new THREE.Vector3(0, 0, 1);
 const _dummy = new THREE.Object3D();
 // HITO 1: scratch dedicado de steering/separación (cero allocations en el loop).
 const _steerTangent = new THREE.Vector3();
@@ -671,6 +680,18 @@ interface ExplosionFx {
   radius: number;
 }
 
+/**
+ * HITO 3 — Anillo de impacto carmesí en la posición del jugador al recibir
+ * daño: pulso 3D expandiéndose sobre el plano tangente (shock-ring vívido
+ * que confirma el golpe en escena, no solo en el HUD).
+ */
+interface DamageRingFx {
+  mesh: THREE.Mesh;
+  material: THREE.MeshBasicMaterial;
+  active: boolean;
+  t: number;
+}
+
 /** Estado del jugador que el mundo necesita cada frame (vectores preasignados). */
 export interface WorldPlayerState {
   pos: THREE.Vector3;
@@ -696,12 +717,65 @@ export interface WorldPlayerState {
   hostileRecent: boolean;
 }
 
+/**
+ * Hito 3 — Daño al jugador con atribución completa: quién atacó (nombre
+ * en español), por qué (motivo del golpe) y desde qué punto del mundo
+ * (para el chevron direccional del HUD). Los 5 últimos parámetros son
+ * opcionales para no romper los llamadores que no aportan contexto.
+ */
 export type PlayerDamageFn = (
   amount: number,
   pushX: number,
   pushY: number,
-  pushZ: number
+  pushZ: number,
+  attacker?: string,
+  reason?: string,
+  sourceX?: number,
+  sourceY?: number,
+  sourceZ?: number
 ) => void;
+
+/**
+ * Hito 3 — Nombre en español del atacante según su skin/kind: la pantera
+ * de la selva, el samurái de Kurogane, la ciber-guardia de Neon Bastion...
+ * con fallback limpio al uniforme de Kronos (guardia/oficial/coloso/dron).
+ */
+function enemyAttackerName(enemy: EnemyObj): string {
+  switch (enemy.skin) {
+    case 'panther':
+      return 'Pantera';
+    case 'monkey':
+      return 'Mono vigía';
+    case 'gorilla':
+      return 'Gorila';
+    case 'samurai':
+      return 'Samurái';
+    case 'oni':
+      return 'Oni acorazado';
+    case 'cyber_guard':
+      return 'Ciber-guardia';
+    case 'cyber_officer':
+      return 'Ciber-oficial';
+    case 'cyber_mech':
+      return 'Ciber-mecha';
+    case 'wasp':
+      return 'Avispa gigante';
+    case 'cyber_drone':
+      return 'Ciber-dron';
+    default:
+      break;
+  }
+  switch (enemy.kind) {
+    case 'officer':
+      return 'Oficial';
+    case 'brute':
+      return 'Coloso';
+    case 'drone':
+      return 'Dron vigía';
+    default:
+      return 'Guardia';
+  }
+}
 
 // ============================================================================
 // Builders de mallas (solo al construir el nivel)
@@ -1062,6 +1136,8 @@ export class WorldObjectsManager {
   private readonly mines: SeismicMineObj[] = [];
   private readonly teleporters: TeleporterObj[] = [];
   private readonly explosions: ExplosionFx[] = [];
+  /** HITO 3: pool de anillos de impacto carmesí (reutilizado, sin GC). */
+  private readonly damageRings: DamageRingFx[] = [];
   private readonly interceptors: InterceptorObj[] = [];
   // --- FASE B: puzle, sigilo y acción táctica ---
   private readonly lockedGates: LockedGateObj[] = [];
@@ -1350,6 +1426,22 @@ export class WorldObjectsManager {
       this.explosions.push({ mesh, material, active: false, t: 0, radius: 1 });
     }
 
+    // HITO 3: pool de anillos de impacto carmesí (shock-ring del daño).
+    for (let i = 0; i < 4; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xef4444,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(new THREE.TorusGeometry(1, 0.07, 8, 40), material);
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.damageRings.push({ mesh, material, active: false, t: 0 });
+    }
+
     // Pool de proyectiles luminosos de torreta (parreables con F/Q).
     for (let i = 0; i < PROJECTILE_POOL_SIZE; i++) {
       const material = new THREE.MeshBasicMaterial({
@@ -1393,6 +1485,7 @@ export class WorldObjectsManager {
         active: false,
         reflected: false,
         life: 0,
+        reason: 'Orbe de energía',
       });
     }
   }
@@ -1815,9 +1908,16 @@ export class WorldObjectsManager {
     mesh.add(icons.group);
     // HITO 1: anillo de telegraph del windup bajo los caminantes (guardia,
     // oficial, brute): marca el área real del golpe (attackRange + 0.9).
+    // HITO 3: los drones también lo llevan — flota como halo a su altura de
+    // hover y marca el área del zap durante su windup de 0.35s.
     let windupRing: THREE.Mesh | null = null;
     let windupRingMaterial: THREE.MeshBasicMaterial | null = null;
-    if (spec.kind === 'guard' || spec.kind === 'officer' || spec.kind === 'brute') {
+    if (
+      spec.kind === 'guard' ||
+      spec.kind === 'officer' ||
+      spec.kind === 'brute' ||
+      spec.kind === 'drone'
+    ) {
       windupRingMaterial = new THREE.MeshBasicMaterial({
         color: CONE_COLOR_WARNING,
         transparent: true,
@@ -2053,12 +2153,13 @@ export class WorldObjectsManager {
   }
 
   /** Orbe energético teledirigido al jugador (parreable con F/Q). */
-  private spawnKronosOrb(k: KronosObj, state: WorldPlayerState): void {
+  private spawnKronosOrb(k: KronosObj, state: WorldPlayerState, reason = 'Orbe de energía'): void {
     for (const orb of this.kronosOrbs) {
       if (orb.active) continue;
       orb.active = true;
       orb.reflected = false;
       orb.life = KRONOS_ORB_LIFE;
+      orb.reason = reason;
       orb.material.color.set(0xef4444);
       orb.pos.copy(k.pos).addScaledVector(k.dir, 2.6).addScaledVector(k.forward, 1.5);
       orb.vel
@@ -2090,7 +2191,17 @@ export class WorldObjectsManager {
         _v1.copy(state.pos).sub(k.pos);
         if (_v1.length() < KRONOS_PULSE_RADIUS && (state.disguised || state.inGrass)) {
           _v1.normalize().multiplyScalar(10).addScaledVector(state.up, 5);
-          onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+          onPlayerDamage(
+            1,
+            _v1.x,
+            _v1.y,
+            _v1.z,
+            'Comandante KRONOS',
+            'Pulso anti-sigilo',
+            k.pos.x,
+            k.pos.y,
+            k.pos.z
+          );
           this.reinforceKronosPosture(k);
         }
         break;
@@ -2100,7 +2211,17 @@ export class WorldObjectsManager {
         this.spawnExplosion(k.pos, KRONOS_SEISMIC_RADIUS, 0xfacc15);
         if (state.burrowing && k.pos.distanceTo(state.pos) < KRONOS_SEISMIC_RADIUS) {
           this.burrowEjectPending = true;
-          onPlayerDamage(1, state.up.x * 8, state.up.y * 8, state.up.z * 8);
+          onPlayerDamage(
+            1,
+            state.up.x * 8,
+            state.up.y * 8,
+            state.up.z * 8,
+            'Comandante KRONOS',
+            'Onda sísmica',
+            k.pos.x,
+            k.pos.y,
+            k.pos.z
+          );
           this.reinforceKronosPosture(k);
         }
         break;
@@ -2108,7 +2229,7 @@ export class WorldObjectsManager {
       case 'anti_axel': {
         // Ráfaga aérea: orbe directo contra el jugador en el aire.
         if (state.airborne && k.pos.distanceTo(state.pos) < KRONOS_AIR_BURST_RANGE) {
-          this.spawnKronosOrb(k, state);
+          this.spawnKronosOrb(k, state, 'Ráfaga antiaérea');
           this.reinforceKronosPosture(k);
         }
         break;
@@ -2169,7 +2290,17 @@ export class WorldObjectsManager {
         if (playerDist < KRONOS_MELEE_RANGE + 1.4) {
           _v1.copy(state.pos).sub(k.pos).divideScalar(Math.max(playerDist, 1e-6));
           _v1.multiplyScalar(11).addScaledVector(state.up, 5);
-          onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+          onPlayerDamage(
+            1,
+            _v1.x,
+            _v1.y,
+            _v1.z,
+            'Comandante KRONOS',
+            'Mazazo imperial',
+            k.pos.x,
+            k.pos.y,
+            k.pos.z
+          );
         }
       }
     } else {
@@ -2183,6 +2314,8 @@ export class WorldObjectsManager {
       if (playerDist < KRONOS_MELEE_RANGE && k.swingCd <= 0) {
         k.state = KRONOS_STATE_WINDUP;
         k.windupT = KRONOS_WINDUP;
+        // HITO 3: affordance sonora del windup del mazazo (click de carga).
+        this.onSound?.('telegraph');
       } else if (playerDist < KRONOS_ORB_RANGE && k.orbCd <= 0) {
         k.orbCd = KRONOS_ORB_CD;
         this.spawnKronosOrb(k, state);
@@ -2220,7 +2353,17 @@ export class WorldObjectsManager {
       if (orb.pos.distanceToSquared(state.pos) < KRONOS_ORB_HIT_RADIUS * KRONOS_ORB_HIT_RADIUS) {
         this.deactivateProjectile(orb);
         _v1.copy(orb.vel).normalize().multiplyScalar(9).addScaledVector(state.up, 4);
-        onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+        onPlayerDamage(
+          1,
+          _v1.x,
+          _v1.y,
+          _v1.z,
+          'Comandante KRONOS',
+          orb.reason ?? 'Orbe de energía',
+          orb.pos.x,
+          orb.pos.y,
+          orb.pos.z
+        );
         continue;
       }
 
@@ -3177,6 +3320,7 @@ export class WorldObjectsManager {
     this.updateTeleporters(dt, state);
     this.updateNpcs(dt, state);
     this.updateExplosions(dt);
+    this.updateDamageRings(dt);
   }
 
   /**
@@ -3495,7 +3639,17 @@ export class WorldObjectsManager {
     const dist = _v1.length();
     if (dist < EXPLOSION_RADIUS + 1 && dist > 1e-6) {
       _v1.divideScalar(dist).multiplyScalar(9).addScaledVector(state.up, 4);
-      onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+      onPlayerDamage(
+        1,
+        _v1.x,
+        _v1.y,
+        _v1.z,
+        'Barril explosivo',
+        'Onda expansiva cercana',
+        pos.x,
+        pos.y,
+        pos.z
+      );
     }
   }
 
@@ -3554,7 +3708,22 @@ export class WorldObjectsManager {
               .normalize()
               .multiplyScalar(14)
               .addScaledVector(state.up, 6);
-            onPlayerDamage(1, _v4.x, _v4.y, _v4.z);
+            // HITO 3: posición del impacto capturada ANTES de devolver el
+            // asteroide a su órbita (belt.pos[i] se reasigna justo después).
+            const hitX = belt.pos[i].x;
+            const hitY = belt.pos[i].y;
+            const hitZ = belt.pos[i].z;
+            onPlayerDamage(
+              1,
+              _v4.x,
+              _v4.y,
+              _v4.z,
+              'Tormenta de asteroides',
+              'Impacto orbital (desbloquea el planeta anterior)',
+              hitX,
+              hitY,
+              hitZ
+            );
             this.interceptorBouncePending = true;
             this.spawnExplosion(belt.pos[i], belt.radii[i] * 1.6, 0xf97316);
             this.onSound?.('explosion');
@@ -3585,7 +3754,17 @@ export class WorldObjectsManager {
       if (dist < LASER_GATE_RADIUS && gate.cooldown <= 0) {
         gate.cooldown = LASER_GATE_CD;
         _v1.divideScalar(Math.max(dist, 1e-6)).multiplyScalar(10).addScaledVector(state.up, 5);
-        onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+        onPlayerDamage(
+          1,
+          _v1.x,
+          _v1.y,
+          _v1.z,
+          'Barrera láser',
+          'Contacto con haz de seguridad',
+          gate.pos.x,
+          gate.pos.y,
+          gate.pos.z
+        );
       }
     }
   }
@@ -3978,7 +4157,21 @@ export class WorldObjectsManager {
         if (!outOfRange && !jumpedOver) {
           _v1.divideScalar(Math.max(playerDist, 1e-6));
           _v1.multiplyScalar(9).addScaledVector(state.up, 4);
-          onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+          // HITO 3: atribución completa — quién golpeó y por qué (zona
+          // restringida = asalto a una instalación, no un simple zarpazo).
+          onPlayerDamage(
+            1,
+            _v1.x,
+            _v1.y,
+            _v1.z,
+            enemyAttackerName(enemy),
+            this.cachedPlayerZone(enemy.planet, state) !== null
+              ? 'Ataque en zona restringida'
+              : 'Golpe cuerpo a cuerpo',
+            enemy.pos.x,
+            enemy.pos.y,
+            enemy.pos.z
+          );
         }
       }
     }
@@ -4020,13 +4213,44 @@ export class WorldObjectsManager {
         enemy.state = GUARD_STATE_PATROL;
         enemy.suspicion = 0.4;
       } else if (playerDist < DRONE_ZAP_RANGE && enemy.attackCd <= 0) {
+        // HITO 3 — Telegraph justo: el dron CARGA 0.35s con su anillo/halo
+        // de windup + click de carga antes de soltar el zap (nada de daño
+        // instantáneo sin aviso en distancia de contacto).
+        enemy.state = GUARD_STATE_WINDUP;
+        enemy.windupT = enemy.params.windupTime;
+        this.updateWindupRing(enemy);
+        this.onSound?.('telegraph');
+      }
+    } else if (enemy.state === GUARD_STATE_WINDUP) {
+      // HITO 3 — Windup del zap: halo pulsante 0.35s; si el jugador se
+      // aleja del área del anillo antes del final, el zap falla en vacío.
+      if (playerDist > GUARD_GIVEUP_DIST + 4) {
+        enemy.state = GUARD_STATE_CHASE;
+      }
+      enemy.windupT -= dt;
+      this.updateWindupRing(enemy);
+      if (enemy.windupT <= 0) {
+        enemy.state = GUARD_STATE_CHASE;
         enemy.attackCd = enemy.params.attackCdTime;
-        // _v1 fue sobreescrito por moveEnemyTowards: se recalcula el
-        // empuje del zap desde el offset real jugador-dron.
-        _v1.copy(state.pos).sub(enemy.pos);
-        _v1.divideScalar(Math.max(playerDist, 1e-6));
-        _v1.multiplyScalar(7).addScaledVector(state.up, 4);
-        onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+        const outOfRange = playerDist > DRONE_ZAP_RANGE + WINDUP_WHIFF_MARGIN;
+        if (!outOfRange) {
+          // _v1 pudo ser sobreescrito: se recalcula el empuje del zap desde
+          // el offset real jugador-dron.
+          _v1.copy(state.pos).sub(enemy.pos);
+          _v1.divideScalar(Math.max(playerDist, 1e-6));
+          _v1.multiplyScalar(7).addScaledVector(state.up, 4);
+          onPlayerDamage(
+            1,
+            _v1.x,
+            _v1.y,
+            _v1.z,
+            enemyAttackerName(enemy),
+            enemy.skin === 'wasp' ? 'Aguijonazo eléctrico' : 'Descarga eléctrica',
+            enemy.pos.x,
+            enemy.pos.y,
+            enemy.pos.z
+          );
+        }
       }
     }
   }
@@ -4073,9 +4297,24 @@ export class WorldObjectsManager {
 
       // Impacto contra el jugador.
       if (proj.pos.distanceToSquared(state.pos) < PROJECTILE_HIT_RADIUS * PROJECTILE_HIT_RADIUS) {
+        // HITO 3: posición mundial del proyectil capturada ANTES de
+        // desactivarlo (fuente limpia del chevron direccional).
+        const srcX = proj.pos.x;
+        const srcY = proj.pos.y;
+        const srcZ = proj.pos.z;
         this.deactivateProjectile(proj);
         _v1.copy(proj.vel).normalize().multiplyScalar(8).addScaledVector(state.up, 4);
-        onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+        onPlayerDamage(
+          1,
+          _v1.x,
+          _v1.y,
+          _v1.z,
+          'Torreta antiaérea',
+          'Proyectil láser mientras volabas',
+          srcX,
+          srcY,
+          srcZ
+        );
         continue;
       }
 
@@ -4711,7 +4950,17 @@ export class WorldObjectsManager {
       _v1.copy(state.pos).sub(mine.pos);
       if (_v1.lengthSq() < 1e-6) _v1.copy(state.up);
       _v1.normalize().multiplyScalar(10).addScaledVector(state.up, 8);
-      onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+      onPlayerDamage(
+        1,
+        _v1.x,
+        _v1.y,
+        _v1.z,
+        'Mina sísmica',
+        'Detonación por proximidad',
+        mine.pos.x,
+        mine.pos.y,
+        mine.pos.z
+      );
     }
   }
 
@@ -4796,6 +5045,44 @@ export class WorldObjectsManager {
     }
   }
 
+  /**
+   * HITO 3 — Anillo de impacto carmesí en la posición del jugador: pulso 3D
+   * expandiéndose sobre el plano tangente (up) durante 0.5s. Lo invoca el
+   * GameEngine desde el funil único de daño cuando el golpe APLICA de verdad
+   * (la invulnerabilidad no genera anillo). Cero allocations.
+   */
+  spawnDamageRing(pos: THREE.Vector3, up: THREE.Vector3): void {
+    for (const fx of this.damageRings) {
+      if (fx.active) continue;
+      fx.active = true;
+      fx.t = 0;
+      fx.mesh.position.copy(pos);
+      // El torus vive en el plano XY (eje del agujero = Z local): se mapea
+      // Z -> up para que el anillo quede tumbado sobre el plano tangente.
+      _q1.setFromUnitVectors(_zAxis, up);
+      fx.mesh.quaternion.copy(_q1);
+      fx.mesh.scale.setScalar(0.35);
+      fx.mesh.visible = true;
+      return;
+    }
+  }
+
+  private updateDamageRings(dt: number): void {
+    for (const fx of this.damageRings) {
+      if (!fx.active) continue;
+      fx.t += dt;
+      const k = fx.t / DAMAGE_RING_DURATION;
+      if (k >= 1) {
+        fx.active = false;
+        fx.mesh.visible = false;
+        continue;
+      }
+      const grow = 0.35 + (1 - (1 - k) * (1 - k)) * DAMAGE_RING_MAX_RADIUS;
+      fx.mesh.scale.setScalar(grow);
+      fx.material.opacity = 0.95 * (1 - k);
+    }
+  }
+
   /** Limpia las referencias (las mallas las dispone el GameEngine). */
   clear(): void {
     this.grabs.length = 0;
@@ -4810,6 +5097,7 @@ export class WorldObjectsManager {
     this.mines.length = 0;
     this.teleporters.length = 0;
     this.explosions.length = 0;
+    this.damageRings.length = 0;
     this.interceptors.length = 0;
     this.lockedGates.length = 0;
     this.switchLevers.length = 0;

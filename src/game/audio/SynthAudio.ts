@@ -26,6 +26,7 @@ export type GameSoundKind =
   | 'land'
   | 'melee'
   | 'hurt'
+  | 'telegraph'
   | 'wallBreak'
   | 'npcTalk'
   | 'bounce';
@@ -136,6 +137,9 @@ export class SynthAudio {
         break;
       case 'hurt':
         this.playHurt();
+        break;
+      case 'telegraph':
+        this.playTelegraph();
         break;
       case 'wallBreak':
         this.playWallBreak();
@@ -317,10 +321,29 @@ export class SynthAudio {
     this.tone('triangle', 340, 120, 0.1, 0.5, 0.02);
   }
 
-  /** Golpe recibido: zarpazo áspero descendente. */
+  /**
+   * Hito 3 — Golpe recibido: thud de impacto contundente e inequívoco
+   * (golpe grave + click de ruido) seguido de un buzz de aviso descendente
+   * y áspero. Nada que confundir con un blip suave.
+   */
   playHurt(): void {
-    this.tone('square', 240, 110, 0.16, 0.55);
-    this.noise(0.09, 0.28, 700);
+    // Thud de impacto: golpe grave con ataque seco.
+    this.tone('square', 190, 52, 0.17, 0.95);
+    this.tone('sine', 105, 36, 0.24, 0.9);
+    this.noise(0.11, 0.42, 650);
+    // Buzz de aviso: barrido descendente áspero e inconfundible.
+    this.tone('sawtooth', 640, 170, 0.26, 0.5, 0.02);
+    this.tone('square', 320, 96, 0.2, 0.3, 0.05);
+  }
+
+  /**
+   * Hito 3 — Telegraph de pre-ataque: click/carga high-tech sutil (880 ->
+   * 1320 Hz) que avisa del windup de un enemigo (dron, KRONOS) antes de
+   * que el golpe llegue: affordance sonora de ataque justo.
+   */
+  playTelegraph(): void {
+    this.tone('square', 880, 1320, 0.07, 0.34);
+    this.tone('sine', 1320, 1760, 0.06, 0.22, 0.05);
   }
 
   /** Pared rompible: crujido de roca + explosión media. */

@@ -49,6 +49,10 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
   const shifting = snapshot.isGravityShifting;
   const anchorReady = 1 - snapshot.anchorCooldownRatio;
   const gravityReady = 1 - (snapshot.gravityShiftCooldownRatio ?? 0);
+  // HITO 3: atribución del último golpe (flash, chevron y tarjeta de causa).
+  const damageFeedback = snapshot.damageFeedback;
+  const damageIntensity = damageFeedback?.intensity ?? 0;
+  const damageDirection = damageFeedback?.directionRad ?? null;
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none font-sans text-slate-100">
@@ -114,6 +118,19 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
             })}
           </svg>
         </div>
+      )}
+
+      {/* --- HITO 3: Flash carmesí en los bordes de la pantalla al recibir
+          daño (vignette radial, opacidad = intensidad * 0.65) --- */}
+      {damageIntensity > 0.01 && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            opacity: damageIntensity * 0.65,
+            background:
+              'radial-gradient(ellipse at center, transparent 38%, rgba(153,27,27,0.55) 70%, rgba(239,68,68,0.95) 100%)',
+          }}
+        />
       )}
 
       {/* --- Barra superior --- */}
@@ -230,14 +247,28 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
 
       {/* --- Esquina inferior izquierda: HP, escuadrón e indicadores --- */}
       <div className="absolute bottom-4 left-4 space-y-2">
-        <div className="flex items-center gap-2 rounded-lg border-2 border-black bg-[#160b2e]/85 px-3 py-2 shadow-[4px_4px_0_#000]">
-          <span className="text-[10px] font-black tracking-[0.2em] text-red-400">HP</span>
+        <div
+          className={`flex items-center gap-2 rounded-lg border-2 border-black bg-[#160b2e]/85 px-3 py-2 shadow-[4px_4px_0_#000] ${
+            damageIntensity > 0.15 ? 'ring-2 ring-red-500/90' : ''
+          }`}
+        >
+          <span
+            className={`text-[10px] font-black tracking-[0.2em] text-red-400 ${
+              damageIntensity > 0.15 ? 'animate-pulse' : ''
+            }`}
+          >
+            HP
+          </span>
           <span className="flex gap-1">
             {Array.from({ length: snapshot.maxHp }, (_, i) => (
               <span
                 key={i}
                 className={`h-3.5 w-3.5 rounded-full border-2 border-black ${
                   i < snapshot.hp ? 'bg-red-500' : 'bg-slate-700'
+                } ${
+                  damageIntensity > 0.15 && i < snapshot.hp
+                    ? 'animate-pulse shadow-[0_0_10px_rgba(239,68,68,1)]'
+                    : ''
                 }`}
               />
             ))}
@@ -364,6 +395,23 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
             </span>
           )}
         </div>
+
+        {/* --- HITO 3: Tarjeta de causa del daño (píldora P5 skew roja/negra
+            bajo los badges): QUÉ pasó, QUIÉN golpeó y POR QUÉ. Nunca roza
+            objetivos (arriba, centro) ni la guía de controles (abajo, dcha). --- */}
+        {snapshot.phase === 'playing' && damageFeedback && (
+          <div
+            className="rounded-lg border-2 border-black bg-red-600/95 px-4 py-1.5 shadow-[4px_4px_0_#000]"
+            style={{ transform: 'skewX(-8deg)' }}
+          >
+            <p className="text-xs font-black tracking-[0.14em] text-yellow-300 drop-shadow-[1px_1px_0_#000]">
+              DAÑO -{damageFeedback.amount} HP · {damageFeedback.attacker.toUpperCase()}
+            </p>
+            <p className="mt-0.5 text-[10px] font-bold leading-snug text-red-100">
+              {damageFeedback.reason}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* --- Esquina inferior derecha: guía de controles --- */}
@@ -431,6 +479,46 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
           <span className="absolute top-1/2 right-0 h-0.5 w-2 -translate-y-1/2 bg-current" />
         </div>
       </div>
+
+      {/* --- HITO 3: Indicador direccional de golpe — chevron rojo-amarillo
+          brillante orbitando la mira (w-36 h-36) y rotado `directionRad`
+          apuntando DIRECTO hacia el atacante (0 = arriba/frente,
+          +PI/2 = derecha, ±PI = abajo/detrás). --- */}
+      {snapshot.phase === 'playing' && damageDirection !== null && damageIntensity > 0.02 && (
+        <div className="absolute left-1/2 top-1/2 h-36 w-36 -translate-x-1/2 -translate-y-1/2">
+          <div
+            className="relative h-full w-full"
+            style={{ transform: `rotate(${damageDirection}rad)` }}
+          >
+            <div
+              className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1"
+              style={{ opacity: damageIntensity }}
+            >
+              <svg
+                width="38"
+                height="30"
+                viewBox="0 0 38 30"
+                style={{ filter: 'drop-shadow(0 0 8px rgba(239,68,68,0.95))' }}
+              >
+                <defs>
+                  <linearGradient id="outorbit-hit-chevron" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#fde047" />
+                    <stop offset="55%" stopColor="#f97316" />
+                    <stop offset="100%" stopColor="#dc2626" />
+                  </linearGradient>
+                </defs>
+                <polygon
+                  points="19,1 37,22 27.5,22 19,11 10.5,22 1,22"
+                  fill="url(#outorbit-hit-chevron)"
+                  stroke="#7f1d1d"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- Marcadores direccionales de objetivos (pantalla/bordes) --- */}
       {snapshot.phase === 'playing' &&

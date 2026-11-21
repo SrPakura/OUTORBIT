@@ -343,6 +343,21 @@ export interface RadioToast {
   accent: string;
 }
 
+/**
+ * Hito 3 — Atribución cristalina del daño recibido: quién golpeó, por qué,
+ * desde qué dirección respecto a la cámara y con qué intensidad se muestra
+ * el flash rojo / chevrons direccional del HUD.
+ */
+export interface DamageFeedbackInfo {
+  attacker: string;
+  reason: string;
+  /** Ángulo en radianes respecto a la cámara (0 = frente/arriba HUD, +PI/2 = derecha, PI = detrás). */
+  directionRad: number | null;
+  /** Intensidad del flash rojo y arco direccional (1 -> 0). */
+  intensity: number;
+  amount: number;
+}
+
 // ============================================================================
 // 5. ESTADO DE JUEGO Y SNAPSHOT PARA HUD REACT
 // ============================================================================
@@ -408,6 +423,11 @@ export interface HudSnapshot {
    * avisando (cono ámbar + chirp). null: ningún aviso activo.
    */
   warningBanner?: { speaker: string; text: string } | null;
+  /**
+   * Hito 3 — Atribución del último golpe: atacante, motivo, dirección
+   * respecto a la cámara e intensidad del flash. null: sin feedback activo.
+   */
+  damageFeedback?: DamageFeedbackInfo | null;
 }
 
 // ============================================================================

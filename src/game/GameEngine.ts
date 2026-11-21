@@ -36,6 +36,7 @@ const CAMERA_FOV_FLIGHT_BOOST = 18; // 70 -> 88 en mitad del cruce
 const CAMERA_FOV_SPRINT_BOOST = 12; // 70 -> 82 al esprintar
 const CAMERA_FOV_DASH_BOOST = 18; // 70 -> 88 en dash estilo Jett
 const CAMERA_FOV_FLIGHT_FREE_MAX = 90; // 70 -> 90 volando rápido en vuelo libre
+const CAMERA_FOV_HIT_PUNCH = 6; // HITO 3: FOV punch breve al recibir daño
 const CAMERA_FLIGHT_ROLL = 0.12; // giro orbital suave de cámara en vuelo
 const RADIO_TOAST_DURATION = 6; // banner táctico de radio (no bloqueante)
 const MARKER_SCREEN_CLAMP = 0.88; // borde de pantalla para marcadores fuera/detrás
@@ -89,6 +90,8 @@ export class GameEngine {
   private hudKey = 0;
   /** Intensidad suavizada 0..1 de las líneas de velocidad del HUD. */
   private speedLines = 0;
+  /** Reloj del jitter del golpe de cámara (frecuencias incommensurables). */
+  private camShakeClock = 0;
   /** Motivo específico de la derrota (deriva espacial, etc.). */
   private gameOverReason: string | null = null;
 
@@ -170,8 +173,29 @@ export class GameEngine {
       window.removeEventListener('pointerdown', this.boundPointerDownUnlock);
     }
   };
-  private readonly boundPlayerDamage = (amount: number, px: number, py: number, pz: number) => {
-    this.player?.takeDamage(amount, px, py, pz);
+  /**
+   * Hito 3 — Funil único de daño del mundo: reenvía los 9 parámetros
+   * (impulso + atribución completa) al jugador y, cuando el golpe APLICA
+   * de verdad, dispara el anillo de impacto carmesí en escena. El golpe de
+   * cámara (shake + FOV punch) lo activa el propio PlayerController.
+   */
+  private readonly boundPlayerDamage = (
+    amount: number,
+    px: number,
+    py: number,
+    pz: number,
+    attacker?: string,
+    reason?: string,
+    sx?: number,
+    sy?: number,
+    sz?: number
+  ) => {
+    const player = this.player;
+    if (!player) return;
+    const applied = player.takeDamage(amount, px, py, pz, attacker, reason, sx, sy, sz);
+    if (applied) {
+      this.world?.spawnDamageRing(player.position, player.up);
+    }
   };
 
   constructor(canvas: HTMLCanvasElement, onHudSnapshot: (snapshot: HudSnapshot) => void) {
@@ -470,6 +494,21 @@ export class GameEngine {
       }
     }
 
+    // HITO 3 — Golpe de cámara al recibir daño: offset ortogonal pequeño
+    // (right/up de cámara) con jitter pseudo-aleatorio de intensidad
+    // decaying durante 0.3s (consumeCameraShake del PlayerController).
+    const hitShake = player.consumeCameraShake();
+    if (hitShake > 0.001) {
+      this.camShakeClock += dtReal;
+      const amp = 0.5 * hitShake * hitShake;
+      const a = this.camShakeClock * 47;
+      this._v1.set(1, 0, 0).applyQuaternion(this._camQuat); // right de cámara
+      this._v2.copy(this._v1).cross(this._camDir); // up = right x forward
+      this.camera.position
+        .addScaledVector(this._v1, Math.sin(a * 1.13) * amp)
+        .addScaledVector(this._v2, Math.cos(a * 0.87) * amp * 0.8);
+    }
+
     // FOV dinámico: cámara lenta en Gravity Shift; boost suave al esprintar,
     // hacer Dash, volar rápido (dirigido o libre) o caer en picado.
     let targetFov = CAMERA_FOV;
@@ -500,6 +539,9 @@ export class GameEngine {
       }
       targetFov = CAMERA_FOV + boost;
     }
+    // HITO 3: FOV punch breve (ensanchamiento) mientras dura el golpe de
+    // cámara tras recibir daño — se lee como desorientación del impacto.
+    targetFov += hitShake * CAMERA_FOV_HIT_PUNCH;
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dtReal * 6);
       this.camera.updateProjectionMatrix();
@@ -899,6 +941,14 @@ export class GameEngine {
     // La adaptación inyectada más recientemente por la Red de IA.
     const adaptation = this.adaptation;
 
+    // HITO 3 — Atribución del último golpe: dirección del atacante respecto
+    // a la base ortonormal de la cámara (forward/right). El método reutiliza
+    // su objeto interno (cero GC); aquí se copian campos planos a React.
+    player.getCameraOrientation(this._camQuat);
+    this._v1.set(0, 0, -1).applyQuaternion(this._camQuat); // forward de cámara
+    this._v2.set(1, 0, 0).applyQuaternion(this._camQuat); // right de cámara
+    const damageFeedback = player.getDamageFeedback(this._v1, this._v2);
+
     this.onHudSnapshot({
       phase: this.phase,
       levelId: this.planetLevelId(activePlanet.spec),
@@ -945,6 +995,7 @@ export class GameEngine {
       warningBanner: world.warningBanner
         ? { speaker: world.warningBanner.speaker, text: world.warningBanner.text }
         : null,
+      damageFeedback: damageFeedback ? { ...damageFeedback } : null,
     });
   }
 

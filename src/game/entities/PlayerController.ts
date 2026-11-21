@@ -3,6 +3,7 @@ import {
   GAME_CONSTANTS,
   type CharacterId,
   type CharacterProfile,
+  type DamageFeedbackInfo,
   type PlanetRuntime,
   type PlayerBehaviorVector,
 } from '../types';
@@ -106,6 +107,13 @@ const SHOCKWAVE_MIN_FALL = 17;
 const SHOCKWAVE_RADIUS = 7.5;
 const DISGUISE_DURATION = 30;
 const INVULN_TIME = 0.9;
+
+// HITO 3: feedback de daño — atribución, flash direccional y golpe de cámara.
+const DAMAGE_FEEDBACK_TIME = 2.6; // tarjeta HUD de causa visible
+const DAMAGE_FLASH_TIME = 0.55; // flash rojo + intensidad del chevron (1 -> 0)
+const DAMAGE_BLINK_INTERVAL = 0.07; // blink crisp de invulnerabilidad
+const CAMERA_SHAKE_TIME = 0.3; // golpe de cámara con decay suave
+const HIT_KICK_TIME = 0.18; // escala/recoil breve del modelo al recibir daño
 
 // FASE B: radio de la embestida de Digger contra paredes rompibles.
 const WALL_BREAK_RADIUS = 3.4;
@@ -244,6 +252,32 @@ export class PlayerController {
   private invulnTimer = 0;
   private swimBoostTimer = 0;
   private burrowSink = 0;
+
+  // HITO 3 — Feedback de daño: atribución (quién/por qué/desde dónde),
+  // flash direccional, blink de invulnerabilidad y golpe de cámara.
+  private damageFeedbackTimer = 0;
+  private damageFlashTimer = 0;
+  private damageAttacker = 'Peligro espacial';
+  private damageReason = 'Daño recibido';
+  private hasDamageSource = false;
+  private readonly damageSourcePos = new THREE.Vector3();
+  private lastDamageAmount = 0;
+  /** Intensidad 1 -> 0 del golpe de cámara (decae en CAMERA_SHAKE_TIME). */
+  private cameraHitKick = 0;
+  private cameraShakeT = 0;
+  /** Blink crisp de invulnerabilidad: fase visible/oculta del modelo activo. */
+  private blinkVisible = true;
+  private blinkTimer = 0;
+  /** Kick breve de escala/recoil del modelo tras el impacto. */
+  private hitKickTimer = 0;
+  /** Resultado reutilizado de getDamageFeedback (cero GC por frame). */
+  private readonly _damageFeedback: DamageFeedbackInfo = {
+    attacker: '',
+    reason: '',
+    directionRad: null,
+    intensity: 0,
+    amount: 0,
+  };
 
   // Lock-On (Tab/V + Flechas).
   private lockedTarget: LockOnHandle | null = null;
@@ -718,9 +752,24 @@ export class PlayerController {
     this.rcPressTime = -1;
   }
 
-  /** Daño recibido (láser, guardias, explosiones) con empuje opcional. */
-  takeDamage(amount: number, pushX = 0, pushY = 0, pushZ = 0): void {
-    if (this.invulnTimer > 0) return;
+  /**
+   * Daño recibido (láser, guardias, explosiones) con empuje opcional y
+   * atribución completa (Hito 3): quién atacó, por qué y desde qué punto
+   * del mundo — el HUD lo convierte en flash carmesí + chevron direccional
+   * + tarjeta de causa. Devuelve true si el golpe APLICA (false: invulnerable).
+   */
+  takeDamage(
+    amount: number,
+    pushX = 0,
+    pushY = 0,
+    pushZ = 0,
+    attacker = 'Peligro espacial',
+    reason = 'Daño recibido',
+    sourceX?: number,
+    sourceY?: number,
+    sourceZ?: number
+  ): boolean {
+    if (this.invulnTimer > 0) return false;
     this.invulnTimer = INVULN_TIME;
     this.hp = Math.max(0, this.hp - amount);
     this.behavior.damageTaken += amount;
@@ -730,6 +779,69 @@ export class PlayerController {
     this.anchorBurst.x += pushX;
     this.anchorBurst.y += pushY;
     this.anchorBurst.z += pushZ;
+    // HITO 3: atribución + flash direccional + golpe de cámara + recoil.
+    this.damageFeedbackTimer = DAMAGE_FEEDBACK_TIME;
+    this.damageFlashTimer = DAMAGE_FLASH_TIME;
+    this.damageAttacker = attacker;
+    this.damageReason = reason;
+    this.lastDamageAmount = amount;
+    this.hasDamageSource =
+      sourceX !== undefined && sourceY !== undefined && sourceZ !== undefined;
+    if (this.hasDamageSource) {
+      this.damageSourcePos.set(sourceX ?? 0, sourceY ?? 0, sourceZ ?? 0);
+    }
+    this.cameraHitKick = 1;
+    this.cameraShakeT = CAMERA_SHAKE_TIME;
+    this.hitKickTimer = HIT_KICK_TIME;
+    this.blinkTimer = DAMAGE_BLINK_INTERVAL;
+    this.blinkVisible = false;
+    return true;
+  }
+
+  /**
+   * Hito 3 — Feedback de daño para el HUD: atacante, motivo, dirección del
+   * atacante respecto a la cámara (0 = frente/arriba, +PI/2 = derecha,
+   * ±PI = detrás) e intensidad del flash (1 -> 0). Devuelve el MISMO objeto
+   * reutilizado (cero allocations): el GameEngine copia los campos planos
+   * al emitir el snapshot a React. null: ningún feedback activo.
+   */
+  getDamageFeedback(camForward: THREE.Vector3, camRight: THREE.Vector3): DamageFeedbackInfo | null {
+    if (this.damageFeedbackTimer <= 0) return null;
+    this._damageFeedback.attacker = this.damageAttacker;
+    this._damageFeedback.reason = this.damageReason;
+    this._damageFeedback.intensity = THREE.MathUtils.clamp(
+      this.damageFlashTimer / DAMAGE_FLASH_TIME,
+      0,
+      1
+    );
+    this._damageFeedback.amount = this.lastDamageAmount;
+    if (this.hasDamageSource) {
+      // Vector hacia la fuente del golpe proyectado al plano de cámara:
+      // se elimina la componente a lo largo de la normal del plano
+      // (camForward x camRight) y queda el ángulo tangente puro.
+      this._v1.copy(this.damageSourcePos).sub(this.pos);
+      this._v2.copy(camForward).cross(camRight);
+      this._v1.addScaledVector(this._v2, -this._v1.dot(this._v2));
+      // Convención verificada: atacante al frente -> dot(camForward) > 0 y
+      // dot(camRight) = 0 -> angle 0 (arriba del HUD); a la derecha ->
+      // +PI/2; detrás -> ±PI (abajo del HUD).
+      this._damageFeedback.directionRad = Math.atan2(
+        this._v1.dot(camRight),
+        this._v1.dot(camForward)
+      );
+    } else {
+      this._damageFeedback.directionRad = null;
+    }
+    return this._damageFeedback;
+  }
+
+  /**
+   * Hito 3 — Intensidad suavizada 1 -> 0 del golpe de cámara tras recibir
+   * daño (decae en 0.3s dentro de update). La lee el GameEngine cada frame
+   * para el offset de shake y el FOV punch.
+   */
+  consumeCameraShake(): number {
+    return this.cameraHitKick;
   }
 
   /**
@@ -808,6 +920,16 @@ export class PlayerController {
     if (this.gravityShiftCooldown > 0) this.gravityShiftCooldown -= dt;
     if (this.slashTimer > 0) this.slashTimer -= dt;
 
+    // HITO 3: temporizadores del feedback de daño y del golpe de cámara.
+    if (this.damageFeedbackTimer > 0) this.damageFeedbackTimer -= dt;
+    if (this.damageFlashTimer > 0) this.damageFlashTimer -= dt;
+    if (this.hitKickTimer > 0) this.hitKickTimer -= dt;
+    if (this.cameraShakeT > 0) {
+      this.cameraShakeT -= dt;
+      this.cameraHitKick =
+        this.cameraShakeT <= 0 ? 0 : Math.max(this.cameraShakeT / CAMERA_SHAKE_TIME, 0);
+    }
+
     // Gravity Dash: impulso activo + derribo/empuje de guardias y cajas.
     if (this.dashTimer > 0) {
       this.dashTimer -= dt;
@@ -880,6 +1002,31 @@ export class PlayerController {
     this.disguiseOverlay.visible = this.isDisguised;
     this.anchorFx.visible = this.anchorFxTimer > 0;
 
+    // HITO 3: blink crisp de invulnerabilidad tras el golpe — el modelo
+    // activo alterna visible/oculto cada 0.07s mientras dura el invuln y
+    // SIEMPRE recupera la visibilidad al terminar (o al disponer).
+    if (this.invulnTimer > 0) {
+      this.blinkTimer -= dt;
+      if (this.blinkTimer <= 0) {
+        this.blinkTimer += DAMAGE_BLINK_INTERVAL;
+        this.blinkVisible = !this.blinkVisible;
+      }
+    } else {
+      this.blinkVisible = true;
+      this.blinkTimer = 0;
+    }
+    const activeModel = this.models.get(this.activeCharacter);
+    if (activeModel) activeModel.visible = this.blinkVisible;
+
+    // HITO 3: kick de impacto — escala breve y brillante (recoil) del
+    // modelo al recibir daño, con retorno limpio a 1.
+    if (this.hitKickTimer > 0) {
+      const kickP = Math.max(this.hitKickTimer, 0) / HIT_KICK_TIME;
+      this.flipPivot.scale.setScalar(1 + kickP * 0.22);
+    } else if (this.flipPivot.scale.x !== 1) {
+      this.flipPivot.scale.setScalar(1);
+    }
+
     // Estela/anillo de energía: vuelo dirigido entre planetas o Gravity Dash.
     const fxActive = this.isDirectedFlight || this.dashTimer > 0;
     this.flightFx.visible = fxActive;
@@ -920,7 +1067,8 @@ export class PlayerController {
       }
       this.nearestSurfaceDist = nearest;
       if (nearest > SPACE_DRIFT_DEATH_DIST) {
-        this.takeDamage(99); // perdido en el espacio profundo
+        // Perdido en el espacio profundo: atribución explícita de la derrota.
+        this.takeDamage(99, 0, 0, 0, 'Espacio profundo', 'Te alejaste demasiado del planeta');
       }
     }
   }
@@ -1906,6 +2054,9 @@ export class PlayerController {
   }
 
   dispose(): void {
+    // HITO 3: el blink de invulnerabilidad jamás deja un modelo oculto.
+    this.blinkVisible = true;
+    for (const model of this.models.values()) model.visible = true;
     this.root.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh) return;
