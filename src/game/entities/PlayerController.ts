@@ -115,6 +115,16 @@ const DAMAGE_BLINK_INTERVAL = 0.07; // blink crisp de invulnerabilidad
 const CAMERA_SHAKE_TIME = 0.3; // golpe de cámara con decay suave
 const HIT_KICK_TIME = 0.18; // escala/recoil breve del modelo al recibir daño
 
+// HITO 4: squash & stretch del salto/aterrizaje — muelle subamortiguado que
+// estira el modelo al despegar (Y 1.18 / XZ 0.9), lo aplasta al aterrizar
+// (Y 0.82 / XZ 1.14) y rebota suave de vuelta a 1.
+const SQUASH_SPRING = 90; // rigidez del muelle de retorno a 1
+const SQUASH_DAMPING = 10; // amortiguación (subamortiguado: rebota)
+const SQUASH_JUMP_Y = 1.18;
+const SQUASH_JUMP_XZ = 0.9;
+const SQUASH_LAND_Y = 0.82;
+const SQUASH_LAND_XZ = 1.14;
+
 // FASE B: radio de la embestida de Digger contra paredes rompibles.
 const WALL_BREAK_RADIUS = 3.4;
 
@@ -131,6 +141,8 @@ interface CharacterParts {
   leftLeg: THREE.Object3D;
   rightLeg: THREE.Object3D;
   tail: THREE.Object3D;
+  /** HITO 4: punta articulada de la cola de Kitsune (meneo de látigo). */
+  tailTip: THREE.Object3D | null;
   /** Skin P5: capa/bufanda trasera que ondea con la velocidad. */
   cape: THREE.Object3D | null;
   /** Skin P5: broca del taladro de Digger (gira al excavar). */
@@ -138,6 +150,11 @@ interface CharacterParts {
   /** Skin P5: llamas cian del jetpack de Axel. */
   flameL: THREE.Object3D | null;
   flameR: THREE.Object3D | null;
+  /** HITO 4: aletas aero-jet del jetpack de Axel (se abren en vuelo). */
+  finL: THREE.Object3D | null;
+  finR: THREE.Object3D | null;
+  /** HITO 4: aura aditiva de planeo de Axel (doble salto/natación). */
+  glideAura: THREE.Object3D | null;
 }
 
 /**
@@ -319,6 +336,12 @@ export class PlayerController {
   private flipTimer = 0;
   private slashTimer = 0;
   private capeFlow = 0; // 0 parado .. 1 corriendo (ondeo de la capa)
+  // HITO 4: squash & stretch (muelle subamortiguado hacia 1) + planeo de Axel.
+  private squashY = 1;
+  private squashXZ = 1;
+  private squashVelY = 0;
+  private squashVelXZ = 0;
+  private glideTilt = 0;
 
   // Temporales preasignados (sin GC en el loop)
   private readonly _up = new THREE.Vector3();
@@ -390,10 +413,14 @@ export class PlayerController {
         leftLeg: model.getObjectByName('leftLeg') ?? model,
         rightLeg: model.getObjectByName('rightLeg') ?? model,
         tail: model.getObjectByName('tail') ?? model,
+        tailTip: model.getObjectByName('tailTip') ?? null,
         cape: model.getObjectByName('cape') ?? null,
         drill: model.getObjectByName('drill') ?? null,
         flameL: model.getObjectByName('flameL') ?? null,
         flameR: model.getObjectByName('flameR') ?? null,
+        finL: model.getObjectByName('finL') ?? null,
+        finR: model.getObjectByName('finR') ?? null,
+        glideAura: model.getObjectByName('glideAura') ?? null,
       });
     }
 
@@ -1018,14 +1045,14 @@ export class PlayerController {
     const activeModel = this.models.get(this.activeCharacter);
     if (activeModel) activeModel.visible = this.blinkVisible;
 
-    // HITO 3: kick de impacto — escala breve y brillante (recoil) del
-    // modelo al recibir daño, con retorno limpio a 1.
-    if (this.hitKickTimer > 0) {
-      const kickP = Math.max(this.hitKickTimer, 0) / HIT_KICK_TIME;
-      this.flipPivot.scale.setScalar(1 + kickP * 0.22);
-    } else if (this.flipPivot.scale.x !== 1) {
-      this.flipPivot.scale.setScalar(1);
-    }
+    // HITO 3 + HITO 4: kick de impacto (recoil breve) COMBINADO con el squash
+    // & stretch del salto/aterrizaje — ambos viven en la escala del flipPivot
+    // (multiplicativos) y vuelven limpio a 1.
+    const kick =
+      this.hitKickTimer > 0
+        ? 1 + (Math.max(this.hitKickTimer, 0) / HIT_KICK_TIME) * 0.22
+        : 1;
+    this.flipPivot.scale.set(this.squashXZ * kick, this.squashY * kick, this.squashXZ * kick);
 
     // Estela/anillo de energía: vuelo dirigido entre planetas o Gravity Dash.
     const fxActive = this.isDirectedFlight || this.dashTimer > 0;
@@ -1104,11 +1131,32 @@ export class PlayerController {
   }
 
   /**
+   * HITO 4: impulso del muelle de squash & stretch — estira al despegar,
+   * aplasta al aterrizar; `updateVisualAnim` lo devuelve a 1 con rebote.
+   */
+  private applySquash(sy: number, sxz: number): void {
+    this.squashY = sy;
+    this.squashXZ = sxz;
+    this.squashVelY = 0;
+    this.squashVelXZ = 0;
+  }
+
+  /**
    * Animaciones de la skin P5: inclinación al correr, voltereta 360º del
    * doble salto/Ancla, giro del taladro al excavar, capa que ondea con la
    * velocidad y llamas del jetpack de Axel en el aire.
    */
   private updateVisualAnim(dt: number): void {
+    // HITO 4: muelle subamortiguado del squash & stretch (vuelve a 1 con un
+    // rebote suave) — integración simétrica estable a cualquier framerate.
+    const springY = (1 - this.squashY) * SQUASH_SPRING - this.squashVelY * SQUASH_DAMPING;
+    const springXZ =
+      (1 - this.squashXZ) * SQUASH_SPRING - this.squashVelXZ * SQUASH_DAMPING;
+    this.squashVelY += springY * dt;
+    this.squashVelXZ += springXZ * dt;
+    this.squashY += this.squashVelY * dt;
+    this.squashXZ += this.squashVelXZ * dt;
+
     // Inclinación hacia adelante al correr (suave, cero tambaleo).
     const leanTarget =
       this.grounded && this.isMoving && !this.isBurrowing ? RUN_LEAN_ANGLE : 0;
@@ -1133,13 +1181,31 @@ export class PlayerController {
       if (parts.cape) {
         parts.cape.rotation.x =
           -0.12 - this.capeFlow * 0.5 + Math.sin(this.walkPhase * 1.7) * 0.14 * this.capeFlow;
+        // HITO 4: la capa también se ladea con el giro (flujo lateral).
+        parts.cape.rotation.z = Math.sin(this.walkPhase * 0.85) * 0.1 * this.capeFlow;
       }
-      // Taladro de Digger: gira a tope mientras excava.
+      if (this.activeCharacter === 'kitsune') {
+        // HITO 4: cola expresiva de 2 segmentos — la base barre amplio y la
+        // punta contra-oscila (meneo de látigo), más vivo al correr.
+        const wagSpeed = this.isMoving ? 9 : 3.2;
+        const wagAmp = this.isMoving ? 0.55 : 0.3;
+        parts.tail.rotation.y = Math.sin(this.simTime * wagSpeed) * wagAmp;
+        if (parts.tailTip) {
+          parts.tailTip.rotation.y =
+            Math.sin(this.simTime * wagSpeed + 1.2) * wagAmp * 0.9;
+        }
+      }
+      // Taladro de Digger: gira a tope al excavar, rápido al atacar y lento
+      // en reposo (la broca multi-cresta hace visible el giro).
       if (parts.drill) {
         if (this.isBurrowing) {
-          parts.drill.rotation.y += dt * 26;
+          parts.drill.rotation.y += dt * 30;
           parts.drill.rotation.z = Math.sin(this.walkPhase * 12) * 0.06;
+        } else if (this.slashTimer > 0) {
+          parts.drill.rotation.y += dt * 22;
+          parts.drill.rotation.z *= Math.max(0, 1 - dt * 8);
         } else {
+          parts.drill.rotation.y += dt * 6;
           parts.drill.rotation.z *= Math.max(0, 1 - dt * 8);
         }
       }
@@ -1152,6 +1218,36 @@ export class PlayerController {
       if (parts.flameR) {
         parts.flameR.visible = flamesOn;
         parts.flameR.scale.y = flamesOn ? 0.85 + Math.cos(this.walkPhase * 9) * 0.3 : 1;
+      }
+      // HITO 4: Axel aéreo — cabeceo flotante, aletas que se abren y aura de
+      // planeo que envuelve al piloto (doble salto/natación/vuelo).
+      if (this.activeCharacter === 'axel') {
+        const aerial = this.isAirborne || this.isSwimming || this.inFlight;
+        const tiltTarget = aerial ? Math.sin(this.simTime * 2.6) * 0.09 : 0;
+        this.glideTilt += (tiltTarget - this.glideTilt) * Math.min(1, dt * 5);
+        this.flipPivot.rotation.z = this.glideTilt;
+        const finTarget = aerial ? 0.85 : 0.12;
+        if (parts.finL) {
+          parts.finL.rotation.z +=
+            (-finTarget - parts.finL.rotation.z) * Math.min(1, dt * 6);
+        }
+        if (parts.finR) {
+          parts.finR.rotation.z +=
+            (finTarget - parts.finR.rotation.z) * Math.min(1, dt * 6);
+        }
+        if (parts.glideAura) {
+          parts.glideAura.visible = aerial;
+          if (aerial) {
+            const auraPulse = 1 + Math.sin(this.simTime * 7) * 0.07;
+            parts.glideAura.scale.setScalar(auraPulse);
+          }
+        }
+      } else {
+        // Los demás personajes no heredan el ladeo del planeo de Axel.
+        if (this.glideTilt !== 0) {
+          this.glideTilt += (0 - this.glideTilt) * Math.min(1, dt * 8);
+          this.flipPivot.rotation.z = this.glideTilt;
+        }
       }
     }
   }
@@ -1301,6 +1397,7 @@ export class PlayerController {
         this.grounded = false;
         this.jumpsUsed = 1;
         this.flipTimer = FLIP_TIME;
+        this.applySquash(SQUASH_JUMP_Y, SQUASH_JUMP_XZ); // HITO 4: estira al rebotar
         this.onSound?.('bounce');
       } else {
         // Aterrizaje en Modo Júpiter (Digger): onda expansiva.
@@ -1316,6 +1413,7 @@ export class PlayerController {
         this.vertVel = 0;
         if (!this.grounded) {
           this.jumpsUsed = 0;
+          this.applySquash(SQUASH_LAND_Y, SQUASH_LAND_XZ); // HITO 4: aplasta al aterrizar
           this.onSound?.('land'); // aterrizaje suave tras el salto/vuelo
         }
         this.grounded = true;
@@ -1522,6 +1620,7 @@ export class PlayerController {
     this.pos
       .copy(target.centerVec)
       .addScaledVector(up, target.spec.radius + terrainOffset);
+    this.applySquash(SQUASH_LAND_Y, SQUASH_LAND_XZ); // HITO 4: aplasta al aterrizar
     this.onSound?.('land');
   }
 
@@ -1677,6 +1776,7 @@ export class PlayerController {
       this.vertVel = 5; // saltito de salida en el polo opuesto
       this.grounded = false;
       this.jumpsUsed = 0;
+      this.applySquash(SQUASH_JUMP_Y, SQUASH_JUMP_XZ); // HITO 4: estira al salir del núcleo
     }
   }
 
@@ -1699,11 +1799,13 @@ export class PlayerController {
       this.vertVel = this.profile.jumpImpulse;
       this.grounded = false;
       this.jumpsUsed = 1;
+      this.applySquash(SQUASH_JUMP_Y, SQUASH_JUMP_XZ); // HITO 4: estira al despegar
       this.onSound?.('jump');
     } else if (this.jumpsUsed < 2) {
       this.vertVel = this.profile.jumpImpulse * DOUBLE_JUMP_FACTOR;
       this.jumpsUsed = 2;
       this.flipTimer = FLIP_TIME; // voltereta 360º del doble salto
+      this.applySquash(SQUASH_JUMP_Y, SQUASH_JUMP_XZ); // HITO 4: estira al despegar
       this.onSound?.('jump');
     } else {
       this.tryAnchor();
@@ -1729,6 +1831,7 @@ export class PlayerController {
     this.anchorFx.scale.z = this.profile.anchorRange / 18;
     this.anchorFxTimer = ANCHOR_FX_TIME;
     this.flipTimer = FLIP_TIME; // voltereta 360º del Ancla Gravitatoria
+    this.applySquash(1.12, 0.94); // HITO 4: estirón del impulso del ancla
     this.behavior.aerialAttacks++;
     this.onSound?.('anchor');
   }

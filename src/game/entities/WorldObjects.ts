@@ -33,6 +33,29 @@ import {
   buildVisionConeMesh,
 } from '../render/proceduralModels';
 import {
+  animateEnemyRig,
+  animateKronos,
+  animateNpc,
+  collectEnemyRig,
+  collectKronosRig,
+  collectNpcRig,
+  createEmptyEnemyRig,
+  GUARD_STATE_PATROL,
+  GUARD_STATE_CHASE,
+  GUARD_STATE_WINDUP,
+  GUARD_STATE_KO,
+  GUARD_STATE_SEARCH,
+  GUARD_STATE_WARNING,
+  KRONOS_STATE_CHASE,
+  KRONOS_STATE_WINDUP,
+  KRONOS_STATE_STUNNED,
+  type EnemyAnimParams,
+  type EnemyRigRefs,
+  type KronosAnimParams,
+  type KronosRigRefs,
+  type NpcRigRefs,
+} from '../render/enemyAnimator';
+import {
   createArchGatePillarColliders,
   createStructureCollider,
   findStrongestGravityPlanet,
@@ -93,7 +116,9 @@ const RADIO_ALERT_RANGE = 22.0; // alcance de la alerta por radio
 const RADIO_CHECKIN_DELAY = 7.0; // sin respuesta de un compañero -> búsqueda
 const BODY_SPOT_RANGE = 14.0; // avistamiento de un compañero noqueado
 const ABILITY_REPORT_RANGE = 18.0; // Estasis/Gravity Shift delante de un guardia
-const DRONE_HOVER_ALT = 2.3;
+// HITO 4: altura de hover reducida (el halo de sombra + propulsor hacen que
+// el vuelo se lea sin alejar tanto al dron del suelo).
+const DRONE_HOVER_ALT = 1.9;
 const DRONE_PATROL_SPEED = 5.0;
 const DRONE_CHASE_SPEED = 6.5;
 const DRONE_ZAP_RANGE = 1.9;
@@ -196,10 +221,6 @@ const KRONOS_POSTURE_REEVAL = 2.5; // re-predicción de la red MLP
 const KRONOS_FRONT_SHIELD_DOT = 0.35; // escudo frontal anti_stasis
 const KRONOS_FRONT_SHIELD_MUL = 0.25; // reduce el daño frontal salvo flanqueo
 
-const KRONOS_STATE_CHASE = 0;
-const KRONOS_STATE_WINDUP = 1;
-const KRONOS_STATE_STUNNED = 2;
-
 /** Color del anillo de energía según la postura activa de la red MLP. */
 const KRONOS_POSTURE_RING_COLORS = [0xf97316, 0xfacc15, 0x22d3ee, 0xa78bfa];
 
@@ -212,13 +233,11 @@ const GRAB_STATE_CONSUMED = 3;
 const GRAB_RESPAWN_KRONOS_SEC = 14;
 const KRONOS_ARENA_PLANET_ID = 'kronos-trono';
 
-const GUARD_STATE_PATROL = 0;
-const GUARD_STATE_CHASE = 1;
-const GUARD_STATE_WINDUP = 2;
-const GUARD_STATE_KO = 3;
-const GUARD_STATE_SEARCH = 4;
-/** HITO 1 — Modo aviso: se detiene, encara al jugador y le da una oportunidad. */
-const GUARD_STATE_WARNING = 5;
+// HITO 4: los estados GUARD_STATE_* / KRONOS_STATE_* viven en
+// enemyAnimator.ts (fuente única de verdad, importados arriba).
+
+/** HITO 4: duración del follow-through visual del golpe (s) tras el windup. */
+const ENEMY_STRIKE_ANIM_TIME = 0.28;
 
 /** Parámetros de detección/combate por tipo de enemigo. */
 interface EnemyParams {
@@ -306,8 +325,24 @@ interface EnemyObj {
   hoverPhase: number; // dron
   /** Fase del rebote de paso de los animales cuadrúpedos (pantera/gorila/mono). */
   walkPhase: number;
-  /** Alas de la avispa (skin 'wasp'): aleteo continuo sobre el hover del dron. */
-  wings: [THREE.Object3D | null, THREE.Object3D | null];
+  /** HITO 4: rig cacheado de pivotes nombrados (una vez al hacer spawn). */
+  rig: EnemyRigRefs;
+  /** HITO 4: escala base del modelo (oni 1.3, cyberMech 1.2, resto 1). */
+  baseScale: number;
+  /** HITO 4: velocidad real normalizada 0..1 suavizada (sin moonwalk). */
+  smoothSpeedRatio: number;
+  /** HITO 4: temporizador del follow-through del golpe (s, decae a 0). */
+  strikeAnimT: number;
+  /** HITO 4: forward del frame anterior (medición del giro para el banking). */
+  prevForward: THREE.Vector3;
+  /** HITO 4: alabeo lateral suavizado del volador (rad). */
+  hoverBank: number;
+  /** HITO 4: altura de terreno suavizada del volador (sube rápido, baja lento). */
+  smoothTerrainY: number;
+  /** HITO 4: posición del frame anterior (medición del movimiento real). */
+  prevPos: THREE.Vector3;
+  /** HITO 4: halo de sombra bajo el volador (se ve flotar sobre el terreno). */
+  shadowHalo: THREE.Object3D | null;
   params: EnemyParams;
   /** Cono de visión adherido al suelo (guardias y oficiales). */
   visionCone: THREE.Mesh | null;
@@ -467,7 +502,8 @@ interface BreakableWallObj {
 interface NpcObj {
   spec: NpcSpec;
   mesh: THREE.Group;
-  icon: THREE.Object3D | null;
+  /** HITO 4: rig cacheado del NPC (torso/cabeza/brazos/icono [E]). */
+  rig: NpcRigRefs;
   pos: THREE.Vector3;
   planet: PlanetRuntime;
   dir: THREE.Vector3;
@@ -485,6 +521,8 @@ interface KronosObj {
   mesh: THREE.Group;
   ringMaterial: THREE.MeshBasicMaterial;
   maceGroup: THREE.Group;
+  /** HITO 4: rig cacheado del jefe (torso/maza/anillo de energía). */
+  rig: KronosRigRefs;
   planet: PlanetRuntime;
   pos: THREE.Vector3;
   dir: THREE.Vector3; // unit desde el centro del planeta
@@ -542,6 +580,8 @@ const _propD1 = new THREE.Vector3();
 const _propD2 = new THREE.Vector3();
 const _propR = new THREE.Vector3();
 const _propQ = new THREE.Vector3();
+// HITO 4: scratch del producto cruzado del giro enemigo (banking de voladores).
+const _animDelta = new THREE.Vector3();
 
 /** PRNG determinista para los spawns dinámicos de la adaptación. */
 function makeSeededRandom(seed: number): () => number {
@@ -1167,6 +1207,37 @@ export class WorldObjectsManager {
     stasis: 0,
   };
   private readonly kronosInput: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  // HITO 4: parámetros preasignados de los animadores procedurales (cero
+  // allocations por frame: se mutan los campos escalares y se reutiliza).
+  private readonly enemyAnim: EnemyAnimParams = {
+    rig: createEmptyEnemyRig(),
+    kind: 'guard',
+    skin: 'default',
+    state: GUARD_STATE_PATROL,
+    stationaryLookout: false,
+    walkPhase: 0,
+    hoverPhase: 0,
+    windupProgress: 0,
+    strikeDecay: 0,
+    speedRatio: 0,
+    turnRate: 0,
+    clock: 0,
+    dt: 0,
+    enemyMesh: _dummy,
+  };
+  private readonly kronosAnim: KronosAnimParams = {
+    torso: null,
+    torsoBaseY: 0,
+    mace: null,
+    ring: null,
+    ringMaterial: new THREE.MeshBasicMaterial(),
+    state: KRONOS_STATE_CHASE,
+    windupProgress: 0,
+    speedRatio: 0,
+    clock: 0,
+    dt: 0,
+    defeated: false,
+  };
   // --- Oleada 2: galaxia continua ---
   private readonly structureColliders: StructureCollider[] = [];
   // --- HITO 2: colliders físicos de props (flora, rocas, obstáculos) ---
@@ -1736,7 +1807,7 @@ export class WorldObjectsManager {
     this.npcs.push({
       spec,
       mesh,
-      icon: mesh.getObjectByName('promptIcon') ?? null,
+      rig: collectNpcRig(mesh),
       pos: pos.clone(),
       planet,
       dir,
@@ -1958,6 +2029,8 @@ export class WorldObjectsManager {
     baseForward.addScaledVector(dir, -baseForward.dot(dir));
     if (baseForward.lengthSq() < 1e-6) baseForward.set(1, 0, 0).cross(dir);
     baseForward.normalize();
+    // HITO 4: cachea los pivotes nombrados UNA vez (cero búsquedas por frame).
+    const rig = collectEnemyRig(mesh);
     this.enemies.push({
       kind: spec.kind,
       skin,
@@ -1980,7 +2053,17 @@ export class WorldObjectsManager {
       koRadioSent: false,
       hoverPhase: spec.kind.length * 1.3,
       walkPhase: spec.kind.length * 0.9,
-      wings: [mesh.getObjectByName('wingL') ?? null, mesh.getObjectByName('wingR') ?? null],
+      rig,
+      baseScale: mesh.scale.x,
+      smoothSpeedRatio: 0,
+      strikeAnimT: 0,
+      prevForward: baseForward.clone(),
+      hoverBank: 0,
+      // HITO 4: arranca en el terreno real (sin hundirse en la colina al
+      // aparecer); luego el filtro asimétrico lo mantiene despejado.
+      smoothTerrainY: getPlanetTerrainOffsetVec(planet.spec.id, dir),
+      prevPos: pos.clone(),
+      shadowHalo: mesh.getObjectByName('shadowHalo') ?? null,
       params: ENEMY_PARAMS[spec.kind],
       visionCone,
       visionConeMaterial,
@@ -2015,10 +2098,18 @@ export class WorldObjectsManager {
     ).normalize();
     const pos = this.placeOnPlanet(group, planet, dir.x, dir.y, dir.z, 0);
     this.group.add(group);
+    // HITO 4: rig del jefe cacheado una vez + parámetros reutilizables.
+    const rig = collectKronosRig(group);
+    this.kronosAnim.torso = rig.torso;
+    this.kronosAnim.torsoBaseY = rig.torsoBaseY;
+    this.kronosAnim.mace = rig.mace;
+    this.kronosAnim.ring = rig.ring;
+    this.kronosAnim.ringMaterial = ringMaterial;
     this.kronos = {
       mesh: group,
       ringMaterial,
       maceGroup,
+      rig,
       planet,
       pos: pos.clone(),
       dir: dir.clone(),
@@ -2247,11 +2338,20 @@ export class WorldObjectsManager {
     const k = this.kronos;
     if (!k) return;
     if (k.defeated) {
+      // HITO 4: el animador acomoda la pose de derrota (torso caído, anillo
+      // apagado) antes de sincronizar la transformada.
+      const anim = this.kronosAnim;
+      anim.state = k.state;
+      anim.windupProgress = 0;
+      anim.speedRatio = 0;
+      anim.clock = k.clock;
+      anim.dt = dt;
+      anim.defeated = true;
+      animateKronos(anim);
       this.syncKronosTransform(k);
       return;
     }
     k.clock += dt;
-    k.ringMaterial.opacity = 0.4 + Math.sin(k.clock * 4) * 0.2;
 
     // Re-predicción de la postura con la red MLP (pesos offline + online).
     k.postureCd -= dt;
@@ -2272,7 +2372,6 @@ export class WorldObjectsManager {
     if (k.state === KRONOS_STATE_STUNNED) {
       // Aturdido por Parry: la maza cae y recibe daño x2.
       k.stunT -= dt;
-      k.maceGroup.rotation.z += (-1.1 - k.maceGroup.rotation.z) * Math.min(1, dt * 6);
       if (k.stunT <= 0) {
         k.state = KRONOS_STATE_CHASE;
         k.maceGroup.rotation.z = -0.25;
@@ -2281,8 +2380,6 @@ export class WorldObjectsManager {
     } else if (k.state === KRONOS_STATE_WINDUP) {
       // Windup claro del barrido de maza: ventana de Parry (F/Q).
       k.windupT -= dt;
-      const p = 1 - Math.max(k.windupT, 0) / KRONOS_WINDUP;
-      k.maceGroup.rotation.x = 1.25 - p * 1.0;
       if (k.windupT <= 0) {
         k.state = KRONOS_STATE_CHASE;
         k.swingCd = KRONOS_SWING_CD;
@@ -2305,7 +2402,6 @@ export class WorldObjectsManager {
       }
     } else {
       // Persecución sobre la esfera + selección de ataque.
-      k.maceGroup.rotation.x += (1.25 - k.maceGroup.rotation.x) * Math.min(1, dt * 5);
       k.swingCd -= dt;
       k.orbCd -= dt;
       k.powerCd -= dt;
@@ -2325,6 +2421,17 @@ export class WorldObjectsManager {
         this.kronosPosturePower(k, state, onPlayerDamage);
       }
     }
+
+    // HITO 4: animador procedural del jefe (paso pesado, arco de la maza y
+    // anillo de energía pulsando) con parámetros preasignados.
+    const anim = this.kronosAnim;
+    anim.state = k.state;
+    anim.windupProgress = 1 - Math.max(k.windupT, 0) / KRONOS_WINDUP;
+    anim.speedRatio = k.state === KRONOS_STATE_CHASE ? 1 : 0;
+    anim.clock = k.clock;
+    anim.dt = dt;
+    anim.defeated = false;
+    animateKronos(anim);
 
     this.syncKronosTransform(k);
   }
@@ -3370,11 +3477,15 @@ export class WorldObjectsManager {
       const yaw = Math.atan2(_v4.dot(npc.dir), cosYaw);
       _q2.setFromAxisAngle(_upAxis, yaw);
       npc.mesh.quaternion.copy(_q1).multiply(_q2);
-      if (npc.icon) {
-        npc.icon.visible = dist < NPC_FACE_RANGE * 1.6;
-        npc.icon.position.y = 2.35 + Math.sin(this.clock * 2.2 + npc.spec.id.length) * 0.09;
-        npc.icon.rotation.y = Math.sin(this.clock * 1.4) * 0.2;
-      }
+      // HITO 4: idle procedural (respiración, asentir, saludo y halo [E]
+      // girando) con el rig cacheado — cero búsquedas por nombre por frame.
+      // El offset por id desfasa el idle entre NPCs vecinos.
+      animateNpc(
+        npc.rig,
+        this.clock + npc.spec.id.length,
+        dist < NPC_FACE_RANGE * 1.6,
+        dist < NPC_FACE_RANGE
+      );
     }
     if (this.dialogueNpc !== null) {
       this.dialogueT -= dt;
@@ -4150,6 +4261,8 @@ export class WorldObjectsManager {
       if (enemy.windupT <= 0) {
         enemy.state = GUARD_STATE_CHASE;
         enemy.attackCd = enemy.params.attackCdTime;
+        // HITO 4: follow-through visible del barrido (brazo que cruza).
+        enemy.strikeAnimT = ENEMY_STRIKE_ANIM_TIME;
         // HITO 1 — Esquiva justa: fuera de alcance (> attackRange + 0.9) o
         // saltando con margen (> 2.2 m), el barrido falla sin daño.
         const outOfRange = playerDist > enemy.params.attackRange + WINDUP_WHIFF_MARGIN;
@@ -4232,6 +4345,8 @@ export class WorldObjectsManager {
       if (enemy.windupT <= 0) {
         enemy.state = GUARD_STATE_CHASE;
         enemy.attackCd = enemy.params.attackCdTime;
+        // HITO 4: follow-through del zap (embestida eléctrica hacia delante).
+        enemy.strikeAnimT = ENEMY_STRIKE_ANIM_TIME;
         const outOfRange = playerDist > DRONE_ZAP_RANGE + WINDUP_WHIFF_MARGIN;
         if (!outOfRange) {
           // _v1 pudo ser sobreescrito: se recalcula el empuje del zap desde
@@ -4708,24 +4823,43 @@ export class WorldObjectsManager {
 
   /** Transform sobre la esfera + hover de dron + tumbado si K.O. */
   private syncEnemyTransform(enemy: EnemyObj, dt: number): void {
-    // Telegraph del ataque: pulso de escala claro durante el windup.
+    // HITO 4: posición del frame anterior para medir el movimiento REAL.
+    enemy.prevPos.copy(enemy.pos);
+    // Telegraph del ataque: pulso de escala claro durante el windup (respeta
+    // la escala base del modelo: oni 1.3, cyberMech 1.2).
     if (enemy.state === GUARD_STATE_WINDUP) {
-      enemy.mesh.scale.setScalar(1 + Math.sin(this.clock * 22) * 0.07);
+      enemy.mesh.scale.setScalar(
+        enemy.baseScale * (1 + Math.sin(this.clock * 22) * 0.07)
+      );
     } else {
-      enemy.mesh.scale.setScalar(1);
+      enemy.mesh.scale.setScalar(enemy.baseScale);
     }
     // HITO 1: el anillo de telegraph del suelo solo vive durante el windup.
     if (enemy.windupRing) {
       enemy.windupRing.visible = enemy.state === GUARD_STATE_WINDUP;
     }
+    const flying = enemy.kind === 'drone';
     let altitude = enemy.altitudeOffset;
-    if (enemy.kind === 'drone') {
-      enemy.hoverPhase += dt * 3;
-      altitude +=
-        enemy.state === GUARD_STATE_KO ? 0.35 : DRONE_HOVER_ALT + Math.sin(enemy.hoverPhase) * 0.25;
-    }
     // HITO 2: el suelo real incluye el terreno esférico (colinas/cráteres).
-    const terrainH = getPlanetTerrainOffsetVec(enemy.planet.spec.id, enemy.dir);
+    let terrainH = getPlanetTerrainOffsetVec(enemy.planet.spec.id, enemy.dir);
+    if (flying) {
+      enemy.hoverPhase += dt * 3;
+      // HITO 4: altitud de terreno suavizada ASIMÉTRICA — sube rápido para
+      // despejar las colinas y baja lento al entrar en los valles.
+      const riseK = Math.min(1, dt * 8);
+      const fallK = Math.min(1, dt * 2.2);
+      enemy.smoothTerrainY +=
+        (terrainH - enemy.smoothTerrainY) *
+        (terrainH > enemy.smoothTerrainY ? riseK : fallK);
+      terrainH = enemy.smoothTerrainY;
+      // HITO 4: flotación de doble armónico (onda compuesta más orgánica).
+      altitude +=
+        enemy.state === GUARD_STATE_KO
+          ? 0.35
+          : DRONE_HOVER_ALT +
+            Math.sin(enemy.hoverPhase) * 0.28 +
+            Math.cos(enemy.hoverPhase * 0.5) * 0.1;
+    }
     enemy.pos
       .copy(enemy.planet.centerVec)
       .addScaledVector(enemy.dir, enemy.planet.spec.radius + terrainH + altitude);
@@ -4763,24 +4897,32 @@ export class WorldObjectsManager {
       }
     }
     enemy.mesh.position.copy(enemy.pos);
-    // Skins de la selva: la avispa aletea sobre el hover del dron y los
-    // cuadrúpedos (pantera/gorila/mono) rebotan ligeros al caminar.
-    if (enemy.skin === 'wasp') {
-      if (enemy.state !== GUARD_STATE_KO) {
-        const flap = Math.sin(this.clock * 34) * 0.45;
-        if (enemy.wings[0]) enemy.wings[0].rotation.z = -flap;
-        if (enemy.wings[1]) enemy.wings[1].rotation.z = flap;
-      }
-    } else if (
-      (enemy.skin === 'panther' || enemy.skin === 'gorilla' || enemy.skin === 'monkey') &&
-      enemy.state !== GUARD_STATE_KO &&
-      !enemy.stationaryLookout
-    ) {
-      enemy.walkPhase += dt * 9;
-      enemy.mesh.position.addScaledVector(
-        enemy.dir,
-        Math.abs(Math.sin(enemy.walkPhase)) * 0.09
-      );
+    // HITO 4: mide el movimiento REAL de superficie entre frames — al quedar
+    // plantado (aviso/parado/atascado) las piernas se detienen limpio en
+    // vez de caminar en la luna — y el giro para el alabeo del volador.
+    const invDt = 1 / Math.max(dt, 1e-4);
+    const measured = enemy.pos.distanceTo(enemy.prevPos) * invDt;
+    const targetRatio = THREE.MathUtils.clamp(
+      measured / Math.max(enemy.params.chaseSpeed, 1),
+      0,
+      1
+    );
+    enemy.smoothSpeedRatio +=
+      (targetRatio - enemy.smoothSpeedRatio) * Math.min(1, dt * 9);
+    enemy.walkPhase += dt * measured * 2.4;
+    const fd = THREE.MathUtils.clamp(enemy.prevForward.dot(enemy.forward), -1, 1);
+    _animDelta.copy(enemy.prevForward).cross(enemy.forward);
+    const turn = Math.atan2(_animDelta.dot(enemy.dir), fd) * invDt;
+    // Alabeo hacia DENTRO del giro (como una aeronave): giro a la izquierda
+    // (turn > 0) hunde el lado izquierdo (rotation.z < 0 del hoverCore).
+    enemy.hoverBank +=
+      (THREE.MathUtils.clamp(-turn * 0.14, -0.55, 0.55) - enemy.hoverBank) *
+      Math.min(1, dt * 5);
+    enemy.prevForward.copy(enemy.forward);
+    // HITO 4: halo de sombra pegado al terreno bajo el volador (se VE flotar).
+    if (enemy.shadowHalo) {
+      enemy.shadowHalo.visible = flying && enemy.state !== GUARD_STATE_KO;
+      enemy.shadowHalo.position.y = -altitude;
     }
     _q1.setFromUnitVectors(_upAxis, enemy.dir);
     if (enemy.kind === 'turret') {
@@ -4804,6 +4946,35 @@ export class WorldObjectsManager {
       _q2.setFromAxisAngle(_v3.set(0, 0, 1), 1.45);
       enemy.mesh.quaternion.multiply(_q2);
     }
+    // HITO 4: animador procedural articulado (parámetros preasignados, cero
+    // allocations): galope/bipedos/voladores + follow-through del golpe.
+    if (enemy.strikeAnimT > 0) {
+      enemy.strikeAnimT = Math.max(0, enemy.strikeAnimT - dt);
+    }
+    const anim = this.enemyAnim;
+    anim.rig = enemy.rig;
+    anim.kind = enemy.kind;
+    anim.skin = enemy.skin;
+    anim.state = enemy.state;
+    anim.stationaryLookout = enemy.stationaryLookout;
+    anim.walkPhase = enemy.walkPhase;
+    anim.hoverPhase = enemy.hoverPhase;
+    anim.windupProgress =
+      enemy.state === GUARD_STATE_WINDUP
+        ? THREE.MathUtils.clamp(
+            1 - Math.max(enemy.windupT, 0) / Math.max(enemy.params.windupTime, 0.001),
+            0,
+            1
+          )
+        : 0;
+    anim.strikeDecay =
+      enemy.strikeAnimT > 0 ? enemy.strikeAnimT / ENEMY_STRIKE_ANIM_TIME : 0;
+    anim.speedRatio = enemy.smoothSpeedRatio;
+    anim.turnRate = enemy.hoverBank;
+    anim.clock = this.clock;
+    anim.dt = dt;
+    anim.enemyMesh = enemy.mesh;
+    animateEnemyRig(anim);
     this.updateVisionCone(enemy);
   }
 
