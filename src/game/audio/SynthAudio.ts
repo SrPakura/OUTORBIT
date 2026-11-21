@@ -43,6 +43,8 @@ export class SynthAudio {
   private master: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
   private _muted = false;
+  /** Multiplicador de volumen del ajuste persistente `masterVolume`. */
+  private volumeMultiplier = 1;
 
   get muted(): boolean {
     return this._muted;
@@ -51,6 +53,26 @@ export class SynthAudio {
   /** True mientras no exista AudioContext (el GameEngine mantiene un listener de pointerdown). */
   get needsUnlock(): boolean {
     return this.ctx === null;
+  }
+
+  /** Ganancia efectiva del bus maestro: volumen base x multiplicador de ajustes. */
+  private get masterGain(): number {
+    return MASTER_VOLUME * this.volumeMultiplier;
+  }
+
+  /**
+   * Escala el volumen base del sintetizador (ajuste `masterVolume`, 0 .. 1.5).
+   * Se aplica al instante si el AudioContext ya existe y se respeta al crearlo.
+   */
+  setVolumeMultiplier(mul: number): void {
+    this.volumeMultiplier = Number.isFinite(mul) ? Math.min(Math.max(mul, 0), 1.5) : 1;
+    if (this.master && this.ctx) {
+      this.master.gain.setTargetAtTime(
+        this._muted ? 0 : this.masterGain,
+        this.ctx.currentTime,
+        0.01
+      );
+    }
   }
 
   /** Crea/reanuda el AudioContext (llamar en el primer gesto del usuario). */
@@ -65,7 +87,7 @@ export class SynthAudio {
     if (!Ctor) return;
     this.ctx = new Ctor();
     this.master = this.ctx.createGain();
-    this.master.gain.value = this._muted ? 0 : MASTER_VOLUME;
+    this.master.gain.value = this._muted ? 0 : this.masterGain;
     this.master.connect(this.ctx.destination);
   }
 
@@ -73,7 +95,7 @@ export class SynthAudio {
   toggleMute(): boolean {
     this._muted = !this._muted;
     if (this.master && this.ctx) {
-      this.master.gain.setTargetAtTime(this._muted ? 0 : MASTER_VOLUME, this.ctx.currentTime, 0.01);
+      this.master.gain.setTargetAtTime(this._muted ? 0 : this.masterGain, this.ctx.currentTime, 0.01);
     }
     return this._muted;
   }

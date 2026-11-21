@@ -11,7 +11,7 @@ import {
   type PlayerBehaviorVector,
   type RadioToast,
 } from './types';
-import { createSpaceBackdrop } from './render/toonMaterials';
+import { createSpaceBackdrop, setHalftonesEnabled } from './render/toonMaterials';
 import { buildPlanetModel } from './render/proceduralModels';
 import { PlayerController } from './entities/PlayerController';
 import { WorldObjectsManager, type WorldPlayerState } from './entities/WorldObjects';
@@ -20,6 +20,7 @@ import { initPlanetTerrain, isInLowBasin } from './math/terrain';
 import { BehaviorTracker, createEmptyBehaviorVector } from './ai/BehaviorTracker';
 import { computePlanetAdaptation } from './ai/AdaptationDirector';
 import { SynthAudio } from './audio/SynthAudio';
+import { loadGameSettings, CONTROL_ACTIONS, type GameSettings } from './settings';
 
 // ============================================================================
 // Constantes de cámara y HUD de la galaxia continua
@@ -30,12 +31,13 @@ const CAMERA_MIN_DIST = 5;
 const CAMERA_MAX_DIST = 26;
 const CAMERA_DISTANCE_SHIFT = 5.2;
 const CAMERA_DISTANCE_CORE_DIVE_FACTOR = 2.2; // zoom-out a radio * 2.2
-const CAMERA_FOV = 70;
-const CAMERA_FOV_SHIFT = 52;
-const CAMERA_FOV_FLIGHT_BOOST = 18; // 70 -> 88 en mitad del cruce
-const CAMERA_FOV_SPRINT_BOOST = 12; // 70 -> 82 al esprintar
-const CAMERA_FOV_DASH_BOOST = 18; // 70 -> 88 en dash estilo Jett
-const CAMERA_FOV_FLIGHT_FREE_MAX = 90; // 70 -> 90 volando rápido en vuelo libre
+const CAMERA_FOV_DEFAULT = 70; // FOV base de fábrica (ajustable en Controles)
+const CAMERA_FOV_SHIFT_OFFSET = -18; // cámara lenta: base - 18
+const CAMERA_FOV_SHIFT_MIN = 40; // suelo del FOV en cámara lenta
+const CAMERA_FOV_FLIGHT_BOOST = 18; // base -> base + 18 en mitad del cruce
+const CAMERA_FOV_SPRINT_BOOST = 12; // base -> base + 12 al esprintar
+const CAMERA_FOV_DASH_BOOST = 18; // base -> base + 18 en dash estilo Jett
+const CAMERA_FOV_FLIGHT_FREE_MAX_OFFSET = 20; // base -> base + 20 volando rápido
 const CAMERA_FOV_HIT_PUNCH = 6; // HITO 3: FOV punch breve al recibir daño
 const CAMERA_FLIGHT_ROLL = 0.12; // giro orbital suave de cámara en vuelo
 const RADIO_TOAST_DURATION = 6; // banner táctico de radio (no bloqueante)
@@ -84,6 +86,10 @@ export class GameEngine {
   private timeScale = 1;
   private camDist = CAMERA_BASE_DIST;
   private baseCamDist = CAMERA_BASE_DIST;
+  /** Ajustes persistentes (Controles): se leen al entrar a la partida. */
+  private settings: GameSettings = loadGameSettings();
+  /** FOV base efectivo: todos los boosts de cámara son offsets sobre él. */
+  private baseFov = CAMERA_FOV_DEFAULT;
   private phase: HudSnapshot['phase'] = 'playing';
   private pointerLocked = false;
   private hudAccum = 0;
@@ -207,7 +213,7 @@ export class GameEngine {
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
 
     this.camera = new THREE.PerspectiveCamera(
-      CAMERA_FOV,
+      this.settings.baseFov,
       window.innerWidth / Math.max(window.innerHeight, 1),
       0.1,
       4000
@@ -215,7 +221,27 @@ export class GameEngine {
 
     this.setupLights();
     this.loadGalaxy();
+    // Ajustes persistentes: FOV, sensibilidad, eje Y, keybindings, volumen y
+    // halftones se aplican en cuanto el jugador y el mundo existen.
+    this.applySettings(this.settings);
     this.attachListeners();
+    this.emitHud();
+  }
+
+  /**
+   * Aplica (y recuerda) los ajustes de Controles: FOV base, sensibilidad del
+   * ratón, eje Y invertido, keybindings, volumen del sintetizador y trama
+   * halftone. Lo llama el constructor al entrar a la partida y el menú de
+   * Controles al guardar.
+   */
+  applySettings(settings: GameSettings): void {
+    this.settings = { ...settings, bindings: { ...settings.bindings } };
+    this.baseFov = THREE.MathUtils.clamp(settings.baseFov, 55, 85);
+    this.camera.fov = this.baseFov;
+    this.camera.updateProjectionMatrix();
+    this.player?.applySettings(this.settings);
+    this.audio.setVolumeMultiplier(settings.masterVolume);
+    setHalftonesEnabled(settings.halftonesEnabled);
     this.emitHud();
   }
 
@@ -510,13 +536,14 @@ export class GameEngine {
     }
 
     // FOV dinámico: cámara lenta en Gravity Shift; boost suave al esprintar,
-    // hacer Dash, volar rápido (dirigido o libre) o caer en picado.
-    let targetFov = CAMERA_FOV;
+    // hacer Dash, volar rápido (dirigido o libre) o caer en picado. Todos los
+    // offsets son relativos al FOV base del ajuste `baseFov`.
+    let targetFov = this.baseFov;
     if (player.gravityShifting) {
-      targetFov = CAMERA_FOV_SHIFT;
+      targetFov = Math.max(CAMERA_FOV_SHIFT_MIN, this.baseFov + CAMERA_FOV_SHIFT_OFFSET);
     } else if (player.isDirectedFlight) {
       targetFov =
-        CAMERA_FOV + CAMERA_FOV_FLIGHT_BOOST * Math.sin(Math.PI * player.flightProgress);
+        this.baseFov + CAMERA_FOV_FLIGHT_BOOST * Math.sin(Math.PI * player.flightProgress);
     } else {
       let boost = 0;
       if (player.isSprinting) {
@@ -529,15 +556,14 @@ export class GameEngine {
       if (flightSpeed > 14) {
         boost = Math.max(
           boost,
-          THREE.MathUtils.clamp((flightSpeed - 14) / 20, 0, 1) *
-            (CAMERA_FOV_FLIGHT_FREE_MAX - CAMERA_FOV)
+          THREE.MathUtils.clamp((flightSpeed - 14) / 20, 0, 1) * CAMERA_FOV_FLIGHT_FREE_MAX_OFFSET
         );
       }
       const fall = player.fallSpeed;
       if (fall > 18) {
         boost = Math.max(boost, THREE.MathUtils.clamp((fall - 18) / 14, 0, 1) * 14);
       }
-      targetFov = CAMERA_FOV + boost;
+      targetFov = this.baseFov + boost;
     }
     // HITO 3: FOV punch breve (ensanchamiento) mientras dura el golpe de
     // cámara tras recibir daño — se lee como desorientación del impacto.
@@ -549,7 +575,7 @@ export class GameEngine {
 
     // Líneas de velocidad estilo cómic: intensidad suavizada 0..1 escalando
     // con el FOV extra (sprint/dash/vuelo rápido/picado).
-    const speedTarget = THREE.MathUtils.clamp((targetFov - CAMERA_FOV) / 18, 0, 1);
+    const speedTarget = THREE.MathUtils.clamp((targetFov - this.baseFov) / 18, 0, 1);
     this.speedLines += (speedTarget - this.speedLines) * Math.min(1, dtReal * 5);
 
     // Giro orbital suave de cámara durante el vuelo entre planetas.
@@ -1041,9 +1067,18 @@ export class GameEngine {
       return;
     }
     if (this.phase !== 'playing') return;
-    // Space y Tab: evita scroll y cambio de foco mientras se juega.
-    if (e.code === 'Space' || e.code === 'Tab') e.preventDefault();
+    // Space, Tab y cualquier tecla rebindeada: evita scroll y cambio de foco.
+    if (e.code === 'Space' || e.code === 'Tab' || this.isBoundCode(e.code)) e.preventDefault();
     this.player?.handleKey(e.code, true);
+  }
+
+  /** ¿El código es una tecla de acción del jugador? (evita el scroll del navegador) */
+  private isBoundCode(code: string): boolean {
+    const bindings = this.settings.bindings;
+    for (let i = 0; i < CONTROL_ACTIONS.length; i++) {
+      if (bindings[CONTROL_ACTIONS[i]] === code) return true;
+    }
+    return false;
   }
 
   private onKeyUp(e: KeyboardEvent): void {

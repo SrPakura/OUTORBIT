@@ -1625,6 +1625,58 @@ const atmosphereFragmentShader = /* glsl */ `
   }
 `;
 
+// ============================================================================
+// Anillos orbitales: maná translúcido animado con borde de energía brillante
+// (Persona 5 x Epic Mickey x Frieren). `uv.x` recorre el anillo y `uv.y` la
+// sección del tubo (0/1 = borde exterior, 0.5 = borde interior).
+// ============================================================================
+
+const ringVertexShader = /* glsl */ `
+  varying vec2 vUv;
+  varying vec3 vNormalWorld;
+  varying vec3 vViewDir;
+  void main() {
+    vUv = uv;
+    vec4 wp = modelMatrix * vec4( position, 1.0 );
+    vNormalWorld = normalize( mat3( modelMatrix ) * normal );
+    vViewDir = normalize( cameraPosition - wp.xyz );
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const ringFragmentShader = /* glsl */ `
+  uniform vec3 uRingColor;
+  uniform vec3 uEdgeColor;
+  uniform float uTime;
+  uniform float uOpacity;
+  varying vec2 vUv;
+  varying vec3 vNormalWorld;
+  varying vec3 vViewDir;
+
+  void main() {
+    float around = vUv.x;
+    float tube = vUv.y;
+
+    // Ondas de maná que derivan despacio alrededor del anillo.
+    float waveA = 0.5 + 0.5 * sin( around * 42.0 - uTime * 1.6 );
+    float waveB = 0.5 + 0.5 * sin( around * 17.0 + uTime * 0.9 + tube * 6.2831853 );
+    float mana = pow( waveA * 0.6 + waveB * 0.4, 1.6 );
+
+    // Borde exterior de energía: limbo del tubo (uv.y 0/1) encendido.
+    float edge = smoothstep( 0.55, 1.0, abs( tube - 0.5 ) * 2.0 );
+    // Fresnel suave: el anillo se enciende en su silueta contra el espacio.
+    float rim = pow( 1.0 - abs( dot( normalize( vNormalWorld ), normalize( vViewDir ) ) ), 2.0 );
+
+    vec3 col = mix( uRingColor, uEdgeColor, edge );
+    col += uEdgeColor * edge * 0.85;
+    col += uRingColor * mana * 0.55;
+    col += uEdgeColor * rim * 0.35;
+
+    float alpha = uOpacity * ( 0.45 + mana * 0.55 ) + edge * 0.35;
+    gl_FragColor = vec4( col, clamp( alpha, 0.0, 1.0 ) );
+  }
+`;
+
 /**
  * Construye un planeta completo: esfera cel-shaded con contorno, parches de
  * terreno/hielo, árboles pino low-poly, anillos orbitales semitransparentes y
@@ -1702,7 +1754,7 @@ export function buildPlanetModel(spec: PlanetSpec): {
     const dirX = sinTheta * Math.cos(phi);
     const dirY = cosTheta;
     const dirZ = sinTheta * Math.sin(phi);
-    const patchRadius = spec.radius * (0.16 + random() * 0.16);
+    const patchRadius = spec.radius * (0.12 + random() * 0.11);
     const isIce = spec.hasIcePatches === true && random() > 0.45;
     const patch = toonMesh(
       new THREE.SphereGeometry(patchRadius, 14, 10),
@@ -1710,15 +1762,18 @@ export function buildPlanetModel(spec: PlanetSpec): {
       outlineThickness * 0.6
     );
     // Se apoyan sobre la altura exacta del terreno para no flotar ni hundirse.
+    // El centro queda hundido 0.214 * patchRadius y el aplanado es 0.22: solo
+    // asoma una lámina de terreno de ~0.5-0.8 m que se funde con el relieve,
+    // sin cúpulas gigantes que se coman los árboles.
     placeOnSphere(
       patch,
       center,
       dirX,
       dirY,
       dirZ,
-      spec.radius + getPlanetTerrainOffset(spec.id, dirX, dirY, dirZ) - patchRadius * 0.1
+      spec.radius + getPlanetTerrainOffset(spec.id, dirX, dirY, dirZ) - patchRadius * 0.214
     );
-    patch.scale.y = 0.32;
+    patch.scale.y = 0.22;
     group.add(patch);
   }
 
@@ -1726,35 +1781,54 @@ export function buildPlanetModel(spec: PlanetSpec): {
   // viven como PropSpec estructurados en levelDefinitions con grounding exacto
   // y colisión física real. Se mantienen anillos orbitales y asteroides.
 
-  // --- Anillos orbitales ---
+  // --- Anillos orbitales: maná animado (ShaderMaterial) ---
   let ringGroup: THREE.Group | null = null;
+  const ringMaterials: THREE.ShaderMaterial[] = [];
   if (spec.hasOrbitalRings) {
     ringGroup = new THREE.Group();
     ringGroup.position.copy(center);
+    const ringColor = new THREE.Color(spec.ringColor ?? '#c4b5fd');
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(spec.radius * 1.75, spec.radius * 0.14, 10, 72),
-      new THREE.MeshBasicMaterial({
-        color: spec.ringColor ?? '#c4b5fd',
+      new THREE.ShaderMaterial({
+        vertexShader: ringVertexShader,
+        fragmentShader: ringFragmentShader,
+        uniforms: {
+          uRingColor: { value: ringColor },
+          uEdgeColor: { value: new THREE.Color('#67e8f9') },
+          uTime: { value: 0 },
+          uOpacity: { value: 0.42 },
+        },
         transparent: true,
-        opacity: 0.38,
         side: THREE.DoubleSide,
         depthWrite: false,
+        fog: false,
       })
     );
     ring.rotation.x = Math.PI / 2 - 0.35;
     ringGroup.add(ring);
+    ringMaterials.push(ring.material as THREE.ShaderMaterial);
     const ring2 = new THREE.Mesh(
       new THREE.TorusGeometry(spec.radius * 2.15, spec.radius * 0.05, 8, 72),
-      new THREE.MeshBasicMaterial({
-        color: spec.ringColor ?? '#a78bfa',
+      new THREE.ShaderMaterial({
+        vertexShader: ringVertexShader,
+        fragmentShader: ringFragmentShader,
+        uniforms: {
+          uRingColor: { value: ringColor.clone().lerp(new THREE.Color('#a78bfa'), 0.5) },
+          uEdgeColor: { value: new THREE.Color('#fde68a') },
+          uTime: { value: 0 },
+          uOpacity: { value: 0.3 },
+        },
         transparent: true,
-        opacity: 0.25,
         side: THREE.DoubleSide,
         depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        fog: false,
       })
     );
     ring2.rotation.x = Math.PI / 2 - 0.35;
     ringGroup.add(ring2);
+    ringMaterials.push(ring2.material as THREE.ShaderMaterial);
     group.add(ringGroup);
   }
 
@@ -1792,7 +1866,13 @@ export function buildPlanetModel(spec: PlanetSpec): {
   return {
     group,
     animTick(dt: number): void {
-      if (ringGroup) ringGroup.rotation.y += dt * 0.06;
+      if (ringGroup) {
+        ringGroup.rotation.y += dt * 0.06;
+        // Maná de los anillos: deriva continua de las ondas y del borde.
+        for (let i = 0; i < ringMaterials.length; i++) {
+          ringMaterials[i].uniforms.uTime.value += dt;
+        }
+      }
       asteroidGroup.rotation.y += dt * 0.11;
       for (let i = 0; i < asteroids.length; i++) {
         asteroids[i].rotation.y += dt * asteroidSpin[i];

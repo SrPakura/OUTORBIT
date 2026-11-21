@@ -17,6 +17,12 @@ import {
 import { getPlanetTerrainOffsetVec } from '../math/terrain';
 import { buildCharacterModel, buildDisguiseOverlay } from '../render/proceduralModels';
 import type { GameSoundKind } from '../audio/SynthAudio';
+import {
+  DEFAULT_SETTINGS,
+  resolveActionCodes,
+  type ControlAction,
+  type GameSettings,
+} from '../settings';
 import type { LockOnHandle, WorldObjectsManager } from './WorldObjects';
 
 // ============================================================================
@@ -181,6 +187,10 @@ interface CharacterParts {
  * - Q/Tab/V (o clic central): Lock-On del objetivo válido más cercano;
  *   Flecha Izquierda/Derecha: cicla el objetivo fijado; con Lock-On activo la
  *   cámara gira suavemente hacia el objetivo y un aro 3D lo marca en escena.
+ *   Sin Lock-On las flechas mueven (reserva) si no están asignadas a nada.
+ * - Todas las teclas salen de `GameSettings.bindings` (`applySettings`): un
+ *   rebind personalizado manda siempre y los alias de fábrica (ShiftRight,
+ *   KeyC, Tab/KeyV) solo sobreviven mientras el binding primario no cambie.
  * - F: Parry (ventana 0.32s, cooldown 0.85s).
  * - E: interacción táctica por prioridad — 1) noquear guardia por la
  *   espalda + robo de uniforme (`isDisguised`), 2) hablar con un NPC cercano
@@ -313,6 +323,15 @@ export class PlayerController {
   private nearestSurfaceDist = 0; // distancia a la superficie más cercana
 
   private readonly keys = new Set<string>();
+
+  // Ajustes persistentes (Controles): sensibilidad, eje Y y keybindings.
+  private sensMul = 1;
+  private invertY = false;
+  /** Códigos que activan cada acción (binding + alias limpios + flechas). */
+  private codesByAction: Record<ControlAction, string[]> = resolveActionCodes(
+    DEFAULT_SETTINGS.bindings
+  );
+
   private readonly models = new Map<CharacterId, THREE.Group>();
   private readonly parts = new Map<CharacterId, CharacterParts>();
   private readonly bodyRoot = new THREE.Group();
@@ -635,13 +654,13 @@ export class PlayerController {
     return this.lastUp;
   }
 
-  /** Corriendo con Shift en superficie: delata al jugador disfrazado. */
+  /** Corriendo con Sprint en superficie: delata al jugador disfrazado. */
   get isSprinting(): boolean {
     return (
       this.isMoving &&
       this.grounded &&
       !this.isBurrowing &&
-      (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'))
+      this.isActionDown('sprint')
     );
   }
 
@@ -683,38 +702,73 @@ export class PlayerController {
   // --------------------------------------------------------------------------
   // Entrada (reenviada por el GameEngine, que posee el Pointer Lock)
   // --------------------------------------------------------------------------
-  handleKey(code: string, down: boolean): void {
-    if (down) {
-      this.keys.add(code);
-      if (code === 'Space') {
-        if (this.isBurrowing && !this.coreDiveActive) this.startCoreDive();
-        else this.tryJump();
-      } else if (code === 'Digit1') this.switchCharacter('kitsune');
-      else if (code === 'Digit2') this.switchCharacter('digger');
-      else if (code === 'Digit3') this.switchCharacter('axel');
-      else if (code === 'KeyE') this.tryInteract();
-      else if (code === 'KeyF') this.tryParry();
-      else if (code === 'ShiftLeft' || code === 'ShiftRight') {
-        // Shift en el aire (salto o vuelo libre): dash instantáneo estilo Jett.
-        if (this.isAirborne || (this.inFlight && !this.flightDirected)) this.jettDash();
-        else this.toggleBurrow();
-      }
-      else if (code === 'KeyR' || code === 'KeyC') this.captureStasis();
-      else if (code === 'KeyQ' || code === 'Tab' || code === 'KeyV') this.toggleLockOn();
-      else if (code === 'ArrowLeft') this.cycleLockOn(-1);
-      else if (code === 'ArrowRight') this.cycleLockOn(1);
-    } else {
-      this.keys.delete(code);
+
+  /**
+   * Aplica los ajustes persistentes de Controles: sensibilidad del ratón,
+   * eje Y invertido y keybindings. Los códigos de cada acción se resuelven
+   * UNA sola vez aquí (binding primario + alias limpios + flechas de reserva)
+   * para que el bucle de juego no asigne nada.
+   */
+  applySettings(settings: GameSettings): void {
+    this.sensMul = THREE.MathUtils.clamp(settings.mouseSensitivity, 0.25, 2.5);
+    this.invertY = settings.invertY;
+    this.codesByAction = resolveActionCodes(settings.bindings);
+  }
+
+  /** ¿El código pulsado activa esta acción? (binding + alias limpios) */
+  private codeMatches(action: ControlAction, code: string): boolean {
+    const codes = this.codesByAction[action];
+    for (let i = 0; i < codes.length; i++) {
+      if (codes[i] === code) return true;
     }
+    return false;
+  }
+
+  /** ¿Hay alguna tecla de la acción pulsada ahora mismo? (cero allocations) */
+  private isActionDown(action: ControlAction): boolean {
+    const codes = this.codesByAction[action];
+    for (let i = 0; i < codes.length; i++) {
+      if (this.keys.has(codes[i])) return true;
+    }
+    return false;
+  }
+
+  handleKey(code: string, down: boolean): void {
+    if (!down) {
+      this.keys.delete(code);
+      return;
+    }
+    // Flechas con Lock-On activo: ciclan el objetivo en vez de moverse.
+    if (this.lockedTarget && (code === 'ArrowLeft' || code === 'ArrowRight')) {
+      this.cycleLockOn(code === 'ArrowLeft' ? -1 : 1);
+      return;
+    }
+    this.keys.add(code);
+    if (this.codeMatches('jump', code)) {
+      if (this.isBurrowing && !this.coreDiveActive) this.startCoreDive();
+      else this.tryJump();
+    } else if (this.codeMatches('slot1', code)) this.switchCharacter('kitsune');
+    else if (this.codeMatches('slot2', code)) this.switchCharacter('digger');
+    else if (this.codeMatches('slot3', code)) this.switchCharacter('axel');
+    else if (this.codeMatches('interact', code)) this.tryInteract();
+    else if (this.codeMatches('parry', code)) this.tryParry();
+    else if (this.codeMatches('sprint', code)) {
+      // Sprint en el aire (salto o vuelo libre): dash instantáneo estilo Jett.
+      if (this.isAirborne || (this.inFlight && !this.flightDirected)) this.jettDash();
+      else this.toggleBurrow();
+    } else if (this.codeMatches('stasis', code)) this.captureStasis();
+    else if (this.codeMatches('lockOn', code)) this.toggleLockOn();
   }
 
   handleMouseMove(dx: number, dy: number): void {
-    this.yaw -= dx * MOUSE_SENSITIVITY;
+    const sens = MOUSE_SENSITIVITY * this.sensMul;
+    this.yaw -= dx * sens;
     // Cámara 100% libre en vuelo, Gravity Shift y aire: pitch casi sin
     // restricción; en suelo se mantiene el límite clásico.
     const freeLook = this.inFlight || this.gravityShifting || !this.grounded;
     const pitchLimit = freeLook ? PITCH_FREE : PITCH_MAX;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - dy * MOUSE_SENSITIVITY, -pitchLimit, pitchLimit);
+    const pitchDelta = dy * sens * (this.invertY ? -1 : 1);
+    this.pitch = THREE.MathUtils.clamp(this.pitch - pitchDelta, -pitchLimit, pitchLimit);
     if (this.yaw > Math.PI) this.yaw -= Math.PI * 2;
     else if (this.yaw < -Math.PI) this.yaw += Math.PI * 2;
   }
@@ -1305,8 +1359,8 @@ export class PlayerController {
 
     // Movimiento tangente (WASD en el marco de la cámara).
     getTangentAxes(this.basisQuat, this.yaw, this._forward, this._right);
-    const inputZ = (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0);
-    const inputX = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
+    const inputZ = (this.isActionDown('forward') ? 1 : 0) - (this.isActionDown('back') ? 1 : 0);
+    const inputX = (this.isActionDown('right') ? 1 : 0) - (this.isActionDown('left') ? 1 : 0);
     this._move.set(0, 0, 0).addScaledVector(this._forward, inputZ).addScaledVector(this._right, inputX);
     this.isMoving = this._move.lengthSq() > 1e-8;
 
@@ -1316,7 +1370,7 @@ export class PlayerController {
     const inFoliage = this.world.isInFoliage(this.pos, planet);
     if (this.isMoving) {
       this._move.normalize();
-      const sprinting = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+      const sprinting = this.isActionDown('sprint');
       speed =
         this.profile.moveSpeed *
         (sprinting ? SPRINT_MULTIPLIER : 1) *
@@ -1479,8 +1533,8 @@ export class PlayerController {
     this.getCameraOrientation(this._q1);
     this._forward.set(0, 0, -1).applyQuaternion(this._q1);
     this._right.set(1, 0, 0).applyQuaternion(this._q1);
-    const inputZ = (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0);
-    const inputX = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
+    const inputZ = (this.isActionDown('forward') ? 1 : 0) - (this.isActionDown('back') ? 1 : 0);
+    const inputX = (this.isActionDown('right') ? 1 : 0) - (this.isActionDown('left') ? 1 : 0);
     this._move.set(0, 0, 0).addScaledVector(this._forward, inputZ).addScaledVector(this._right, inputX);
     this.isMoving = this._move.lengthSq() > 1e-8;
 
@@ -1946,8 +2000,8 @@ export class PlayerController {
     this.getCameraOrientation(this._q1);
     this._forward.set(0, 0, -1).applyQuaternion(this._q1);
     this._right.set(1, 0, 0).applyQuaternion(this._q1);
-    const inputZ = (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0);
-    const inputX = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
+    const inputZ = (this.isActionDown('forward') ? 1 : 0) - (this.isActionDown('back') ? 1 : 0);
+    const inputX = (this.isActionDown('right') ? 1 : 0) - (this.isActionDown('left') ? 1 : 0);
     this._v1
       .set(0, 0, 0)
       .addScaledVector(this._forward, inputZ)
