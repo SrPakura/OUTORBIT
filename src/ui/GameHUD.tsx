@@ -280,7 +280,7 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMut
       </div>
 
       {/* --- Esquina inferior derecha: guía de controles --- */}
-      <div className="absolute bottom-4 right-4 rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-3 text-[10px] font-semibold leading-relaxed text-slate-300 shadow-[4px_4px_0_#000]">
+      <div className="absolute bottom-14 right-4 rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-3 text-[10px] font-semibold leading-relaxed text-slate-300 shadow-[4px_4px_0_#000]">
         <p>
           <span className="text-yellow-300">WASD</span> Mover ·{' '}
           <span className="text-yellow-300">ESPACIO</span> Salto/Ancla
