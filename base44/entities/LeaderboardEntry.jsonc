@@ -1,0 +1,47 @@
+{
+  "name": "LeaderboardEntry",
+  "type": "object",
+  "properties": {
+    "player_name": {
+      "type": "string",
+      "description": "Pilot callsign entered at the end of the run"
+    },
+    "clear_time_sec": {
+      "type": "number",
+      "description": "Total clear time in seconds"
+    },
+    "score": {
+      "type": "number",
+      "description": "Computed run score"
+    },
+    "dominant_style": {
+      "type": "string",
+      "description": "Dominant tactical style detected by the AI"
+    },
+    "stealth_pct": {
+      "type": "number"
+    },
+    "aggression_pct": {
+      "type": "number"
+    },
+    "aerial_pct": {
+      "type": "number"
+    },
+    "subterranean_pct": {
+      "type": "number"
+    },
+    "stasis_pct": {
+      "type": "number"
+    },
+    "alarms_triggered": {
+      "type": "number"
+    }
+  },
+  "required": ["player_name", "clear_time_sec", "score", "dominant_style"],
+  "rls": {
+    "read": {},
+    "create": {},
+    "update": { "user_condition": { "role": "admin" } },
+    "delete": { "user_condition": { "role": "admin" } }
+  }
+}
