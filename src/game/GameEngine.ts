@@ -26,12 +26,15 @@ import { SynthAudio } from './audio/SynthAudio';
 const HUD_INTERVAL = 1 / 15;
 const CAMERA_BASE_DIST = 10.5;
 const CAMERA_MIN_DIST = 5;
-const CAMERA_MAX_DIST = 20;
+const CAMERA_MAX_DIST = 26;
 const CAMERA_DISTANCE_SHIFT = 5.2;
 const CAMERA_DISTANCE_CORE_DIVE_FACTOR = 2.2; // zoom-out a radio * 2.2
 const CAMERA_FOV = 70;
 const CAMERA_FOV_SHIFT = 52;
 const CAMERA_FOV_FLIGHT_BOOST = 18; // 70 -> 88 en mitad del cruce
+const CAMERA_FOV_SPRINT_BOOST = 12; // 70 -> 82 al esprintar
+const CAMERA_FOV_DASH_BOOST = 18; // 70 -> 88 en dash estilo Jett
+const CAMERA_FOV_FLIGHT_FREE_MAX = 90; // 70 -> 90 volando rápido en vuelo libre
 const CAMERA_FLIGHT_ROLL = 0.12; // giro orbital suave de cámara en vuelo
 const RADIO_TOAST_DURATION = 6; // banner táctico de radio (no bloqueante)
 const MARKER_SCREEN_CLAMP = 0.88; // borde de pantalla para marcadores fuera/detrás
@@ -83,6 +86,10 @@ export class GameEngine {
   private pointerLocked = false;
   private hudAccum = 0;
   private hudKey = 0;
+  /** Intensidad suavizada 0..1 de las líneas de velocidad del HUD. */
+  private speedLines = 0;
+  /** Motivo específico de la derrota (deriva espacial, etc.). */
+  private gameOverReason: string | null = null;
 
   // IA inter-planeta: acumulado de la run + última adaptación inyectada.
   private readonly behaviorTracker = new BehaviorTracker();
@@ -390,7 +397,7 @@ export class GameEngine {
     this._camDir.set(0, 0, -1).applyQuaternion(this._camQuat);
     player.getHeadPosition(this._camPos);
 
-    // Zoom: rueda del ratón (5-20) + acercamiento en Gravity Shift.
+    // Zoom: rueda del ratón (5-26, libre) + acercamiento en Gravity Shift.
     // Cruce del núcleo: zoom-out automático a radio * 2.2 para ver el
     // planeta completo desde fuera (edificios/obstáculos incluidos).
     const targetDist = player.gravityShifting
@@ -415,19 +422,45 @@ export class GameEngine {
       }
     }
 
-    // FOV: cámara lenta en Gravity Shift; boost dinámico en el vuelo
-    // dirigido (70 -> 88 en mitad del cruce -> 70 al aterrizar).
+    // FOV dinámico: cámara lenta en Gravity Shift; boost suave al esprintar,
+    // hacer Dash, volar rápido (dirigido o libre) o caer en picado.
     let targetFov = CAMERA_FOV;
     if (player.gravityShifting) {
       targetFov = CAMERA_FOV_SHIFT;
     } else if (player.isDirectedFlight) {
       targetFov =
         CAMERA_FOV + CAMERA_FOV_FLIGHT_BOOST * Math.sin(Math.PI * player.flightProgress);
+    } else {
+      let boost = 0;
+      if (player.isSprinting) {
+        boost = Math.max(boost, CAMERA_FOV_SPRINT_BOOST);
+      }
+      if (player.isDashing) {
+        boost = Math.max(boost, CAMERA_FOV_DASH_BOOST);
+      }
+      const flightSpeed = player.freeFlightSpeed;
+      if (flightSpeed > 14) {
+        boost = Math.max(
+          boost,
+          THREE.MathUtils.clamp((flightSpeed - 14) / 20, 0, 1) *
+            (CAMERA_FOV_FLIGHT_FREE_MAX - CAMERA_FOV)
+        );
+      }
+      const fall = player.fallSpeed;
+      if (fall > 18) {
+        boost = Math.max(boost, THREE.MathUtils.clamp((fall - 18) / 14, 0, 1) * 14);
+      }
+      targetFov = CAMERA_FOV + boost;
     }
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dtReal * 6);
       this.camera.updateProjectionMatrix();
     }
+
+    // Líneas de velocidad estilo cómic: intensidad suavizada 0..1 escalando
+    // con el FOV extra (sprint/dash/vuelo rápido/picado).
+    const speedTarget = THREE.MathUtils.clamp((targetFov - CAMERA_FOV) / 18, 0, 1);
+    this.speedLines += (speedTarget - this.speedLines) * Math.min(1, dtReal * 5);
 
     // Giro orbital suave de cámara durante el vuelo entre planetas.
     if (player.isDirectedFlight) {
@@ -553,6 +586,7 @@ export class GameEngine {
     if (this.phase !== 'playing') return;
     const player = this.player;
     if (!player || player.hp > 0) return;
+    this.gameOverReason = player.lostInSpace ? 'Te perdiste en el espacio profundo' : null;
     this.phase = 'game_over';
     this.timeScale = 1;
     if (document.pointerLockElement === this.canvas) document.exitPointerLock();
@@ -631,6 +665,8 @@ export class GameEngine {
     key = key * 31 + (this.audio.muted ? 1 : 0);
     // Oleada 2: banner de radio al caer un escudo planetario.
     key = key * 31 + (this.radioToast ? 1 : 0);
+    // Deriva espacial: aviso HUD cuando el jugador se aleja de toda órbita.
+    key = key * 31 + (player.isSpaceDrifting ? 1 : 0);
 
     if (key !== this.hudKey) {
       this.hudKey = key;
@@ -829,6 +865,9 @@ export class GameEngine {
       kronosUpdates: world.kronosUpdates,
       objectiveMarkers: this.projectObjectiveMarkers(player),
       radioToast: this.radioToast ? { ...this.radioToast, lines: [...this.radioToast.lines] } : null,
+      speedLinesIntensity: this.speedLines,
+      spaceDriftWarning: player.isSpaceDrifting,
+      gameOverReason: this.gameOverReason,
     });
   }
 
@@ -899,7 +938,7 @@ export class GameEngine {
     this.player?.handleMouseButton(e.button, false);
   }
 
-  /** Zoom con la rueda del ratón entre 5 y 20 unidades. */
+  /** Zoom con la rueda del ratón entre 5 y 26 unidades (siempre libre). */
   private onWheel(e: WheelEvent): void {
     if (this.phase !== 'playing') return;
     this.baseCamDist = THREE.MathUtils.clamp(

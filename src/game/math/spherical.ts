@@ -249,9 +249,16 @@ export function resolvePlayerStructures(
       continue;
     }
 
-    // Por debajo de la base (puentes, plataformas y dinteles flotantes):
-    // se puede pasar andando por debajo.
-    if (_scLocal.y < 0) continue;
+    // Por debajo de la base: las estructuras APOYADAS en el suelo siguen
+    // colisionando hasta y = -2.6, porque en los extremos de una muralla
+    // ancha la esfera se curva por debajo de y = 0 (antes se saltaban la
+    // colisión y se atravesaban los extremos curvos). Solo las estructuras
+    // FLOTANTES (puentes, plataformas, dinteles) se pasan por debajo.
+    if (c.altitudeOffset > 0.5) {
+      if (_scLocal.y < 0) continue;
+    } else if (_scLocal.y < -2.6) {
+      continue;
+    }
 
     // Pared lateral: empuje por el eje de mínima penetración en local.
     const penX = ex - Math.abs(_scLocal.x);
@@ -269,6 +276,41 @@ export function resolvePlayerStructures(
   _resolveResult.groundAltitude = groundAltitude;
   _resolveResult.hitWall = hitWall;
   return _resolveResult;
+}
+
+/**
+ * Colliders sólidos de los DOS PILARES laterales de un `arch_gate` (además
+ * del dintel superior que aporta `createStructureCollider`). El collider del
+ * arco es el dintel flotante a `altitudeOffset`; los pilares visuales bajan
+ * hasta el suelo, así que aquí se emiten dos cajas laterales (halfX = 0.45,
+ * altura = altitudeOffset) desplazadas en X local a ±(halfX - 0.45), con la
+ * MISMA convención de rotación para que colisión y visual coincidan.
+ * Solo se llama al montar el nivel (allocaciones permitidas).
+ */
+export function createArchGatePillarColliders(
+  spec: StructureSpec,
+  planetCenter: THREE.Vector3,
+  planetRadius: number
+): StructureCollider[] {
+  const altitude = spec.altitudeOffset ?? 0;
+  if (altitude <= 0.5) return [];
+  const halfX = spec.size[0];
+  const halfZ = spec.size[2];
+  const out: StructureCollider[] = [];
+  for (const side of [-1, 1]) {
+    const pillarSpec: StructureSpec = {
+      ...spec,
+      id: `${spec.id}-pillar-${side > 0 ? 'r' : 'l'}`,
+      altitudeOffset: 0,
+      size: [0.45, altitude, halfZ],
+    };
+    const collider = createStructureCollider(pillarSpec, planetCenter, planetRadius);
+    // Desplaza la base al eje del pilar lateral (x local = ±(halfX - 0.45)).
+    _scLocal.set(side * (halfX - 0.45), 0, 0).applyQuaternion(collider.quat);
+    collider.center.add(_scLocal);
+    out.push(collider);
+  }
+  return out;
 }
 
 /**

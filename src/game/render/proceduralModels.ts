@@ -172,7 +172,7 @@ function buildDiggerHeadExtras(head: THREE.Group): void {
     new THREE.SphereGeometry(0.08, 10, 8),
     new THREE.MeshBasicMaterial({ color: 0xfff3b0 })
   );
-  lamp.position.set(0, 0.22, 0.5);
+  lamp.position.set(0, 0.26, 0.5);
   head.add(lamp);
 }
 
@@ -267,41 +267,46 @@ function buildCharacterSkinExtras(
   head: THREE.Group
 ): void {
   if (id === 'kitsune') {
-    // Antifaz rojo/negro estilo Phantom Thief sobre los ojos.
+    // Antifaz rojo/negro estilo Phantom Thief sobre los ojos: pegado delante
+    // de la cara (z 0.45..0.50) sin enterrarse en el cráneo (frente z ~0.51).
     const maskBase = new THREE.Mesh(
-      new THREE.BoxGeometry(0.78, 0.26, 0.18),
+      new THREE.BoxGeometry(0.78, 0.24, 0.14),
       createToonMaterial('#0b0b12')
     );
-    maskBase.position.set(0, 0.1, 0.42);
+    maskBase.position.set(0, 0.11, 0.47);
     head.add(maskBase);
     const maskRed = new THREE.Mesh(
-      new THREE.BoxGeometry(0.7, 0.18, 0.14),
+      new THREE.BoxGeometry(0.7, 0.17, 0.12),
       createToonMaterial('#dc2626')
     );
-    maskRed.position.set(0, 0.1, 0.5);
+    maskRed.position.set(0, 0.11, 0.55);
     head.add(maskRed);
     for (const side of [-1, 1]) {
       const slit = new THREE.Mesh(
         new THREE.BoxGeometry(0.16, 0.05, 0.04),
         new THREE.MeshBasicMaterial({ color: 0xfff7ed })
       );
-      slit.position.set(0.2 * side, 0.12, 0.56);
+      slit.position.set(0.2 * side, 0.13, 0.62);
       head.add(slit);
     }
 
-    // Capa larga trasera que ondea con la velocidad (animada por el controlador).
+    // Capa larga trasera dividida en dos paneles LATERALES que esquivan la
+    // cola esponjosa (la cola ocupa el eje central x ±0.27 detrás del cuerpo).
     const cape = new THREE.Group();
     cape.name = 'cape';
-    cape.position.set(0, 0.92, -0.3);
+    cape.position.set(0, 0.95, -0.3);
     const capeColors = ['#dc2626', '#b91c1c'];
     for (let i = 0; i < 3; i++) {
-      const panel = toonMesh(
-        new THREE.BoxGeometry(0.62 - i * 0.08, 0.36, 0.05),
-        capeColors[i % 2],
-        0.014
-      );
-      panel.position.set(0, -0.18 - i * 0.3, -0.04 - i * 0.1);
-      cape.add(panel);
+      for (const side of [-1, 1]) {
+        const panel = toonMesh(
+          new THREE.BoxGeometry(0.24, 0.34 - i * 0.02, 0.05),
+          capeColors[i % 2],
+          0.014
+        );
+        panel.position.set(side * (0.38 + i * 0.03), -0.16 - i * 0.28, -0.05 - i * 0.08);
+        panel.rotation.z = side * (0.1 + i * 0.07);
+        cape.add(panel);
+      }
     }
     group.add(cape);
 
@@ -336,19 +341,21 @@ function buildCharacterSkinExtras(
       rightArm.add(aura);
     }
   } else if (id === 'digger') {
-    // Visor luminoso cian/amarillo sobre los ojos.
+    // Visor luminoso cian/amarillo sobre los ojos, apoyado en el ala del
+    // casco (z 0.62): antes quedaba enterrado bajo el brim (radio 0.62) y
+    // flotando en los laterales de la cabeza.
     const visor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.72, 0.18, 0.14),
+      new THREE.BoxGeometry(0.6, 0.16, 0.14),
       new THREE.MeshBasicMaterial({ color: 0x22d3ee })
     );
-    visor.position.set(0, 0.1, 0.46);
+    visor.position.set(0, 0.1, 0.62);
     head.add(visor);
     for (const side of [-1, 1]) {
       const lens = new THREE.Mesh(
         new THREE.BoxGeometry(0.18, 0.06, 0.04),
         new THREE.MeshBasicMaterial({ color: 0xfde047 })
       );
-      lens.position.set(0.2 * side, 0.1, 0.52);
+      lens.position.set(0.2 * side, 0.1, 0.71);
       head.add(lens);
     }
 
@@ -382,23 +389,25 @@ function buildCharacterSkinExtras(
       arm.add(gauntlet);
     }
   } else {
-    // Gafas de aviador reposando en la frente.
+    // Gafas de aviador reposando en la frente (pegadas al cráneo, z ~0.34:
+    // la frente curva está en z ~0.31 y antes flotaban a 9 cm).
     for (const side of [-1, 1]) {
       const goggle = new THREE.Mesh(
         new THREE.TorusGeometry(0.11, 0.045, 8, 16),
         createToonMaterial('#78350f')
       );
-      goggle.position.set(0.19 * side, 0.36, 0.4);
+      goggle.position.set(0.19 * side, 0.36, 0.34);
       head.add(goggle);
       const lens = new THREE.Mesh(
-        new THREE.SphereGeometry(0.09, 10, 8),
+        new THREE.SphereGeometry(0.07, 10, 8),
         new THREE.MeshBasicMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.75 })
       );
-      lens.position.set(0.19 * side, 0.36, 0.44);
+      lens.position.set(0.19 * side, 0.36, 0.36);
       head.add(lens);
     }
 
-    // Doble propulsor jetpack trasero con llamas cian animables.
+    // Doble propulsor jetpack trasero con llamas cian animables: los tubos
+    // sobresalen por DEBAJO de la mochila (antes quedaban embebidos dentro).
     const pack = toonMesh(new THREE.BoxGeometry(0.46, 0.44, 0.22), '#0c4a6e', 0.016);
     pack.position.set(0, 0.66, -0.42);
     group.add(pack);
@@ -408,7 +417,7 @@ function buildCharacterSkinExtras(
         '#e0f2fe',
         0.012
       );
-      thruster.position.set(0.14 * side, 0.6, -0.52);
+      thruster.position.set(0.14 * side, 0.48, -0.5);
       group.add(thruster);
       const flame = new THREE.Mesh(
         new THREE.ConeGeometry(0.09, 0.5, 8),
@@ -422,23 +431,27 @@ function buildCharacterSkinExtras(
       );
       flame.name = side < 0 ? 'flameL' : 'flameR';
       flame.rotation.x = Math.PI - 0.35;
-      flame.position.set(0.14 * side, 0.36, -0.56);
+      flame.position.set(0.14 * side, 0.3, -0.54);
       flame.visible = false;
       group.add(flame);
     }
 
-    // Bufanda larga ondeante trasera (`cape`, animada con la velocidad).
+    // Bufanda larga en dos cintas LATERALES que esquivan la cola plana de
+    // nutria (x ±0.15 detrás del cuerpo).
     const cape = new THREE.Group();
     cape.name = 'cape';
     cape.position.set(0, 0.92, -0.28);
     for (let i = 0; i < 3; i++) {
-      const panel = toonMesh(
-        new THREE.BoxGeometry(0.2, 0.34, 0.05),
-        i % 2 === 0 ? '#22d3ee' : '#0891b2',
-        0.012
-      );
-      panel.position.set((i % 2 === 0 ? -1 : 1) * 0.06, -0.16 - i * 0.3, -0.05 - i * 0.12);
-      cape.add(panel);
+      for (const side of [-1, 1]) {
+        const panel = toonMesh(
+          new THREE.BoxGeometry(0.14, 0.3, 0.05),
+          i % 2 === 0 ? '#22d3ee' : '#0891b2',
+          0.012
+        );
+        panel.position.set(side * (0.24 + i * 0.03), -0.14 - i * 0.26, -0.04 - i * 0.1);
+        panel.rotation.z = side * (0.08 + i * 0.06);
+        cape.add(panel);
+      }
     }
     group.add(cape);
   }
@@ -870,9 +883,11 @@ export function buildPropMesh(kind: PropKind): THREE.Group {
 }
 
 // ============================================================================
-// Atmósfera con brillo Fresnel aditivo en el borde (referencia_visual.html
-// líneas 420-447): AdditiveBlending + rim = pow(1 - max(dot(vN, vV), 0), 4.2)
-// para que brille SOLO en el limbo del planeta, sin bandas oscuras ni cortes.
+// Atmósfera con halo BackSide en el limbo exterior (referencia_visual.html):
+// esfera a radius * 1.12 renderizada por su cara INTERIOR, de modo que el
+// halo vive solo en el borde exterior del planeta y NUNCA corta por delante
+// de la superficie ni de los edificios (la cara frontal se descarta, y el
+// depth test ocluye el halo tras el limbo del planeta).
 // ============================================================================
 
 const atmosphereVertexShader = /* glsl */ `
@@ -891,8 +906,8 @@ const atmosphereFragmentShader = /* glsl */ `
   varying vec3 vN;
   varying vec3 vV;
   void main() {
-    float rim = pow( 1.0 - max( dot( vN, vV ), 0.0 ), 4.2 );
-    gl_FragColor = vec4( uColor, rim * 0.55 );
+    float rim = pow( clamp( dot( -vN, vV ), 0.0, 1.0 ), 3.0 ) * smoothstep( 0.0, 0.35, dot( -vN, vV ) );
+    gl_FragColor = vec4( uColor, rim * 0.85 );
   }
 `;
 
@@ -921,9 +936,9 @@ export function buildPlanetModel(spec: PlanetSpec): {
   sphere.position.copy(center);
   group.add(sphere);
 
-  // --- Atmósfera: brillo Fresnel aditivo solo en el limbo del planeta ---
+  // --- Atmósfera: halo BackSide suave solo en el borde exterior del limbo ---
   const atmosphere = new THREE.Mesh(
-    new THREE.SphereGeometry(spec.radius * 1.06, 64, 48),
+    new THREE.SphereGeometry(spec.radius * 1.12, 64, 48),
     new THREE.ShaderMaterial({
       vertexShader: atmosphereVertexShader,
       fragmentShader: atmosphereFragmentShader,
@@ -931,7 +946,7 @@ export function buildPlanetModel(spec: PlanetSpec): {
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
-      side: THREE.FrontSide,
+      side: THREE.BackSide,
       fog: false,
     })
   );

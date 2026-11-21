@@ -8,6 +8,26 @@ function formatTime(totalSec: number): string {
   return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 }
 
+/**
+ * Líneas radiales de velocidad estilo cómic/manga: rayos blancos con acentos
+ * dorados irrumpiendo desde los bordes de la pantalla hacia el centro. Se
+ * generan una sola vez (deterministas) y el contenedor escala su opacidad
+ * con `speedLinesIntensity` (0..1).
+ */
+const SPEED_LINES = Array.from({ length: 28 }, (_, i) => {
+  const angle = (i / 28) * Math.PI * 2 + ((i % 3) - 1) * 0.055;
+  const inner = 74 + (i % 4) * 7;
+  const outer = 118 + (i % 3) * 16;
+  return {
+    i,
+    angle,
+    inner,
+    outer,
+    gold: i % 5 === 0,
+    thick: i % 3 === 0,
+  };
+});
+
 interface GameHUDProps {
   snapshot: HudSnapshot;
   onResume: () => void;

@@ -297,6 +297,12 @@ export interface HudSnapshot {
   kronosUpdates?: number;
   objectiveMarkers?: ObjectiveMarker[];
   radioToast?: RadioToast | null;
+  /** Intensidad 0..1 de las líneas de velocidad cómic (sprint/dash/vuelo/picado). */
+  speedLinesIntensity?: number;
+  /** Deriva espacial: el jugador se alejó >260 m de toda superficie. */
+  spaceDriftWarning?: boolean;
+  /** Motivo específico de la derrota (null: texto por defecto del HUD). */
+  gameOverReason?: string | null;
 }
 
 // ============================================================================

@@ -29,6 +29,7 @@ import {
   buildVisionConeMesh,
 } from '../render/proceduralModels';
 import {
+  createArchGatePillarColliders,
   createStructureCollider,
   findStrongestGravityPlanet,
   isLineBlockedByStructures,
@@ -947,12 +948,18 @@ export class WorldObjectsManager {
    */
   buildGalaxy(galaxy: GalaxySpec, planets: PlanetRuntime[]): void {
     // Estructuras: mesh visual + collider de colisión/LoS (misma convención).
+    // Los arcos emiten además 2 colliders sólidos en sus pilares laterales.
     for (const spec of galaxy.structures) {
       const planet = this.findPlanet(spec.planetId);
       this.group.add(buildStructureMesh(spec, planet.centerVec, planet.spec.radius));
       this.structureColliders.push(
         createStructureCollider(spec, planet.centerVec, planet.spec.radius)
       );
+      if (spec.kind === 'arch_gate') {
+        this.structureColliders.push(
+          ...createArchGatePillarColliders(spec, planet.centerVec, planet.spec.radius)
+        );
+      }
     }
 
     // Tormenta de Asteroides Interceptores: todo planeta con
@@ -1410,7 +1417,8 @@ export class WorldObjectsManager {
     const cosYaw = _v3.dot(k.forward);
     _v4.copy(_v3).cross(k.forward);
     const yaw = Math.atan2(_v4.dot(k.dir), cosYaw);
-    _q2.setFromAxisAngle(k.dir, yaw);
+    // Mismo fix que los guardias: yaw sobre el eje LOCAL (0,1,0).
+    _q2.setFromAxisAngle(_upAxis, yaw);
     k.mesh.quaternion.copy(_q1).multiply(_q2);
     if (k.defeated) {
       _q2.setFromAxisAngle(_v3.set(0, 0, 1), 1.45);
@@ -3014,7 +3022,10 @@ export class WorldObjectsManager {
     const cosYaw = _v3.dot(enemy.forward);
     _v4.copy(_v3).cross(enemy.forward);
     const yaw = Math.atan2(_v4.dot(enemy.dir), cosYaw);
-    _q2.setFromAxisAngle(enemy.dir, yaw);
+    // El yaw se post-multiplica: rota alrededor del eje LOCAL (0,1,0), que
+    // _q1 ya alinea con enemy.dir. Usar enemy.dir aquí tumbaba a los guardias
+    // (rotaba en el marco mundial ya alineado, no en el local).
+    _q2.setFromAxisAngle(_upAxis, yaw);
     enemy.mesh.quaternion.copy(_q1).multiply(_q2);
     if (enemy.state === GUARD_STATE_KO) {
       _q2.setFromAxisAngle(_v3.set(0, 0, 1), 1.45);

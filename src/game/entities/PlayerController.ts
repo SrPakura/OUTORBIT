@@ -26,6 +26,8 @@ const DOUBLE_JUMP_FACTOR = 0.85;
 const MOUSE_SENSITIVITY = 0.0036;
 const PITCH_MIN = -1.25;
 const PITCH_MAX = 1.3;
+// Cámara libre en vuelo/aire/Gravity Shift: pitch casi sin restricción.
+const PITCH_FREE = 1.5;
 const AIM_CONE_MARGIN = 0.32; // rad de tolerancia sobre el radio angular del planeta
 const HEAD_HEIGHT = 1.5;
 
@@ -66,6 +68,14 @@ const GRAVITY_JUMP_COOLDOWN_MIN = 1.8; // salto entre planetas: 1.8s-2.8s
 const GRAVITY_JUMP_COOLDOWN_MAX = 2.8;
 const GRAVITY_JUMP_COOLDOWN_DIST0 = 30; // distancia de referencia del mapeo
 
+// Dash instantáneo estilo Jett (Clic Derecho rápido < 0.22s o Shift en aire)
+const RIGHT_CLICK_DASH_TIME = 0.22;
+// Vuelo libre / Dash gravitario 3D hacia el espacio abierto (sin planeta).
+const FREE_DASH_SPEED = 34;
+// Deriva espacial: aviso a 260 m de TODA superficie, muerte a 360 m.
+const SPACE_DRIFT_WARN_DIST = 260;
+const SPACE_DRIFT_DEATH_DIST = 360;
+
 // Subsuelo (Digger)
 const BURROW_SPEED_MUL = 0.8;
 const BURROW_SINK = -0.95;
@@ -81,7 +91,6 @@ const SWIM_BOOST_MUL = 1.45;
 const FLIGHT_MIN_DURATION = 1.4;
 const FLIGHT_MAX_DURATION = 4.5;
 const FLIGHT_SPEED_DIVISOR = 60;
-const FLIGHT_LANDING_PITCH = 0.12;
 const FLIGHT_ARC_SCALE = 1.15;
 const FLIGHT_ARC_LIFT = 8;
 const FLIGHT_MID_SLOWDOWN = 0.06; // ralentiza el punto medio entre órbitas
@@ -125,9 +134,15 @@ interface CharacterParts {
  *   (impulso encadenable, cooldown 0.9s); con Digger en subsuelo, cruce del núcleo.
  * - Shift: sprint; con Digger en superficie, alterna el subsuelo (`isBurrowing`).
  * - 1/2/3: cambio instantáneo de personaje (Kitsune / Digger / Axel).
- * - Clic Derecho (mantener): Gravity Shift (cámara lenta + apuntado a otro planeta);
- *   al soltar, vuelo orbital cinematográfico con aterrizaje de pie. Si no hay
- *   planeta destino, Gravity Dash local hacia la cámara (empuja guardias/cajas).
+ * - Clic Derecho (mantener): Gravity Shift (cámara lenta + apuntado a otro
+ *   planeta); al soltar, vuelo orbital con aterrizaje de pie y cámara 100%
+ *   libre. En el aire se puede activar en cualquier momento (flotación 0.2x
+ *   para cambiar el vector de gravedad) y en pleno vuelo cancela/redirige el
+ *   salto. Sin planeta bajo la mira: Vuelo Libre / Dash Gravitatorio 3D hacia
+ *   la cámara (¡cuidado con la DERIVA ESPACIAL a >260 m de toda superficie!).
+ * - Clic Derecho rápido (< 0.22s) o Shift en el aire: dash instantáneo estilo
+ *   Jett hacia la dirección WASD (o cámara si quieto), con ráfaga de FOV.
+ * - Espacio en pleno vuelo: Ancla que frena el impulso (flotación).
  * - R/C: captura objetos cercanos al Campo de Estasis (hasta 4 en órbita).
  * - Clic Izquierdo: dispara 1 solo objeto de la Estasis hacia el objetivo
  *   fijado (Lock-On) o la mira; con 0 objetos, golpe melee rápido.
@@ -230,6 +245,11 @@ export class PlayerController {
   private dashTimer = 0;
   private dashHitTimer = 0;
   private readonly dashDir = new THREE.Vector3();
+
+  // Cámara libre + dash Jett + deriva espacial.
+  private simTime = 0;
+  private rcPressTime = -1; // instante del último Clic Derecho (dash rápido)
+  private nearestSurfaceDist = 0; // distancia a la superficie más cercana
 
   private readonly keys = new Set<string>();
   private readonly models = new Map<CharacterId, THREE.Group>();
@@ -479,6 +499,36 @@ export class PlayerController {
     return this.inFlight && this.flightDirected;
   }
 
+  /** Dash Jett/Gravity activo (ráfaga de FOV + líneas de velocidad). */
+  get isDashing(): boolean {
+    return this.dashTimer > 0;
+  }
+
+  /** Velocidad del vuelo libre (0 si no está en vuelo libre). */
+  get freeFlightSpeed(): number {
+    return this.inFlight && !this.flightDirected ? this.flightVel.length() : 0;
+  }
+
+  /** Velocidad de caída en picado (m/s, 0 si no cae). */
+  get fallSpeed(): number {
+    return !this.grounded && !this.inFlight && this.vertVel < 0 ? -this.vertVel : 0;
+  }
+
+  /** Distancia a la superficie más cercana de toda la galaxia (m). */
+  get distanceToNearestSurface(): number {
+    return this.nearestSurfaceDist;
+  }
+
+  /** Deriva espacial: aviso al superar 260 m de distancia a toda superficie. */
+  get isSpaceDrifting(): boolean {
+    return this.nearestSurfaceDist > SPACE_DRIFT_WARN_DIST;
+  }
+
+  /** Perdido en el espacio profundo (>360 m de toda superficie). */
+  get lostInSpace(): boolean {
+    return this.nearestSurfaceDist > SPACE_DRIFT_DEATH_DIST;
+  }
+
   /** Progreso 0..1 del vuelo dirigido (mitad del cruce = 0.5). */
   get flightProgress(): number {
     if (!this.flightDirected) return 0;
@@ -559,7 +609,11 @@ export class PlayerController {
       else if (code === 'Digit3') this.switchCharacter('axel');
       else if (code === 'KeyE') this.tryKnockout();
       else if (code === 'KeyF') this.tryParry();
-      else if (code === 'ShiftLeft' || code === 'ShiftRight') this.toggleBurrow();
+      else if (code === 'ShiftLeft' || code === 'ShiftRight') {
+        // Shift en el aire (salto o vuelo libre): dash instantáneo estilo Jett.
+        if (this.isAirborne || (this.inFlight && !this.flightDirected)) this.jettDash();
+        else this.toggleBurrow();
+      }
       else if (code === 'KeyR' || code === 'KeyC') this.captureStasis();
       else if (code === 'KeyQ' || code === 'Tab' || code === 'KeyV') this.toggleLockOn();
       else if (code === 'ArrowLeft') this.cycleLockOn(-1);
@@ -571,7 +625,11 @@ export class PlayerController {
 
   handleMouseMove(dx: number, dy: number): void {
     this.yaw -= dx * MOUSE_SENSITIVITY;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - dy * MOUSE_SENSITIVITY, PITCH_MIN, PITCH_MAX);
+    // Cámara 100% libre en vuelo, Gravity Shift y aire: pitch casi sin
+    // restricción; en suelo se mantiene el límite clásico.
+    const freeLook = this.inFlight || this.gravityShifting || !this.grounded;
+    const pitchLimit = freeLook ? PITCH_FREE : PITCH_MAX;
+    this.pitch = THREE.MathUtils.clamp(this.pitch - dy * MOUSE_SENSITIVITY, -pitchLimit, pitchLimit);
     if (this.yaw > Math.PI) this.yaw -= Math.PI * 2;
     else if (this.yaw < -Math.PI) this.yaw += Math.PI * 2;
   }
@@ -608,27 +666,37 @@ export class PlayerController {
       // Clic central: Lock-On on/off.
       if (down) this.toggleLockOn();
     } else if (button === 2) {
-      // Gravity Shift (apuntado a otro planeta) / Gravity Dash local.
+      // Gravity Shift (apuntado a otro planeta) / Dash Jett / vuelo libre 3D.
       if (down) {
-        if (
-          !this.inFlight &&
-          !this.isSwimming &&
-          !this.coreDiveActive &&
-          this.gravityShiftCooldown <= 0
-        ) {
+        if (this.isSwimming || this.coreDiveActive) return;
+        // En pleno vuelo: Clic Derecho CANCELA el cruce y vuelve a apuntar
+        // (flotación a cámara lenta) para redirigir el salto.
+        if (this.inFlight) this.stopFlightToFloat();
+        if (this.gravityShiftCooldown <= 0 || this.inFlight) {
+          this.rcPressTime = this.simTime;
           this.gravityShifting = true;
         }
       } else if (this.gravityShifting) {
         this.gravityShifting = false;
         const target = this.gravityTarget;
         this.gravityTarget = null;
-        if (target && target !== this.currentPlanet) {
+        // Clic rápido (< 0.22s): dash instantáneo estilo Jett (suelo o aire).
+        const quickClick =
+          this.rcPressTime >= 0 && this.simTime - this.rcPressTime < RIGHT_CLICK_DASH_TIME;
+        this.rcPressTime = -1;
+        if (quickClick) {
+          this.jettDash();
+        } else if (target && target !== this.currentPlanet) {
           // Tormenta Orbital: SÍ te deja saltar, pero avisa del riesgo de
           // impacto (los interceptores pueden rebotarte al planeta origen).
           if (target.shielded) this.onSound?.('alert');
           this.launchToTarget(target);
-        } else {
+        } else if (this.grounded && !this.inFlight) {
           this.gravityDash();
+        } else {
+          // Apuntas al espacio abierto: Vuelo Libre / Dash Gravitatorio 3D
+          // en la dirección exacta de la cámara (arriba, adelante, diagonal).
+          this.launchFreeFlight();
         }
       }
     }
@@ -639,6 +707,7 @@ export class PlayerController {
     this.keys.clear();
     this.gravityShifting = false;
     this.gravityTarget = null;
+    this.rcPressTime = -1;
   }
 
   /** Daño recibido (láser, guardias, explosiones) con empuje opcional. */
@@ -698,6 +767,7 @@ export class PlayerController {
   // --------------------------------------------------------------------------
   update(dt: number): void {
     if (dt <= 0) return;
+    this.simTime += dt;
 
     if (this.coreDiveActive) {
       this.updateCoreDive(dt);
@@ -813,6 +883,25 @@ export class PlayerController {
     // Apuntado Gravity Shift (cono desde la cámara).
     if (this.gravityShifting) {
       this.gravityTarget = this.pickPlanetUnderCrosshair();
+    }
+
+    // Deriva espacial: distancia a la superficie más cercana de la galaxia.
+    // El vuelo dirigido entre planetas es seguro (trayectoria propia); el
+    // vuelo libre al vacío tiene riesgo real: aviso a 260 m y muerte a 360 m.
+    if (this.flightDirected) {
+      this.nearestSurfaceDist = 0;
+    } else {
+      let nearest = Infinity;
+      for (let i = 0; i < this.planets.length; i++) {
+        const planet = this.planets[i];
+        this._v1.copy(this.pos).sub(planet.centerVec);
+        const surfaceDist = this._v1.length() - planet.spec.radius;
+        if (surfaceDist < nearest) nearest = surfaceDist;
+      }
+      this.nearestSurfaceDist = nearest;
+      if (nearest > SPACE_DRIFT_DEATH_DIST) {
+        this.takeDamage(99); // perdido en el espacio profundo
+      }
     }
   }
 
@@ -1171,8 +1260,8 @@ export class PlayerController {
       this.lastUp.copy(this._up.divideScalar(upLen));
     }
 
-    // Giro cinemático de cámara: yaw/pitch convergen al encuadre frontal.
-    this.updateCinematicFraming(dt);
+    // Cámara 100% libre: el jugador sigue girando el ratón 360º durante el
+    // vuelo orbital (el marco tangente se reorienta solo vía alignBasisToUp).
 
     // Burbuja intermedia en la ruta: se puede entrar nadando.
     if (this.world.getBubbleAt(this.pos)) {
@@ -1186,35 +1275,19 @@ export class PlayerController {
     }
   }
 
-  /** Encuadre de cámara hacia la dirección de viaje durante el vuelo. */
-  private updateCinematicFraming(dt: number): void {
-    // Tangente de la trayectoria en el aterrizaje (end - ctrl).
-    this._v1.copy(this.flightEnd).sub(this.flightCtrl).normalize();
-    // Proyección al plano tangente del up actual.
-    this._v1.addScaledVector(this.lastUp, -this._v1.dot(this.lastUp));
-    if (this._v1.lengthSq() < 1e-6) return;
-    this._v1.normalize();
-
-    // Forward con yaw 0 en el marco actual de la base.
-    this._v2.set(0, 0, -1).applyQuaternion(this.basisQuat);
-    this._v2.addScaledVector(this.lastUp, -this._v2.dot(this.lastUp));
-    if (this._v2.lengthSq() < 1e-6) return;
-    this._v2.normalize();
-
-    // Ángulo con signo alrededor del up: yaw objetivo para mirar al frente.
-    this._v3.copy(this._v2).cross(this._v1);
-    const targetYaw = Math.atan2(this._v3.dot(this.lastUp), this._v2.dot(this._v1));
-
-    // Interpola por el camino corto.
-    let delta = targetYaw - this.yaw;
-    if (delta > Math.PI) delta -= Math.PI * 2;
-    else if (delta < -Math.PI) delta += Math.PI * 2;
-    this.yaw += delta * Math.min(1, dt * 2.6);
-    if (this.yaw > Math.PI) this.yaw -= Math.PI * 2;
-    else if (this.yaw < -Math.PI) this.yaw += Math.PI * 2;
-
-    this.pitch +=
-      (FLIGHT_LANDING_PITCH - this.pitch) * Math.min(1, dt * 2.6);
+  /**
+   * Cancela el impulso del vuelo (dirigido o libre) y deja al jugador
+   * flotando casi estático — a cámara lenta si está apuntando con Gravity
+   * Shift. Usado para redirigir en pleno cruce (Clic Derecho) o frenar con
+   * el Ancla (Espacio); la gravedad suave del vuelo libre lo lleva luego al
+   * planeta más cercano.
+   */
+  private stopFlightToFloat(): void {
+    if (!this.inFlight) return;
+    this.flightDirected = false;
+    this.flightDest = null;
+    this.flightTime = 0;
+    this.flightVel.set(0, 0, 0);
   }
 
   private landOn(target: PlanetRuntime, up: THREE.Vector3): void {
@@ -1388,7 +1461,13 @@ export class PlayerController {
       this.swimBoostTimer = SWIM_BOOST_TIME; // propulsión en el agua
       return;
     }
-    if (this.inFlight || this.coreDiveActive) return;
+    if (this.inFlight) {
+      // Ancla (Espacio) en pleno vuelo: frena el impulso y flota para
+      // cancelar/redirigir el salto (la gravedad suave te lleva al planeta).
+      this.stopFlightToFloat();
+      return;
+    }
+    if (this.coreDiveActive) return;
     if (this.grounded) {
       this.vertVel = this.profile.jumpImpulse;
       this.grounded = false;
@@ -1520,6 +1599,80 @@ export class PlayerController {
   private setGravityShiftCooldown(seconds: number): void {
     this.gravityShiftCooldown = seconds;
     this.gravityShiftCooldownMax = seconds;
+  }
+
+  /**
+   * Dash instantáneo estilo Jett (Clic Derecho rápido < 0.22s o Shift en el
+   * aire): impulso hacia la dirección de movimiento WASD (o la cámara si
+   * está quieto). En suelo discurre por el plano tangente; en el aire es un
+   * dash 3D completo (arriba, adelante, diagonal); en vuelo libre redirige
+   * la velocidad por completo. Ráfaga de FOV + estela cian via GameEngine.
+   */
+  private jettDash(): void {
+    if (this.isSwimming || this.coreDiveActive || this.isBurrowing) return;
+    if (!this.inFlight && this.gravityShiftCooldown > 0) return;
+    this.getCameraOrientation(this._q1);
+    this._forward.set(0, 0, -1).applyQuaternion(this._q1);
+    this._right.set(1, 0, 0).applyQuaternion(this._q1);
+    const inputZ = (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0);
+    const inputX = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
+    this._v1
+      .set(0, 0, 0)
+      .addScaledVector(this._forward, inputZ)
+      .addScaledVector(this._right, inputX);
+    if (this._v1.lengthSq() < 1e-8) this._v1.copy(this._forward); // quieto: mira
+    this._v1.normalize();
+
+    if (this.inFlight) {
+      // Vuelo libre: redirección 3D completa de la velocidad de vuelo.
+      this.flightDirected = false;
+      this.flightDest = null;
+      this.flightVel.copy(this._v1).multiplyScalar(GRAVITY_DASH_SPEED);
+    } else if (this.grounded) {
+      // Suelo: dash por el plano tangente (WASD o cámara).
+      this._v1.addScaledVector(this.lastUp, -this._v1.dot(this.lastUp));
+      if (this._v1.lengthSq() < 1e-6) this.getMoveForward(this._v1);
+      this._v1.normalize();
+      this.anchorBurst.copy(this._v1).multiplyScalar(GRAVITY_DASH_SPEED);
+    } else {
+      // Aire: dash 3D — componente tangente al impulso residual, radial al vertVel.
+      const vertical = this._v1.dot(this.lastUp);
+      this.anchorBurst
+        .copy(this._v1)
+        .addScaledVector(this.lastUp, -vertical)
+        .multiplyScalar(GRAVITY_DASH_SPEED);
+      this.vertVel = Math.max(this.vertVel, 0) + vertical * GRAVITY_DASH_SPEED * 0.75;
+    }
+    this.dashDir.copy(this._v1);
+    this.dashTimer = GRAVITY_DASH_TIME;
+    this.dashHitTimer = 0;
+    this.setGravityShiftCooldown(GRAVITY_DASH_COOLDOWN);
+    this.onSound?.('gravityShift');
+    // Dash delante de un guardia: delata al jugador disfrazado.
+    this.world.reportAbilityUse(this.pos);
+  }
+
+  /**
+   * Vuelo Libre / Dash Gravitatorio 3D hacia el espacio abierto (sin planeta
+   * bajo la mira): impulso directo en la dirección exacta de la cámara. El
+   * vuelo libre aplica una atracción suave hacia el planeta más cercano;
+   * si te alejas >260 m de toda superficie el HUD avisa de la DERIVA
+   * ESPACIAL y a partir de 360 m el escuadrón se pierde en el vacío.
+   */
+  private launchFreeFlight(): void {
+    this.getAimForward(this._v1);
+    this.inFlight = true;
+    this.flightDirected = false;
+    this.flightDest = null;
+    this.flightTime = 0;
+    this.grounded = false;
+    this.altitude = 0;
+    this.vertVel = 0;
+    this.jumpsUsed = 0;
+    this.flightVel.copy(this._v1).multiplyScalar(FREE_DASH_SPEED);
+    this.setGravityShiftCooldown(GRAVITY_DASH_COOLDOWN);
+    this.onSound?.('gravityShift');
+    this.world.reportAbilityUse(this.pos);
   }
 
   private meleeStrike(): void {
