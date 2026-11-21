@@ -130,7 +130,7 @@ export default function BattleReportScreen({
   const radarRatios = STYLE_AXES.map((axis) => pct[axis.key] / 100);
 
   return (
-    <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[#05010f]/92 p-4">
+    <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[#05010f]/95 p-4">
       <div className="max-h-full w-full max-w-4xl rounded-2xl border-4 border-yellow-400 bg-[#160b2e] p-8 shadow-[12px_12px_0_#000]">
         <p className="mb-1 text-center text-[10px] font-black tracking-[0.5em] text-yellow-300">
           BETA COMPLETA · COMANDANTE KRONOS DERROTADO

@@ -238,7 +238,7 @@ export default function GameHUD({
       {/* --- Transmisión de radio: la IA adapta el siguiente planeta --- */}
       {snapshot.phase === 'playing' && snapshot.radioToast && (
         <div className="absolute left-1/2 top-[76px] w-[min(620px,86vw)] -translate-x-1/2">
-          <div className="rounded-lg border-2 border-cyan-300 bg-[#160b2e]/92 px-4 py-2 shadow-[4px_4px_0_#000]">
+          <div className="rounded-lg border-2 border-cyan-300 bg-[#160b2e]/95 px-4 py-2 shadow-[4px_4px_0_#000]">
             <p className="text-[11px] font-black tracking-[0.28em] text-cyan-300">
               {snapshot.radioToast.title}
             </p>
@@ -263,7 +263,7 @@ export default function GameHUD({
           }`}
         >
           <div
-            className="rounded-lg border-2 border-amber-400 bg-[#160b2e]/92 px-4 py-2 shadow-[4px_4px_0_#000]"
+            className="rounded-lg border-2 border-amber-400 bg-[#160b2e]/95 px-4 py-2 shadow-[4px_4px_0_#000]"
             style={{ transform: 'skewX(-6deg)' }}
           >
             <p className="animate-pulse text-[11px] font-black tracking-[0.28em] text-amber-400">
@@ -496,7 +496,7 @@ export default function GameHUD({
       {/* --- Bocadillo de diálogo del NPC (FASE B, sin pausar el juego) --- */}
       {snapshot.phase === 'playing' && snapshot.activeDialogue && (
         <div className="absolute bottom-44 left-1/2 w-[min(560px,86vw)] -translate-x-1/2">
-          <div className="rounded-xl border-2 border-cyan-300 bg-[#160b2e]/92 px-5 py-3 shadow-[5px_5px_0_#000]">
+          <div className="rounded-xl border-2 border-cyan-300 bg-[#160b2e]/95 px-5 py-3 shadow-[5px_5px_0_#000]">
             <p className="text-[11px] font-black tracking-[0.22em] text-cyan-300">
               {snapshot.activeDialogue.speaker.toUpperCase()}
               <span className="ml-2 font-bold tracking-normal text-slate-400">

@@ -450,9 +450,9 @@ export class TitleDioramaSandbox {
     this.logoCamera.updateProjectionMatrix();
     const halfH = Math.tan(THREE.MathUtils.degToRad(this.logoCamera.fov * 0.5)) * this.logoCamera.position.z;
     const halfW = halfH * aspect;
-    const scale = (0.32 * 2 * halfW) / LOGO_VISUAL_WIDTH;
+    const scale = (0.31 * 2 * halfW) / LOGO_VISUAL_WIDTH;
     this.logo.group.scale.setScalar(scale);
-    this.logo.group.position.set((2 * 0.19 - 1) * halfW, (1 - 2 * 0.19) * halfH, 0);
+    this.logo.group.position.set((2 * 0.19 - 1) * halfW, (1 - 2 * 0.195) * halfH, 0);
   }
 
   private handleResize = (): void => {

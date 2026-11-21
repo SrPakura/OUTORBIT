@@ -32,8 +32,8 @@ export default function MenuModalShell({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-[#05010f]/82 p-4 backdrop-blur-sm">
-      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border-4 border-[#0b0b14] bg-[#0d0a1f]/96 shadow-[10px_10px_0_#0b0b14]">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-[#05010f]/85 p-4 backdrop-blur-sm">
+      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border-4 border-[#0b0b14] bg-[#0d0a1f]/95 shadow-[10px_10px_0_#0b0b14]">
         <div className="flex items-start justify-between gap-4 border-b-2 border-white/10 px-6 py-4">
           <div>
             <h2

@@ -450,18 +450,18 @@ export function createMenuLogo3D(): MenuLogo3D {
   // --- Anillo orbital de maná (elipse inclinada alrededor de la palabra) ---
   // Contorno cel oscuro por detrás: recorta el anillo con tinta limpia para
   // que se lea nítido sobre el blade blanco (nunca se lava con el fondo).
-  const ringOutlineGeometry = new THREE.TorusGeometry(3.5, 0.098, 8, 128);
+  const ringOutlineGeometry = new THREE.TorusGeometry(3.5, 0.080, 8, 128);
   const ringOutlineMaterial = new THREE.MeshBasicMaterial({
     color: 0x090b14,
     toneMapped: false,
   });
   const ringOutline = new THREE.Mesh(ringOutlineGeometry, ringOutlineMaterial);
   ringOutline.name = 'menuLogoRingOutline';
-  ringOutline.rotation.set(1.25, 0.0, -0.22);
+  ringOutline.rotation.set(1.38, 0.0, -0.22);
   ringOutline.position.z = -0.14;
   tilt.add(ringOutline);
 
-  const ringGeometry = new THREE.TorusGeometry(3.5, 0.062, 8, 128);
+  const ringGeometry = new THREE.TorusGeometry(3.5, 0.070, 8, 128);
   const ringMaterial = new THREE.ShaderMaterial({
     vertexShader: ringVertexShader,
     fragmentShader: ringFragmentShader,
@@ -478,7 +478,7 @@ export function createMenuLogo3D(): MenuLogo3D {
   });
   const ring = new THREE.Mesh(ringGeometry, ringMaterial);
   ring.name = 'menuLogoRing';
-  ring.rotation.set(1.25, 0.0, -0.22);
+  ring.rotation.set(1.38, 0.0, -0.22);
   ring.position.z = -0.12;
   ring.renderOrder = 2;
   tilt.add(ring);
