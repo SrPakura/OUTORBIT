@@ -5,7 +5,9 @@ import * as THREE from 'three';
 // ============================================================================
 
 const globalShaderState = {
-  uSunDir: { value: new THREE.Vector3(0.55, 0.72, 0.42).normalize() },
+  // Sol cálido y luminoso al Norte (-Z), delante del spawn de la Isla
+  // Flotante: el disco de cómic y su halo quedan en el encuadre inicial.
+  uSunDir: { value: new THREE.Vector3(0.48, 0.42, -0.78).normalize() },
   uHalftoneEnabled: { value: 1.0 },
   uTime: { value: 0.0 },
 };
@@ -358,7 +360,10 @@ const skyFragmentShader = /* glsl */ `
     col += vec3( 1.0, 0.97, 0.88 ) * disk * 1.25;
 
     // --- Planeta gigante de fantasía con anillos, alto en el skyline ---
-    vec3 planetDir = normalize( vec3( -0.62, 0.34, -0.70 ) );
+    // Encuadre: el spawn de la Isla Flotante mira al Norte (-Z), así que el
+    // planeta se coloca delante de la cámara, ligeramente a la izquierda y
+    // por encima del horizonte, para que domine la vista nada más aparecer.
+    vec3 planetDir = normalize( vec3( -0.36, 0.24, -0.90 ) );
     vec3 pRight = normalize( cross( planetDir, vec3( 0.0, 1.0, 0.0 ) ) );
     vec3 pUp = cross( pRight, planetDir );
     float pd = dot( dir, planetDir );
@@ -373,8 +378,8 @@ const skyFragmentShader = /* glsl */ `
     float ringBand = smoothstep( 1.32, 1.50, ringR ) * ( 1.0 - smoothstep( 2.05, 2.30, ringR ) );
     float ringStripe = 0.5 + 0.5 * sin( ringR * 30.0 );
     vec3 ringCol = mix( vec3( 1.0, 0.92, 0.72 ), vec3( 0.55, 0.92, 0.98 ), ringStripe );
-    float ringMask = ringBand * ( 0.55 + 0.45 * ringStripe );
-    if ( pUV.y > 0.0 && pr < 1.0 ) ringMask = 0.0;
+    float planetRingMask = ringBand * ( 0.55 + 0.45 * ringStripe );
+    if ( pUV.y > 0.0 && pr < 1.0 ) planetRingMask = 0.0;
 
     // Esfera cel-shaded: bandas de gas pastel (rosa perla, lavanda, crema).
     if ( pr < 1.0 ) {
@@ -396,8 +401,8 @@ const skyFragmentShader = /* glsl */ `
     }
 
     // Anillos: halo suave + banda sólida cel-stepped.
-    col += ringCol * ringMask * 0.35;
-    col = mix( col, ringCol * 1.08, smoothstep( 0.35, 0.75, ringMask ) );
+    col += ringCol * planetRingMask * 0.35;
+    col = mix( col, ringCol * 1.08, smoothstep( 0.35, 0.75, planetRingMask ) );
 
     // --- Nubes cel-stepped esponjosas: crema-dorado soleado y rosa
     // algodón-de-azúcar a lo largo de h 0.40..0.88 ---

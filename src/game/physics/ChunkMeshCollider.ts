@@ -46,43 +46,45 @@ interface DistrictInfoEntry {
 }
 
 /**
- * Devuelve la info del distrito real de Hekseville bajo `pos` (coordenadas
- * mundo). El mundo es 100% Pleajeune: el `id` es siempre `'pleajeune'` y el
- * nombre/subtítulo describen el sub-barrio de Pleajeune según la posición.
+ * Devuelve la info de zona de la Isla Flotante original bajo `pos`.
  */
 export function getHeksevilleDistrictInfo(pos: THREE.Vector3): DistrictInfoEntry {
   const x = pos.x;
   const y = pos.y;
   const z = pos.z;
-  if (y < 116) {
+  if (x >= 68) {
     return {
       id: 'pleajeune',
-      name: 'Pleajeune · Bajos',
-      subtitle: 'Suburbios Sombríos y Pasajes',
+      name: 'Bulevar de Tiendas',
+      subtitle: 'Cafés, Mercado y Rótulos',
     };
   }
-  if (x > 55 && z > 280) {
+  if (x <= -68) {
     return {
       id: 'pleajeune',
-      name: 'Pleajeune · Noria',
-      subtitle: 'Plaza de la Noria y Mirador',
+      name: 'Colinas Residenciales',
+      subtitle: 'Casas, Parques y Terrazas',
     };
   }
-  if (z > 410) {
+  if (z <= -58) {
+    if (y < 18) {
+      return {
+        id: 'pleajeune',
+        name: 'Paseo de Cañerías',
+        subtitle: 'Nivel Bajo, Tuberías y Vapor',
+      };
+    }
     return {
       id: 'pleajeune',
-      name: 'Pleajeune · Bulevar Sur',
-      subtitle: 'Galerías de Neón y Rascacielos',
+      name: 'Mirador Norte',
+      subtitle: 'Torres, Arcos y Puentes',
     };
   }
-  if (x < -75) {
-    return {
-      id: 'pleajeune',
-      name: 'Pleajeune · Ala Oeste',
-      subtitle: 'Terrazas y Pasarelas Altas',
-    };
-  }
-  return { id: 'pleajeune', name: 'Pleajeune', subtitle: 'Bulevares de Neón y Tiendas' };
+  return {
+    id: 'pleajeune',
+    name: 'Gran Plaza Central',
+    subtitle: 'Corazón de la Isla Flotante',
+  };
 }
 
 // ----------------------------------------------------------------------------

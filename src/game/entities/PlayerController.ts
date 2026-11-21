@@ -1358,11 +1358,11 @@ export class PlayerController {
 
     // Deriva espacial: en ciudad plana basta con respawn si caes muy bajo.
     // Hekseville 1:1: la niebla del abismo es un mar púrpura-azulado a
-    // y = -125; caer más abajo respawnea al jugador en el spawn.
+    // y = -58..-82; caer por debajo de -66 respawnea al jugador en el spawn.
     if (this.flatCityEnabled) {
       this.nearestSurfaceDist = 0;
       this.lostInSpace = false;
-      if (this.pos.y < (this.chunkCollider ? -125 : -155)) {
+      if (this.pos.y < -66) {
         this.respawnFlatCity();
       }
     } else if (this.flightDirected) {

@@ -1,0 +1,1424 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OUTORBIT // CHARACTER SHEET: NYX</title>
+<style>
+  :root {
+    --ink: #0b0d12;
+    --ink-soft: #2a2f3d;
+    --paper: #f1f1ed;
+    --panel: #fbfbf8;
+    --grid: rgba(11, 13, 18, 0.065);
+    --grid-fine: rgba(11, 13, 18, 0.03);
+    --crimson: #e11d48;
+    --cyan: #22d3ee;
+    --gold: #fbbf24;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    min-height: 100vh;
+    color: var(--ink);
+    font-family: var(--sans);
+    background-color: var(--paper);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+      linear-gradient(var(--grid-fine) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-fine) 1px, transparent 1px);
+    background-size: 96px 96px, 96px 96px, 16px 16px, 16px 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: 1640px;
+    margin: 0 auto;
+    padding: 22px 24px 34px;
+  }
+
+  /* ---------------------------------------------------------------- header */
+
+  .hdr { position: relative; margin-bottom: 16px; }
+
+  .hdr__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--ink);
+  }
+
+  .hdr__id { display: flex; align-items: center; gap: 8px; }
+
+  .tag {
+    display: inline-block;
+    background: var(--ink);
+    color: #fff;
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.16em;
+    padding: 6px 9px 5px;
+    transform: skewX(-9deg);
+  }
+
+  .tag--ghost {
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--ink);
+  }
+
+  .hdr__meta {
+    font: 700 10px/1 var(--mono);
+    letter-spacing: 0.14em;
+    color: var(--ink-soft);
+  }
+
+  .hdr__title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin: 14px 0 8px;
+    font-size: clamp(24px, 3.5vw, 50px);
+    font-weight: 900;
+    letter-spacing: -0.035em;
+    line-height: 0.94;
+    text-transform: uppercase;
+  }
+
+  .hdr__bar {
+    display: inline-block;
+    background: var(--ink);
+    padding: 3px 18px 8px;
+    transform: skewX(-9deg);
+  }
+
+  .hdr__bar > span {
+    display: inline-block;
+    transform: skewX(9deg);
+    color: #fff;
+  }
+
+  .hdr__slash { color: var(--crimson); font-weight: 900; }
+
+  .hdr__sub {
+    margin: 0 0 16px;
+    padding-left: 12px;
+    border-left: 4px solid var(--crimson);
+    font: 700 11px/1.5 var(--mono);
+    letter-spacing: 0.13em;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+  }
+
+  .hdr__controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 22px;
+    align-items: flex-end;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid var(--ink);
+  }
+
+  .ctrl { display: flex; flex-direction: column; gap: 8px; }
+
+  .ctrl__label {
+    font: 800 9px/1 var(--mono);
+    letter-spacing: 0.2em;
+    color: var(--ink-soft);
+  }
+
+  .palettes { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  .pal {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 11px;
+    background: transparent;
+    border: 1px solid var(--ink);
+    cursor: pointer;
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.1em;
+    color: var(--ink);
+    transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+  }
+
+  .pal:hover { transform: translateY(-1px); }
+
+  .pal[aria-pressed="true"] {
+    background: var(--ink);
+    color: #fff;
+    box-shadow: 3px 3px 0 var(--crimson);
+  }
+
+  .pal__chips { display: flex; gap: 2px; }
+
+  .pal__chips i {
+    display: block;
+    width: 9px;
+    height: 14px;
+    border: 1px solid rgba(11, 13, 18, 0.35);
+  }
+
+  .toggles { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 11px;
+    background: transparent;
+    border: 1px solid var(--ink);
+    cursor: pointer;
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.1em;
+    color: var(--ink);
+    transition: background 120ms ease, color 120ms ease;
+  }
+
+  .toggle::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border: 1px solid currentColor;
+    background: transparent;
+  }
+
+  .toggle.is-on { background: var(--ink); color: #fff; }
+  .toggle.is-on::before { background: var(--cyan); border-color: var(--cyan); }
+
+  /* ------------------------------------------------------------------ body */
+
+  .body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+  }
+
+  /* ----------------------------------------------------------------- views */
+
+  .views {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+    gap: 12px;
+    height: clamp(540px, 74vh, 840px);
+  }
+
+  #gl {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    pointer-events: none;
+    display: block;
+  }
+
+  .panel {
+    position: relative;
+    overflow: hidden;
+    background-color: var(--panel);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+
+  .panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 44%, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0) 68%);
+    pointer-events: none;
+  }
+
+  .panel::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 1px solid var(--ink);
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  .panel--dynamic::after { border-color: var(--crimson); border-width: 2px; }
+
+  .panel__label {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 3;
+    display: flex;
+    align-items: stretch;
+    pointer-events: none;
+  }
+
+  .panel__idx {
+    display: flex;
+    align-items: center;
+    padding: 5px 7px;
+    background: var(--ink);
+    color: #fff;
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.08em;
+  }
+
+  .panel__name {
+    display: flex;
+    align-items: center;
+    padding: 5px 10px;
+    background: rgba(255, 255, 255, 0.9);
+    border-right: 1px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.14em;
+  }
+
+  .panel--dynamic .panel__idx { background: var(--crimson); }
+
+  .panel__hint {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    z-index: 3;
+    padding: 4px 7px;
+    background: var(--ink);
+    color: #fff;
+    font: 800 9px/1 var(--mono);
+    letter-spacing: 0.14em;
+    pointer-events: none;
+  }
+
+  .panel__hint--live { background: var(--cyan); color: var(--ink); }
+
+  /* --------------------------------------------------------------- sidebar */
+
+  .side { display: flex; flex-direction: column; gap: 12px; }
+
+  .card {
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid var(--ink);
+    padding: 12px 13px 14px;
+  }
+
+  .card__title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 11px;
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+
+  .card__title::before {
+    content: "";
+    width: 14px;
+    height: 3px;
+    background: var(--crimson);
+    transform: skewX(-24deg);
+  }
+
+  .swatches { display: flex; flex-direction: column; gap: 6px; }
+
+  .swatch {
+    display: grid;
+    grid-template-columns: 26px 1fr auto;
+    align-items: center;
+    gap: 9px;
+    padding: 4px 0;
+    border-bottom: 1px dashed rgba(11, 13, 18, 0.16);
+  }
+
+  .swatch:last-child { border-bottom: 0; }
+
+  .swatch__chip {
+    display: block;
+    width: 26px;
+    height: 18px;
+    border: 1px solid var(--ink);
+  }
+
+  .swatch__slot {
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.12em;
+  }
+
+  .swatch__hex {
+    font: 700 10px/1 var(--mono);
+    letter-spacing: 0.06em;
+    color: var(--ink-soft);
+  }
+
+  .meshes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+
+  .mesh {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 8px;
+    align-items: center;
+  }
+
+  .mesh__name {
+    font: 700 10px/1.2 var(--mono);
+    letter-spacing: 0.06em;
+  }
+
+  .mesh__tris {
+    font: 700 10px/1.2 var(--mono);
+    color: var(--ink-soft);
+  }
+
+  .mesh__bar {
+    grid-column: 1 / -1;
+    height: 4px;
+    background: rgba(11, 13, 18, 0.1);
+  }
+
+  .mesh__bar > i {
+    display: block;
+    height: 100%;
+    background: var(--ink);
+  }
+
+  .mesh:nth-child(2) .mesh__bar > i { background: var(--crimson); }
+  .mesh:nth-child(3) .mesh__bar > i { background: var(--cyan); }
+  .mesh:nth-child(4) .mesh__bar > i { background: var(--gold); }
+
+  .meshes__total {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 2px solid var(--ink);
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.14em;
+  }
+
+  .ability { padding: 9px 0; border-bottom: 1px dashed rgba(11, 13, 18, 0.16); }
+  .ability:last-child { border-bottom: 0; padding-bottom: 0; }
+
+  .ability__head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+
+  .ability__key {
+    padding: 3px 6px;
+    background: var(--ink);
+    color: #fff;
+    font: 800 9px/1 var(--mono);
+    letter-spacing: 0.1em;
+  }
+
+  .ability:nth-child(3) .ability__key { background: var(--crimson); }
+
+  .ability h3 {
+    margin: 0;
+    font: 900 12px/1 var(--sans);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .ability p {
+    margin: 0;
+    font: 400 11px/1.55 var(--sans);
+    color: var(--ink-soft);
+  }
+
+  /* ---------------------------------------------------------------- states */
+
+  .overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(241, 241, 237, 0.86);
+    font: 800 11px/1.6 var(--mono);
+    letter-spacing: 0.16em;
+    text-align: center;
+    padding: 20px;
+  }
+
+  .overlay[hidden] { display: none; }
+
+  .overlay--error { color: var(--crimson); }
+
+  @media (max-width: 1080px) {
+    .body { grid-template-columns: minmax(0, 1fr); }
+    .views { height: clamp(460px, 58vh, 640px); }
+  }
+
+  @media (max-width: 640px) {
+    .sheet { padding: 14px 12px 24px; }
+    .views { grid-template-columns: 1fr; grid-template-rows: repeat(4, 1fr); height: 900px; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header class="hdr">
+    <div class="hdr__top">
+      <div class="hdr__id">
+        <span class="tag">OUTORBIT</span>
+        <span class="tag tag--ghost">CHARACTER SHEET</span>
+      </div>
+      <div class="hdr__meta">FILE 02 · NYX_RIGGED.GLB · 6,776 TRIS · 18 BONES</div>
+    </div>
+
+    <h1 class="hdr__title">
+      <span class="hdr__bar"><span>OUTORBIT</span></span>
+      <span class="hdr__slash">//</span>
+      <span class="hdr__name">CHARACTER SHEET: NYX</span>
+    </h1>
+
+    <p class="hdr__sub">GRAVITY ROGUELITE PROTAGONIST · UNIVERSE SHADER + HAIR PHYSICS (18 BONES)</p>
+
+    <div class="hdr__controls">
+      <div class="ctrl">
+        <span class="ctrl__label">PALETA / UNIVERSO</span>
+        <div class="palettes" id="palettes"></div>
+      </div>
+      <div class="ctrl">
+        <span class="ctrl__label">POSE</span>
+        <div class="toggles" id="pose-btns">
+          <button class="toggle" data-pose="apose" type="button" aria-pressed="false">A-POSE</button>
+          <button class="toggle is-on" data-pose="float" type="button" aria-pressed="true">GRAVITY FLOAT</button>
+          <button class="toggle" data-pose="tpose" type="button" aria-pressed="false">T-POSE</button>
+        </div>
+      </div>
+      <div class="ctrl">
+        <span class="ctrl__label">RENDER</span>
+        <div class="toggles">
+          <button class="toggle is-on" id="t-halftone" type="button" aria-pressed="true">HALFTONES</button>
+          <button class="toggle is-on" id="t-outline" type="button" aria-pressed="true">TINTA BLANCA</button>
+          <button class="toggle is-on" id="t-sway" type="button" aria-pressed="true">FÍSICAS PELO</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="body">
+
+    <section class="views" id="views">
+      <canvas id="gl"></canvas>
+
+      <article class="panel panel--dynamic" data-view="dynamic">
+        <div class="panel__label"><span class="panel__idx">01</span><span class="panel__name">NYX · GRAVITY VIEWPORT</span></div>
+        <div class="panel__hint panel__hint--live">DRAG · ORBIT · SCROLL ZOOM</div>
+      </article>
+
+      <div class="overlay" id="overlay">CARGANDO NYX_RIGGED.GLB…</div>
+    </section>
+
+  </main>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+
+// El shader cel escribe el color final directamente en gl_FragColor (no usa el
+// pipeline de materiales de three), así que desactivamos la gestión de color
+// para que los hex de la paleta lleguen a pantalla idénticos a los swatches CSS.
+THREE.ColorManagement.enabled = false;
+
+// ============================================================================
+// Estado global de shaders (mismo contrato que src/game/render/toonMaterials.ts)
+// ============================================================================
+
+const sharedShaderState = {
+  // Sol cálido del juego (0.48, 0.42, -0.78) espejado en Z: la hoja de
+  // personaje se lee de frente, así que la luz clave debe caer sobre la cara.
+  uSunDir: { value: new THREE.Vector3(0.48, 0.42, 0.78).normalize() },
+  uHalftoneEnabled: { value: 1.0 },
+  uTime: { value: 0.0 },
+};
+
+// ============================================================================
+// Cel-Shading GLSL: 3 bandas + trama halftone + Rim Light Fresnel
+// (portado literalmente de src/game/render/toonMaterials.ts)
+// ============================================================================
+
+const celVertexShader = /* glsl */ `
+  #include <common>
+  #include <skinning_pars_vertex>
+  varying vec3 vNormalWorld;
+  varying vec3 vViewDir;
+  #ifdef USE_COLOR
+    varying vec3 vVertexColor;
+  #endif
+  void main() {
+    #include <beginnormal_vertex>
+    #include <skinbase_vertex>
+    #include <skinnormal_vertex>
+    #include <begin_vertex>
+    #include <skinning_vertex>
+    vec4 worldPos = modelMatrix * vec4( transformed, 1.0 );
+    vNormalWorld = normalize( mat3( modelMatrix ) * objectNormal );
+    vViewDir = normalize( cameraPosition - worldPos.xyz );
+    #ifdef USE_COLOR
+      vVertexColor = color;
+    #endif
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
+  }
+`;
+
+const celFragmentShader = /* glsl */ `
+  uniform vec3 uColor;
+  uniform vec3 uShadowTint;
+  uniform vec3 uRimColor;
+  uniform float uRimPower;
+  uniform float uRimStrength;
+  uniform float uEmissiveBoost;
+  uniform float uOpacity;
+  uniform vec3 uSunDir;
+  uniform float uHalftoneEnabled;
+
+  varying vec3 vNormalWorld;
+  varying vec3 vViewDir;
+  #ifdef USE_COLOR
+    varying vec3 vVertexColor;
+  #endif
+
+  // Patrón de puntos halftone en espacio de pantalla (estilo cómic impreso).
+  float halftonePattern( vec2 fragCoord, float scale ) {
+    float angle = 0.523599; // 30 grados
+    mat2 rot = mat2( cos( angle ), -sin( angle ), sin( angle ), cos( angle ) );
+    vec2 uv = ( rot * fragCoord ) / scale;
+    vec2 grid = fract( uv ) - 0.5;
+    return length( grid );
+  }
+
+  void main() {
+    vec3 N = normalize( vNormalWorld );
+    vec3 V = normalize( vViewDir );
+    float NdotL = dot( N, normalize( uSunDir ) );
+
+    // Color base: uniforme o sombreado por vértice (terreno del Hito 2).
+    vec3 baseColor = uColor;
+    #ifdef USE_COLOR
+      baseColor *= vVertexColor;
+    #endif
+
+    // 3 bandas marcadas de iluminación tipo cómic.
+    vec3 litColor = baseColor * 1.12;
+    vec3 midColor = mix( baseColor, uShadowTint, 0.28 );
+    vec3 darkColor = mix( baseColor, uShadowTint, 0.62 );
+
+    vec3 finalColor = litColor;
+    if ( NdotL < 0.12 ) {
+      finalColor = darkColor;
+    } else if ( NdotL < 0.48 ) {
+      finalColor = midColor;
+    }
+
+    // Puntos halftone en la transición hacia la sombra.
+    if ( uHalftoneEnabled > 0.5 && NdotL > -0.25 && NdotL < 0.34 ) {
+      float dots = halftonePattern( gl_FragCoord.xy, 6.5 );
+      float threshold = smoothstep( 0.34, -0.20, NdotL ) * 0.42;
+      if ( dots < threshold ) {
+        finalColor = mix( finalColor, uShadowTint * 0.85, 0.55 );
+      }
+    }
+
+    // Luz de contorno Fresnel (Rim Light) para separar siluetas. El borde se
+    // agudiza con un smoothstep para que el personaje recorte limpio contra
+    // los fondos cósmicos oscuros.
+    float fresnelRaw = 1.0 - max( dot( N, V ), 0.0 );
+    float fresnel = pow( fresnelRaw, uRimPower );
+    fresnel = smoothstep( 0.10, 0.82, fresnel ) * ( 0.72 + 0.28 * fresnel );
+    finalColor += uRimColor * fresnel * uRimStrength;
+
+    // Rebote iridiscente del cielo: la cara en sombra recibe un baño de color
+    // frío del hemisferio opuesto al sol (nunca queda muerta ni negra).
+    float skyBounce = max( -NdotL, 0.0 );
+    finalColor += uRimColor * skyBounce * 0.08;
+
+    // Emisión extra opcional (energía, cristales, portal).
+    finalColor += baseColor * uEmissiveBoost;
+
+    gl_FragColor = vec4( finalColor, uOpacity );
+  }
+`;
+
+/**
+ * Material cel-shaded de 3 bandas con trama halftone en el terminador de
+ * sombra y Rim Light Fresnel. Sombra con tinte azul/índigo (0x161b33).
+ */
+function createComicCelMaterial(color, options = {}) {
+  const {
+    rimColor = 0x7dd3fc,
+    rimPower = 3.2,
+    rimStrength = 0.55,
+    emissiveBoost = 0.0,
+    shadowTint = 0x161b33,
+    transparent = false,
+    opacity = 1,
+    side = THREE.FrontSide,
+  } = options;
+
+  return new THREE.ShaderMaterial({
+    vertexShader: celVertexShader,
+    fragmentShader: celFragmentShader,
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uShadowTint: { value: new THREE.Color(shadowTint) },
+      uRimColor: { value: new THREE.Color(rimColor) },
+      uRimPower: { value: rimPower },
+      uRimStrength: { value: rimStrength },
+      uEmissiveBoost: { value: emissiveBoost },
+      uOpacity: { value: opacity },
+      uSunDir: sharedShaderState.uSunDir,
+      uHalftoneEnabled: sharedShaderState.uHalftoneEnabled,
+    },
+    transparent,
+    side,
+  });
+}
+
+// ============================================================================
+// Shader de Universo Propio (estilo Dusty / Xii de Gravity Rush)
+// Interior 90% opaco con nebulosa cósmica + estrellas en screen-space + Rim blanco
+// ============================================================================
+
+const universeFragmentShader = /* glsl */ `
+  uniform vec3 uDeepColor;
+  uniform vec3 uNebulaA;
+  uniform vec3 uNebulaB;
+  uniform vec3 uRimColor;
+  uniform float uTime;
+  uniform float uOpacity;
+
+  varying vec3 vNormalWorld;
+  varying vec3 vViewDir;
+
+  float hash21( vec2 p ) {
+    p = fract( p * vec2( 234.34, 435.345 ) );
+    p += dot( p, p + 34.23 );
+    return fract( p.x * p.y );
+  }
+
+  float noise2( vec2 p ) {
+    vec2 i = floor( p );
+    vec2 f = fract( p );
+    f = f * f * ( 3.0 - 2.0 * f );
+    float a = hash21( i );
+    float b = hash21( i + vec2( 1.0, 0.0 ) );
+    float c = hash21( i + vec2( 0.0, 1.0 ) );
+    float d = hash21( i + vec2( 1.0, 1.0 ) );
+    return mix( mix( a, b, f.x ), mix( c, d, f.x ), f.y );
+  }
+
+  float fbm( vec2 p ) {
+    float v = 0.0;
+    float a = 0.5;
+    mat2 m = mat2( 0.8, 0.6, -0.6, 0.8 );
+    for ( int i = 0; i < 4; i++ ) {
+      v += a * noise2( p );
+      p = m * p * 2.02;
+      a *= 0.5;
+    }
+    return v;
+  }
+
+  float starLayer( vec2 uv, float scale, float speed ) {
+    vec2 gv = fract( uv * scale ) - 0.5;
+    vec2 id = floor( uv * scale );
+    float h = hash21( id );
+    if ( h < 0.82 ) return 0.0;
+    vec2 offset = vec2( hash21( id + 7.1 ), hash21( id + 13.7 ) ) - 0.5;
+    float d = length( gv - offset * 0.65 );
+    float twinkle = 0.55 + 0.45 * sin( uTime * speed + h * 40.0 );
+    float size = mix( 0.04, 0.14, fract( h * 19.3 ) );
+    return smoothstep( size, 0.0, d ) * twinkle;
+  }
+
+  void main() {
+    vec3 N = normalize( vNormalWorld );
+    vec3 V = normalize( vViewDir );
+
+    // Coordenadas en espacio de pantalla para efecto ventana dimensional (Dusty/Xii)
+    vec2 uv = gl_FragCoord.xy * 0.0042;
+    vec2 drift = vec2( uTime * 0.045, -uTime * 0.03 );
+
+    float n1 = fbm( uv * 1.4 + drift );
+    float n2 = fbm( uv * 2.2 - drift * 1.3 + n1 * 0.85 );
+
+    vec3 col = uDeepColor;
+    col = mix( col, uNebulaA, smoothstep( 0.34, 0.78, n1 ) * 0.85 );
+    col = mix( col, uNebulaB, smoothstep( 0.44, 0.86, n2 ) * 0.75 );
+
+    // Estrellas nítidas en dos planos de profundidad
+    float stars = starLayer( uv + drift * 0.35, 16.0, 2.4 ) * 0.9
+                + starLayer( uv - drift * 0.20, 28.0, 3.6 ) * 1.25;
+    col += mix( vec3( 1.0 ), uRimColor, 0.35 ) * stars;
+
+    // Borde Fresnel luminoso para separar las extremidades dentro de la silueta
+    float fresnel = pow( 1.0 - max( dot( N, V ), 0.0 ), 2.6 );
+    col += uRimColor * smoothstep( 0.25, 0.9, fresnel ) * 0.65;
+
+    gl_FragColor = vec4( col, uOpacity );
+  }
+`;
+
+function createUniverseMaterial(deepColor, nebulaA, nebulaB, rimColor) {
+  return new THREE.ShaderMaterial({
+    vertexShader: celVertexShader,
+    fragmentShader: universeFragmentShader,
+    uniforms: {
+      uDeepColor: { value: new THREE.Color(deepColor) },
+      uNebulaA: { value: new THREE.Color(nebulaA) },
+      uNebulaB: { value: new THREE.Color(nebulaB) },
+      uRimColor: { value: new THREE.Color(rimColor) },
+      uTime: sharedShaderState.uTime,
+      uOpacity: { value: 0.90 },
+    },
+    transparent: true,
+    depthWrite: true,
+    side: THREE.FrontSide,
+  });
+}
+
+// ============================================================================
+// Contorno de tinta orgánica (Inverted Hull BackSide con soporte SkinnedMesh)
+// ============================================================================
+
+function addComicOutline(mesh, thickness = 0.008, color = 0xffffff) {
+  const outlineMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: {
+      uThickness: { value: thickness },
+      uNoiseAmp: { value: 0.2 },
+      uInkColor: { value: new THREE.Color(color) },
+    },
+    vertexShader: /* glsl */ `
+      #include <common>
+      #include <skinning_pars_vertex>
+      uniform float uThickness;
+      uniform float uNoiseAmp;
+      void main() {
+        #include <beginnormal_vertex>
+        #include <skinbase_vertex>
+        #include <skinnormal_vertex>
+        #include <begin_vertex>
+        #include <skinning_vertex>
+        float brushVar = sin( transformed.x * 7.3 + transformed.y * 5.1 ) * cos( transformed.z * 6.7 - transformed.y * 4.2 );
+        float width = max( 0.002, uThickness * ( 1.0 + brushVar * uNoiseAmp ) );
+        vec3 extruded = transformed + normalize( objectNormal ) * width;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4( extruded, 1.0 );
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uInkColor;
+      void main() {
+        gl_FragColor = vec4( uInkColor, 1.0 );
+      }
+    `,
+  });
+
+  let outline;
+  if (mesh.isSkinnedMesh) {
+    outline = new THREE.SkinnedMesh(mesh.geometry, outlineMat);
+    outline.bind(mesh.skeleton, mesh.bindMatrix);
+  } else {
+    outline = new THREE.Mesh(mesh.geometry, outlineMat);
+  }
+  outline.userData.isOutline = true;
+  if (mesh.parent) {
+    mesh.parent.add(outline);
+  } else {
+    mesh.add(outline);
+  }
+  return outline;
+}
+
+// ============================================================================
+// Paletas / skins
+// ============================================================================
+
+const PALETTES = [
+  {
+    id: 'astral',
+    name: 'VOID COSMOS',
+    rim: '#a5f3fc',
+    universe: { deep: '#070518', nebA: '#4c1d95', nebB: '#e11d48', rim: '#ffffff' },
+    colors: { body: '#120c2b', hair: '#e2e8f0', face: '#f6dcc8', eyes: '#181b2c' },
+  },
+  {
+    id: 'eclipse',
+    name: 'RAVEN NEBULA',
+    rim: '#e9d5ff',
+    universe: { deep: '#090314', nebA: '#7e22ce', nebB: '#06b6d4', rim: '#f8fafc' },
+    colors: { body: '#1a0c2e', hair: '#1e1b2e', face: '#f4d4c0', eyes: '#0f172a' },
+  },
+  {
+    id: 'solar',
+    name: 'SOLAR RIFT',
+    rim: '#fde68a',
+    universe: { deep: '#120614', nebA: '#be123c', nebB: '#f59e0b', rim: '#ffffff' },
+    colors: { body: '#1c0b1e', hair: '#fef3c7', face: '#f2d6c0', eyes: '#181b2c' },
+  },
+];
+
+const SLOT_LABELS = { body: 'CUERPO (UNIVERSO)', hair: 'PELO (FÍSICAS)', face: 'ROSTRO', eyes: 'OJOS' };
+const SLOT_ORDER = ['body', 'hair', 'face', 'eyes'];
+
+const MESH_SLOT = {
+  nyx_body: 'body',
+  nyx_hair: 'hair',
+  nyx_face: 'face',
+  nyx_eyes: 'eyes',
+};
+
+const MESH_ORDER = ['nyx_body', 'nyx_hair', 'nyx_face', 'nyx_eyes'];
+
+const SLOT_MAT_OPTS = {
+  hair: { rimStrength: 0.72 },
+  face: { rimStrength: 0.25 },
+  // Antifaz oscuro elegante: sin emision, solo un rim sutil que define los ojos.
+  eyes: { rimStrength: 0.4, emissiveBoost: 0.0 },
+};
+
+// ============================================================================
+// DOM
+// ============================================================================
+
+const viewsEl = document.getElementById('views');
+const canvasEl = document.getElementById('gl');
+const overlayEl = document.getElementById('overlay');
+const palettesEl = document.getElementById('palettes');
+const swatchesEl = document.getElementById('swatches');
+const meshesEl = document.getElementById('meshes');
+const meshTotalEl = document.getElementById('mesh-total');
+
+const state = {
+  palette: PALETTES[1], // RAVEN NEBULA por defecto
+  pose: 'float',
+  halftones: true,
+  outlines: true,
+  sway: true,
+};
+
+// ============================================================================
+// Renderer único + setScissor/setViewport para las 4 vistas
+// ============================================================================
+
+const renderer = new THREE.WebGLRenderer({
+  canvas: canvasEl,
+  antialias: true,
+  alpha: true,
+  powerPreference: 'high-performance',
+});
+
+renderer.setClearColor(0x000000, 0);
+renderer.autoClear = false;
+
+const FOV = 30;
+const panels = [];
+const materials = {};
+let universeMat = null;
+const outlines = [];
+const rigs = []; // { key, model, bones: Map<name, Bone>, hairVel: [x,y,z], hairAngle: [x,y] }
+
+let frontModel = null;
+let dynamicPivot = null;
+let orbitGroup = null;
+let orbiters = [];
+let ringA = null;
+let ringB = null;
+let controls = null;
+let center = new THREE.Vector3(0, 0.85, 0);
+
+function resize() {
+  const rect = viewsEl.getBoundingClientRect();
+  const w = Math.max(1, Math.round(rect.width));
+  const h = Math.max(1, Math.round(rect.height));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(w, h, false);
+}
+
+// ============================================================================
+// UI: paletas, swatches, desglose de mallas
+// ============================================================================
+
+function buildPaletteButtons() {
+  palettesEl.textContent = '';
+
+  for (const pal of PALETTES) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pal';
+    btn.dataset.pal = pal.id;
+    btn.setAttribute('aria-pressed', String(pal.id === state.palette.id));
+
+    const chips = document.createElement('span');
+    chips.className = 'pal__chips';
+    for (const slot of ['body', 'hair', 'face', 'eyes']) {
+      const chip = document.createElement('i');
+      chip.style.background = slot === 'body' ? pal.universe.nebA : pal.colors[slot];
+      chips.appendChild(chip);
+    }
+
+    const label = document.createElement('span');
+    label.className = 'pal__name';
+    label.textContent = pal.name;
+
+    btn.appendChild(chips);
+    btn.appendChild(label);
+    btn.addEventListener('click', () => applyPalette(pal));
+    palettesEl.appendChild(btn);
+  }
+}
+
+function renderSwatches() {}
+function renderMeshBreakdown() {}
+
+function applyPalette(pal) {
+  state.palette = pal;
+
+  if (universeMat) {
+    universeMat.uniforms.uDeepColor.value.set(pal.universe.deep);
+    universeMat.uniforms.uNebulaA.value.set(pal.universe.nebA);
+    universeMat.uniforms.uNebulaB.value.set(pal.universe.nebB);
+    universeMat.uniforms.uRimColor.value.set(pal.universe.rim);
+  }
+
+  for (const slot of SLOT_ORDER) {
+    const mat = materials[slot];
+    if (!mat || !mat.uniforms.uColor) continue;
+    mat.uniforms.uColor.value.set(pal.colors[slot]);
+    mat.uniforms.uRimColor.value.set(pal.rim);
+  }
+
+  for (const btn of palettesEl.querySelectorAll('.pal')) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.pal === pal.id));
+  }
+
+  renderSwatches(pal);
+}
+
+// ============================================================================
+// Construcción de las 4 vistas
+// ============================================================================
+
+const VIEW_DEFS = [
+  { key: 'dynamic', dir: new THREE.Vector3(0.45, 0.28, 1), orbit: true },
+];
+
+function buildPanels(source, box) {
+  const size = box.getSize(new THREE.Vector3());
+  center = box.getCenter(new THREE.Vector3());
+
+  const fitDistance = (size.y * 0.5) / Math.tan(THREE.MathUtils.degToRad(FOV * 0.5)) * 1.18;
+
+  for (const def of VIEW_DEFS) {
+    const el = viewsEl.querySelector('[data-view="' + def.key + '"]');
+    const scene = new THREE.Scene();
+    const model = SkeletonUtils.clone(source);
+    const camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 100);
+
+    // Recoger huesos y añadir contornos blancos sobre cada SkinnedMesh clonado
+    const bones = new Map();
+    model.traverse((obj) => {
+      if (obj.isBone) bones.set(obj.name, obj);
+      if (obj.isSkinnedMesh) {
+        if (obj.name === 'nyx_body') {
+          const out = addComicOutline(obj, 0.015, 0xffffff);
+          out.visible = state.outlines;
+          outlines.push(out);
+        } else if (obj.name === 'nyx_face') {
+          const out = addComicOutline(obj, 0.008, 0xffffff);
+          out.visible = state.outlines;
+          outlines.push(out);
+        } else if (obj.name === 'nyx_hair') {
+          const out = addComicOutline(obj, 0.011, 0xffffff);
+          out.visible = state.outlines;
+          outlines.push(out);
+        }
+      }
+    });
+    rigs.push({ key: def.key, model, bones, hairPos: [0, 0], hairVel: [0, 0] });
+
+    const distance = def.orbit ? fitDistance * 0.92 : fitDistance;
+    const dir = def.dir.clone().normalize();
+
+    camera.position.copy(center).addScaledVector(dir, distance);
+    camera.lookAt(center);
+
+    if (def.orbit) {
+      const pivot = new THREE.Group();
+      pivot.position.copy(center);
+      model.position.sub(center);
+      pivot.add(model);
+      scene.add(pivot);
+      dynamicPivot = pivot;
+
+      orbitGroup = buildGravityOrbit(center);
+      scene.add(orbitGroup);
+
+      controls = new OrbitControls(camera, el);
+      controls.target.copy(center);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.075;
+      controls.enablePan = false;
+      controls.minDistance = distance * 0.55;
+      controls.maxDistance = distance * 1.9;
+      controls.minPolarAngle = 0.25;
+      controls.maxPolarAngle = Math.PI - 0.25;
+      controls.update();
+    } else {
+      scene.add(model);
+    }
+
+    if (def.key === 'front') frontModel = model;
+
+    panels.push({ key: def.key, el, scene, camera });
+  }
+}
+
+function buildGravityOrbit(origin) {
+  const group = new THREE.Group();
+  group.position.copy(origin);
+
+  const cyanMat = createComicCelMaterial('#22d3ee', {
+    rimColor: '#a5f3fc',
+    rimStrength: 0.95,
+    emissiveBoost: 0.55,
+  });
+  const goldMat = createComicCelMaterial('#fbbf24', {
+    rimColor: '#fde68a',
+    rimStrength: 0.95,
+    emissiveBoost: 0.55,
+  });
+
+  ringA = new THREE.Mesh(new THREE.TorusGeometry(0.92, 0.011, 6, 72), cyanMat);
+  ringA.rotation.set(Math.PI * 0.5, 0, 0.32);
+  group.add(ringA);
+
+  ringB = new THREE.Mesh(new THREE.TorusGeometry(1.12, 0.009, 6, 72), goldMat);
+  ringB.rotation.set(Math.PI * 0.5 - 0.42, 0.3, -0.2);
+  group.add(ringB);
+
+  orbiters = [];
+  for (let i = 0; i < 6; i++) {
+    const isGold = i % 2 === 1;
+    const crystal = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.05, 0),
+      isGold ? goldMat : cyanMat
+    );
+    addComicOutline(crystal, 0.006, 0x090b14);
+    group.add(crystal);
+
+    orbiters.push({
+      mesh: crystal,
+      radius: 0.95 + (i % 3) * 0.15,
+      speed: 0.42 + i * 0.11,
+      phase: (i / 6) * Math.PI * 2,
+      tilt: (i % 2 === 0 ? 1 : -1) * 0.38,
+      yOff: ((i % 3) - 1) * 0.24,
+    });
+  }
+
+  return group;
+}
+
+// ============================================================================
+// Carga del GLB
+// ============================================================================
+
+const loader = new GLTFLoader();
+
+loader.load(
+  '/models/nyx_rigged.glb',
+  (gltf) => {
+    const source = gltf.scene;
+
+    universeMat = createUniverseMaterial(
+      state.palette.universe.deep,
+      state.palette.universe.nebA,
+      state.palette.universe.nebB,
+      state.palette.universe.rim
+    );
+
+    const meshes = [];
+    source.traverse((obj) => {
+      if (obj.isMesh) meshes.push(obj);
+    });
+
+    for (const mesh of meshes) {
+      const slot = MESH_SLOT[mesh.name];
+      if (!slot) continue;
+
+      if (slot === 'body' || slot === 'face' || slot === 'hair') {
+        materials[slot] = universeMat;
+        mesh.material = universeMat;
+      } else {
+        const mat = createComicCelMaterial(state.palette.colors[slot], {
+          rimColor: state.palette.rim,
+          ...SLOT_MAT_OPTS[slot],
+        });
+        materials[slot] = mat;
+        mesh.material = mat;
+      }
+    }
+
+    const box = new THREE.Box3().setFromObject(source);
+
+    const rows = meshes
+      .filter((m) => MESH_SLOT[m.name])
+      .map((m) => ({
+        name: m.name,
+        tris: Math.round(
+          (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count) / 3
+        ),
+      }))
+      .sort((a, b) => MESH_ORDER.indexOf(a.name) - MESH_ORDER.indexOf(b.name));
+
+    renderMeshBreakdown(rows);
+    buildPanels(source, box);
+    applyPalette(state.palette);
+
+    resize();
+    overlayEl.hidden = true;
+  },
+  undefined,
+  (err) => {
+    overlayEl.hidden = false;
+    overlayEl.classList.add('overlay--error');
+    overlayEl.textContent = 'NO SE PUDO CARGAR /models/nyx_rigged.glb — ' + (err && err.message ? err.message : 'error de red');
+  }
+);
+
+// ============================================================================
+// Toggles
+// ============================================================================
+
+function bindToggle(id, key, onChange) {
+  const btn = document.getElementById(id);
+  btn.addEventListener('click', () => {
+    state[key] = !state[key];
+    btn.classList.toggle('is-on', state[key]);
+    btn.setAttribute('aria-pressed', String(state[key]));
+    onChange(state[key]);
+  });
+}
+
+bindToggle('t-halftone', 'halftones', (on) => {
+  sharedShaderState.uHalftoneEnabled.value = on ? 1.0 : 0.0;
+});
+
+bindToggle('t-outline', 'outlines', (on) => {
+  for (const outline of outlines) outline.visible = on;
+});
+
+bindToggle('t-sway', 'sway', () => {});
+
+const poseBtns = document.querySelectorAll('#pose-btns [data-pose]');
+for (const btn of poseBtns) {
+  btn.addEventListener('click', () => {
+    state.pose = btn.dataset.pose;
+    for (const b of poseBtns) {
+      const active = b === btn;
+      b.classList.toggle('is-on', active);
+      b.setAttribute('aria-pressed', String(active));
+    }
+  });
+}
+
+function updateRigPoseAndHairPhysics(rig, t, dt) {
+  const b = rig.bones;
+  if (!b.size) return;
+
+  const poseMode = state.pose;
+
+  const setRot = (name, x, y, z) => {
+    const bone = b.get(name);
+    if (bone) bone.rotation.set(x, y, z);
+  };
+
+  if (poseMode === 'tpose') {
+    for (const bone of b.values()) bone.rotation.set(0, 0, 0);
+  } else if (poseMode === 'float') {
+    const breath = Math.sin(t * 2.1) * 0.03;
+    setRot('hips', -0.08 + breath * 0.3, 0.12, 0);
+    setRot('spine', 0.06, -0.05, 0);
+    setRot('chest', 0.04 + breath, 0, 0);
+    setRot('head', -0.08, -0.06, 0.03);
+    // Brazos abiertos flotando con energía gravitatoria
+    setRot('upperArm_L', 0.18, 0.15, -0.68 + Math.sin(t * 1.8) * 0.05);
+    setRot('forearm_L', 0.12, 0.25, -0.22);
+    setRot('upperArm_R', -0.10, -0.15, 0.72 - Math.sin(t * 1.8 + 0.6) * 0.05);
+    setRot('forearm_R', 0.12, -0.25, 0.22);
+    // Piernas flexionadas suaves en gravedad cero
+    setRot('thigh_L', -0.28, 0.04, 0.08);
+    setRot('shin_L', 0.52, 0, 0);
+    setRot('thigh_R', -0.12, -0.04, -0.08);
+    setRot('shin_R', 0.28, 0, 0);
+  } else {
+    // A-POSE natural con respiración sutil
+    const breath = Math.sin(t * 1.6) * 0.02;
+    setRot('hips', 0, 0, 0);
+    setRot('spine', 0, 0, 0);
+    setRot('chest', breath, 0, 0);
+    setRot('head', -breath * 0.5, 0, 0);
+    setRot('upperArm_L', 0.04, 0, -1.08);
+    setRot('forearm_L', 0.08, 0.12, -0.14);
+    setRot('upperArm_R', 0.04, 0, 1.08);
+    setRot('forearm_R', 0.08, -0.12, 0.14);
+    setRot('thigh_L', 0, 0, 0.03);
+    setRot('shin_L', 0.04, 0, 0);
+    setRot('thigh_R', 0, 0, -0.03);
+    setRot('shin_R', 0.04, 0, 0);
+  }
+
+  // Física de resorte (spring-damper) en la cadena del pelo (hair_1 -> hair_2 -> hair_3)
+  if (state.sway) {
+    const camAzimuth = controls ? controls.getAzimuthalAngle() : 0;
+    const camVel = (camAzimuth - (rig.prevAzimuth ?? camAzimuth)) / Math.max(dt, 0.001);
+    rig.prevAzimuth = camAzimuth;
+
+    const targetX = poseMode === 'float'
+      ? 0.14 + Math.sin(t * 2.4) * 0.11
+      : 0.04 + Math.sin(t * 1.4) * 0.04;
+    const targetY = poseMode === 'float'
+      ? Math.cos(t * 1.8) * 0.12 + THREE.MathUtils.clamp(camVel * 0.05, -0.35, 0.35)
+      : Math.sin(t * 0.9) * 0.03 + THREE.MathUtils.clamp(camVel * 0.04, -0.25, 0.25);
+
+    const k = 28.0;
+    const damp = 4.8;
+    for (let axis = 0; axis < 2; axis++) {
+      const target = axis === 0 ? targetX : targetY;
+      const force = (target - rig.hairPos[axis]) * k - rig.hairVel[axis] * damp;
+      rig.hairVel[axis] += force * dt;
+      rig.hairPos[axis] += rig.hairVel[axis] * dt;
+    }
+
+    const hx = rig.hairPos[0];
+    const hy = rig.hairPos[1];
+    setRot('hair_1', hx * 0.45, hy * 0.45, hy * 0.2);
+    setRot('hair_2', hx * 0.85, hy * 0.85, hy * 0.35);
+    setRot('hair_3', hx * 1.25, hy * 1.25, hy * 0.45);
+  } else {
+    setRot('hair_1', 0, 0, 0);
+    setRot('hair_2', 0, 0, 0);
+    setRot('hair_3', 0, 0, 0);
+  }
+}
+
+// ============================================================================
+// Render: un solo WebGLRenderer, 4 regiones con scissor
+// ============================================================================
+
+function renderViews() {
+  const viewsRect = viewsEl.getBoundingClientRect();
+  const canvasHeight = viewsRect.height;
+
+  renderer.setScissorTest(false);
+  renderer.clear();
+
+  for (const panel of panels) {
+    const rect = panel.el.getBoundingClientRect();
+    const w = rect.width;
+    const h = rect.height;
+    if (w <= 0 || h <= 0) continue;
+
+    const x = rect.left - viewsRect.left;
+    const y = canvasHeight - (rect.top - viewsRect.top) - h;
+
+    renderer.setViewport(x, y, w, h);
+    renderer.setScissor(x, y, w, h);
+    renderer.setScissorTest(true);
+
+    panel.camera.aspect = w / h;
+    panel.camera.updateProjectionMatrix();
+
+    renderer.render(panel.scene, panel.camera);
+  }
+}
+
+let lastTime = performance.now();
+
+function tick(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  const t = now / 1000;
+
+  sharedShaderState.uTime.value = t;
+
+  for (const rig of rigs) {
+    updateRigPoseAndHairPhysics(rig, t, dt);
+  }
+
+  if (frontModel) {
+    const target = state.sway ? Math.sin(t * 0.55) * 0.10 : 0;
+    frontModel.rotation.y += (target - frontModel.rotation.y) * Math.min(1, dt * 6);
+  }
+
+  if (dynamicPivot) {
+    const bob = Math.sin(t * 1.15) * 0.045;
+    dynamicPivot.position.y = center.y + bob;
+    dynamicPivot.rotation.set(
+      0.06 + Math.sin(t * 0.8) * 0.03,
+      -0.32 + Math.sin(t * 0.45) * 0.12,
+      -0.14 + Math.sin(t * 0.6) * 0.04
+    );
+
+    if (orbitGroup) orbitGroup.position.y = center.y + bob;
+  }
+
+  if (ringA) ringA.rotation.x = Math.PI * 0.5 + Math.sin(t * 0.5) * 0.16;
+  if (ringB) ringB.rotation.x = Math.PI * 0.5 - 0.42 + Math.sin(t * 0.37 + 1.2) * 0.2;
+
+  for (const o of orbiters) {
+    const a = t * o.speed + o.phase;
+    const px = Math.cos(a) * o.radius;
+    const pz = Math.sin(a) * o.radius;
+    o.mesh.position.set(px, o.yOff + pz * Math.sin(o.tilt), pz * Math.cos(o.tilt));
+    o.mesh.rotation.set(a * 1.3, a * 0.9, a * 0.5);
+  }
+
+  if (controls) controls.update();
+
+  renderViews();
+}
+
+// ============================================================================
+// Arranque
+// ============================================================================
+
+buildPaletteButtons();
+renderSwatches(state.palette);
+resize();
+
+new ResizeObserver(resize).observe(viewsEl);
+window.addEventListener('resize', resize);
+
+renderer.setAnimationLoop(tick);
+</script>
+</body>
+</html>

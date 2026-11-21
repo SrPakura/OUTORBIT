@@ -21,8 +21,8 @@ export const SANDBOX_GALAXY_SPEC: GalaxySpec = {
     {
       id: 'hekseville',
       order: 1,
-      name: 'Hekseville',
-      subtitle: 'Pleajeune · Ciudad Flotante',
+      name: 'Outorbit City',
+      subtitle: 'Isla Flotante · Modo Exploración',
       biome: 'verdant',
       center: [0, -1000, 0],
       radius: 1000,

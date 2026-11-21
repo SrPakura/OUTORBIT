@@ -465,8 +465,8 @@ export class GameEngine {
     );
     if (galaxy.isFlatCity && this.chunkCollider) {
       // Spawn provisional (el real llega con `manifest.json` en ~200 ms):
-      // sobre la terraza de Pleajeune, no en el vacío de Auldnoir.
-      this.player.setChunkCity(this.chunkCollider, [15, 148, 220], 3.0);
+      // sobre la Gran Plaza de la Isla Flotante, mirando al Norte (-Z).
+      this.player.setChunkCity(this.chunkCollider, [0, 20.6, 68], 0);
       void this.streamHeksevilleChunks(this.chunkEpoch);
     }
     // PASO B: el tutorial arranca con su personaje recomendado ya equipado.
@@ -716,8 +716,8 @@ export class GameEngine {
         this.elapsed += dtSim;
 
         // Hekseville 1:1: la niebla del abismo es un mar púrpura-azulado a
-        // y = -125; caer más abajo respawnea al jugador en el spawn.
-        if (this.activeGalaxySpec.isFlatCity && player.position.y < -125) {
+        // y = -58..-82; caer por debajo de -66 respawnea al jugador en el spawn.
+        if (this.activeGalaxySpec.isFlatCity && player.position.y < -66) {
           player.respawnFlatCity();
         }
       }

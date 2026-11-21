@@ -782,9 +782,11 @@ ${BUCKET_TEXTURE_UNIFORMS[group]}
     float camDist = length( cameraPosition - vWorldPos );
     float dotFade = smoothstep( 140.0, 28.0, camDist );
 
-    // Gradiente de ánimo vertical: Pleajeune alto vivo y soleado, Bajos
-    // (y < 115 m) mucho más sombríos.
-    float upperFactor = smoothstep( 72.0, 158.0, vWorldPos.y );
+    // Gradiente de ánimo vertical: la Isla Flotante vive en y = 14..38 m. Las
+    // plazas soleadas, tiendas, colinas residenciales y torres (y >= 20 m)
+    // brillan vivas y saturadas; el paseo de vapor a y = 14 m y las bóvedas y
+    // vigas del reverso (y <= 14 m) quedan más sombríos.
+    float upperFactor = smoothstep( 4.0, 26.0, vWorldPos.y );
 
     vec3 surf;
 ${BUCKET_SURFACES[group]}
@@ -965,15 +967,19 @@ interface GlowPulse {
 // ----------------------------------------------------------------------------
 
 /**
- * Centro horizontal del abismo: bajo el eje de Pleajeune (15, 330). El radio
- * de los discos (1700) cubre Pleajeune y Vendecentre de sobra.
+ * Centro horizontal del abismo: bajo el eje de la Isla Flotante (0, 0). El
+ * radio de los discos (1700) cubre la isla y su skyline de sobra.
  */
-const VOID_FOG_CENTER_X = 15;
-const VOID_FOG_CENTER_Z = 330;
-/** Velo superior de niebla: justo por encima del plano de respawn (y = -125). */
-const VOID_FOG_UPPER_Y = -112;
-/** Suelo abisal: la niebla opaca que cierra el vacío. */
-const VOID_FOG_LOWER_Y = -140;
+const VOID_FOG_CENTER_X = 0;
+const VOID_FOG_CENTER_Z = 0;
+/**
+ * Velo superior de niebla: y = -58, justo por debajo de las faldas de
+ * contención de la isla (y = 6..12) y envolviendo las vigas de acero que
+ * descienden hasta y = -95.
+ */
+const VOID_FOG_UPPER_Y = -58;
+/** Suelo abisal: la niebla opaca que cierra el vacío bajo las vigas. */
+const VOID_FOG_LOWER_Y = -82;
 const VOID_FOG_RADIUS = 1700;
 const VOID_FOG_SEGMENTS = 64;
 /** Paleta del vacío: morado oscuro, azul abisal e índigo cósmico. */
@@ -1110,10 +1116,14 @@ const voidFogFragmentShader = /* glsl */ `
 // Vida en el cielo: banners de neón, zepelines y farolillos a la deriva
 // ----------------------------------------------------------------------------
 
-/** Centro de las avenidas aéreas de Pleajeune (sobre la terraza del spawn). */
-const SKY_LIFE_CENTER_X = 15;
-const SKY_LIFE_CENTER_Y = 150;
-const SKY_LIFE_CENTER_Z = 330;
+/**
+ * Centro de las avenidas aéreas: sobre la Gran Plaza y las tiendas de la Isla
+ * Flotante (y = 42), con órbitas de 40..170 m de radio que sobrevuelan las
+ * terrazas caminables (y = 14..38) sin meterse nunca en la niebla del abismo.
+ */
+const SKY_LIFE_CENTER_X = 0;
+const SKY_LIFE_CENTER_Y = 42;
+const SKY_LIFE_CENTER_Z = 0;
 const SKY_BANNER_COUNT = 14;
 const SKY_BLIMP_COUNT = 6;
 const SKY_LANTERN_COUNT = 8;
@@ -1342,8 +1352,8 @@ export function createHeksevilleMaterialLibrary(): HeksevilleMaterialLibrary {
       tiles[i] = Math.floor(rng() * 16);
       phases[i] = rng() * Math.PI * 2;
       bannerOrbits.push({
-        radius: 70 + rng() * 120,
-        // Siempre por encima de y = 140: los banners viven en el cielo alto,
+        radius: 40 + rng() * 130,
+        // Siempre por encima de y = 42: los banners viven sobre la isla,
         // nunca dentro de la niebla del abismo.
         height: SKY_LIFE_CENTER_Y + rng() * 90,
         speed: 0.055 + rng() * 0.05,
@@ -1379,7 +1389,7 @@ export function createHeksevilleMaterialLibrary(): HeksevilleMaterialLibrary {
 
     for (let i = 0; i < SKY_BLIMP_COUNT; i++) {
       blimpOrbits.push({
-        radius: 120 + rng() * 150,
+        radius: 90 + rng() * 80,
         height: SKY_LIFE_CENTER_Y + 10 + rng() * 70,
         speed: 0.03 + rng() * 0.03,
         phase: rng() * Math.PI * 2,
@@ -1407,8 +1417,8 @@ export function createHeksevilleMaterialLibrary(): HeksevilleMaterialLibrary {
 
     for (let i = 0; i < SKY_LANTERN_COUNT; i++) {
       lanternOrbits.push({
-        radius: 45 + rng() * 110,
-        // Por encima de y = 140, como los banners: farolillos de cielo alto.
+        radius: 40 + rng() * 110,
+        // Por encima de y = 42, como los banners: farolillos sobre la isla.
         height: SKY_LIFE_CENTER_Y + rng() * 80,
         speed: 0.09 + rng() * 0.07,
         phase: rng() * Math.PI * 2,
