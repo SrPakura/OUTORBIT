@@ -15,13 +15,14 @@ interface GameHUDProps {
 }
 
 /**
- * HUD mínimo y limpio del Hito 1: barra superior (planeta, objetivos, reloj),
- * selector de escuadrón, HP, indicador de GRAVITY SHIFT, mira central y guía
- * compacta de controles. Solo re-renderiza cuando el GameEngine emite un
- * HudSnapshot (~15 Hz o cambios discretos).
+ * HUD del Hito 2: barra superior (planeta, objetivos, reloj), selector de
+ * escuadrón, HP, indicadores de Estasis (0/4), Disfraz, Subsuelo, Nado,
+ * ventana de Parry y cooldown del Ancla, prompt contextual de interacción,
+ * transición de planeta y pantallas de pausa/game over/victoria.
  */
 export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDProps) {
   const shifting = snapshot.isGravityShifting;
+  const anchorReady = 1 - snapshot.anchorCooldownRatio;
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none font-sans text-slate-100">
@@ -46,7 +47,8 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
                   objective.completed ? 'text-emerald-400 line-through' : 'text-slate-200'
                 }`}
               >
-                {objective.completed ? '[OK]' : '[ ]'} {objective.description}
+                {objective.completed ? '[OK]' : `[${objective.currentCount}/${objective.targetCount}]`}{' '}
+                {objective.description}
               </li>
             ))}
           </ul>
@@ -62,7 +64,7 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
         </div>
       </div>
 
-      {/* --- Esquina inferior izquierda: HP + escuadrón --- */}
+      {/* --- Esquina inferior izquierda: HP, escuadrón e indicadores --- */}
       <div className="absolute bottom-4 left-4 space-y-2">
         <div className="flex items-center gap-2 rounded-lg border-2 border-black bg-[#160b2e]/85 px-3 py-2 shadow-[4px_4px_0_#000]">
           <span className="text-[10px] font-black tracking-[0.2em] text-red-400">HP</span>
@@ -99,25 +101,95 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
             );
           })}
         </div>
+
+        {/* --- Estasis (0/4) + cooldown del Ancla --- */}
+        <div className="flex items-center gap-3 rounded-lg border-2 border-black bg-[#160b2e]/85 px-3 py-2 shadow-[4px_4px_0_#000]">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-black tracking-[0.2em] text-cyan-300">
+              ESTASIS
+            </span>
+            <span className="flex gap-1">
+              {Array.from({ length: GAME_CONSTANTS.MAX_STASIS_OBJECTS }, (_, i) => (
+                <span
+                  key={i}
+                  className={`h-2.5 w-2.5 rounded-full border border-black ${
+                    i < snapshot.stasisHeldCount ? 'bg-cyan-400' : 'bg-slate-700'
+                  }`}
+                />
+              ))}
+            </span>
+            <span className="font-mono text-[10px] font-black text-cyan-200">
+              {snapshot.stasisHeldCount}/{GAME_CONSTANTS.MAX_STASIS_OBJECTS}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-black tracking-[0.2em] text-yellow-300">
+              ANCLA
+            </span>
+            <span className="h-2.5 w-14 overflow-hidden rounded-full border border-black bg-slate-700">
+              <span
+                className={`block h-full ${anchorReady >= 1 ? 'bg-yellow-300' : 'bg-yellow-600'}`}
+                style={{ width: `${Math.round(anchorReady * 100)}%` }}
+              />
+            </span>
+          </div>
+        </div>
+
+        {/* --- Badges de estado --- */}
+        <div className="flex flex-wrap gap-2">
+          {snapshot.isDisguised && (
+            <span className="rounded-lg border-2 border-black bg-violet-500/90 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-white shadow-[3px_3px_0_#000]">
+              DISFRAZADO
+            </span>
+          )}
+          {snapshot.isBurrowing && (
+            <span className="rounded-lg border-2 border-black bg-yellow-500/90 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-black shadow-[3px_3px_0_#000]">
+              SUBSUELO
+            </span>
+          )}
+          {snapshot.isSwimming && (
+            <span className="rounded-lg border-2 border-black bg-cyan-400/90 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-black shadow-[3px_3px_0_#000]">
+              NADO
+            </span>
+          )}
+          {snapshot.globalAlert && (
+            <span className="animate-pulse rounded-lg border-2 border-black bg-red-600/90 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-white shadow-[3px_3px_0_#000]">
+              ¡ALERTA!
+            </span>
+          )}
+        </div>
       </div>
 
       {/* --- Esquina inferior derecha: guía de controles --- */}
       <div className="absolute bottom-4 right-4 rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-3 text-[10px] font-semibold leading-relaxed text-slate-300 shadow-[4px_4px_0_#000]">
         <p>
           <span className="text-yellow-300">WASD</span> Mover ·{' '}
-          <span className="text-yellow-300">ESPACIO</span> Salto/Doble
+          <span className="text-yellow-300">ESPACIO</span> Salto/Ancla (aire)
         </p>
         <p>
-          <span className="text-yellow-300">SHIFT</span> Sprint ·{' '}
+          <span className="text-yellow-300">SHIFT</span> Sprint/Subsuelo (Digger) ·{' '}
           <span className="text-yellow-300">1/2/3</span> Escuadrón
         </p>
         <p>
-          <span className="text-yellow-300">CLIC DER.</span> Gravity Shift (0.2x)
+          <span className="text-yellow-300">CLIC DER.</span> Gravity Shift ·{' '}
+          <span className="text-yellow-300">CLIC IZQ.</span> Estasis
         </p>
         <p>
-          <span className="text-yellow-300">ESC</span> Pausa
+          <span className="text-yellow-300">E</span> Noquear ·{' '}
+          <span className="text-yellow-300">F/Q</span> Parry ·{' '}
+          <span className="text-yellow-300">RUEDA</span> Zoom
         </p>
       </div>
+
+      {/* --- Prompt contextual de interacción --- */}
+      {snapshot.interactionPrompt && snapshot.phase === 'playing' && (
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2">
+          <p className="rounded-lg border-2 border-yellow-300 bg-black/75 px-4 py-1.5 text-xs font-black tracking-widest text-yellow-200 shadow-[4px_4px_0_#000]">
+            {snapshot.interactionPrompt}
+          </p>
+        </div>
+      )}
 
       {/* --- Mira central --- */}
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
@@ -130,6 +202,15 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
           <span className="absolute top-1/2 right-0 h-0.5 w-2 -translate-y-1/2 bg-current" />
         </div>
       </div>
+
+      {/* --- Ventana de Parry activa --- */}
+      {snapshot.parryWindowActive && (
+        <div className="absolute left-1/2 top-[38%] -translate-x-1/2">
+          <p className="rounded-lg border-2 border-white bg-black/70 px-4 py-1 text-sm font-black tracking-[0.3em] text-white shadow-[0_0_18px_rgba(255,255,255,0.7)]">
+            PARRY
+          </p>
+        </div>
+      )}
 
       {/* --- Aviso inicial de Pointer Lock --- */}
       {snapshot.phase === 'playing' && !snapshot.pointerLocked && (
@@ -149,6 +230,20 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
               Objetivo: {snapshot.gravityTargetName}
             </p>
           )}
+        </div>
+      )}
+
+      {/* --- Transición entre planetas --- */}
+      {snapshot.phase === 'planet_transition' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-[#05010f]/70">
+          <div className="rounded-2xl border-4 border-cyan-300 bg-[#160b2e] px-12 py-8 text-center shadow-[10px_10px_0_#000]">
+            <p className="mb-2 text-[10px] font-black tracking-[0.5em] text-cyan-300">
+              SALTANDO DE ÓRBITA
+            </p>
+            <h2 className="text-4xl font-black tracking-widest text-white drop-shadow-[3px_3px_0_#000]">
+              {snapshot.levelTitle}
+            </h2>
+          </div>
         </div>
       )}
 
@@ -173,15 +268,40 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
         </div>
       )}
 
-      {/* --- Victoria --- */}
+      {/* --- Game Over --- */}
+      {snapshot.phase === 'game_over' && (
+        <div className="pointer-events-auto absolute inset-0 flex items-center justify-center bg-[#05010f]/85">
+          <div className="rounded-2xl border-4 border-red-500 bg-[#160b2e] p-10 text-center shadow-[10px_10px_0_#000]">
+            <h2 className="mb-2 text-4xl font-black tracking-widest text-red-400">
+              ESCUADRÓN DERROTADO
+            </h2>
+            <p className="mb-6 text-sm font-bold text-slate-300">
+              Los centinelas de {snapshot.activePlanetName} te han noqueado.
+            </p>
+            <button
+              type="button"
+              onClick={onExitToTitle}
+              className="cursor-pointer rounded-xl border-4 border-black bg-yellow-400 px-8 py-3 text-lg font-black tracking-widest text-black shadow-[6px_6px_0_#000] transition-transform hover:-translate-y-0.5"
+            >
+              VOLVER AL TÍTULO
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- Victoria / Hito completado --- */}
       {snapshot.phase === 'victory' && (
         <div className="pointer-events-auto absolute inset-0 flex items-center justify-center bg-[#05010f]/85">
           <div className="rounded-2xl border-4 border-cyan-300 bg-[#160b2e] p-10 text-center shadow-[10px_10px_0_#000]">
             <h2 className="mb-2 text-4xl font-black tracking-widest text-cyan-300">
-              ¡PORTAL ALCANZADO!
+              {snapshot.levelId === 'verdant'
+                ? '¡PLANETA VERDANT COMPLETADO!'
+                : '¡PORTAL ALCANZADO!'}
             </h2>
             <p className="mb-1 text-sm font-bold text-slate-200">
-              Has completado el Prólogo Orbital.
+              {snapshot.levelId === 'verdant'
+                ? 'Hito 2 completado: el escuadrón está operativo.'
+                : 'Has completado el Prólogo Orbital.'}
             </p>
             <p className="mb-6 font-mono text-2xl font-black text-yellow-300">
               {formatTime(snapshot.elapsedRunSec)}

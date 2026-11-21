@@ -64,6 +64,10 @@ export function addComicOutline(
     color,
     side: THREE.BackSide,
     fog: false,
+    // Evita z-fighting del contorno contra el suelo del planeta y otros contornos.
+    polygonOffset: true,
+    polygonOffsetFactor: 2,
+    polygonOffsetUnits: 2,
   });
   const extrusion = thickness.toFixed(4);
   material.onBeforeCompile = (shader: OutlineShaderParams) => {

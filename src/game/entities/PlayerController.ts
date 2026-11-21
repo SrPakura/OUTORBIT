@@ -4,9 +4,11 @@ import {
   type CharacterId,
   type CharacterProfile,
   type PlanetRuntime,
+  type PlayerBehaviorVector,
 } from '../types';
 import { alignBasisToUp, findStrongestGravityPlanet, getTangentAxes } from '../math/spherical';
-import { buildCharacterModel } from '../render/proceduralModels';
+import { buildCharacterModel, buildDisguiseOverlay } from '../render/proceduralModels';
+import type { WorldObjectsManager } from './WorldObjects';
 
 // ============================================================================
 // Constantes de simulación del jugador
@@ -15,14 +17,53 @@ const GRAVITY_BASE = 22;
 const BASIS_ALIGN_SPEED = 9; // velocidad de reorientación del marco tangente
 const SPRINT_MULTIPLIER = 1.55;
 const DOUBLE_JUMP_FACTOR = 0.85;
-const MOUSE_SENSITIVITY = 0.0022;
+const MOUSE_SENSITIVITY = 0.0036;
 const PITCH_MIN = -1.25;
 const PITCH_MAX = 1.3;
 const AIM_CONE_MARGIN = 0.32; // rad de tolerancia sobre el radio angular del planeta
-const FLIGHT_SPEED_PER_DIST = 0.34;
-const FLIGHT_SPEED_MIN = 26;
-const FLIGHT_SPEED_MAX = 74;
 const HEAD_HEIGHT = 1.5;
+
+// Ancla gravitatoria (Espacio en el aire)
+const ANCHOR_COOLDOWN = 0.9;
+const ANCHOR_BURST_DECAY = 3.2;
+const ANCHOR_FX_TIME = 0.35;
+
+// Parry (F / Q)
+const PARRY_WINDOW = 0.32;
+const PARRY_COOLDOWN = 0.85;
+
+// Campo de Estasis (Clic Izquierdo)
+const STASIS_GRAB_RANGE = 9;
+const STASIS_QUICKCLICK = 0.18;
+
+// Subsuelo (Digger)
+const BURROW_SPEED_MUL = 0.8;
+const BURROW_SINK = -0.95;
+const CORE_DIVE_SPEED = 55;
+
+// Nado en burbujas
+const SWIM_BASE_SPEED = 8;
+const SWIM_BOOST_TIME = 0.6;
+const SWIM_BOOST_MUL = 1.45;
+
+// Vuelo cinematográfico (Gravity Shift)
+const FLIGHT_MIN_DURATION = 1.4;
+const FLIGHT_MAX_DURATION = 4.5;
+const FLIGHT_SPEED_DIVISOR = 60;
+const FLIGHT_LANDING_PITCH = 0.12;
+const FLIGHT_ARC_SCALE = 1.15;
+const FLIGHT_ARC_LIFT = 8;
+
+// Vuelo libre (tras salir de una burbuja): propulsión + gravedad suave para
+// poder encadenar burbujas/planetas sin caer en picado.
+const SWIM_EXIT_BOOST = 1.7;
+const FREE_FLIGHT_GRAVITY = 0.25;
+
+// Combate
+const SHOCKWAVE_MIN_FALL = 17;
+const SHOCKWAVE_RADIUS = 7.5;
+const DISGUISE_DURATION = 30;
+const INVULN_TIME = 0.9;
 
 interface CharacterParts {
   head: THREE.Object3D;
@@ -38,26 +79,50 @@ interface CharacterParts {
  *
  * - WASD: movimiento en el plano tangente a la esfera actual.
  * - Ratón (Pointer Lock): yaw/pitch dentro del marco `basisQuat` (sin gimbal lock).
- * - Espacio: salto + doble impulso aéreo.
- * - Shift: sprint en superficie.
+ * - Espacio: salto + doble impulso aéreo; en el aire, Ancla Gravitatoria
+ *   (impulso encadenable, cooldown 0.9s); con Digger en subsuelo, cruce del núcleo.
+ * - Shift: sprint; con Digger en superficie, alterna el subsuelo (`isBurrowing`).
  * - 1/2/3: cambio instantáneo de personaje (Kitsune / Digger / Axel).
- * - Clic Derecho (mantener): Gravity Shift (cámara lenta + apuntado a otro planeta).
+ * - Clic Derecho (mantener): Gravity Shift (cámara lenta + apuntado a otro planeta);
+ *   al soltar, vuelo orbital cinematográfico con aterrizaje de pie.
+ * - Clic Izquierdo: Campo de Estasis (mantener: levita hasta 4 objetos;
+ *   soltar: los dispara en abanico; clic rápido sin objetos: golpe melee).
+ * - F/Q: Parry (ventana 0.32s, cooldown 0.85s).
+ * - E: noqueo por la espalda + robo de uniforme (`isDisguised`).
  *
  * Cero allocations por frame: todos los vectores/cuaterniones son preasignados.
  */
 export class PlayerController {
   readonly root = new THREE.Group();
   readonly basisQuat = new THREE.Quaternion();
+  readonly behavior: PlayerBehaviorVector = {
+    stealthKnockouts: 0,
+    disguiseTimeSec: 0,
+    alarmsTriggered: 0,
+    bruteKills: 0,
+    aerialAttacks: 0,
+    burrowDistance: 0,
+    burrowTimeSec: 0,
+    stasisThrows: 0,
+    parriesLanded: 0,
+    damageTaken: 0,
+    totalTimeSec: 0,
+  };
+
   yaw = 0;
   pitch = 0.3;
 
   gravityShifting = false;
   gravityTarget: PlanetRuntime | null = null;
-  hp = GAME_CONSTANTS.PLAYER_MAX_HP;
+  hp: number = GAME_CONSTANTS.PLAYER_MAX_HP;
   walkDistance = 0;
+  isBurrowing = false;
+  isSwimming = false;
+  isDisguised = false;
 
   private readonly planets: PlanetRuntime[];
   private readonly camera: THREE.PerspectiveCamera;
+  private readonly world: WorldObjectsManager;
   private currentPlanet: PlanetRuntime;
   private profile: CharacterProfile;
   private activeCharacter: CharacterId;
@@ -65,17 +130,48 @@ export class PlayerController {
   private readonly pos = new THREE.Vector3();
   private readonly lastUp = new THREE.Vector3(0, 1, 0);
   private readonly flightVel = new THREE.Vector3();
+  private readonly swimVel = new THREE.Vector3();
+  private readonly anchorBurst = new THREE.Vector3();
   private altitude = 0;
   private vertVel = 0;
   private grounded = true;
   private jumpsUsed = 0;
+
+  // Vuelo cinematográfico dirigido (Bezier elevado sobre el origen del nivel).
   private inFlight = false;
+  private flightDirected = false;
+  private flightDest: PlanetRuntime | null = null;
+  private flightTime = 0;
+  private flightDuration = 2;
+  private readonly flightStart = new THREE.Vector3();
+  private readonly flightCtrl = new THREE.Vector3();
+  private readonly flightEnd = new THREE.Vector3();
+
+  // Cruce del núcleo (Digger).
+  private coreDiveActive = false;
+  private diveTime = 0;
+  private diveDuration = 1;
+  private readonly diveStart = new THREE.Vector3();
+  private readonly diveEnd = new THREE.Vector3();
+
+  // Habilidades.
+  private anchorCooldown = 0;
+  private anchorFxTimer = 0;
+  private parryTimer = 0;
+  private parryCooldown = 0;
+  private stasisHolding = false;
+  private stasisHoldTime = 0;
+  private disguiseTimer = 0;
+  private invulnTimer = 0;
+  private swimBoostTimer = 0;
+  private burrowSink = 0;
 
   private readonly keys = new Set<string>();
   private readonly models = new Map<CharacterId, THREE.Group>();
   private readonly parts = new Map<CharacterId, CharacterParts>();
-  private flightTarget: PlanetRuntime | null = null;
-  private flightTime = 0;
+  private readonly bodyRoot = new THREE.Group();
+  private readonly disguiseOverlay: THREE.Group;
+  private readonly anchorFx: THREE.Group;
   private walkPhase = 0;
   private isMoving = false;
 
@@ -97,6 +193,7 @@ export class PlayerController {
   constructor(
     planets: PlanetRuntime[],
     camera: THREE.PerspectiveCamera,
+    world: WorldObjectsManager,
     spawnPlanetId: string,
     spawnDir: THREE.Vector3
   ) {
@@ -105,6 +202,7 @@ export class PlayerController {
     }
     this.planets = planets;
     this.camera = camera;
+    this.world = world;
     this.currentPlanet =
       planets.find((p) => p.spec.id === spawnPlanetId) ?? planets[0];
     this.activeCharacter = 'kitsune';
@@ -120,12 +218,16 @@ export class PlayerController {
     this.lastUp.copy(this._up);
     alignBasisToUp(this.basisQuat, this._up, 1);
 
+    // Jerarquía: root (transform físico) -> bodyRoot (hundimiento del subsuelo)
+    // -> modelos. Así el hundimiento de Digger no ensucia la física.
+    this.root.add(this.bodyRoot);
+
     // Modelos pre-construidos: el cambio 1/2/3 es instantáneo.
     const characterIds: CharacterId[] = ['kitsune', 'digger', 'axel'];
     for (const id of characterIds) {
       const model = buildCharacterModel(id);
       model.visible = id === this.activeCharacter;
-      this.root.add(model);
+      this.bodyRoot.add(model);
       this.models.set(id, model);
       this.parts.set(id, {
         head: model.getObjectByName('head') ?? model,
@@ -136,6 +238,34 @@ export class PlayerController {
         tail: model.getObjectByName('tail') ?? model,
       });
     }
+
+    // Uniforme robado (visible solo con isDisguised).
+    this.disguiseOverlay = buildDisguiseOverlay();
+    this.bodyRoot.add(this.disguiseOverlay);
+
+    // FX del Ancla Gravitatoria: orbe brillante + haz hacia delante.
+    this.anchorFx = new THREE.Group();
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.035, 0.035, 7, 6),
+      new THREE.MeshBasicMaterial({
+        color: 0xfde047,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+      })
+    );
+    beam.rotation.x = Math.PI / 2;
+    beam.position.z = 3.5;
+    this.anchorFx.add(beam);
+    const orb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0xfff7cc })
+    );
+    orb.position.z = 7;
+    this.anchorFx.add(orb);
+    this.anchorFx.rotation.x = -0.5; // elevado hacia arriba-adelante
+    this.anchorFx.visible = false;
+    this.bodyRoot.add(this.anchorFx);
   }
 
   // --------------------------------------------------------------------------
@@ -161,6 +291,22 @@ export class PlayerController {
     return this.inFlight;
   }
 
+  get coreDiving(): boolean {
+    return this.coreDiveActive;
+  }
+
+  get parryWindowActive(): boolean {
+    return this.parryTimer > 0;
+  }
+
+  get anchorCooldownRatio(): number {
+    return THREE.MathUtils.clamp(this.anchorCooldown / ANCHOR_COOLDOWN, 0, 1);
+  }
+
+  get stealthMultiplier(): number {
+    return this.profile.stealthMultiplier;
+  }
+
   /** Up radial actual (normal de la esfera bajo el jugador). */
   get up(): THREE.Vector3 {
     return this.lastUp;
@@ -179,16 +325,32 @@ export class PlayerController {
     outVec.copy(this.pos).addScaledVector(this.lastUp, HEAD_HEIGHT);
   }
 
+  /** Avance tangente actual (marco de cámara + yaw). */
+  getMoveForward(outVec: THREE.Vector3): void {
+    getTangentAxes(this.basisQuat, this.yaw, outVec, this._v2);
+  }
+
+  /** Dirección de mira (mundo) desde la orientación de cámara. */
+  getAimForward(outVec: THREE.Vector3): void {
+    this.getCameraOrientation(this._q1);
+    outVec.set(0, 0, -1).applyQuaternion(this._q1);
+  }
+
   // --------------------------------------------------------------------------
   // Entrada (reenviada por el GameEngine, que posee el Pointer Lock)
   // --------------------------------------------------------------------------
   handleKey(code: string, down: boolean): void {
     if (down) {
       this.keys.add(code);
-      if (code === 'Space') this.tryJump();
-      else if (code === 'Digit1') this.switchCharacter('kitsune');
+      if (code === 'Space') {
+        if (this.isBurrowing && !this.coreDiveActive) this.startCoreDive();
+        else this.tryJump();
+      } else if (code === 'Digit1') this.switchCharacter('kitsune');
       else if (code === 'Digit2') this.switchCharacter('digger');
       else if (code === 'Digit3') this.switchCharacter('axel');
+      else if (code === 'KeyE') this.tryKnockout();
+      else if (code === 'KeyF' || code === 'KeyQ') this.tryParry();
+      else if (code === 'ShiftLeft' || code === 'ShiftRight') this.toggleBurrow();
     } else {
       this.keys.delete(code);
     }
@@ -202,15 +364,33 @@ export class PlayerController {
   }
 
   handleMouseButton(button: number, down: boolean): void {
-    if (button !== 2) return;
-    if (down) {
-      if (!this.inFlight) this.gravityShifting = true;
-    } else if (this.gravityShifting) {
-      this.gravityShifting = false;
-      if (this.gravityTarget && this.gravityTarget !== this.currentPlanet) {
-        this.launchToTarget(this.gravityTarget);
+    if (button === 0) {
+      // Campo de Estasis / golpe cuerpo a cuerpo.
+      if (down) {
+        if (this.inFlight || this.isSwimming || this.coreDiveActive || this.isBurrowing) return;
+        this.stasisHolding = true;
+        this.stasisHoldTime = 0;
+      } else if (this.stasisHolding) {
+        this.stasisHolding = false;
+        if (this.world.held === 0 && this.stasisHoldTime < STASIS_QUICKCLICK) {
+          this.meleeStrike();
+        } else {
+          this.throwStasis();
+        }
       }
-      this.gravityTarget = null;
+    } else if (button === 2) {
+      // Gravity Shift.
+      if (down) {
+        if (!this.inFlight && !this.isSwimming && !this.coreDiveActive) {
+          this.gravityShifting = true;
+        }
+      } else if (this.gravityShifting) {
+        this.gravityShifting = false;
+        if (this.gravityTarget && this.gravityTarget !== this.currentPlanet) {
+          this.launchToTarget(this.gravityTarget);
+        }
+        this.gravityTarget = null;
+      }
     }
   }
 
@@ -219,6 +399,20 @@ export class PlayerController {
     this.keys.clear();
     this.gravityShifting = false;
     this.gravityTarget = null;
+    this.stasisHolding = false;
+  }
+
+  /** Daño recibido (láser, guardias, explosiones) con empuje opcional. */
+  takeDamage(amount: number, pushX = 0, pushY = 0, pushZ = 0): void {
+    if (this.invulnTimer > 0) return;
+    this.invulnTimer = INVULN_TIME;
+    this.hp = Math.max(0, this.hp - amount);
+    this.behavior.damageTaken += amount;
+    this.isDisguised = false;
+    this.disguiseTimer = 0;
+    this.anchorBurst.x += pushX;
+    this.anchorBurst.y += pushY;
+    this.anchorBurst.z += pushZ;
   }
 
   // --------------------------------------------------------------------------
@@ -227,22 +421,65 @@ export class PlayerController {
   update(dt: number): void {
     if (dt <= 0) return;
 
-    if (this.inFlight) {
+    if (this.coreDiveActive) {
+      this.updateCoreDive(dt);
+    } else if (this.isSwimming) {
+      this.updateSwim(dt);
+    } else if (this.inFlight) {
       this.updateFlight(dt);
     } else {
       this.updateGrounded(dt);
     }
 
+    // Temporizadores de habilidades.
+    if (this.anchorCooldown > 0) this.anchorCooldown -= dt;
+    if (this.parryCooldown > 0) this.parryCooldown -= dt;
+    if (this.invulnTimer > 0) this.invulnTimer -= dt;
+    if (this.swimBoostTimer > 0) this.swimBoostTimer -= dt;
+    if (this.anchorFxTimer > 0) this.anchorFxTimer -= dt;
+
+    if (this.isDisguised) {
+      this.behavior.disguiseTimeSec += dt;
+      this.disguiseTimer -= dt;
+      if (this.disguiseTimer <= 0) this.isDisguised = false;
+    }
+    if (this.isBurrowing && !this.coreDiveActive) this.behavior.burrowTimeSec += dt;
+
+    // Ventana de Parry: refleja el ataque de cualquier guardia cercano.
+    if (this.parryTimer > 0) {
+      this.parryTimer -= dt;
+      if (this.world.checkParry(this.pos)) {
+        this.behavior.parriesLanded++;
+        this.parryTimer = 0;
+      }
+    }
+
+    // Campo de Estasis: mientras se mantiene, levita objetos cercanos.
+    if (this.stasisHolding) {
+      this.stasisHoldTime += dt;
+      if (this.world.held < GAME_CONSTANTS.MAX_STASIS_OBJECTS) {
+        this.getMoveForward(this._forward);
+        this.world.grabNearest(this.pos, this._forward, STASIS_GRAB_RANGE);
+      }
+    }
+
     // Reorientación suave del marco tangente (transporte paralelo continuo).
     alignBasisToUp(this.basisQuat, this.lastUp, 1 - Math.exp(-BASIS_ALIGN_SPEED * dt));
 
-    // Aplica transform al modelo: mira hacia el forward de cámara.
+    // Transform del modelo: mira hacia el forward de cámara.
     this._yawQuat.setFromAxisAngle(this._v1.set(0, 1, 0), this.yaw);
     this.root.quaternion
       .copy(this.basisQuat)
       .multiply(this._yawQuat)
       .multiply(this._flipQuat);
     this.root.position.copy(this.pos);
+
+    // Hundimiento visual del subsuelo + overlay de disfraz + FX de ancla.
+    const targetSink = this.isBurrowing && !this.coreDiveActive ? BURROW_SINK : 0;
+    this.burrowSink += (targetSink - this.burrowSink) * Math.min(1, dt * 10);
+    this.bodyRoot.position.y = this.burrowSink;
+    this.disguiseOverlay.visible = this.isDisguised;
+    this.anchorFx.visible = this.anchorFxTimer > 0;
 
     this.animateLimbs();
 
@@ -267,15 +504,35 @@ export class PlayerController {
     if (this.isMoving) {
       this._move.normalize();
       const sprinting = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
-      speed = this.profile.moveSpeed * (sprinting ? SPRINT_MULTIPLIER : 1);
+      speed =
+        this.profile.moveSpeed *
+        (sprinting ? SPRINT_MULTIPLIER : 1) *
+        (this.isBurrowing ? BURROW_SPEED_MUL : 1);
       this.pos.addScaledVector(this._move, speed * dt);
       this.walkDistance += speed * dt;
     }
 
+    // Impulso residual del Ancla (decae exponencialmente).
+    if (this.anchorBurst.lengthSq() > 1e-6) {
+      this.pos.addScaledVector(this.anchorBurst, dt);
+      this.anchorBurst.multiplyScalar(Math.exp(-ANCHOR_BURST_DECAY * dt));
+    } else {
+      this.anchorBurst.set(0, 0, 0);
+    }
+
     // Dinámica vertical (salto / gravedad radial).
+    const wasAirborne = !this.grounded;
     this.altitude += this.vertVel * dt;
     this.vertVel -= GRAVITY_BASE * this.profile.gravityScale * dt;
     if (this.altitude <= 0) {
+      // Aterrizaje en Modo Júpiter (Digger): onda expansiva.
+      if (
+        wasAirborne &&
+        this.vertVel < -SHOCKWAVE_MIN_FALL &&
+        this.profile.gravityScale > 1.2
+      ) {
+        this.world.shockwave(this.pos, SHOCKWAVE_RADIUS);
+      }
       this.altitude = 0;
       this.vertVel = 0;
       if (!this.grounded) this.jumpsUsed = 0;
@@ -301,13 +558,75 @@ export class PlayerController {
     }
   }
 
+  // ------------------------------------------------------------------------
+  // Nado 3D libre dentro de burbujas de agua (Axel a 2.35x)
+  // ------------------------------------------------------------------------
+  private updateSwim(dt: number): void {
+    const bubble = this.world.getBubbleAt(this.pos);
+    if (!bubble) {
+      // Salida propulsada: vuelo libre con la inercia del nado.
+      this.isSwimming = false;
+      this.inFlight = true;
+      this.flightDirected = false;
+      this.flightDest = null;
+      this.flightTime = 0;
+      this.flightVel.copy(this.swimVel).multiplyScalar(SWIM_EXIT_BOOST);
+      return;
+    }
+
+    // Orientación hacia el planeta con mayor atracción.
+    const nearest = findStrongestGravityPlanet(this.pos, this.planets, this.currentPlanet.spec.id);
+    this.currentPlanet = nearest;
+    this._up.copy(this.pos).sub(nearest.centerVec);
+    const upLen = this._up.length();
+    if (upLen > 1e-6) {
+      this.lastUp.copy(this._up.divideScalar(upLen));
+    }
+
+    // Natación 3D hacia donde mira la cámara.
+    this.getCameraOrientation(this._q1);
+    this._forward.set(0, 0, -1).applyQuaternion(this._q1);
+    this._right.set(1, 0, 0).applyQuaternion(this._q1);
+    const inputZ = (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0);
+    const inputX = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
+    this._move.set(0, 0, 0).addScaledVector(this._forward, inputZ).addScaledVector(this._right, inputX);
+    this.isMoving = this._move.lengthSq() > 1e-8;
+
+    const boost = this.swimBoostTimer > 0 ? SWIM_BOOST_MUL : 1;
+    const speed = SWIM_BASE_SPEED * this.profile.swimSpeedMultiplier * boost;
+    if (this.isMoving) {
+      this._move.normalize().multiplyScalar(speed);
+    } else {
+      this._move.set(0, 0, 0);
+    }
+    this.swimVel.lerp(this._move, Math.min(1, dt * 6));
+    this.pos.addScaledVector(this.swimVel, dt);
+    this.walkPhase += dt * (this.isMoving ? 6 : 1.5);
+  }
+
+  private enterSwim(): void {
+    this.isSwimming = true;
+    this.inFlight = false;
+    this.flightDirected = false;
+    this.flightDest = null;
+    this.grounded = false;
+    this.jumpsUsed = 0;
+    this.swimVel.set(0, 0, 0);
+  }
+
+  // ------------------------------------------------------------------------
+  // Vuelo: cinematográfico dirigido (Gravity Shift) o libre (salida de burbuja)
+  // ------------------------------------------------------------------------
   private updateFlight(dt: number): void {
+    if (this.flightDirected && this.flightDest) {
+      this.updateDirectedFlight(dt, this.flightDest);
+      return;
+    }
+
+    // Vuelo libre: física de atracción suave hacia el planeta más cercano
+    // (propulsión de nado: permite encadenar burbujas y planetas).
     this.flightTime += dt;
-    // Durante un Gravity Shift dirigido, la atracción apunta al planeta objetivo
-    // para garantizar el cruce orbital sin quedar atrapado en el planeta de origen.
-    const activeTarget =
-      this.flightTarget ??
-      findStrongestGravityPlanet(this.pos, this.planets, this.currentPlanet.spec.id);
+    const activeTarget = findStrongestGravityPlanet(this.pos, this.planets, this.currentPlanet.spec.id);
     this.currentPlanet = activeTarget;
     const center = activeTarget.centerVec;
 
@@ -315,10 +634,7 @@ export class PlayerController {
     const dist = this._v1.length();
     if (dist > 1e-6) {
       this._v1.divideScalar(dist);
-      // Corrección orbital suave hacia el objetivo para evitar desvíos laterales.
-      const speed = this.flightVel.length();
-      this.flightVel.lerp(this._v2.copy(this._v1).multiplyScalar(Math.max(speed, 50)), Math.min(1, dt * 3.2));
-      this.flightVel.addScaledVector(this._v1, GRAVITY_BASE * 1.4 * dt);
+      this.flightVel.addScaledVector(this._v1, GRAVITY_BASE * FREE_FLIGHT_GRAVITY * dt);
     }
     this.pos.addScaledVector(this.flightVel, dt);
 
@@ -327,50 +643,275 @@ export class PlayerController {
     this._up.divideScalar(Math.max(newDist, 1e-6));
     this.lastUp.copy(this._up);
 
+    if (this.world.getBubbleAt(this.pos)) {
+      this.enterSwim();
+      return;
+    }
+
     if (this.flightTime > 0.12 && newDist <= activeTarget.spec.radius + 0.15) {
-      // Aterrizaje: anclaje a la nueva superficie.
-      this.inFlight = false;
-      this.flightTarget = null;
-      this.flightTime = 0;
-      this.grounded = true;
-      this.altitude = 0;
-      this.vertVel = 0;
-      this.jumpsUsed = 0;
-      this.flightVel.set(0, 0, 0);
-      this.pos.copy(center).addScaledVector(this._up, activeTarget.spec.radius);
+      this.landOn(activeTarget, this._up);
     }
   }
 
-  private tryJump(): void {
-    if (this.inFlight) return;
-    if (this.grounded) {
-      this.vertVel = this.profile.jumpImpulse;
-      this.grounded = false;
-      this.jumpsUsed = 1;
-    } else if (this.jumpsUsed < 2) {
-      // Doble impulso aéreo básico.
-      this.vertVel = this.profile.jumpImpulse * DOUBLE_JUMP_FACTOR;
-      this.jumpsUsed = 2;
+  /**
+   * Interpolación orbital cinematográfica: arco Bezier elevado sobre el origen
+   * del nivel, desaceleración suave (ease-out), rotación progresiva de
+   * `basisQuat` hacia la normal del planeta destino y encuadre de cámara
+   * girando hacia la dirección de viaje para aterrizar de pie.
+   */
+  private updateDirectedFlight(dt: number, target: PlanetRuntime): void {
+    this.flightTime += dt;
+    const t = Math.min(this.flightTime / this.flightDuration, 1);
+    const te = 1 - (1 - t) * (1 - t); // ease-out: desaceleración suave
+    const it = 1 - te;
+
+    this.pos
+      .set(0, 0, 0)
+      .addScaledVector(this.flightStart, it * it)
+      .addScaledVector(this.flightCtrl, 2 * it * te)
+      .addScaledVector(this.flightEnd, te * te);
+
+    // Up radial respecto al planeta destino: aterrizaje de pie garantizado.
+    this._up.copy(this.pos).sub(target.centerVec);
+    const upLen = this._up.length();
+    if (upLen > 1e-6) {
+      this.lastUp.copy(this._up.divideScalar(upLen));
     }
+
+    // Giro cinemático de cámara: yaw/pitch convergen al encuadre frontal.
+    this.updateCinematicFraming(dt);
+
+    // Burbuja intermedia en la ruta: se puede entrar nadando.
+    if (this.world.getBubbleAt(this.pos)) {
+      this.enterSwim();
+      return;
+    }
+
+    if (t >= 1) {
+      this._up.copy(this.flightEnd).sub(target.centerVec).normalize();
+      this.landOn(target, this._up);
+    }
+  }
+
+  /** Encuadre de cámara hacia la dirección de viaje durante el vuelo. */
+  private updateCinematicFraming(dt: number): void {
+    // Tangente de la trayectoria en el aterrizaje (end - ctrl).
+    this._v1.copy(this.flightEnd).sub(this.flightCtrl).normalize();
+    // Proyección al plano tangente del up actual.
+    this._v1.addScaledVector(this.lastUp, -this._v1.dot(this.lastUp));
+    if (this._v1.lengthSq() < 1e-6) return;
+    this._v1.normalize();
+
+    // Forward con yaw 0 en el marco actual de la base.
+    this._v2.set(0, 0, -1).applyQuaternion(this.basisQuat);
+    this._v2.addScaledVector(this.lastUp, -this._v2.dot(this.lastUp));
+    if (this._v2.lengthSq() < 1e-6) return;
+    this._v2.normalize();
+
+    // Ángulo con signo alrededor del up: yaw objetivo para mirar al frente.
+    this._v3.copy(this._v2).cross(this._v1);
+    const targetYaw = Math.atan2(this._v3.dot(this.lastUp), this._v2.dot(this._v1));
+
+    // Interpola por el camino corto.
+    let delta = targetYaw - this.yaw;
+    if (delta > Math.PI) delta -= Math.PI * 2;
+    else if (delta < -Math.PI) delta += Math.PI * 2;
+    this.yaw += delta * Math.min(1, dt * 2.6);
+    if (this.yaw > Math.PI) this.yaw -= Math.PI * 2;
+    else if (this.yaw < -Math.PI) this.yaw += Math.PI * 2;
+
+    this.pitch +=
+      (FLIGHT_LANDING_PITCH - this.pitch) * Math.min(1, dt * 2.6);
+  }
+
+  private landOn(target: PlanetRuntime, up: THREE.Vector3): void {
+    this.currentPlanet = target;
+    this.inFlight = false;
+    this.flightDirected = false;
+    this.flightDest = null;
+    this.flightTime = 0;
+    this.grounded = true;
+    this.altitude = 0;
+    this.vertVel = 0;
+    this.jumpsUsed = 0;
+    this.flightVel.set(0, 0, 0);
+    this.lastUp.copy(up);
+    this.pos
+      .copy(target.centerVec)
+      .addScaledVector(up, target.spec.radius);
   }
 
   private launchToTarget(target: PlanetRuntime): void {
-    // Pequeño despegue radial para salvar obstáculos del planeta de salida.
-    this.pos.addScaledVector(this.lastUp, 1.2);
-    this._v1.copy(target.centerVec).sub(this.pos);
-    const travelDist = Math.max(this._v1.length() - target.spec.radius, 1);
-    this._v1.normalize().addScaledVector(this.lastUp, 0.25).normalize();
-    const speed = THREE.MathUtils.clamp(travelDist * 0.55, 48, 96);
-    this.flightVel.copy(this._v1).multiplyScalar(speed);
-    this.flightTarget = target;
+    this.flightStart.copy(this.pos);
+    this._v1.copy(this.pos).sub(target.centerVec).normalize();
+    this.flightEnd
+      .copy(target.centerVec)
+      .addScaledVector(this._v1, target.spec.radius);
+
+    // Punto de control: arco elevado sobre el origen del nivel (0,0,0).
+    this.flightCtrl.copy(this.flightStart).add(this.flightEnd).multiplyScalar(0.5);
+    const ctrlLen = this.flightCtrl.length();
+    if (ctrlLen > 1e-6) {
+      this.flightCtrl.multiplyScalar((ctrlLen * FLIGHT_ARC_SCALE + FLIGHT_ARC_LIFT) / ctrlLen);
+    }
+
+    const dist = this.flightStart.distanceTo(this.flightEnd);
+    this.flightDuration = THREE.MathUtils.clamp(
+      dist / FLIGHT_SPEED_DIVISOR,
+      FLIGHT_MIN_DURATION,
+      FLIGHT_MAX_DURATION
+    );
     this.flightTime = 0;
+    this.flightDest = target;
+    this.flightDirected = true;
     this.inFlight = true;
     this.grounded = false;
     this.altitude = 0;
     this.vertVel = 0;
     this.jumpsUsed = 0;
+    this.currentPlanet = target;
   }
 
+  // ------------------------------------------------------------------------
+  // Subsuelo de Digger: hundimiento en superficie + cruce del núcleo
+  // ------------------------------------------------------------------------
+  private toggleBurrow(): void {
+    if (!this.profile.canBurrow || this.coreDiveActive) return;
+    if (this.inFlight || this.isSwimming) return;
+    if (!this.grounded && !this.isBurrowing) return;
+    this.isBurrowing = !this.isBurrowing;
+  }
+
+  private startCoreDive(): void {
+    const planet = this.currentPlanet;
+    this.diveStart.copy(this.pos);
+    this._v1.copy(this.pos).sub(planet.centerVec).normalize();
+    this.diveEnd
+      .copy(planet.centerVec)
+      .addScaledVector(this._v1, -planet.spec.radius); // polo opuesto
+    this.diveDuration = (2 * planet.spec.radius) / CORE_DIVE_SPEED;
+    this.diveTime = 0;
+    this.coreDiveActive = true;
+    this.isBurrowing = true;
+    this.grounded = false;
+    this.altitude = 0;
+    this.vertVel = 0;
+    this.jumpsUsed = 0;
+    this.behavior.burrowDistance += 2 * planet.spec.radius;
+  }
+
+  private updateCoreDive(dt: number): void {
+    this.diveTime += dt;
+    const t = Math.min(this.diveTime / this.diveDuration, 1);
+    const smooth = t * t * (3 - 2 * t);
+    this.pos.lerpVectors(this.diveStart, this.diveEnd, smooth);
+
+    const planet = this.currentPlanet;
+    this._up.copy(this.pos).sub(planet.centerVec);
+    const upLen = this._up.length();
+    if (upLen > 1.5) {
+      this.lastUp.copy(this._up.divideScalar(upLen));
+    }
+
+    if (t >= 1) {
+      this.coreDiveActive = false;
+      this.isBurrowing = false;
+      this.pos.copy(this.diveEnd);
+      this.altitude = 0.1;
+      this.vertVel = 5; // saltito de salida en el polo opuesto
+      this.grounded = false;
+      this.jumpsUsed = 0;
+    }
+  }
+
+  // ------------------------------------------------------------------------
+  // Salto, doble impulso y Ancla Gravitatoria
+  // ------------------------------------------------------------------------
+  private tryJump(): void {
+    if (this.isSwimming) {
+      this.swimBoostTimer = SWIM_BOOST_TIME; // propulsión en el agua
+      return;
+    }
+    if (this.inFlight || this.coreDiveActive) return;
+    if (this.grounded) {
+      this.vertVel = this.profile.jumpImpulse;
+      this.grounded = false;
+      this.jumpsUsed = 1;
+    } else if (this.jumpsUsed < 2) {
+      this.vertVel = this.profile.jumpImpulse * DOUBLE_JUMP_FACTOR;
+      this.jumpsUsed = 2;
+    } else {
+      this.tryAnchor();
+    }
+  }
+
+  /**
+   * Ancla Gravitatoria (Espacio en el aire): orbe con haz hasta
+   * `profile.anchorRange` e impulso aéreo adelante/arriba para encadenar
+   * saltos infinitos. Cooldown 0.9s (`anchorCooldownRatio`).
+   */
+  private tryAnchor(): void {
+    if (this.anchorCooldown > 0) return;
+    this.anchorCooldown = ANCHOR_COOLDOWN;
+    getTangentAxes(this.basisQuat, this.yaw, this._forward, this._right);
+    // El alcance del ancla escala con el perfil (Axel 28, Kitsune 18, Digger 14).
+    const strength = this.profile.anchorRange * 0.72;
+    this.anchorBurst
+      .copy(this._forward)
+      .multiplyScalar(strength)
+      .addScaledVector(this.lastUp, 5);
+    this.vertVel = Math.max(this.vertVel, 0) + 6.5;
+    this.anchorFx.scale.z = this.profile.anchorRange / 18;
+    this.anchorFxTimer = ANCHOR_FX_TIME;
+    this.behavior.aerialAttacks++;
+  }
+
+  // ------------------------------------------------------------------------
+  // Estasis, melee, parry y noqueo
+  // ------------------------------------------------------------------------
+  private throwStasis(): void {
+    if (this.world.held === 0) return;
+    this.getAimForward(this._v1);
+    const thrown = this.world.releaseThrow(this._v1, this.lastUp);
+    this.behavior.stasisThrows += thrown;
+    this.breakDisguise();
+  }
+
+  private meleeStrike(): void {
+    this.getMoveForward(this._forward);
+    const hit = this.world.meleeStrike(this.pos, this._forward);
+    if (hit === 'guard') {
+      this.behavior.bruteKills++;
+      this.breakDisguise();
+    }
+  }
+
+  private tryParry(): void {
+    if (this.parryCooldown > 0) return;
+    if (this.inFlight || this.isSwimming || this.coreDiveActive) return;
+    this.parryTimer = PARRY_WINDOW;
+    this.parryCooldown = PARRY_COOLDOWN;
+  }
+
+  private tryKnockout(): void {
+    if (this.inFlight || this.isSwimming || this.coreDiveActive) return;
+    this.getMoveForward(this._forward);
+    if (this.world.tryKnockoutBehind(this.pos)) {
+      this.behavior.stealthKnockouts++;
+      this.isDisguised = true;
+      this.disguiseTimer = DISGUISE_DURATION;
+    }
+  }
+
+  private breakDisguise(): void {
+    if (!this.isDisguised) return;
+    this.isDisguised = false;
+    this.disguiseTimer = 0;
+  }
+
+  // ------------------------------------------------------------------------
+  // Apuntado Gravity Shift y cambio de personaje
+  // ------------------------------------------------------------------------
   /**
    * Selección de planeta apuntado: cono desde la cámara (barato, sin raycaster
    * ni allocations). Devuelve el planeta visible bajo la mira o null.
@@ -398,19 +939,28 @@ export class PlayerController {
 
   private switchCharacter(id: CharacterId): void {
     if (id === this.activeCharacter) return;
+    const nextProfile = GAME_CONSTANTS.CHARACTERS[id];
     const currentModel = this.models.get(this.activeCharacter);
     if (currentModel) currentModel.visible = false;
     const nextModel = this.models.get(id);
     if (nextModel) nextModel.visible = true;
     this.activeCharacter = id;
-    this.profile = GAME_CONSTANTS.CHARACTERS[id];
+    this.profile = nextProfile;
+    if (!nextProfile.canBurrow) this.isBurrowing = false;
   }
 
   private animateLimbs(): void {
     const parts = this.parts.get(this.activeCharacter);
     if (!parts) return;
-    const swing = Math.sin(this.walkPhase) * (this.isMoving ? 0.75 : 0.12);
-    if (this.grounded) {
+    if (this.isSwimming) {
+      // Nado: braceo continuo.
+      const stroke = Math.sin(this.walkPhase * 1.2);
+      parts.leftArm.rotation.x = -1.2 + stroke * 0.9;
+      parts.rightArm.rotation.x = -1.2 - stroke * 0.9;
+      parts.leftLeg.rotation.x = stroke * 0.5;
+      parts.rightLeg.rotation.x = -stroke * 0.5;
+    } else if (this.grounded) {
+      const swing = Math.sin(this.walkPhase) * (this.isMoving ? 0.75 : 0.12);
       parts.leftArm.rotation.x = swing;
       parts.rightArm.rotation.x = -swing;
       parts.leftLeg.rotation.x = -swing;
@@ -427,7 +977,19 @@ export class PlayerController {
   }
 
   dispose(): void {
+    this.root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry?.dispose();
+      const material = mesh.material;
+      if (Array.isArray(material)) {
+        for (const m of material) m.dispose();
+      } else if (material) {
+        material.dispose();
+      }
+    });
     this.root.clear();
+    this.bodyRoot.clear();
     this.models.clear();
     this.parts.clear();
     this.keys.clear();

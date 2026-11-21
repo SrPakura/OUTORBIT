@@ -50,6 +50,17 @@ export interface WaterBubbleSpec {
   radius: number;
 }
 
+/**
+ * Zona de hierba alta sobre un planeta: casquete esférico de briznas instanciadas
+ * que otorga sigilo total (especialmente a Kitsune) a quien esté dentro.
+ */
+export interface GrassZoneSpec {
+  id: string;
+  planetId: string;
+  sphericalDir: [number, number, number];
+  angularRadius: number; // radianes: radio angular del casquete de hierba
+}
+
 export type InteractableKind =
   | 'rock'
   | 'barrel_explosive'
@@ -151,6 +162,7 @@ export interface LevelSpec {
   skyBottomColor: string;
   planets: PlanetSpec[];
   waterBubbles: WaterBubbleSpec[];
+  grassZones?: GrassZoneSpec[];
   objects: WorldObjectSpec[];
   enemies: EnemySpawnSpec[];
   spawnPlanetId: string;

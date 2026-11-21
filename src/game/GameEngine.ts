@@ -12,77 +12,22 @@ import { orientObjectOnSphere } from './math/spherical';
 import { createSpaceBackdrop } from './render/toonMaterials';
 import { buildPlanetModel, buildWarpPortal } from './render/proceduralModels';
 import { PlayerController } from './entities/PlayerController';
+import { WorldObjectsManager, type WorldPlayerState } from './entities/WorldObjects';
+import { LEVELS, createLevelObjectives } from './levels/levelDefinitions';
 
 // ============================================================================
-// Nivel inicial: Prólogo (Luna Tutorial + Satélite Cristal)
+// Constantes de cámara y portal
 // ============================================================================
-const PROLOGUE_LEVEL: LevelSpec = {
-  id: 'prologue',
-  order: 0,
-  title: 'PRÓLOGO',
-  subtitle: 'Luna Tutorial · Satélite Cristal',
-  skyTopColor: '#05010f',
-  skyBottomColor: '#6d28d9',
-  planets: [
-    {
-      id: 'luna-tutorial',
-      name: 'Luna Tutorial',
-      biome: 'tutorial',
-      center: [0, 0, 0],
-      radius: 60,
-      gravityStrength: 1.0,
-      surfaceColor: '#cbd5e1',
-      patchColor: '#94a3b8',
-      atmosphereColor: '#93c5fd',
-      hasIcePatches: true,
-    },
-    {
-      id: 'satelite-cristal',
-      name: 'Satélite Cristal',
-      biome: 'tutorial',
-      center: [235, 60, -120],
-      radius: 26,
-      gravityStrength: 1.35,
-      surfaceColor: '#7dd3fc',
-      patchColor: '#a78bfa',
-      atmosphereColor: '#c4b5fd',
-      hasOrbitalRings: true,
-      ringColor: '#c4b5fd',
-    },
-  ],
-  waterBubbles: [],
-  objects: [],
-  enemies: [],
-  spawnPlanetId: 'luna-tutorial',
-  spawnDir: [0.25, 0.85, 0.45],
-  portalPlanetId: 'satelite-cristal',
-  portalDir: [0.35, 0.9, 0.25],
-  objectiveSummary: 'Domina la gravedad esférica y usa GRAVITY SHIFT para alcanzar el portal.',
-};
-
-const PROLOGUE_OBJECTIVES: LevelObjective[] = [
-  {
-    id: 'explore',
-    description: 'Muévete con WASD y salta con ESPACIO',
-    completed: false,
-    currentCount: 0,
-    targetCount: 1,
-  },
-  {
-    id: 'gravity-shift',
-    description: 'GRAVITY SHIFT (Clic Derecho): salta hasta el Satélite Cristal',
-    completed: false,
-    currentCount: 0,
-    targetCount: 1,
-  },
-  {
-    id: 'portal',
-    description: 'Alcanza el portal orbital',
-    completed: false,
-    currentCount: 0,
-    targetCount: 1,
-  },
-];
+const HUD_INTERVAL = 1 / 15;
+const CAMERA_BASE_DIST = 10.5;
+const CAMERA_MIN_DIST = 5;
+const CAMERA_MAX_DIST = 20;
+const CAMERA_DISTANCE_SHIFT = 5.2;
+const CAMERA_DISTANCE_CORE_DIVE = 6.5;
+const CAMERA_FOV = 70;
+const CAMERA_FOV_SHIFT = 52;
+const PORTAL_TRIGGER_RADIUS = 6;
+const TRANSITION_DURATION = 2.4;
 
 const DEFAULT_ADAPTATION: PlanetAdaptationConfig = {
   baseAlertLevel: 0,
@@ -96,32 +41,11 @@ const DEFAULT_ADAPTATION: PlanetAdaptationConfig = {
   summaryReasons: [],
 };
 
-const EMPTY_BEHAVIOR: PlayerBehaviorVector = {
-  stealthKnockouts: 0,
-  disguiseTimeSec: 0,
-  alarmsTriggered: 0,
-  bruteKills: 0,
-  aerialAttacks: 0,
-  burrowDistance: 0,
-  burrowTimeSec: 0,
-  stasisThrows: 0,
-  parriesLanded: 0,
-  damageTaken: 0,
-  totalTimeSec: 0,
-};
-
-const HUD_INTERVAL = 1 / 15;
-const CAMERA_DISTANCE = 8.5;
-const CAMERA_DISTANCE_SHIFT = 5.2;
-const CAMERA_FOV = 70;
-const CAMERA_FOV_SHIFT = 52;
-const PORTAL_TRIGGER_RADIUS = 6;
-
 /**
- * Orquestador Three.js del Hito 1: monta el nivel prólogo, ejecuta el loop
- * principal, gestiona Pointer Lock / pausa y emite HudSnapshot al callback
- * suscrito (máximo ~15 Hz, o inmediato ante cambios discretos) para que React
- * no se re-renderice a la frecuencia del render.
+ * Orquestador Three.js: monta los niveles de la campaña (Prólogo + Verdant),
+ * ejecuta el loop principal, gestiona Pointer Lock / pausa / transiciones de
+ * planeta y emite HudSnapshot al callback suscrito (máximo ~15 Hz, o inmediato
+ * ante cambios discretos) para que React no se re-renderice por frame.
  */
 export class GameEngine {
   private readonly canvas: HTMLCanvasElement;
@@ -129,22 +53,44 @@ export class GameEngine {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.PerspectiveCamera;
-  private readonly player: PlayerController;
   private readonly planets: PlanetRuntime[] = [];
   private readonly planetTicks: Array<(dt: number) => void> = [];
-  private readonly backdrop: { update: (dt: number) => void; dispose: () => void };
-  private readonly portalPos = new THREE.Vector3();
-  private readonly objectives: LevelObjective[] = PROLOGUE_OBJECTIVES.map((o) => ({ ...o }));
+  private backdrop: { update: (dt: number) => void; dispose: () => void } | null = null;
+
+  // Estado por nivel.
+  private levelIndex = 0;
+  private level: LevelSpec = LEVELS[0];
+  private levelGroup: THREE.Group | null = null;
+  private world: WorldObjectsManager | null = null;
+  private player: PlayerController | null = null;
+  private objectives: LevelObjective[] = [];
+  private portalPos = new THREE.Vector3();
+  private portalTick: ((dt: number) => void) | null = null;
 
   private rafId = 0;
   private lastTime = 0;
   private elapsed = 0;
   private timeScale = 1;
-  private camDist = CAMERA_DISTANCE;
+  private camDist = CAMERA_BASE_DIST;
+  private baseCamDist = CAMERA_BASE_DIST;
   private phase: HudSnapshot['phase'] = 'playing';
   private pointerLocked = false;
   private hudAccum = 0;
-  private hudKey = '';
+  private hudKey = 0;
+  private transitionTimer = 0;
+
+  // Estado del jugador que el mundo necesita (preasignado, sin GC).
+  private readonly worldState: WorldPlayerState = {
+    pos: new THREE.Vector3(),
+    up: new THREE.Vector3(),
+    forward: new THREE.Vector3(),
+    disguised: false,
+    inGrass: false,
+    burrowing: false,
+    swimming: false,
+    parryActive: false,
+    stealthMul: 1,
+  };
 
   // Temporales preasignados (sin GC en el loop)
   private readonly _camQuat = new THREE.Quaternion();
@@ -157,10 +103,14 @@ export class GameEngine {
   private readonly boundMouseMove = (e: MouseEvent) => this.onMouseMove(e);
   private readonly boundMouseDown = (e: MouseEvent) => this.onMouseDown(e);
   private readonly boundMouseUp = (e: MouseEvent) => this.onMouseUp(e);
+  private readonly boundWheel = (e: WheelEvent) => this.onWheel(e);
   private readonly boundClick = () => this.requestPointerLock();
   private readonly boundContextMenu = (e: Event) => e.preventDefault();
   private readonly boundPointerLockChange = () => this.onPointerLockChange();
   private readonly boundResize = () => this.onResize();
+  private readonly boundPlayerDamage = (amount: number, px: number, py: number, pz: number) => {
+    this.player?.takeDamage(amount, px, py, pz);
+  };
 
   constructor(canvas: HTMLCanvasElement, onHudSnapshot: (snapshot: HudSnapshot) => void) {
     this.canvas = canvas;
@@ -177,30 +127,14 @@ export class GameEngine {
       2500
     );
 
-    this.scene.background = new THREE.Color(PROLOGUE_LEVEL.skyTopColor);
-    this.backdrop = createSpaceBackdrop(
-      this.scene,
-      PROLOGUE_LEVEL.skyTopColor,
-      PROLOGUE_LEVEL.skyBottomColor
-    );
-
     this.setupLights();
-    this.buildLevel();
-
-    this.player = new PlayerController(
-      this.planets,
-      this.camera,
-      PROLOGUE_LEVEL.spawnPlanetId,
-      new THREE.Vector3(...PROLOGUE_LEVEL.spawnDir)
-    );
-    this.scene.add(this.player.root);
-
+    this.loadLevel(0);
     this.attachListeners();
     this.emitHud();
   }
 
   // --------------------------------------------------------------------------
-  // Construcción del nivel
+  // Construcción / reconstrucción del nivel activo
   // --------------------------------------------------------------------------
   private setupLights(): void {
     const sun = new THREE.DirectionalLight(0xfff2d8, 2.4);
@@ -215,21 +149,66 @@ export class GameEngine {
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.32));
   }
 
-  private buildLevel(): void {
-    for (const spec of PROLOGUE_LEVEL.planets) {
+  private disposeLevel(): void {
+    if (this.player) {
+      this.scene.remove(this.player.root);
+      this.player.dispose();
+      this.player = null;
+    }
+    if (this.levelGroup) {
+      this.levelGroup.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.geometry?.dispose();
+        const material = mesh.material;
+        if (Array.isArray(material)) {
+          for (const m of material) m.dispose();
+        } else if (material) {
+          material.dispose();
+        }
+      });
+      this.scene.remove(this.levelGroup);
+      this.levelGroup = null;
+    }
+    if (this.backdrop) {
+      this.backdrop.dispose();
+      this.backdrop = null;
+    }
+    this.world?.clear();
+    this.world = null;
+    this.planets.length = 0;
+    this.planetTicks.length = 0;
+    this.portalTick = null;
+  }
+
+  private loadLevel(index: number): void {
+    this.disposeLevel();
+    this.levelIndex = index;
+    this.level = LEVELS[index];
+
+    this.scene.background = new THREE.Color(this.level.skyTopColor);
+    this.backdrop = createSpaceBackdrop(
+      this.scene,
+      this.level.skyTopColor,
+      this.level.skyBottomColor
+    );
+
+    this.levelGroup = new THREE.Group();
+    this.levelGroup.name = `level-${this.level.id}`;
+    this.scene.add(this.levelGroup);
+
+    for (const spec of this.level.planets) {
       const { group, animTick } = buildPlanetModel(spec);
-      this.scene.add(group);
+      this.levelGroup.add(group);
       this.planets.push({ spec, mesh: group, centerVec: new THREE.Vector3(...spec.center) });
       this.planetTicks.push(animTick);
     }
 
-    // Portal de victoria sobre el planeta destino.
-    const portalPlanet = this.planets.find(
-      (p) => p.spec.id === PROLOGUE_LEVEL.portalPlanetId
-    );
+    // Portal de fin de nivel sobre el planeta destino.
+    const portalPlanet = this.planets.find((p) => p.spec.id === this.level.portalPlanetId);
     if (portalPlanet) {
       const portal = buildWarpPortal();
-      const portalDir = new THREE.Vector3(...PROLOGUE_LEVEL.portalDir);
+      const portalDir = new THREE.Vector3(...this.level.portalDir);
       orientObjectOnSphere(
         portal.group,
         portalPlanet.centerVec,
@@ -237,9 +216,24 @@ export class GameEngine {
         portalPlanet.spec.radius + 2.2
       );
       this.portalPos.copy(portal.group.position);
-      this.scene.add(portal.group);
-      this.planetTicks.push(portal.animTick);
+      this.levelGroup.add(portal.group);
+      this.portalTick = portal.animTick;
     }
+
+    // Objetos del mundo: agarrables, generadores, láser, burbujas, hierba, guardias.
+    this.world = new WorldObjectsManager(this.levelGroup, this.planets);
+    this.world.build(this.level);
+
+    this.objectives = createLevelObjectives(this.level.id);
+
+    this.player = new PlayerController(
+      this.planets,
+      this.camera,
+      this.world,
+      this.level.spawnPlanetId,
+      new THREE.Vector3(...this.level.spawnDir)
+    );
+    this.scene.add(this.player.root);
   }
 
   // --------------------------------------------------------------------------
@@ -263,20 +257,37 @@ export class GameEngine {
     dtReal = Math.min(Math.max(dtReal, 0), GAME_CONSTANTS.FIXED_MAX_DT);
 
     if (this.phase === 'playing') {
-      // Cámara lenta durante Gravity Shift.
-      const targetScale = this.player.gravityShifting
-        ? GAME_CONSTANTS.GRAVITY_SHIFT_TIME_SCALE
-        : 1;
-      this.timeScale += (targetScale - this.timeScale) * Math.min(1, dtReal * 10);
-      const dtSim = dtReal * this.timeScale;
+      const player = this.player;
+      if (player) {
+        // Cámara lenta durante Gravity Shift.
+        const targetScale = player.gravityShifting
+          ? GAME_CONSTANTS.GRAVITY_SHIFT_TIME_SCALE
+          : 1;
+        this.timeScale += (targetScale - this.timeScale) * Math.min(1, dtReal * 10);
+        const dtSim = dtReal * this.timeScale;
 
-      this.player.update(dtSim);
-      for (const animTick of this.planetTicks) animTick(dtSim);
-      this.backdrop.update(dtSim);
-      this.elapsed += dtSim;
+        player.update(dtSim);
+        this.syncWorldState();
+        this.world?.update(dtSim, this.worldState, this.boundPlayerDamage);
+        this.elapsed += dtSim;
+      }
+
+      for (const animTick of this.planetTicks) animTick(dtReal);
+      if (this.portalTick) this.portalTick(dtReal);
+      this.backdrop?.update(dtReal);
 
       this.updateObjectives();
       this.checkVictory();
+      this.checkGameOver();
+    } else if (this.phase === 'planet_transition') {
+      // Congelado cinemático entre niveles; al terminar carga el siguiente.
+      this.transitionTimer -= dtReal;
+      this.backdrop?.update(dtReal);
+      if (this.transitionTimer <= 0) {
+        this.loadLevel(this.levelIndex + 1);
+        this.phase = 'playing';
+        this.emitHud();
+      }
     }
 
     this.updateCamera(dtReal);
@@ -284,27 +295,50 @@ export class GameEngine {
     this.updateHudEmission(dtReal);
   };
 
+  private syncWorldState(): void {
+    const player = this.player;
+    const world = this.world;
+    if (!player || !world) return;
+    this.worldState.pos.copy(player.position);
+    this.worldState.up.copy(player.up);
+    player.getMoveForward(this.worldState.forward);
+    this.worldState.disguised = player.isDisguised;
+    this.worldState.burrowing = player.isBurrowing;
+    this.worldState.swimming = player.isSwimming;
+    this.worldState.parryActive = player.parryWindowActive;
+    this.worldState.stealthMul = player.stealthMultiplier;
+    this.worldState.inGrass = world.isInGrass(player.position, player.planet);
+  }
+
   private updateCamera(dtReal: number): void {
     const player = this.player;
+    if (!player) return;
     player.getCameraOrientation(this._camQuat);
     this.camera.quaternion.copy(this._camQuat);
     this._camDir.set(0, 0, -1).applyQuaternion(this._camQuat);
     player.getHeadPosition(this._camPos);
 
-    // Zoom suave al mantener clic derecho (Gravity Shift).
-    const targetDist = player.gravityShifting ? CAMERA_DISTANCE_SHIFT : CAMERA_DISTANCE;
+    // Zoom: rueda del ratón (5-20) + acercamiento en Gravity Shift / cruce de núcleo.
+    const targetDist = player.gravityShifting
+      ? CAMERA_DISTANCE_SHIFT
+      : player.coreDiving
+        ? CAMERA_DISTANCE_CORE_DIVE
+        : this.baseCamDist;
     this.camDist += (targetDist - this.camDist) * Math.min(1, dtReal * 6);
     this.camera.position.copy(this._camPos).addScaledVector(this._camDir, -this.camDist);
 
-    // No atravesar la superficie del planeta actual.
-    const planet = player.planet;
-    this._v1.copy(this.camera.position).sub(planet.centerVec);
-    const camDistToCenter = this._v1.length();
-    const minDist = planet.spec.radius + 0.9;
-    if (camDistToCenter < minDist && camDistToCenter > 1e-6) {
-      this.camera.position
-        .copy(planet.centerVec)
-        .addScaledVector(this._v1.divideScalar(camDistToCenter), minDist);
+    // Anti-clipping contra TODOS los planetas del nivel: la cámara jamás
+    // puede quedar por debajo de ninguna superficie, ni en pleno vuelo.
+    for (let i = 0; i < this.planets.length; i++) {
+      const planet = this.planets[i];
+      this._v1.copy(this.camera.position).sub(planet.centerVec);
+      const camDistToCenter = this._v1.length();
+      const minDist = planet.spec.radius + 1.5;
+      if (camDistToCenter < minDist && camDistToCenter > 1e-6) {
+        this.camera.position
+          .copy(planet.centerVec)
+          .addScaledVector(this._v1.divideScalar(camDistToCenter), minDist);
+      }
     }
 
     const targetFov = player.gravityShifting ? CAMERA_FOV_SHIFT : CAMERA_FOV;
@@ -314,29 +348,81 @@ export class GameEngine {
     }
   }
 
+  // --------------------------------------------------------------------------
+  // Objetivos, victoria y derrota
+  // --------------------------------------------------------------------------
   private updateObjectives(): void {
-    const explore = this.objectives[0];
-    if (!explore.completed && this.player.walkDistance >= 15) {
-      explore.currentCount = 1;
-      explore.completed = true;
-    }
-    const shift = this.objectives[1];
-    const arrived = this.player.planet.spec.id === PROLOGUE_LEVEL.portalPlanetId;
-    if (!shift.completed && arrived) {
-      shift.currentCount = 1;
-      shift.completed = true;
+    const player = this.player;
+    if (!player) return;
+
+    if (this.level.id === 'prologue') {
+      const explore = this.objectives[0];
+      if (explore && !explore.completed && player.walkDistance >= 15) {
+        explore.currentCount = 1;
+        explore.completed = true;
+      }
+      const shift = this.objectives[1];
+      if (
+        shift &&
+        !shift.completed &&
+        player.planet.spec.id === this.level.portalPlanetId
+      ) {
+        shift.currentCount = 1;
+        shift.completed = true;
+      }
+    } else {
+      // Verdant: generadores destruidos + llegada al islote.
+      const generators = this.objectives.find((o) => o.id === 'generators');
+      if (generators && !generators.completed) {
+        generators.currentCount = this.world?.generatorsDestroyed ?? 0;
+        if (generators.currentCount >= generators.targetCount) {
+          generators.completed = true;
+        }
+      }
+      const bubbles = this.objectives.find((o) => o.id === 'bubbles');
+      if (
+        bubbles &&
+        !bubbles.completed &&
+        player.planet.spec.id === this.level.portalPlanetId
+      ) {
+        bubbles.currentCount = 1;
+        bubbles.completed = true;
+      }
     }
   }
 
   private checkVictory(): void {
     if (this.phase !== 'playing') return;
-    if (this.player.planet.spec.id !== PROLOGUE_LEVEL.portalPlanetId) return;
-    if (this.player.position.distanceTo(this.portalPos) > PORTAL_TRIGGER_RADIUS) return;
+    const player = this.player;
+    if (!player) return;
+    if (player.planet.spec.id !== this.level.portalPlanetId) return;
+    if (player.position.distanceTo(this.portalPos) > PORTAL_TRIGGER_RADIUS) return;
 
-    this.phase = 'victory';
-    const portalObjective = this.objectives[2];
-    portalObjective.currentCount = 1;
-    portalObjective.completed = true;
+    const portalObjective = this.objectives.find((o) => o.id === 'portal');
+    if (portalObjective) {
+      portalObjective.currentCount = 1;
+      portalObjective.completed = true;
+    }
+
+    if (this.levelIndex >= LEVELS.length - 1) {
+      // Último nivel del hito: pantalla de hito completado.
+      this.phase = 'victory';
+      if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+      this.emitHud();
+    } else {
+      // Cruce de portal: transición cinemática al siguiente planeta.
+      this.phase = 'planet_transition';
+      this.transitionTimer = TRANSITION_DURATION;
+      this.emitHud();
+    }
+  }
+
+  private checkGameOver(): void {
+    if (this.phase !== 'playing') return;
+    const player = this.player;
+    if (!player || player.hp > 0) return;
+    this.phase = 'game_over';
+    this.timeScale = 1;
     if (document.pointerLockElement === this.canvas) document.exitPointerLock();
     this.emitHud();
   }
@@ -344,17 +430,50 @@ export class GameEngine {
   // --------------------------------------------------------------------------
   // HUD: emisión limitada (~15 Hz) + inmediata en cambios discretos
   // --------------------------------------------------------------------------
+  private computePromptKind(): number {
+    const player = this.player;
+    const world = this.world;
+    if (!player || !world) return 0;
+    if (world.knockoutTargetNear(player.position)) return 1;
+    if (world.guardAttackingNear(player.position)) return 2;
+    if (world.grabbableNear(player.position)) return 3;
+    if (
+      player.characterId === 'digger' &&
+      player.isGrounded &&
+      !player.isBurrowing &&
+      !player.isInFlight
+    ) {
+      return 4;
+    }
+    return 0;
+  }
+
   private updateHudEmission(dtReal: number): void {
-    const targetName = this.player.gravityTarget?.spec.name ?? '';
-    const key = [
-      this.phase,
-      this.player.characterId,
-      this.player.planet.spec.name,
-      targetName,
-      this.player.gravityShifting ? 1 : 0,
-      this.pointerLocked ? 1 : 0,
-      this.objectives.filter((o) => o.completed).length,
-    ].join('|');
+    const player = this.player;
+    const world = this.world;
+    if (!player || !world) return;
+
+    // Clave numérica discreta (sin allocations por frame).
+    let completed = 0;
+    for (let i = 0; i < this.objectives.length; i++) {
+      if (this.objectives[i].completed) completed++;
+    }
+    let key = this.levelIndex * 7 + this.phaseCode();
+    key = key * 31 + (player.characterId === 'kitsune' ? 0 : player.characterId === 'digger' ? 1 : 2);
+    key = key * 31 + this.planets.indexOf(player.planet);
+    key = key * 31 + (player.gravityTarget ? this.planets.indexOf(player.gravityTarget) + 2 : 0);
+    key = key * 31 + (player.gravityShifting ? 1 : 0);
+    key = key * 31 + (this.pointerLocked ? 1 : 0);
+    key = key * 31 + completed;
+    key = key * 31 + (player.isDisguised ? 1 : 0);
+    key = key * 31 + (player.isBurrowing ? 1 : 0);
+    key = key * 31 + (player.isSwimming ? 1 : 0);
+    key = key * 31 + (player.parryWindowActive ? 1 : 0);
+    key = key * 31 + world.held;
+    key = key * 31 + player.hp;
+    key = key * 31 + world.generatorsDestroyed;
+    key = key * 31 + (world.anyGuardInCombat() ? 1 : 0);
+    key = key * 31 + this.computePromptKind();
 
     if (key !== this.hudKey) {
       this.hudKey = key;
@@ -368,32 +487,83 @@ export class GameEngine {
     }
   }
 
+  private phaseCode(): number {
+    switch (this.phase) {
+      case 'playing':
+        return 0;
+      case 'paused':
+        return 1;
+      case 'planet_transition':
+        return 2;
+      case 'game_over':
+        return 3;
+      case 'victory':
+        return 4;
+      default:
+        return 5;
+    }
+  }
+
   private emitHud(): void {
+    const player = this.player;
+    const world = this.world;
+    if (!player || !world) return;
+
+    // Durante la transición se anuncia el nivel entrante.
+    const announceIndex =
+      this.phase === 'planet_transition' && this.levelIndex < LEVELS.length - 1
+        ? this.levelIndex + 1
+        : this.levelIndex;
+    const announced = LEVELS[announceIndex];
+
+    let prompt: string | null = null;
+    switch (this.computePromptKind()) {
+      case 1:
+        prompt = '[E] Noquear y robar uniforme';
+        break;
+      case 2:
+        prompt = '[F/Q] ¡PARRY AHORA!';
+        break;
+      case 3:
+        prompt = '[CLIC IZQ.] Mantén pulsado: Campo de Estasis';
+        break;
+      case 4:
+        prompt = '[SHIFT] Subsuelo · [ESPACIO] Cruzar el núcleo';
+        break;
+      default:
+        prompt = null;
+    }
+
+    const behavior: PlayerBehaviorVector = {
+      ...player.behavior,
+      totalTimeSec: this.elapsed,
+    };
+
     this.onHudSnapshot({
       phase: this.phase,
-      levelId: PROLOGUE_LEVEL.id,
-      levelTitle: `${PROLOGUE_LEVEL.title} — ${PROLOGUE_LEVEL.subtitle}`,
-      activeCharacter: this.player.characterId,
+      levelId: announced.id,
+      levelTitle: `${announced.title} — ${announced.subtitle}`,
+      activeCharacter: player.characterId,
       unlockedCharacters: ['kitsune', 'digger', 'axel'],
-      hp: this.player.hp,
+      hp: player.hp,
       maxHp: GAME_CONSTANTS.PLAYER_MAX_HP,
-      isDisguised: false,
+      isDisguised: player.isDisguised,
       suspicionRatio: 0,
-      globalAlert: false,
-      isGravityShifting: this.player.gravityShifting,
-      gravityTargetName: this.player.gravityTarget?.spec.name ?? null,
-      stasisHeldCount: 0,
-      isBurrowing: false,
-      isSwimming: false,
-      anchorCooldownRatio: 0,
-      parryWindowActive: false,
-      activePlanetName: this.player.planet.spec.name,
+      globalAlert: world.anyGuardInCombat(),
+      isGravityShifting: player.gravityShifting,
+      gravityTargetName: player.gravityTarget?.spec.name ?? null,
+      stasisHeldCount: world.held,
+      isBurrowing: player.isBurrowing,
+      isSwimming: player.isSwimming,
+      anchorCooldownRatio: player.anchorCooldownRatio,
+      parryWindowActive: player.parryWindowActive,
+      activePlanetName: player.planet.spec.name,
       objectives: this.objectives.map((o) => ({ ...o })),
       elapsedRunSec: this.elapsed,
       pointerLocked: this.pointerLocked,
-      interactionPrompt: null,
+      interactionPrompt: prompt,
       adaptation: { ...DEFAULT_ADAPTATION },
-      behaviorVector: { ...EMPTY_BEHAVIOR, totalTimeSec: this.elapsed },
+      behaviorVector: behavior,
       bossHpRatio: null,
       bossAdaptedTo: null,
     });
@@ -406,6 +576,7 @@ export class GameEngine {
     window.addEventListener('keydown', this.boundKeyDown);
     window.addEventListener('keyup', this.boundKeyUp);
     window.addEventListener('resize', this.boundResize);
+    window.addEventListener('wheel', this.boundWheel, { passive: true });
     document.addEventListener('pointerlockchange', this.boundPointerLockChange);
     document.addEventListener('mousemove', this.boundMouseMove);
     document.addEventListener('mousedown', this.boundMouseDown);
@@ -418,6 +589,7 @@ export class GameEngine {
     window.removeEventListener('keydown', this.boundKeyDown);
     window.removeEventListener('keyup', this.boundKeyUp);
     window.removeEventListener('resize', this.boundResize);
+    window.removeEventListener('wheel', this.boundWheel);
     document.removeEventListener('pointerlockchange', this.boundPointerLockChange);
     document.removeEventListener('mousemove', this.boundMouseMove);
     document.removeEventListener('mousedown', this.boundMouseDown);
@@ -430,31 +602,41 @@ export class GameEngine {
     if (e.repeat) return;
     if (this.phase !== 'playing') return;
     if (e.code === 'Space') e.preventDefault();
-    this.player.handleKey(e.code, true);
+    this.player?.handleKey(e.code, true);
   }
 
   private onKeyUp(e: KeyboardEvent): void {
     if (this.phase !== 'playing') return;
-    this.player.handleKey(e.code, false);
+    this.player?.handleKey(e.code, false);
   }
 
   private onMouseMove(e: MouseEvent): void {
     if (!this.pointerLocked || this.phase !== 'playing') return;
-    this.player.handleMouseMove(e.movementX, e.movementY);
+    this.player?.handleMouseMove(e.movementX, e.movementY);
   }
 
   private onMouseDown(e: MouseEvent): void {
     if (!this.pointerLocked || this.phase !== 'playing') return;
-    this.player.handleMouseButton(e.button, true);
+    this.player?.handleMouseButton(e.button, true);
   }
 
   private onMouseUp(e: MouseEvent): void {
     if (this.phase !== 'playing') return;
-    this.player.handleMouseButton(e.button, false);
+    this.player?.handleMouseButton(e.button, false);
+  }
+
+  /** Zoom con la rueda del ratón entre 5 y 20 unidades. */
+  private onWheel(e: WheelEvent): void {
+    if (this.phase !== 'playing') return;
+    this.baseCamDist = THREE.MathUtils.clamp(
+      this.baseCamDist + e.deltaY * 0.01,
+      CAMERA_MIN_DIST,
+      CAMERA_MAX_DIST
+    );
   }
 
   private requestPointerLock(): void {
-    if (this.phase === 'victory') return;
+    if (this.phase === 'victory' || this.phase === 'game_over') return;
     if (document.pointerLockElement !== this.canvas) {
       try {
         const lock = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined;
@@ -473,7 +655,7 @@ export class GameEngine {
       // Escape / pérdida de Pointer Lock => pausa.
       this.phase = 'paused';
       this.timeScale = 1;
-      this.player.clearTransientInput();
+      this.player?.clearTransientInput();
     }
     this.emitHud();
   }
@@ -494,8 +676,7 @@ export class GameEngine {
     cancelAnimationFrame(this.rafId);
     this.detachListeners();
     if (document.pointerLockElement === this.canvas) document.exitPointerLock();
-    this.player.dispose();
-    this.backdrop.dispose();
+    this.disposeLevel();
     this.scene.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh) return;

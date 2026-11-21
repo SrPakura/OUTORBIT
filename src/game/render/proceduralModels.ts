@@ -83,12 +83,16 @@ function buildEyes(head: THREE.Group): void {
 }
 
 function buildMuzzle(head: THREE.Group, palette: CharacterPalette): void {
-  const muzzle = toonMesh(new THREE.SphereGeometry(0.3, 16, 12), palette.secondary, 0.02);
+  const muzzle = toonMesh(new THREE.SphereGeometry(0.3, 16, 12), palette.secondary, 0.014);
   muzzle.position.set(0, -0.12, 0.36);
   muzzle.scale.set(1.1, 0.85, 0.9);
   head.add(muzzle);
 
-  const nose = toonMesh(new THREE.SphereGeometry(0.08, 10, 8), palette.accent, 0.012);
+  // Detalle pequeño: sin contorno para evitar manchas de tinta.
+  const nose = new THREE.Mesh(
+    new THREE.SphereGeometry(0.08, 10, 8),
+    createToonMaterial(palette.accent)
+  );
   nose.position.set(0, -0.05, 0.62);
   head.add(nose);
 }
@@ -107,7 +111,7 @@ function buildLimb(
   const capsule = toonMesh(
     new THREE.CapsuleGeometry(radius, length, 6, 10),
     color,
-    radius * 0.35
+    THREE.MathUtils.clamp(radius * 0.14, 0.012, 0.018)
   );
   capsule.position.y = -(length / 2 + radius) * 0.6;
   limb.add(capsule);
@@ -119,7 +123,7 @@ function buildKitsuneHeadExtras(head: THREE.Group, palette: CharacterPalette): v
   const earGeometry = new THREE.ConeGeometry(0.16, 0.38, 8);
   const innerGeometry = new THREE.ConeGeometry(0.09, 0.22, 8);
   for (const side of [-1, 1]) {
-    const ear = toonMesh(earGeometry, palette.primary, 0.03);
+    const ear = toonMesh(earGeometry, palette.primary, 0.014);
     ear.position.set(0.28 * side, 0.52, 0);
     ear.rotation.z = -0.28 * side;
     head.add(ear);
@@ -135,14 +139,14 @@ function buildDiggerHeadExtras(head: THREE.Group): void {
   const helmet = toonMesh(
     new THREE.SphereGeometry(0.56, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2),
     '#facc15',
-    0.03
+    0.016
   );
   helmet.position.y = 0.06;
   head.add(helmet);
   const brim = toonMesh(
     new THREE.CylinderGeometry(0.62, 0.62, 0.05, 18),
     '#eab308',
-    0.02
+    0.014
   );
   brim.position.set(0, 0.08, 0);
   head.add(brim);
@@ -179,18 +183,18 @@ function buildTail(id: CharacterId, palette: CharacterPalette): THREE.Group {
       [0, 0.62, -0.88, 0.15, palette.secondary],
     ];
     for (const [x, y, z, r, color] of segments) {
-      const ball = toonMesh(new THREE.SphereGeometry(r, 14, 10), color, r * 0.3);
+      const ball = toonMesh(new THREE.SphereGeometry(r, 14, 10), color, 0.014);
       ball.position.set(x, y, z);
       tail.add(ball);
     }
   } else if (id === 'digger') {
     // Cola corta de topo
-    const stub = toonMesh(new THREE.SphereGeometry(0.14, 12, 8), palette.secondary, 0.03);
+    const stub = toonMesh(new THREE.SphereGeometry(0.14, 12, 8), palette.secondary, 0.014);
     stub.position.set(0, 0.4, -0.4);
     tail.add(stub);
   } else {
     // Cola plana de nutria
-    const paddle = toonMesh(new THREE.SphereGeometry(0.22, 14, 10), palette.primary, 0.035);
+    const paddle = toonMesh(new THREE.SphereGeometry(0.22, 14, 10), palette.primary, 0.014);
     paddle.position.set(0, 0.38, -0.55);
     paddle.scale.set(0.7, 0.28, 1.5);
     tail.add(paddle);
@@ -202,18 +206,22 @@ function buildNeckwear(id: CharacterId, palette: CharacterPalette): THREE.Group 
   const neckwear = new THREE.Group();
   if (id === 'kitsune') {
     // Pañuelo rojo
-    const scarf = toonMesh(new THREE.TorusGeometry(0.3, 0.08, 10, 20), '#dc2626', 0.025);
+    const scarf = toonMesh(new THREE.TorusGeometry(0.3, 0.08, 10, 20), '#dc2626', 0.014);
     scarf.rotation.x = Math.PI / 2;
     neckwear.add(scarf);
-    const knot = toonMesh(new THREE.SphereGeometry(0.1, 10, 8), '#b91c1c', 0.02);
+    // Detalle pequeño: sin contorno.
+    const knot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.1, 10, 8),
+      createToonMaterial('#b91c1c')
+    );
     knot.position.set(0.22, -0.02, 0.2);
     neckwear.add(knot);
   } else if (id === 'axel') {
     // Bufanda cian con extremo colgante
-    const scarf = toonMesh(new THREE.TorusGeometry(0.3, 0.08, 10, 20), '#22d3ee', 0.025);
+    const scarf = toonMesh(new THREE.TorusGeometry(0.3, 0.08, 10, 20), '#22d3ee', 0.014);
     scarf.rotation.x = Math.PI / 2;
     neckwear.add(scarf);
-    const tailCloth = toonMesh(new THREE.BoxGeometry(0.16, 0.42, 0.06), '#06b6d4', 0.02);
+    const tailCloth = toonMesh(new THREE.BoxGeometry(0.16, 0.42, 0.06), '#06b6d4', 0.014);
     tailCloth.position.set(0.16, -0.24, -0.18);
     tailCloth.rotation.x = -0.3;
     neckwear.add(tailCloth);
@@ -235,7 +243,7 @@ export function buildCharacterModel(id: CharacterId): THREE.Group {
   // --- Cuerpo ---
   const body = new THREE.Group();
   body.name = 'body';
-  const torso = toonMesh(new THREE.CapsuleGeometry(0.34, 0.34, 8, 14), palette.primary, 0.05);
+  const torso = toonMesh(new THREE.CapsuleGeometry(0.34, 0.34, 8, 14), palette.primary, 0.016);
   torso.position.y = 0.52;
   body.add(torso);
   const belly = new THREE.Mesh(
@@ -252,7 +260,7 @@ export function buildCharacterModel(id: CharacterId): THREE.Group {
   const head = new THREE.Group();
   head.name = 'head';
   head.position.y = 1.32;
-  const skull = toonMesh(new THREE.SphereGeometry(0.52, 20, 16), palette.primary, 0.05);
+  const skull = toonMesh(new THREE.SphereGeometry(0.52, 20, 16), palette.primary, 0.016);
   skull.scale.set(1.06, 0.96, 1);
   head.add(skull);
   buildMuzzle(head, palette);
@@ -322,6 +330,32 @@ function buildRock(): THREE.Group {
   return rock;
 }
 
+// ============================================================================
+// Atmósfera con degradado suave (sin cortes poligonales en el horizonte)
+// ============================================================================
+
+const atmosphereVertexShader = /* glsl */ `
+  varying vec3 vNormal;
+  varying vec3 vViewDir;
+  void main() {
+    vNormal = normalize( normalMatrix * normal );
+    vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+    vViewDir = normalize( -mvPosition.xyz );
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const atmosphereFragmentShader = /* glsl */ `
+  uniform vec3 uColor;
+  varying vec3 vNormal;
+  varying vec3 vViewDir;
+  void main() {
+    float rim = pow( 1.0 - abs( dot( vNormal, vViewDir ) ), 1.5 );
+    float alpha = 0.03 + rim * 0.12;
+    gl_FragColor = vec4( uColor, alpha );
+  }
+`;
+
 /**
  * Construye un planeta completo: esfera cel-shaded con contorno, parches de
  * terreno/hielo, árboles pino low-poly, anillos orbitales semitransparentes y
@@ -347,15 +381,17 @@ export function buildPlanetModel(spec: PlanetSpec): {
   sphere.position.copy(center);
   group.add(sphere);
 
-  // --- Atmósfera sutil ---
+  // --- Atmósfera sutil: 64x48 segmentos + degradado fresnel de baja opacidad ---
   const atmosphere = new THREE.Mesh(
-    new THREE.SphereGeometry(spec.radius * 1.06, 32, 24),
-    new THREE.MeshBasicMaterial({
-      color: spec.atmosphereColor,
+    new THREE.SphereGeometry(spec.radius * 1.06, 64, 48),
+    new THREE.ShaderMaterial({
+      vertexShader: atmosphereVertexShader,
+      fragmentShader: atmosphereFragmentShader,
+      uniforms: { uColor: { value: new THREE.Color(spec.atmosphereColor) } },
       transparent: true,
-      opacity: 0.14,
       depthWrite: false,
       side: THREE.FrontSide,
+      fog: false,
     })
   );
   atmosphere.position.copy(center);
@@ -544,4 +580,94 @@ export function buildWarpPortal(): { group: THREE.Group; animTick: (dt: number) 
       light.intensity = 45 + Math.sin(clock * 3.2) * 20;
     },
   };
+}
+
+// ============================================================================
+// Guardias (centinelas de prueba del Hito 2) y disfraz robado
+// ============================================================================
+
+const GUARD_UNIFORM = '#3b4463';
+const GUARD_UNIFORM_DARK = '#232a3d';
+
+/**
+ * Centinela de prueba: uniforme azul oscuro con casco, visor rojo y hombreras.
+ * Contornos finos (0.012-0.018) coherentes con los personajes del escuadrón.
+ */
+export function buildGuardModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'guard';
+
+  const torso = toonMesh(new THREE.CapsuleGeometry(0.36, 0.36, 8, 14), GUARD_UNIFORM, 0.016);
+  torso.position.y = 0.55;
+  group.add(torso);
+
+  const belt = toonMesh(new THREE.CylinderGeometry(0.38, 0.38, 0.14, 14), GUARD_UNIFORM_DARK, 0.014);
+  belt.position.y = 0.38;
+  group.add(belt);
+
+  const head = new THREE.Group();
+  head.name = 'head';
+  head.position.y = 1.34;
+  const skull = toonMesh(new THREE.SphereGeometry(0.5, 18, 14), '#b8c0cc', 0.016);
+  head.add(skull);
+  const visor = new THREE.Mesh(
+    new THREE.BoxGeometry(0.56, 0.16, 0.18),
+    new THREE.MeshBasicMaterial({ color: 0xf87171 })
+  );
+  visor.position.set(0, 0.06, 0.44);
+  head.add(visor);
+  const helmet = toonMesh(
+    new THREE.SphereGeometry(0.54, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    GUARD_UNIFORM_DARK,
+    0.016
+  );
+  helmet.position.y = 0.08;
+  head.add(helmet);
+  group.add(head);
+
+  group.add(buildLimb('leftArm', 0.46, 0.74, 0.12, 0.28, GUARD_UNIFORM));
+  group.add(buildLimb('rightArm', -0.46, 0.74, 0.12, 0.28, GUARD_UNIFORM));
+  group.add(buildLimb('leftLeg', 0.18, 0.32, 0.14, 0.18, GUARD_UNIFORM_DARK));
+  group.add(buildLimb('rightLeg', -0.18, 0.32, 0.14, 0.18, GUARD_UNIFORM_DARK));
+
+  for (const side of [-1, 1]) {
+    const pad = toonMesh(new THREE.SphereGeometry(0.16, 10, 8), GUARD_UNIFORM_DARK, 0.014);
+    pad.position.set(0.46 * side, 0.86, 0);
+    pad.scale.set(1, 0.7, 1);
+    group.add(pad);
+  }
+
+  return group;
+}
+
+/**
+ * Casco y chaleco de guardia que se superponen al personaje activo cuando
+ * `isDisguised = true` (uniforme robado con el noqueo por la espalda).
+ * Invisible por defecto.
+ */
+export function buildDisguiseOverlay(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'disguiseOverlay';
+
+  const helmet = toonMesh(
+    new THREE.SphereGeometry(0.56, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+    GUARD_UNIFORM_DARK,
+    0.014
+  );
+  helmet.position.y = 1.62;
+  group.add(helmet);
+
+  const visor = new THREE.Mesh(
+    new THREE.BoxGeometry(0.6, 0.14, 0.16),
+    new THREE.MeshBasicMaterial({ color: 0xf87171 })
+  );
+  visor.position.set(0, 1.42, 0.46);
+  group.add(visor);
+
+  const vest = toonMesh(new THREE.BoxGeometry(0.8, 0.58, 0.62), GUARD_UNIFORM, 0.014);
+  vest.position.y = 0.6;
+  group.add(vest);
+
+  group.visible = false;
+  return group;
 }
