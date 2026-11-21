@@ -1,5 +1,13 @@
 import * as THREE from 'three';
-import { GAME_CONSTANTS, type CharacterId, type PlanetSpec, type PropKind, type StructureSpec } from '../types';
+import {
+  GAME_CONSTANTS,
+  type CharacterId,
+  type EnemyKind,
+  type EnemySkin,
+  type PlanetSpec,
+  type PropKind,
+  type StructureSpec,
+} from '../types';
 import { orientObjectOnSphere } from '../math/spherical';
 import { addComicOutline, createComicCelMaterial, createToonMaterial, type ComicCelOptions } from './toonMaterials';
 
@@ -722,6 +730,209 @@ function buildWoodBridge(): THREE.Group {
   return bridge;
 }
 
+// ============================================================================
+// Flora y ruinas tropicales (Verdant · Selva Tropical y Templos de Jade)
+// ============================================================================
+
+/**
+ * Palmera tropical: tronco alto segmentado con ligera inclinación, 5 hojas
+ * largas verdes abriéndose en abanico desde la corona y cocos colgando.
+ */
+function buildPalmTree(): THREE.Group {
+  const palm = new THREE.Group();
+  // Tronco segmentado: cada segmento se desplaza un poco más que el anterior.
+  const trunkColors = ['#8a5a2b', '#7c4a21'];
+  const segments = 5;
+  const segHeight = 0.62;
+  let leanX = 0;
+  for (let i = 0; i < segments; i++) {
+    const trunk = toonMesh(
+      new THREE.CylinderGeometry(0.115 - i * 0.01, 0.14 - i * 0.01, segHeight, 7),
+      trunkColors[i % 2],
+      0.02
+    );
+    leanX += i * 0.045;
+    trunk.position.set(leanX, segHeight / 2 + i * segHeight, 0);
+    trunk.rotation.z = -0.07;
+    palm.add(trunk);
+  }
+  const crownX = leanX + 0.1;
+  const crownY = segments * segHeight + 0.05;
+  // 5 hojas de palmera largas radiando en abanico, con caída hacia fuera.
+  const leafColors = ['#22c55e', '#16a34a', '#15803d'];
+  for (let i = 0; i < 5; i++) {
+    const pivot = new THREE.Group();
+    pivot.position.set(crownX, crownY, 0);
+    pivot.rotation.y = (i / 5) * Math.PI * 2 + 0.4;
+    const leaf = toonMesh(new THREE.SphereGeometry(1, 10, 8), leafColors[i % 3], 0.018);
+    leaf.scale.set(0.2, 0.06, 1.25);
+    leaf.position.set(0, 0.08, 1.1);
+    leaf.rotation.x = 0.32;
+    pivot.add(leaf);
+    palm.add(pivot);
+  }
+  // Cocos colgando bajo la corona.
+  const coconutGeometry = new THREE.SphereGeometry(0.14, 10, 8);
+  for (const [dx, dz] of [
+    [-0.18, 0.1],
+    [0.16, 0.14],
+    [0.02, -0.2],
+  ] as const) {
+    const coconut = toonMesh(coconutGeometry, '#5b3a1e', 0.014);
+    coconut.position.set(crownX + dx, crownY - 0.22, dz);
+    palm.add(coconut);
+  }
+  return palm;
+}
+
+/**
+ * Clúster de helechos tropicales: hojas anchas radiando desde la base y una
+ * flor exótica magenta con centro amarillo brillando en el centro.
+ */
+function buildFernCluster(): THREE.Group {
+  const fern = new THREE.Group();
+  const leafColors = ['#22c55e', '#16a34a', '#4ade80'];
+  for (let i = 0; i < 7; i++) {
+    const pivot = new THREE.Group();
+    pivot.rotation.y = (i / 7) * Math.PI * 2 + 0.25;
+    const leaf = toonMesh(new THREE.SphereGeometry(1, 10, 8), leafColors[i % 3], 0.016);
+    leaf.scale.set(0.17, 0.05, 0.95);
+    leaf.position.set(0, 0.34, 0.42);
+    leaf.rotation.x = -1.05; // hoja ancha alzándose hacia fuera
+    pivot.add(leaf);
+    fern.add(pivot);
+  }
+  // Flor exótica central: pétalos magenta + corazón amarillo brillante.
+  const stem = toonMesh(new THREE.CylinderGeometry(0.045, 0.06, 0.5, 6), '#15803d', 0.012);
+  stem.position.y = 0.25;
+  fern.add(stem);
+  const petals = toonMesh(new THREE.SphereGeometry(0.22, 10, 8), '#e879f9', 0.016);
+  petals.scale.set(1, 0.75, 1);
+  petals.position.y = 0.58;
+  fern.add(petals);
+  const heart = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xfacc15 })
+  );
+  heart.position.y = 0.68;
+  fern.add(heart);
+  return fern;
+}
+
+/**
+ * Tótem/monolito de piedra antigua musgosa con cara tallada, ceño fruncido y
+ * ojos turquesa brillantes que velan el sendero de la selva.
+ */
+function buildAncientStatue(): THREE.Group {
+  const statue = new THREE.Group();
+  const stone = '#78716c';
+  const stoneDark = '#57534e';
+  const mossColors = ['#4ade80', '#16a34a'];
+
+  const base = toonMesh(new THREE.CylinderGeometry(0.8, 1.0, 0.5, 8), stoneDark, 0.024);
+  base.position.y = 0.25;
+  statue.add(base);
+  const body = toonMesh(new THREE.BoxGeometry(1.05, 2.4, 0.85), stone, 0.026);
+  body.position.y = 1.7;
+  statue.add(body);
+  const head = toonMesh(new THREE.BoxGeometry(1.35, 1.0, 1.0), stone, 0.026);
+  head.position.y = 3.3;
+  statue.add(head);
+  const crown = toonMesh(new THREE.BoxGeometry(1.55, 0.32, 1.15), stoneDark, 0.02);
+  crown.position.y = 3.92;
+  statue.add(crown);
+
+  // Cara tallada: ceño fruncido, nariz y boca hundidas.
+  const brow = toonMesh(new THREE.BoxGeometry(0.92, 0.2, 0.14), stoneDark, 0.016);
+  brow.position.set(0, 3.5, 0.52);
+  statue.add(brow);
+  const nose = toonMesh(new THREE.BoxGeometry(0.2, 0.42, 0.14), stoneDark, 0.014);
+  nose.position.set(0, 3.24, 0.52);
+  statue.add(nose);
+  const mouth = toonMesh(new THREE.BoxGeometry(0.55, 0.14, 0.12), stoneDark, 0.014);
+  mouth.position.set(0, 2.98, 0.52);
+  statue.add(mouth);
+
+  // Ojos turquesa brillantes (la marca del tótem viviente).
+  const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x2dd4bf });
+  const eyeGeometry = new THREE.SphereGeometry(0.11, 10, 8);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    eye.position.set(0.26 * side, 3.38, 0.55);
+    eye.scale.set(1, 0.75, 0.6);
+    statue.add(eye);
+  }
+
+  // Musgo: parches verdes achatados sobre la piedra (deterministas).
+  const mossGeometry = new THREE.SphereGeometry(0.3, 10, 8);
+  const mossSpots: Array<[number, number, number, number]> = [
+    [0.3, 4.05, 0.2, 0],
+    [-0.45, 2.6, 0.44, 1],
+    [0.5, 1.9, 0.4, 0],
+    [-0.2, 1.1, 0.45, 1],
+    [0.42, 3.75, -0.3, 1],
+  ];
+  for (const [mx, my, mz, ci] of mossSpots) {
+    const moss = toonMesh(mossGeometry, mossColors[ci], 0.014);
+    moss.position.set(mx, my, mz);
+    moss.scale.set(1, 0.45, 0.8);
+    statue.add(moss);
+  }
+  return statue;
+}
+
+/**
+ * Arco de piedra antigua cubierto de enredaderas y musgo: medio toro
+ * encajado entre dos pilares, con lianas verdes colgando del intradós.
+ */
+function buildVineArch(): THREE.Group {
+  const arch = new THREE.Group();
+  const stone = '#78716c';
+  const stoneDark = '#57534e';
+
+  for (const side of [-1, 1]) {
+    const pillar = toonMesh(new THREE.CylinderGeometry(0.42, 0.52, 3.6, 8), stone, 0.026);
+    pillar.position.set(1.6 * side, 1.8, 0);
+    arch.add(pillar);
+    const cap = toonMesh(new THREE.CylinderGeometry(0.6, 0.6, 0.28, 8), stoneDark, 0.02);
+    cap.position.set(1.6 * side, 3.7, 0);
+    arch.add(cap);
+  }
+  // Dintel curvado: medio toro apoyado sobre las zapatas de los pilares.
+  const lintel = toonMesh(new THREE.TorusGeometry(1.6, 0.42, 10, 22, Math.PI), stone, 0.026);
+  lintel.position.y = 3.7;
+  arch.add(lintel);
+
+  // Enredaderas: cadenas de esferas verdes colgando del arco + musgo en las
+  // claves de piedra (patrón determinista, sin PRNG).
+  const vineGeometry = new THREE.SphereGeometry(0.09, 8, 6);
+  const vineMaterial = createToonMaterial('#16a34a');
+  const mossMaterial = createToonMaterial('#4ade80');
+  for (let i = 0; i < 5; i++) {
+    const ang = Math.PI * (0.18 + i * 0.16);
+    const vx = Math.cos(ang) * 1.6;
+    const vy = 3.7 + Math.sin(ang) * 1.6;
+    const length = 3 + (i % 3) * 0.8;
+    for (let j = 0; j < Math.round(length / 0.3); j++) {
+      const knot = new THREE.Mesh(vineGeometry, vineMaterial);
+      knot.position.set(vx, vy - 0.25 - j * 0.3, (j % 2 === 0 ? 1 : -1) * 0.12);
+      arch.add(knot);
+    }
+    const moss = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), mossMaterial);
+    moss.position.set(vx, vy + 0.1, 0);
+    moss.scale.set(1, 0.5, 1);
+    arch.add(moss);
+  }
+  // Musgo en la base de los pilares.
+  for (const side of [-1, 1]) {
+    const moss = new THREE.Mesh(new THREE.SphereGeometry(0.4, 10, 8), mossMaterial);
+    moss.position.set(1.6 * side, 0.35, 0.2);
+    moss.scale.set(1, 0.5, 0.9);
+    arch.add(moss);
+  }
+  return arch;
+}
+
 /** Cristal de hielo gigante: prismas azul claro translúcidos brillantes. */
 function buildIceCrystal(): THREE.Group {
   const crystal = new THREE.Group();
@@ -867,6 +1078,14 @@ export function buildPropMesh(kind: PropKind): THREE.Group {
       return buildStonePath();
     case 'wood_bridge':
       return buildWoodBridge();
+    case 'palm_tree':
+      return buildPalmTree();
+    case 'fern_cluster':
+      return buildFernCluster();
+    case 'ancient_statue':
+      return buildAncientStatue();
+    case 'vine_arch':
+      return buildVineArch();
     case 'ice_crystal':
       return buildIceCrystal();
     case 'igloo':
@@ -979,9 +1198,9 @@ export function buildPlanetModel(spec: PlanetSpec): {
     group.add(patch);
   }
 
-  // --- Árboles y rocas en superficie (Verdant luce mucho más poblado) ---
+  // --- Árboles y rocas en superficie (Verdant: selva densa de palmeras) ---
   let propCount = 8;
-  if (spec.biome === 'verdant') propCount = 16;
+  if (spec.biome === 'verdant') propCount = 22;
   else if (spec.biome === 'cryo') propCount = 8;
   else if (spec.biome === 'bastion' || spec.biome === 'kronos') propCount = 6;
   for (let i = 0; i < propCount; i++) {
@@ -989,7 +1208,14 @@ export function buildPlanetModel(spec: PlanetSpec): {
     const phi = random() * Math.PI * 2;
     const cosTheta = 1 - 2 * u;
     const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
-    const prop = random() > 0.35 ? buildPineTree() : buildRock();
+    // Verdant es una selva tropical: palmeras y helechos en lugar de pinos.
+    let prop: THREE.Group;
+    if (spec.biome === 'verdant') {
+      const r = random();
+      prop = r > 0.5 ? buildPalmTree() : r > 0.25 ? buildFernCluster() : buildRock();
+    } else {
+      prop = random() > 0.35 ? buildPineTree() : buildRock();
+    }
     const scale = spec.radius * 0.045;
     prop.scale.setScalar(scale);
     placeOnSphere(
@@ -1404,6 +1630,377 @@ export function buildBruteModel(): THREE.Group {
   }
 
   return group;
+}
+
+// ============================================================================
+// Enemigos animales salvajes de la Selva Tropical (Verdant · Paso 2).
+// Sustituyen temáticamente a guardias/oficiales (pantera), vigías (mono),
+// brutes (gorila) y drones (avispa). Cuerpos cel con contornos finos
+// (0.015-0.022) y mirando hacia +Z, como el resto de enemigos.
+// ============================================================================
+
+const PANTHER_COAT = '#3b2d63'; // púrpura-índigo oscuro
+const PANTHER_BELLY = '#5b4a8f';
+const PANTHER_SPOT = '#f59e0b'; // manchas doradas
+
+/**
+ * Pantera/jaguar de la selva: cuadrúpedo ágil de pelaje púrpura-índigo con
+ * manchas doradas, orejas felinas puntiagudas, ojos ámbar brillantes y cola
+ * curva alzada. Sustituye a guardias y oficiales en Verdant.
+ */
+export function buildPantherModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'panther';
+
+  // Cuerpo cuadrúpedo ágil: cápsula tendida a lo largo del eje Z.
+  const torso = celMesh(new THREE.CapsuleGeometry(0.33, 0.72, 8, 14), PANTHER_COAT, 0.02);
+  torso.rotation.x = Math.PI / 2;
+  torso.position.y = 0.72;
+  group.add(torso);
+
+  // Pecho y panza más claros.
+  const belly = celMesh(new THREE.SphereGeometry(0.26, 12, 10), PANTHER_BELLY, 0.016);
+  belly.scale.set(1, 0.7, 1.6);
+  belly.position.set(0, 0.58, 0.1);
+  group.add(belly);
+
+  // Manchas doradas deterministas sobre el lomo (sin contorno: detalle fino).
+  const spotGeometry = new THREE.SphereGeometry(0.07, 8, 6);
+  const spotMaterial = createToonMaterial(PANTHER_SPOT);
+  for (let i = 0; i < 9; i++) {
+    const spot = new THREE.Mesh(spotGeometry, spotMaterial);
+    const ang = (i * 2.4) % (Math.PI * 2);
+    spot.position.set(
+      Math.sin(ang) * 0.28,
+      0.82 + Math.cos(i * 1.7) * 0.14,
+      -0.5 + (i % 5) * 0.26
+    );
+    spot.scale.set(1, 0.55, 1);
+    group.add(spot);
+  }
+
+  // Cabeza felina con hocico y orejas puntiagudas.
+  const head = celMesh(new THREE.SphereGeometry(0.3, 16, 12), PANTHER_COAT, 0.018);
+  head.position.set(0, 1.0, 0.72);
+  group.add(head);
+  const muzzle = celMesh(new THREE.SphereGeometry(0.16, 12, 10), PANTHER_BELLY, 0.015);
+  muzzle.scale.set(1.15, 0.8, 1.0);
+  muzzle.position.set(0, 0.9, 0.98);
+  group.add(muzzle);
+  const earGeometry = new THREE.ConeGeometry(0.1, 0.26, 6);
+  for (const side of [-1, 1]) {
+    const ear = celMesh(earGeometry, PANTHER_COAT, 0.015);
+    ear.position.set(0.19 * side, 1.26, 0.62);
+    ear.rotation.z = -0.3 * side;
+    group.add(ear);
+  }
+
+  // Ojos ámbar brillantes (sin contorno: brillo limpio).
+  const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0xfbbf24 });
+  const eyeGeometry = new THREE.SphereGeometry(0.06, 8, 6);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    eye.position.set(0.13 * side, 1.06, 0.95);
+    group.add(eye);
+  }
+
+  // Patas: cuatro cápsulas finas bajo el cuerpo.
+  const legGeometry = new THREE.CapsuleGeometry(0.085, 0.42, 6, 10);
+  for (const sideX of [-1, 1]) {
+    for (const sideZ of [-1, 1]) {
+      const leg = celMesh(legGeometry, PANTHER_COAT, 0.015);
+      leg.position.set(0.2 * sideX, 0.32, 0.42 * sideZ);
+      group.add(leg);
+    }
+  }
+
+  // Cola curva: cadena de esferas alzándose hacia la punta.
+  const tail: Array<[number, number, number, number]> = [
+    [0, 0.86, -0.72, 0.12],
+    [0, 0.98, -0.92, 0.1],
+    [0, 1.14, -1.04, 0.08],
+    [0, 1.28, -1.1, 0.06],
+  ];
+  for (const [tx, ty, tz, tr] of tail) {
+    const ball = celMesh(new THREE.SphereGeometry(tr, 10, 8), PANTHER_COAT, 0.015);
+    ball.position.set(tx, ty, tz);
+    group.add(ball);
+  }
+
+  return group;
+}
+
+const MONKEY_FUR = '#8b5e3c'; // marrón
+const MONKEY_CREAM = '#e8d0a9'; // crema
+
+/**
+ * Mono vigía de las ruinas: marrón con hocico y orejas grandes crema, ojos
+ * vivos y cola enroscada hacia arriba. Ideal para torres y puestos de
+ * vigilancia estacionarios.
+ */
+export function buildMonkeyModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'monkey';
+
+  // Cuerpo compacto con pecho crema.
+  const torso = celMesh(new THREE.CapsuleGeometry(0.26, 0.3, 8, 12), MONKEY_FUR, 0.018);
+  torso.position.y = 0.52;
+  group.add(torso);
+  const belly = celMesh(new THREE.SphereGeometry(0.2, 12, 10), MONKEY_CREAM, 0.015);
+  belly.scale.set(1, 1.2, 0.6);
+  belly.position.set(0, 0.52, 0.16);
+  group.add(belly);
+
+  // Cabeza con hocico claro y orejas grandes.
+  const head = celMesh(new THREE.SphereGeometry(0.32, 16, 12), MONKEY_FUR, 0.018);
+  head.position.y = 1.06;
+  group.add(head);
+  const face = celMesh(new THREE.SphereGeometry(0.22, 12, 10), MONKEY_CREAM, 0.015);
+  face.scale.set(1.05, 0.85, 0.7);
+  face.position.set(0, 1.0, 0.22);
+  group.add(face);
+  const earGeometry = new THREE.SphereGeometry(0.13, 10, 8);
+  for (const side of [-1, 1]) {
+    const ear = celMesh(earGeometry, MONKEY_FUR, 0.015);
+    ear.position.set(0.34 * side, 1.12, -0.02);
+    ear.scale.set(0.5, 1, 1);
+    group.add(ear);
+    const inner = new THREE.Mesh(
+      new THREE.SphereGeometry(0.08, 8, 6),
+      createToonMaterial(MONKEY_CREAM)
+    );
+    inner.position.set(0.36 * side, 1.12, 0.02);
+    inner.scale.set(0.4, 0.9, 0.8);
+    group.add(inner);
+  }
+
+  // Ojos vivos oscuros con brillo.
+  const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x1c1917 });
+  const eyeGeometry = new THREE.SphereGeometry(0.055, 8, 6);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    eye.position.set(0.11 * side, 1.1, 0.36);
+    group.add(eye);
+  }
+
+  // Brazos y piernas colgantes.
+  group.add(buildLimb('leftArm', 0.34, 0.68, 0.09, 0.24, MONKEY_FUR));
+  group.add(buildLimb('rightArm', -0.34, 0.68, 0.09, 0.24, MONKEY_FUR));
+  group.add(buildLimb('leftLeg', 0.14, 0.3, 0.1, 0.14, MONKEY_FUR));
+  group.add(buildLimb('rightLeg', -0.14, 0.3, 0.1, 0.14, MONKEY_FUR));
+
+  // Cola enroscada hacia arriba: cadena de esferas que se riza al final.
+  const tail: Array<[number, number, number, number]> = [
+    [0, 0.5, -0.3, 0.09],
+    [0, 0.68, -0.42, 0.08],
+    [0, 0.88, -0.48, 0.07],
+    [0, 1.06, -0.44, 0.06],
+    [0, 1.16, -0.32, 0.05],
+  ];
+  for (const [tx, ty, tz, tr] of tail) {
+    const ball = celMesh(new THREE.SphereGeometry(tr, 10, 8), MONKEY_FUR, 0.015);
+    ball.position.set(tx, ty, tz);
+    group.add(ball);
+  }
+
+  return group;
+}
+
+const GORILLA_FUR = '#3f3f46';
+const GORILLA_SILVER = '#d4d4d8'; // lomo plateado
+const GORILLA_SKIN = '#52525b'; // cara y pecho
+
+/**
+ * Gorila lomo plateado gigante: pecho robusto, hombros anchos, puños grandes
+ * y musgo verde creciendo sobre los hombros. Sustituye al brute en la selva.
+ */
+export function buildGorillaModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'gorilla';
+
+  // Torso masivo con pecho robusto.
+  const torso = celMesh(new THREE.CapsuleGeometry(0.52, 0.5, 8, 14), GORILLA_FUR, 0.022);
+  torso.position.y = 0.85;
+  torso.scale.set(1.3, 1, 1.1);
+  group.add(torso);
+  const chest = celMesh(new THREE.SphereGeometry(0.4, 14, 12), GORILLA_SKIN, 0.018);
+  chest.scale.set(1.15, 1.1, 0.6);
+  chest.position.set(0, 0.9, 0.42);
+  group.add(chest);
+
+  // Lomo plateado (la marca del alfa).
+  const silverback = celMesh(new THREE.SphereGeometry(0.46, 14, 12), GORILLA_SILVER, 0.018);
+  silverback.scale.set(1.2, 1.05, 0.55);
+  silverback.position.set(0, 0.92, -0.42);
+  group.add(silverback);
+
+  // Cabeza con cresta sagital y cara oscura.
+  const head = celMesh(new THREE.SphereGeometry(0.38, 16, 12), GORILLA_FUR, 0.02);
+  head.position.y = 1.62;
+  group.add(head);
+  const crest = celMesh(new THREE.BoxGeometry(0.16, 0.24, 0.5), GORILLA_FUR, 0.016);
+  crest.position.set(0, 1.94, -0.02);
+  group.add(crest);
+  const face = celMesh(new THREE.SphereGeometry(0.26, 12, 10), GORILLA_SKIN, 0.016);
+  face.scale.set(1.05, 0.85, 0.7);
+  face.position.set(0, 1.56, 0.26);
+  group.add(face);
+  const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0xf87171 });
+  const eyeGeometry = new THREE.SphereGeometry(0.05, 8, 6);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    eye.position.set(0.11 * side, 1.64, 0.44);
+    group.add(eye);
+  }
+
+  // Hombros anchos blindados + musgo verde creciendo sobre ellos.
+  for (const side of [-1, 1]) {
+    const pad = celMesh(new THREE.SphereGeometry(0.28, 12, 10), GORILLA_FUR, 0.018);
+    pad.position.set(0.66 * side, 1.28, 0);
+    pad.scale.set(1, 0.75, 1);
+    group.add(pad);
+    const moss = celMesh(new THREE.SphereGeometry(0.2, 10, 8), '#4ade80', 0.015);
+    moss.position.set(0.66 * side, 1.48, 0.02);
+    moss.scale.set(1, 0.5, 0.9);
+    group.add(moss);
+  }
+
+  // Brazos largos y gruesos con puños grandes apoyados en el suelo.
+  const armGeometry = new THREE.CapsuleGeometry(0.15, 0.72, 8, 12);
+  for (const side of [-1, 1]) {
+    const arm = celMesh(armGeometry, GORILLA_FUR, 0.018);
+    arm.position.set(0.72 * side, 0.62, 0.12);
+    group.add(arm);
+    const fist = celMesh(new THREE.SphereGeometry(0.21, 12, 10), GORILLA_SKIN, 0.016);
+    fist.position.set(0.78 * side, 0.2, 0.16);
+    group.add(fist);
+  }
+
+  // Piernas cortas y fuertes.
+  const legGeometry = new THREE.CapsuleGeometry(0.16, 0.3, 8, 12);
+  for (const side of [-1, 1]) {
+    const leg = celMesh(legGeometry, GORILLA_FUR, 0.018);
+    leg.position.set(0.28 * side, 0.28, -0.12);
+    group.add(leg);
+  }
+
+  return group;
+}
+
+/**
+ * Avispa gigante de la selva: tórax peludo oscuro, abdomen rayado
+ * amarillo/negro con aguijón y dos pares de alas cian translúcidas (grupos
+ * `wingL`/`wingR` para animar el aleteo). Sustituye al dron en la selva.
+ */
+export function buildWaspModel(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'wasp';
+
+  // Tórax peludo oscuro.
+  const thorax = celMesh(new THREE.SphereGeometry(0.32, 14, 12), '#292524', 0.018);
+  thorax.position.set(0, 0.02, 0.22);
+  group.add(thorax);
+
+  // Abdomen rayado amarillo/negro, alzado hacia el aguijón.
+  const abdomen = new THREE.Group();
+  abdomen.position.set(0, -0.02, -0.28);
+  abdomen.rotation.x = 0.22;
+  for (let i = 0; i < 4; i++) {
+    const seg = celMesh(
+      new THREE.CylinderGeometry(0.27 - i * 0.045, 0.3 - i * 0.045, 0.22, 12),
+      i % 2 === 0 ? '#facc15' : '#292524',
+      0.016
+    );
+    seg.rotation.x = Math.PI / 2;
+    seg.position.z = -i * 0.21;
+    abdomen.add(seg);
+  }
+  // Aguijón trasero.
+  const stinger = celMesh(new THREE.ConeGeometry(0.08, 0.32, 8), '#18181b', 0.014);
+  stinger.rotation.x = -Math.PI / 2;
+  stinger.position.z = -0.86;
+  abdomen.add(stinger);
+  group.add(abdomen);
+
+  // Cabeza con ojos compuestos y antenas.
+  const head = celMesh(new THREE.SphereGeometry(0.24, 14, 12), '#292524', 0.016);
+  head.position.set(0, 0.08, 0.56);
+  group.add(head);
+  const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0xf87171 });
+  const eyeGeometry = new THREE.SphereGeometry(0.1, 10, 8);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    eye.position.set(0.12 * side, 0.12, 0.72);
+    eye.scale.set(0.8, 1, 0.7);
+    group.add(eye);
+  }
+  const antennaGeometry = new THREE.CylinderGeometry(0.02, 0.02, 0.34, 5);
+  for (const side of [-1, 1]) {
+    const antenna = celMesh(antennaGeometry, '#18181b', 0.012);
+    antenna.position.set(0.09 * side, 0.34, 0.6);
+    antenna.rotation.z = 0.35 * side;
+    antenna.rotation.x = -0.3;
+    group.add(antenna);
+  }
+
+  // Dos pares de alas cian translúcidas (grupos nombrados para el aleteo).
+  const wingMaterial = new THREE.MeshBasicMaterial({
+    color: 0x67e8f9,
+    transparent: true,
+    opacity: 0.45,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  for (const side of [-1, 1]) {
+    const wing = new THREE.Group();
+    wing.name = side < 0 ? 'wingL' : 'wingR';
+    wing.position.set(0.16 * side, 0.26, 0.14);
+    // Par delantero (largo) + par trasero (corto).
+    for (const [len, yOff, zOff] of [
+      [0.85, 0.1, 0.05],
+      [0.62, -0.04, -0.16],
+    ] as const) {
+      const blade = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), wingMaterial);
+      blade.scale.set(len, 0.035, 0.3);
+      blade.position.set(side * len * 0.55, yOff, zOff);
+      wing.add(blade);
+    }
+    group.add(wing);
+  }
+
+  return group;
+}
+
+/**
+ * Instancia el modelo de un enemigo por su tipo y skin temática: los animales
+ * de la selva (pantera, mono, gorila, avispa) sustituyen al modelo uniformado
+ * por defecto; cualquier skin sin builder propio cae al modelo de su `kind`.
+ */
+export function buildEnemyModelBySkin(kind: EnemyKind, skin?: EnemySkin): THREE.Group {
+  switch (skin) {
+    case 'panther':
+      return buildPantherModel();
+    case 'monkey':
+      return buildMonkeyModel();
+    case 'gorilla':
+      return buildGorillaModel();
+    case 'wasp':
+      return buildWaspModel();
+    default:
+      break;
+  }
+  switch (kind) {
+    case 'officer':
+      return buildOfficerModel();
+    case 'drone':
+      return buildDroneModel();
+    case 'turret':
+      return buildTurretModel();
+    case 'brute':
+      return buildBruteModel();
+    default:
+      return buildGuardModel();
+  }
 }
 
 // ============================================================================

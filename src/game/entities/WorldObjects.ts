@@ -3,6 +3,7 @@ import type {
   BehaviorPercentages,
   CharacterId,
   EnemyKind,
+  EnemySkin,
   EnemySpawnSpec,
   GalaxySpec,
   GrassZoneSpec,
@@ -19,18 +20,14 @@ import { addComicOutline, createComicCelMaterial, createToonMaterial } from '../
 import {
   buildBeaconBeam,
   buildBreakableWallMesh,
-  buildBruteModel,
-  buildDroneModel,
-  buildGuardModel,
+  buildEnemyModelBySkin,
   buildInterceptorBelt,
   buildKronosModel,
   buildLockedGateMesh,
   buildNpcModel,
-  buildOfficerModel,
   buildPropMesh,
   buildStructureMesh,
   buildSwitchLeverMesh,
-  buildTurretModel,
   buildVisionConeMesh,
 } from '../render/proceduralModels';
 import {
@@ -246,6 +243,8 @@ type HitSource = 'melee' | 'knockout' | 'dash' | 'shockwave' | 'explosive' | 'pa
  */
 interface EnemyObj {
   kind: EnemyKind;
+  /** Skin temática del modelo (animales de la selva en Verdant). */
+  skin: EnemySkin;
   planet: PlanetRuntime;
   mesh: THREE.Group;
   pos: THREE.Vector3;
@@ -264,6 +263,10 @@ interface EnemyObj {
   koTimer: number;
   koRadioSent: boolean;
   hoverPhase: number; // dron
+  /** Fase del rebote de paso de los animales cuadrúpedos (pantera/gorila/mono). */
+  walkPhase: number;
+  /** Alas de la avispa (skin 'wasp'): aleteo continuo sobre el hover del dron. */
+  wings: [THREE.Object3D | null, THREE.Object3D | null];
   params: EnemyParams;
   /** Cono de visión adherido al suelo (guardias y oficiales). */
   visionCone: THREE.Mesh | null;
@@ -1540,26 +1543,10 @@ export class WorldObjectsManager {
       return;
     }
     const planet = this.findPlanet(spec.planetId);
-    let mesh: THREE.Group;
-    switch (spec.kind) {
-      case 'guard':
-        mesh = buildGuardModel();
-        break;
-      case 'officer':
-        mesh = buildOfficerModel();
-        break;
-      case 'drone':
-        mesh = buildDroneModel();
-        break;
-      case 'turret':
-        mesh = buildTurretModel();
-        break;
-      case 'brute':
-        mesh = buildBruteModel();
-        break;
-      default:
-        return;
-    }
+    // Modelo por skin temática (animales de la selva en Verdant) con
+    // fallback limpio al uniforme por defecto de cada kind.
+    const skin = spec.skin ?? 'default';
+    const mesh = buildEnemyModelBySkin(spec.kind, skin);
     // Cono de visión adherido al suelo delante de guardias y oficiales
     // (curvado con el radio del planeta para abrazar la esfera).
     let visionCone: THREE.Mesh | null = null;
@@ -1598,6 +1585,7 @@ export class WorldObjectsManager {
     baseForward.normalize();
     this.enemies.push({
       kind: spec.kind,
+      skin,
       planet,
       mesh,
       pos: pos.clone(),
@@ -1616,6 +1604,8 @@ export class WorldObjectsManager {
       koTimer: 0,
       koRadioSent: false,
       hoverPhase: spec.kind.length * 1.3,
+      walkPhase: spec.kind.length * 0.9,
+      wings: [mesh.getObjectByName('wingL') ?? null, mesh.getObjectByName('wingR') ?? null],
       params: ENEMY_PARAMS[spec.kind],
       visionCone,
       visionConeMaterial,
@@ -2550,6 +2540,18 @@ export class WorldObjectsManager {
     if (handle.kind === 'wall') return 'Muro agrietado';
     const enemy = this.enemies[handle.index];
     if (!enemy) return 'Objetivo';
+    switch (enemy.skin) {
+      case 'panther':
+        return enemy.kind === 'officer' ? 'Alfa de la Ruina' : 'Pantera';
+      case 'monkey':
+        return 'Mono vigía';
+      case 'gorilla':
+        return 'Gorila lomo plateado';
+      case 'wasp':
+        return 'Avispa gigante';
+      default:
+        break;
+    }
     switch (enemy.kind) {
       case 'officer':
         return 'Oficial';
@@ -3716,6 +3718,25 @@ export class WorldObjectsManager {
       }
     }
     enemy.mesh.position.copy(enemy.pos);
+    // Skins de la selva: la avispa aletea sobre el hover del dron y los
+    // cuadrúpedos (pantera/gorila/mono) rebotan ligeros al caminar.
+    if (enemy.skin === 'wasp') {
+      if (enemy.state !== GUARD_STATE_KO) {
+        const flap = Math.sin(this.clock * 34) * 0.45;
+        if (enemy.wings[0]) enemy.wings[0].rotation.z = -flap;
+        if (enemy.wings[1]) enemy.wings[1].rotation.z = flap;
+      }
+    } else if (
+      (enemy.skin === 'panther' || enemy.skin === 'gorilla' || enemy.skin === 'monkey') &&
+      enemy.state !== GUARD_STATE_KO &&
+      !enemy.stationaryLookout
+    ) {
+      enemy.walkPhase += dt * 9;
+      enemy.mesh.position.addScaledVector(
+        enemy.dir,
+        Math.abs(Math.sin(enemy.walkPhase)) * 0.09
+      );
+    }
     _q1.setFromUnitVectors(_upAxis, enemy.dir);
     if (enemy.kind === 'turret') {
       enemy.mesh.quaternion.copy(_q1);

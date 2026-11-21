@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type {
+  EnemySkin,
   EnemySpawnSpec,
   GalaxySpec,
   GrassZoneSpec,
@@ -282,10 +283,12 @@ function lookout(
   planetId: string,
   dir: [number, number, number],
   altitudeOffset: number,
-  lookAtDir?: [number, number, number]
+  lookAtDir?: [number, number, number],
+  skin?: EnemySkin
 ): EnemySpawnSpec {
   return {
     kind: 'guard',
+    skin,
     planetId,
     patrolDirs: lookAtDir ? [dir, lookAtDir] : [dir],
     stationaryLookout: true,
@@ -326,6 +329,48 @@ function orbitBubble(
     planet.center[2]
   ).addScaledVector(d, planet.radius + altitude);
   return { id, center: [c.x, c.y, c.z], radius };
+}
+
+/**
+ * Interpolación esférica (slerp) entre dos direcciones de superficie: sirve
+ * para encadenar lagunas de agua a lo largo del sendero entre dos zonas.
+ */
+function midDir(
+  a: [number, number, number],
+  b: [number, number, number],
+  t: number
+): [number, number, number] {
+  const va = vec(a);
+  const vb = vec(b);
+  const dot = THREE.MathUtils.clamp(va.dot(vb), -1, 1);
+  const ang = Math.acos(dot);
+  if (ang < 1e-6) return [va.x, va.y, va.z];
+  const s = Math.sin(ang);
+  const d = new THREE.Vector3()
+    .addScaledVector(va, Math.sin((1 - t) * ang) / s)
+    .addScaledVector(vb, Math.sin(t * ang) / s)
+    .normalize();
+  return [d.x, d.y, d.z];
+}
+
+/**
+ * Tangente del geodésico que va de `a` hacia `b` (dirección de marcha sobre
+ * la superficie): sirve para orientar puentes y senderos entre dos zonas.
+ */
+function geodesicTangent(
+  a: [number, number, number],
+  b: [number, number, number]
+): THREE.Vector3 {
+  const va = vec(a);
+  const vb = vec(b);
+  return new THREE.Vector3().copy(vb).addScaledVector(va, -vb.dot(va)).normalize();
+}
+
+/** Yaw que orienta el +Z local de un objeto en `dir` hacia el tangente `along`. */
+function yawFaceDir(dir: [number, number, number], along: THREE.Vector3): number {
+  _q.setFromUnitVectors(_up, vec(dir)).invert();
+  _v.copy(along).applyQuaternion(_q);
+  return Math.atan2(_v.x, _v.z);
 }
 
 /**
@@ -381,16 +426,14 @@ export const GALAXY_PLANETS: PlanetSpec[] = [
     id: 'verdant-pradera',
     order: 1,
     name: 'Verdant',
-    subtitle: 'Shogunato del Bosque — Aldea Feudal y Castillo Cerrado',
+    subtitle: 'Selva Tropical · Templos de Jade',
     biome: 'verdant',
     center: [300, 40, -150],
     radius: 135,
     gravityStrength: 1.1,
-    surfaceColor: '#4ade80',
-    patchColor: '#16a34a',
+    surfaceColor: '#22c55e',
+    patchColor: '#15803d',
     atmosphereColor: '#bbf7d0',
-    hasWaterShell: true,
-    waterRadius: 136.5,
     unlockedByPlanetId: 'luna-tutorial',
   },
   {
@@ -536,12 +579,15 @@ function lunaContent(): {
 }
 
 // ----------------------------------------------------------------------------
-// Planeta 1 — Verdant: SHOGUNATO DEL BOSQUE (r = 135).
-// Acto 1: Aldea Feudal del Valle (pagoda central, Capitán con la llave maestra
-// y el Almacén del generador 1 tras su valla láser + palanca en la casa
-// lateral). Acto 2: Castillo del Shogunato con doble recinto CERRADO: portón
-// con llave, pared agrietada trasera, vigías en las torres, escalera de
-// burbujas al tejado, patio interior con LOCKDOWN y santuario del Shogun.
+// Planeta 1 — Verdant: SELVA TROPICAL · TEMPLOS DE JADE (r = 135).
+// Selva densa y viva con 3 zonas interconectadas por senderos de hierba alta,
+// lagunas de agua conectadas cruzadas por puentes de madera y arcos de liana:
+// (1) Campamento del Botánico y Valle de Palmeras (spawn, Dr. Solís),
+// (2) Ruinas del Altar Oeste: generador 1 tras su valla láser y el Alfa
+//     pantera que porta el Ídolo-Llave del Gran Zigurat,
+// (3) El Gran Zigurat: templo escalonado CERRADO con portón de llave, muro
+//     trasero agrietado cubierto de musgo, monos vigía en las torres, gorila
+//     lomo plateado, avispas gigantes y terraza superior por burbujas (Axel).
 // ----------------------------------------------------------------------------
 
 function verdantContent(): {
@@ -554,234 +600,279 @@ function verdantContent(): {
   npcs: NpcSpec[];
 } {
   const planet = GALAXY_PLANETS[1];
-  const WALL = '#3e4c3a';
-  const GATE = '#55684d';
+  const WALL = '#57534e'; // piedra musgosa de las ruinas
+  const WALL_DARK = '#44403c';
 
-  // ==================== Acto 1: Aldea Feudal del Valle ====================
+  // ==================== Zona 1: Campamento del Botánico ====================
   const fV = baseFrame(planet.id, [0.05, 0.3, 0.95], planet.radius);
 
-  // ==================== Acto 2: Castillo del Shogunato ====================
-  // Recinto exterior 44 x 34 (x -22..22, z -17..17) + interior 24 x 20.
+  // ==================== Zona 2: Ruinas del Altar Oeste ====================
+  const fR = baseFrame(planet.id, [0.68, 0.42, 0.42], planet.radius);
+
+  // ==================== Zona 3: El Gran Zigurat ====================
   const fA = baseFrame(planet.id, [0.35, 0.8, 0.42], planet.radius);
 
   const structures: StructureSpec[] = [
-    // --- Almacén de la aldea (generador 1): patio 8 x 5 abierto al oeste,
-    // cerrado por la valla láser (Digger la cruza por debajo). ---
-    wallSeg(fV, 'vd-almacen-wall-back', 38, 2.5, 't2', 5, 3.5, WALL),
-    wallSeg(fV, 'vd-almacen-wall-n', 34, 5, 't1', 8, 3.5, WALL),
-    wallSeg(fV, 'vd-almacen-wall-s', 34, 0, 't1', 8, 3.5, WALL),
-    // Arco decorativo de entrada a la aldea (se pasa por debajo).
-    archGate(fV, 'vd-arco-aldea', 0, -20, 't1', 10, GATE),
-
-    // --- Muralla exterior del castillo (h=5): CERRADA en los 4 lados. ---
-    // Norte: 19 + 19 (muro) + 6 (pared agrietada) = 44 m exactos.
-    wallSeg(fA, 'vd-cast-wall-n-l', -12.5, -17, 't1', 19, 5, WALL),
-    wallSeg(fA, 'vd-cast-wall-n-r', 12.5, -17, 't1', 19, 5, WALL),
-    // Sur: 19 + 19 (muro) + 6 (portón principal) = 44 m exactos.
-    wallSeg(fA, 'vd-cast-wall-s-l', -12.5, 17, 't1', 19, 5, WALL),
-    wallSeg(fA, 'vd-cast-wall-s-r', 12.5, 17, 't1', 19, 5, WALL),
-    wallSeg(fA, 'vd-cast-wall-e', 22, 0, 't2', 34, 5, WALL),
-    wallSeg(fA, 'vd-cast-wall-w', -22, 0, 't2', 34, 5, WALL),
-    // Torres de las esquinas con vigías oteando el patio.
-    towerAt(fA, 'vd-cast-tower-ne', 22, -17, WALL, 8),
-    towerAt(fA, 'vd-cast-tower-se', 22, 17, WALL, 8),
-    towerAt(fA, 'vd-cast-tower-nw', -22, -17, WALL, 8),
-    towerAt(fA, 'vd-cast-tower-sw', -22, 17, WALL, 8),
-
-    // --- Muralla interior (h=4): CERRADA en los 4 lados. ---
-    wallSeg(fA, 'vd-cast-wall-in-n', 0, -10, 't1', 24, 4, WALL),
-    // Sur interior: 9.5 + 9.5 (muro) + 5 (compuerta) = 24 m exactos.
-    wallSeg(fA, 'vd-cast-wall-in-s-l', -7.25, 10, 't1', 9.5, 4, WALL),
-    wallSeg(fA, 'vd-cast-wall-in-s-r', 7.25, 10, 't1', 9.5, 4, WALL),
-    wallSeg(fA, 'vd-cast-wall-in-e', 12, 0, 't2', 20, 4, WALL),
-    // Oeste interior: 7.5 + 7.5 (muro) + 5 (pared agrietada) = 20 m exactos.
-    wallSeg(fA, 'vd-cast-wall-in-w-n', -12, 6.25, 't2', 7.5, 4, WALL),
-    wallSeg(fA, 'vd-cast-wall-in-w-s', -12, -6.25, 't2', 7.5, 4, WALL),
-
-    // --- Ruta aérea de Axel (flanco derecho): escalera de burbujas hasta
-    // la plataforma del tejado que sobrevuela el patio de armas. ---
-    struct(fA, 'vd-cast-plataforma-1', 'platform', 32, 0, null, [4, 1, 4], GATE, {
-      altitudeOffset: 14,
+    // --- Zona 2: Ruina del Altar Oeste (16 x 12, h=4): CERRADA en los 4
+    // lados; la valla láser sur es la entrada (Digger la cruza por debajo).
+    wallSeg(fR, 'vd-ruina-wall-n', 0, -6, 't1', 16, 4, WALL),
+    // Sur: 5.3 + 5.3 (muro) + 5.4 (valla láser) = 16 m exactos.
+    wallSeg(fR, 'vd-ruina-wall-s-l', -5.35, 6, 't1', 5.3, 4, WALL),
+    wallSeg(fR, 'vd-ruina-wall-s-r', 5.35, 6, 't1', 5.3, 4, WALL),
+    wallSeg(fR, 'vd-ruina-wall-e', 8, 0, 't2', 12, 4, WALL),
+    wallSeg(fR, 'vd-ruina-wall-w', -8, 0, 't2', 12, 4, WALL),
+    towerAt(fR, 'vd-ruina-torre-e', 8, -6, WALL, 7),
+    towerAt(fR, 'vd-ruina-torre-w', -8, -6, WALL, 7),
+    // Plataforma lateral que sostiene la palanca de la valla láser.
+    struct(fR, 'vd-ruina-plataforma', 'platform', 12, 0, null, [3, 1, 3], WALL_DARK, {
+      altitudeOffset: 3,
     }),
-    struct(fA, 'vd-cast-tejado', 'platform', 8, 6, null, [4.5, 1, 4.5], GATE, {
-      altitudeOffset: 15,
+
+    // --- Zona 3: Gran Zigurat, recinto exterior (40 x 30, h=5): CERRADO. ---
+    // Norte: 17 + 17 (muro) + 6 (pared agrietada) = 40 m exactos.
+    wallSeg(fA, 'vd-zig-wall-n-l', -11.5, -15, 't1', 17, 5, WALL),
+    wallSeg(fA, 'vd-zig-wall-n-r', 11.5, -15, 't1', 17, 5, WALL),
+    // Sur: 17 + 17 (muro) + 6 (portón de llave) = 40 m exactos.
+    wallSeg(fA, 'vd-zig-wall-s-l', -11.5, 15, 't1', 17, 5, WALL),
+    wallSeg(fA, 'vd-zig-wall-s-r', 11.5, 15, 't1', 17, 5, WALL),
+    wallSeg(fA, 'vd-zig-wall-e', 20, 0, 't2', 30, 5, WALL),
+    wallSeg(fA, 'vd-zig-wall-w', -20, 0, 't2', 30, 5, WALL),
+    // Torres de piedra flanqueando el portón: los monos vigía las ocupan.
+    towerAt(fA, 'vd-zig-tower-ne', 20, -15, WALL, 8),
+    towerAt(fA, 'vd-zig-tower-se', 20, 15, WALL, 8),
+    towerAt(fA, 'vd-zig-tower-nw', -20, -15, WALL, 8),
+    towerAt(fA, 'vd-zig-tower-sw', -20, 15, WALL, 8),
+
+    // --- Zona 3: santuario interior escalonado (20 x 14, h=4): CERRADO. ---
+    wallSeg(fA, 'vd-zig-wall-in-n', 0, -7, 't1', 20, 4, WALL),
+    // Sur interior: 7.5 + 7.5 (muro) + 5 (compuerta) = 20 m exactos.
+    wallSeg(fA, 'vd-zig-wall-in-s-l', -6.25, 7, 't1', 7.5, 4, WALL),
+    wallSeg(fA, 'vd-zig-wall-in-s-r', 6.25, 7, 't1', 7.5, 4, WALL),
+    wallSeg(fA, 'vd-zig-wall-in-e', 10, 0, 't2', 14, 4, WALL),
+    wallSeg(fA, 'vd-zig-wall-in-w', -10, 0, 't2', 14, 4, WALL),
+
+    // --- Nivel 2 del Zigurat: terraza superior flotante (cadena de
+    // burbujas para Axel) sobre el santuario escalonado. ---
+    struct(fA, 'vd-zig-terraza', 'platform', 0, 0, null, [6, 1, 6], WALL_DARK, {
+      altitudeOffset: 9,
     }),
   ];
 
   const objects: WorldObjectSpec[] = [
-    // ==================== Acto 1: Aldea Feudal ====================
-    // Generador 1 dentro del almacén, tras la valla láser.
-    obj(planet.id, 'vd-gen-1', 'generator', frameDir(fV, 35, 2.5)),
-    laserGate(fV, 'vd-laser-almacen', 30, 2.5, 't2'),
-    // Palanca en la casa lateral del almacén (apaga la valla láser).
-    switchLever(fV, 'vd-palanca-almacen', 26, -4),
+    // ==================== Zona 2: Ruinas del Altar Oeste ====================
+    // Generador 1 dentro de la ruina, tras la valla láser.
+    obj(planet.id, 'vd-gen-1', 'generator', frameDir(fR, 0, -2)),
+    laserGate(fR, 'vd-ruina-laser', 0, 6, 't1'),
+    // Palanca sobre la plataforma lateral (apaga la valla láser).
+    switchLever(fR, 'vd-ruina-palanca', 12, 0, { altitudeOffset: 4.0 }),
 
-    // ==================== Acto 2: Castillo del Shogunato ====================
-    // Portón principal: requiere la llave maestra del Capitán de la aldea.
-    lockedGate(fA, 'vd-castillo-porton', 0, 17, 't1', [3, 4.2, 0.7], {
+    // ==================== Zona 3: El Gran Zigurat ====================
+    // Portón frontal: se abre con el Ídolo-Llave del Alfa de la Ruina Oeste.
+    lockedGate(fA, 'vd-zig-porton', 0, 15, 't1', [3, 4.2, 0.7], {
       requiresKeycard: true,
     }),
-    // Pared trasera agrietada, escondida tras los barriles y los pinos.
-    breakableWall(fA, 'vd-castillo-muro-norte', 0, -17, 't1', [3, 4.5, 0.7]),
-    // Compuerta interior con LOCKDOWN: se cierra de golpe si salta la alarma.
-    lockedGate(fA, 'vd-castillo-puerta-interior', 0, 10, 't1', [2.5, 3.8, 0.6], {
+    // Muro trasero agrietado cubierto de musgo (barriles justo detrás).
+    breakableWall(fA, 'vd-zig-muro-norte', 0, -15, 't1', [3, 4.5, 0.7]),
+    // Compuerta interior con LOCKDOWN + palanca lateral del patio.
+    lockedGate(fA, 'vd-zig-puerta-interior', 0, 7, 't1', [2.5, 3.8, 0.6], {
       lockdownOnAlert: true,
     }),
-    // Pared agrietada del patio hacia el santuario del Shogun.
-    breakableWall(fA, 'vd-castillo-muro-santuario', -12, 0, 't2', [2.5, 3.8, 0.6]),
-    // Palanca lateral del patio exterior (ruta normal a la compuerta interior).
-    switchLever(fA, 'vd-castillo-palanca-interior', 16, 13, {
-      linkedGateId: 'vd-castillo-puerta-interior',
+    switchLever(fA, 'vd-zig-palanca-interior', 15, 11, {
+      linkedGateId: 'vd-zig-puerta-interior',
     }),
-    // Generador 2: patio de armas, tras la compuerta interior.
-    obj(planet.id, 'vd-gen-2', 'generator', frameDir(fA, 4, 5)),
-    // Generador 3: dentro de la Pagoda/Santuario del Shogun.
-    obj(planet.id, 'vd-gen-3', 'generator', frameDir(fA, -5, -5)),
+    // Generadores 2 y 3 dentro del santuario escalonado.
+    obj(planet.id, 'vd-gen-2', 'generator', frameDir(fA, 4, 2)),
+    obj(planet.id, 'vd-gen-3', 'generator', frameDir(fA, -4, -2)),
 
-    // Barriles: emboscada al Capitán en la aldea + pared agrietada trasera
-    // del castillo + pared del santuario en el patio.
-    obj(planet.id, 'vd-barril-plaza', 'barrel_explosive', frameDir(fV, 12, 12)),
-    obj(planet.id, 'vd-barril-castillo-1', 'barrel_explosive', frameDir(fA, 0, -21)),
-    obj(planet.id, 'vd-barril-castillo-2', 'barrel_explosive', frameDir(fA, -3.5, -20)),
-    obj(planet.id, 'vd-barril-castillo-3', 'barrel_explosive', frameDir(fA, 3.5, -20)),
-    obj(planet.id, 'vd-barril-santuario', 'barrel_explosive', frameDir(fA, -15, 2.5)),
-    // Rocas para distraer a los guardias del Capitán y para la Estasis.
-    obj(planet.id, 'vd-roca-plaza-1', 'rock', frameDir(fV, -9, 8)),
-    obj(planet.id, 'vd-roca-plaza-2', 'rock', frameDir(fV, 9, 8)),
-    obj(planet.id, 'vd-roca-castillo-1', 'rock', frameDir(fA, 26, 14)),
-    obj(planet.id, 'vd-roca-castillo-2', 'rock', frameDir(fA, -26, -10)),
-    obj(planet.id, 'vd-roca-patio', 'rock', frameDir(fA, 6, -6)),
+    // Barriles explosivos junto al muro agrietado trasero del Zigurat.
+    obj(planet.id, 'vd-barril-zig-1', 'barrel_explosive', frameDir(fA, 0, -19)),
+    obj(planet.id, 'vd-barril-zig-2', 'barrel_explosive', frameDir(fA, -3.5, -19)),
+    obj(planet.id, 'vd-barril-zig-3', 'barrel_explosive', frameDir(fA, 3.5, -19)),
+    // Barril de emboscada junto a la entrada de la Ruina Oeste (el Alfa).
+    obj(planet.id, 'vd-barril-ruina', 'barrel_explosive', frameDir(fR, 4, 14)),
+    // Rocas de Estasis y cajas repartidas por la selva.
+    obj(planet.id, 'vd-roca-camp-1', 'rock', frameDir(fV, 8, -16)),
+    obj(planet.id, 'vd-roca-camp-2', 'rock', frameDir(fV, -8, -16)),
+    obj(planet.id, 'vd-roca-ruina', 'rock', frameDir(fR, 10, 12)),
+    obj(planet.id, 'vd-roca-zig-1', 'rock', frameDir(fA, 16, 13)),
+    obj(planet.id, 'vd-roca-zig-2', 'rock', frameDir(fA, -16, 13)),
     obj(planet.id, 'vd-roca-1', 'rock', [0.3, 0.88, 0.35]),
     obj(planet.id, 'vd-roca-2', 'rock', [-0.2, 0.95, 0.25]),
-    obj(planet.id, 'vd-roca-3', 'rock', [0.6, 0.55, 0.55]),
-    obj(planet.id, 'vd-roca-4', 'rock', [-0.4, 0.75, -0.5]),
-    obj(planet.id, 'vd-caja-1', 'crate', frameDir(fV, -15, -10)),
-    obj(planet.id, 'vd-caja-2', 'crate', frameDir(fA, 18, 20)),
-    obj(planet.id, 'vd-caja-3', 'crate', [0.1, 0.9, 0.4]),
+    obj(planet.id, 'vd-caja-camp', 'crate', frameDir(fV, 2, -6)),
+    obj(planet.id, 'vd-caja-zig', 'crate', frameDir(fA, 10, 10)),
+    obj(planet.id, 'vd-caja-1', 'crate', [0.1, 0.9, 0.4]),
   ];
 
   const enemies: EnemySpawnSpec[] = [
-    // ==================== Acto 1: Aldea Feudal ====================
-    // Oficial Capitán del Shogunato: lleva la LLAVE MAESTRA del castillo.
-    {
-      kind: 'officer',
-      planetId: planet.id,
-      patrolDirs: patrolCircle(...frameDir(fV, 0, 6), 0.045, 4),
-      dropsKeycard: true,
-    },
-    // Sus 2 guardias de escolta en la plaza de la pagoda.
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fV, -5, 4), 0.035, 4) },
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fV, 5, 4), 0.035, 4) },
+    // ==================== Valle de Palmeras: panteras entre los helechos ====
+    { kind: 'guard', skin: 'panther', planetId: planet.id, patrolDirs: patrolCircle(0.15, 0.9, 0.35, 0.08, 4) },
+    { kind: 'guard', skin: 'panther', planetId: planet.id, patrolDirs: patrolCircle(0.05, 0.72, 0.62, 0.08, 4) },
 
-    // ==================== Acto 2: Castillo del Shogunato ====================
-    // Vigías en las torres traseras: barren el patio desde las almenas.
-    lookout(planet.id, frameDir(fA, 22, -17), 7.6, frameDir(fA, 0, 4)),
-    lookout(planet.id, frameDir(fA, -22, -17), 7.6, frameDir(fA, 0, 4)),
-    // Patrullas del patio exterior (entre las dos murallas).
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, 8, 13), 0.05, 4) },
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, -8, 13), 0.05, 4) },
-    // Brute del Shogun custodiando el patio de armas interior.
-    { kind: 'brute', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, 0, -3), 0.05, 3) },
-    // Guardia del patio de armas (generador 2).
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, 4, 1), 0.035, 4) },
-    // Guardia errante por la pradera.
-    { kind: 'guard', planetId: planet.id, patrolDirs: patrolCircle(0.15, 0.9, 0.35, 0.1, 4) },
+    // ==================== Zona 2: Ruinas del Altar Oeste ====================
+    // Pantera patrullando el interior de la ruina (generador 1).
+    { kind: 'guard', skin: 'panther', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fR, 0, 0), 0.03, 4) },
+    // Oficial Alfa de la Ruina: custodia la entrada y porta el Ídolo-Llave.
+    { kind: 'officer', skin: 'panther', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fR, 0, 10), 0.05, 4), dropsKeycard: true },
+
+    // ==================== Zona 3: El Gran Zigurat ====================
+    // Monos vigía en las torres frontales, barriendo el patio con la mirada.
+    lookout(planet.id, frameDir(fA, 20, 15), 7.6, frameDir(fA, 0, 0), 'monkey'),
+    lookout(planet.id, frameDir(fA, -20, 15), 7.6, frameDir(fA, 0, 0), 'monkey'),
+    // Gorila lomo plateado custodiando el patio del Zigurat.
+    { kind: 'brute', skin: 'gorilla', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, 0, 11), 0.05, 3) },
+    // Avispas gigantes patrullando los alrededores del templo.
+    { kind: 'drone', skin: 'wasp', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, 24, 0), 0.07, 4) },
+    { kind: 'drone', skin: 'wasp', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, -24, 0), 0.07, 4) },
+    // Panteras del patio exterior del Zigurat.
+    { kind: 'guard', skin: 'panther', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, 12, 11), 0.05, 4) },
+    { kind: 'guard', skin: 'panther', planetId: planet.id, patrolDirs: patrolCircle(...frameDir(fA, -12, 11), 0.05, 4) },
   ];
 
   const grass: GrassZoneSpec[] = [
-    { id: 'vd-grass-spawn', planetId: planet.id, sphericalDir: [0.15, 0.9, 0.35], angularRadius: 0.2 },
-    { id: 'vd-grass-aldea', planetId: planet.id, sphericalDir: frameDir(fV, 0, -22), angularRadius: 0.2 },
-    { id: 'vd-grass-mid', planetId: planet.id, sphericalDir: [0.05, 0.72, 0.62], angularRadius: 0.18 },
-    // Cobertura sigilosa frente al portón y en los flancos del castillo.
-    { id: 'vd-grass-castillo-frente', planetId: planet.id, sphericalDir: frameDir(fA, 0, 24), angularRadius: 0.2 },
-    { id: 'vd-grass-castillo-este', planetId: planet.id, sphericalDir: frameDir(fA, 30, -14), angularRadius: 0.18 },
-    { id: 'vd-grass-castillo-oeste', planetId: planet.id, sphericalDir: frameDir(fA, -28, 0), angularRadius: 0.18 },
+    // Zona 1: parches amplios de hierba alta para ocultarse como un ninja.
+    { id: 'vd-jungla-spawn', planetId: planet.id, sphericalDir: frameDir(fV, 0, -26), angularRadius: 0.22 },
+    { id: 'vd-jungla-valle-e', planetId: planet.id, sphericalDir: frameDir(fV, 16, 6), angularRadius: 0.2 },
+    { id: 'vd-jungla-valle-o', planetId: planet.id, sphericalDir: frameDir(fV, -16, 6), angularRadius: 0.2 },
+    // Valle intermedio entre zonas (las panteras cazan aquí).
+    { id: 'vd-jungla-mid', planetId: planet.id, sphericalDir: [0.05, 0.72, 0.62], angularRadius: 0.18 },
+    // Zona 2: aproximación sigilosa a la entrada de las ruinas.
+    { id: 'vd-jungla-ruinas', planetId: planet.id, sphericalDir: frameDir(fR, 0, 14), angularRadius: 0.2 },
+    // Zona 3: cobertura frente al portón y en el flanco oeste del Zigurat.
+    { id: 'vd-jungla-zig-frente', planetId: planet.id, sphericalDir: frameDir(fA, 0, 22), angularRadius: 0.2 },
+    { id: 'vd-jungla-zig-oeste', planetId: planet.id, sphericalDir: frameDir(fA, -26, 0), angularRadius: 0.18 },
   ];
 
-  // Escalera de burbujas del flanco derecho (Axel) hasta el tejado.
+  // Lagunas de agua conectadas entre zonas (el agua rodea los templos, nunca
+  // los inunda) + cadena de burbujas hasta la terraza superior (Axel).
+  const lagR = (t: number) => midDir([0.05, 0.3, 0.95], [0.68, 0.42, 0.42], t);
+  const lagZ = (t: number) => midDir([0.05, 0.3, 0.95], [0.35, 0.8, 0.42], t);
   const bubbles: WaterBubbleSpec[] = [
-    orbitBubble('vd-bub-c1', planet, frameDir(fA, 26, -11), 6, 8),
-    orbitBubble('vd-bub-c2', planet, frameDir(fA, 29, -6), 11, 7.5),
-    orbitBubble('vd-bub-c3', planet, frameDir(fA, 27, 6), 16, 7),
-    orbitBubble('vd-bub-aldea', planet, frameDir(fV, 14, 14), 5, 7),
+    // Sendero del campamento a las Ruinas del Altar Oeste.
+    orbitBubble('vd-laguna-r-1', planet, lagR(0.4), 2, 10),
+    orbitBubble('vd-laguna-r-2', planet, lagR(0.5), 2, 10),
+    orbitBubble('vd-laguna-r-3', planet, lagR(0.6), 2, 9),
+    // Sendero del campamento al Gran Zigurat.
+    orbitBubble('vd-laguna-z-1', planet, lagZ(0.4), 2, 10),
+    orbitBubble('vd-laguna-z-2', planet, lagZ(0.5), 2, 10),
+    orbitBubble('vd-laguna-z-3', planet, lagZ(0.6), 2, 9),
+    // Cadena de burbujas hasta la terraza superior del Zigurat.
+    orbitBubble('vd-bub-z1', planet, frameDir(fA, 24, -8), 5, 8),
+    orbitBubble('vd-bub-z2', planet, frameDir(fA, 26, -2), 9, 7.5),
+    orbitBubble('vd-bub-z3', planet, frameDir(fA, 14, 0), 12, 7),
+    // Burbuja del campamento, junto a la tienda del botánico.
+    orbitBubble('vd-bub-camp', planet, frameDir(fV, 16, 14), 5, 7),
   ];
 
-  // --- Aldea Feudal: torii, pagoda central, casas, farolillos, caminos,
-  // puentes de madera y arboledas de bambú/pino alrededor. ---
+  // --- Densidad visual de la selva: palmeras, helechos, tótems, arcos de
+  // liana, puentes de madera sobre las lagunas y senderos de piedra. ---
+  const toRuinas = geodesicTangent([0.05, 0.3, 0.95], [0.68, 0.42, 0.42]);
+  const toZigurat = geodesicTangent([0.05, 0.3, 0.95], [0.35, 0.8, 0.42]);
   const props: PropSpec[] = [
-    prop(planet.id, 'vd-torii-1', 'torii_gate', frameDir(fV, 0, -18)),
-    prop(planet.id, 'vd-torii-2', 'torii_gate', frameDir(fV, 22, -6), { yaw: 1.2 }),
-    prop(planet.id, 'vd-pagoda-1', 'pagoda_house', frameDir(fV, 0, 0)),
-    prop(planet.id, 'vd-pagoda-2', 'pagoda_house', frameDir(fV, -26, 16), { scale: 0.8 }),
-    prop(planet.id, 'vd-casa-1', 'village_house', frameDir(fV, -13, -7), { yaw: 0.4 }),
-    prop(planet.id, 'vd-casa-2', 'village_house', frameDir(fV, 13, -7), { yaw: -0.4 }),
-    prop(planet.id, 'vd-casa-3', 'village_house', frameDir(fV, -13, 9), { yaw: -0.3 }),
-    prop(planet.id, 'vd-casa-4', 'village_house', frameDir(fV, 13, 9), { yaw: 0.3 }),
-    prop(planet.id, 'vd-casa-5', 'village_house', frameDir(fV, 0, 18), { yaw: Math.PI }),
-    prop(planet.id, 'vd-casa-6', 'village_house', frameDir(fV, 28, 10), { yaw: 0.9 }),
-    // Casa lateral del almacén (junto a su palanca).
-    prop(planet.id, 'vd-casa-almacen', 'village_house', frameDir(fV, 26, -7), { yaw: 0.5 }),
-    // Farolillos de papel flanqueando el camino de entrada y la plaza.
-    prop(planet.id, 'vd-farol-1', 'paper_lantern', frameDir(fV, -2.5, -15)),
-    prop(planet.id, 'vd-farol-2', 'paper_lantern', frameDir(fV, 2.5, -15)),
-    prop(planet.id, 'vd-farol-3', 'paper_lantern', frameDir(fV, -2.5, -9)),
-    prop(planet.id, 'vd-farol-4', 'paper_lantern', frameDir(fV, 2.5, -9)),
-    prop(planet.id, 'vd-farol-5', 'paper_lantern', frameDir(fV, -2.5, -3)),
-    prop(planet.id, 'vd-farol-6', 'paper_lantern', frameDir(fV, 2.5, -3)),
-    prop(planet.id, 'vd-farol-7', 'paper_lantern', frameDir(fV, -6, 5)),
-    prop(planet.id, 'vd-farol-8', 'paper_lantern', frameDir(fV, 6, 5)),
-    // Caminos de piedra: acceso al torii y plaza de la pagoda.
-    prop(planet.id, 'vd-camino-1', 'stone_path', frameDir(fV, 0, -12)),
-    prop(planet.id, 'vd-camino-2', 'stone_path', frameDir(fV, 0, 12), { yaw: Math.PI }),
-    prop(planet.id, 'vd-camino-3', 'stone_path', frameDir(fV, -20, -2), { yaw: Math.PI / 2 }),
-    // Puentes de madera entre la aldea y los complejos.
-    prop(planet.id, 'vd-puente-1', 'wood_bridge', frameDir(fV, 19, 0), { yaw: Math.PI / 2 }),
-    prop(planet.id, 'vd-puente-2', 'wood_bridge', frameDir(fV, -19, 0), { yaw: Math.PI / 2 }),
-    // Bambú y árboles alrededor de la aldea y el castillo.
-    prop(planet.id, 'vd-bambu-1', 'bamboo_cluster', frameDir(fV, 17, -13)),
-    prop(planet.id, 'vd-bambu-2', 'bamboo_cluster', frameDir(fV, -17, -13)),
-    prop(planet.id, 'vd-bambu-3', 'bamboo_cluster', frameDir(fV, 9, 20)),
-    prop(planet.id, 'vd-bambu-4', 'bamboo_cluster', frameDir(fV, -9, 20)),
-    prop(planet.id, 'vd-bambu-5', 'bamboo_cluster', frameDir(fA, 24, 16)),
-    prop(planet.id, 'vd-bambu-6', 'bamboo_cluster', frameDir(fA, -24, -20)),
-    prop(planet.id, 'vd-pino-1', 'pine_tree', frameDir(fV, 24, -16), { scale: 1.4 }),
-    prop(planet.id, 'vd-pino-2', 'pine_tree', frameDir(fV, -24, -16), { scale: 1.4 }),
-    prop(planet.id, 'vd-pino-3', 'pine_tree', frameDir(fV, 26, 6), { scale: 1.2 }),
-    prop(planet.id, 'vd-pino-4', 'pine_tree', frameDir(fV, -26, -8), { scale: 1.2 }),
-    // Pinos que esconden la pared agrietada trasera del castillo.
-    prop(planet.id, 'vd-pino-castillo-1', 'pine_tree', frameDir(fA, -6, -21), { scale: 1.5 }),
-    prop(planet.id, 'vd-pino-castillo-2', 'pine_tree', frameDir(fA, 6, -21), { scale: 1.5 }),
-    prop(planet.id, 'vd-pino-castillo-3', 'pine_tree', frameDir(fA, 0, -24), { scale: 1.6 }),
-    prop(planet.id, 'vd-pino-castillo-4', 'pine_tree', frameDir(fA, 30, -12), { scale: 1.5 }),
-    prop(planet.id, 'vd-pino-castillo-5', 'pine_tree', frameDir(fA, -26, 12), { scale: 1.5 }),
-    prop(planet.id, 'vd-pino-castillo-6', 'pine_tree', frameDir(fA, 20, 14), { scale: 1.3 }),
-    prop(planet.id, 'vd-pino-castillo-7', 'pine_tree', frameDir(fA, -20, -14), { scale: 1.3 }),
-    prop(planet.id, 'vd-pino-11', 'pine_tree', [0.3, 0.6, 0.5], { scale: 1.6 }),
-    prop(planet.id, 'vd-pino-12', 'pine_tree', [-0.1, 0.5, 0.8], { scale: 1.6 }),
-    prop(planet.id, 'vd-pino-13', 'pine_tree', [0.7, 0.4, 0.2], { scale: 1.5 }),
-    prop(planet.id, 'vd-pino-14', 'pine_tree', [-0.5, 0.2, 0.7], { scale: 1.5 }),
-    prop(planet.id, 'vd-pino-15', 'pine_tree', [0.2, 0.15, 0.9], { scale: 1.7 }),
-    prop(planet.id, 'vd-pino-16', 'pine_tree', [-0.8, 0.5, -0.2], { scale: 1.6 }),
-    // Torii ceremonial frente al portón principal del castillo.
-    prop(planet.id, 'vd-torii-castillo', 'torii_gate', frameDir(fA, 0, 22)),
-    // Farolillos sueltos junto al castillo.
-    prop(planet.id, 'vd-farol-9', 'paper_lantern', frameDir(fA, 8, 18)),
-    prop(planet.id, 'vd-farol-10', 'paper_lantern', frameDir(fA, -8, 18)),
+    // ==================== Zona 1: Campamento del Botánico ====================
+    // Arcos de liana flanqueando el sendero del valle.
+    prop(planet.id, 'vd-arco-liana-1', 'vine_arch', frameDir(fV, 0, -16)),
+    prop(planet.id, 'vd-arco-liana-2', 'vine_arch', frameDir(fV, 0, 4)),
+    // Palmeras del valle a ambos lados del sendero.
+    prop(planet.id, 'vd-palma-1', 'palm_tree', frameDir(fV, 6, -20), { scale: 1.3 }),
+    prop(planet.id, 'vd-palma-2', 'palm_tree', frameDir(fV, -6, -20), { scale: 1.3 }),
+    prop(planet.id, 'vd-palma-3', 'palm_tree', frameDir(fV, 7, -10), { scale: 1.2 }),
+    prop(planet.id, 'vd-palma-4', 'palm_tree', frameDir(fV, -7, -10), { scale: 1.2 }),
+    prop(planet.id, 'vd-palma-5', 'palm_tree', frameDir(fV, 8, 0), { scale: 1.25 }),
+    prop(planet.id, 'vd-palma-6', 'palm_tree', frameDir(fV, -8, 0), { scale: 1.25 }),
+    prop(planet.id, 'vd-palma-7', 'palm_tree', frameDir(fV, 7, 10), { scale: 1.2 }),
+    prop(planet.id, 'vd-palma-8', 'palm_tree', frameDir(fV, -7, 10), { scale: 1.2 }),
+    prop(planet.id, 'vd-palma-9', 'palm_tree', frameDir(fV, 6, 20), { scale: 1.3 }),
+    prop(planet.id, 'vd-palma-10', 'palm_tree', frameDir(fV, -6, 20), { scale: 1.3 }),
+    prop(planet.id, 'vd-palma-11', 'palm_tree', frameDir(fV, 12, -6), { scale: 1.4 }),
+    prop(planet.id, 'vd-palma-12', 'palm_tree', frameDir(fV, -12, -6), { scale: 1.4 }),
+    prop(planet.id, 'vd-palma-13', 'palm_tree', frameDir(fV, 13, 12), { scale: 1.35 }),
+    prop(planet.id, 'vd-palma-14', 'palm_tree', frameDir(fV, -13, 12), { scale: 1.35 }),
+    // Helechos exóticos entre las palmeras.
+    prop(planet.id, 'vd-helecho-1', 'fern_cluster', frameDir(fV, 3, -14)),
+    prop(planet.id, 'vd-helecho-2', 'fern_cluster', frameDir(fV, -3, -14)),
+    prop(planet.id, 'vd-helecho-3', 'fern_cluster', frameDir(fV, 4, -4)),
+    prop(planet.id, 'vd-helecho-4', 'fern_cluster', frameDir(fV, -4, -4)),
+    prop(planet.id, 'vd-helecho-5', 'fern_cluster', frameDir(fV, 3.5, 8)),
+    prop(planet.id, 'vd-helecho-6', 'fern_cluster', frameDir(fV, -3.5, 8)),
+    prop(planet.id, 'vd-helecho-7', 'fern_cluster', frameDir(fV, 10, 4)),
+    prop(planet.id, 'vd-helecho-8', 'fern_cluster', frameDir(fV, -10, -12)),
+    // Tótems antiguos velando el sendero del campamento.
+    prop(planet.id, 'vd-totem-1', 'ancient_statue', frameDir(fV, 5, -2)),
+    prop(planet.id, 'vd-totem-2', 'ancient_statue', frameDir(fV, -5, -2)),
+    // Sendero de piedra del campamento.
+    prop(planet.id, 'vd-sendero-1', 'stone_path', frameDir(fV, 0, -8)),
+    prop(planet.id, 'vd-sendero-2', 'stone_path', frameDir(fV, 0, 8)),
+
+    // ==================== Zona 2: Ruinas del Altar Oeste ====================
+    prop(planet.id, 'vd-ruina-arco', 'vine_arch', frameDir(fR, 0, 12)),
+    prop(planet.id, 'vd-ruina-palma-1', 'palm_tree', frameDir(fR, 10, 8), { scale: 1.3 }),
+    prop(planet.id, 'vd-ruina-palma-2', 'palm_tree', frameDir(fR, -10, 8), { scale: 1.3 }),
+    prop(planet.id, 'vd-ruina-palma-3', 'palm_tree', frameDir(fR, 12, -4), { scale: 1.25 }),
+    prop(planet.id, 'vd-ruina-palma-4', 'palm_tree', frameDir(fR, -12, -4), { scale: 1.25 }),
+    prop(planet.id, 'vd-ruina-helecho-1', 'fern_cluster', frameDir(fR, 4, 10)),
+    prop(planet.id, 'vd-ruina-helecho-2', 'fern_cluster', frameDir(fR, -4, 10)),
+    prop(planet.id, 'vd-ruina-helecho-3', 'fern_cluster', frameDir(fR, 11, 2)),
+    prop(planet.id, 'vd-ruina-helecho-4', 'fern_cluster', frameDir(fR, -11, 2)),
+    prop(planet.id, 'vd-ruina-helecho-5', 'fern_cluster', frameDir(fR, 2, -4)),
+    prop(planet.id, 'vd-ruina-helecho-6', 'fern_cluster', frameDir(fR, -2, -4)),
+    prop(planet.id, 'vd-ruina-totem-1', 'ancient_statue', frameDir(fR, 5, -4)),
+    prop(planet.id, 'vd-ruina-totem-2', 'ancient_statue', frameDir(fR, -5, -4)),
+
+    // ==================== Zona 3: El Gran Zigurat ====================
+    prop(planet.id, 'vd-zig-arco-1', 'vine_arch', frameDir(fA, 0, 20)),
+    prop(planet.id, 'vd-zig-arco-2', 'vine_arch', frameDir(fA, 0, -20)),
+    prop(planet.id, 'vd-zig-palma-1', 'palm_tree', frameDir(fA, 24, 10), { scale: 1.4 }),
+    prop(planet.id, 'vd-zig-palma-2', 'palm_tree', frameDir(fA, -24, 10), { scale: 1.4 }),
+    prop(planet.id, 'vd-zig-palma-3', 'palm_tree', frameDir(fA, 26, -6), { scale: 1.3 }),
+    prop(planet.id, 'vd-zig-palma-4', 'palm_tree', frameDir(fA, -26, -6), { scale: 1.3 }),
+    prop(planet.id, 'vd-zig-palma-5', 'palm_tree', frameDir(fA, 16, 18), { scale: 1.3 }),
+    prop(planet.id, 'vd-zig-palma-6', 'palm_tree', frameDir(fA, -16, 18), { scale: 1.3 }),
+    prop(planet.id, 'vd-zig-helecho-1', 'fern_cluster', frameDir(fA, 6, 12)),
+    prop(planet.id, 'vd-zig-helecho-2', 'fern_cluster', frameDir(fA, -6, 12)),
+    prop(planet.id, 'vd-zig-helecho-3', 'fern_cluster', frameDir(fA, 14, 4)),
+    prop(planet.id, 'vd-zig-helecho-4', 'fern_cluster', frameDir(fA, -14, 4)),
+    prop(planet.id, 'vd-zig-helecho-5', 'fern_cluster', frameDir(fA, 4, -12)),
+    prop(planet.id, 'vd-zig-helecho-6', 'fern_cluster', frameDir(fA, -4, -12)),
+    // Helechos que esconden el muro agrietado trasero.
+    prop(planet.id, 'vd-zig-helecho-7', 'fern_cluster', frameDir(fA, 3, -18)),
+    prop(planet.id, 'vd-zig-helecho-8', 'fern_cluster', frameDir(fA, -3, -18)),
+    // Tótems flanqueando la compuerta interior y el patio.
+    prop(planet.id, 'vd-zig-totem-1', 'ancient_statue', frameDir(fA, 8, 11)),
+    prop(planet.id, 'vd-zig-totem-2', 'ancient_statue', frameDir(fA, -8, 11)),
+    prop(planet.id, 'vd-zig-totem-3', 'ancient_statue', frameDir(fA, 0, -11)),
+
+    // ==================== Puentes de madera sobre las lagunas ====================
+    prop(planet.id, 'vd-puente-laguna-r', 'wood_bridge', lagR(0.5), {
+      yaw: yawFaceDir(lagR(0.5), toRuinas),
+    }),
+    prop(planet.id, 'vd-puente-laguna-z', 'wood_bridge', lagZ(0.5), {
+      yaw: yawFaceDir(lagZ(0.5), toZigurat),
+    }),
+
+    // ==================== Selva dispersa alrededor del planeta ====================
+    prop(planet.id, 'vd-palma-libre-1', 'palm_tree', [0.3, 0.6, 0.5], { scale: 1.5 }),
+    prop(planet.id, 'vd-palma-libre-2', 'palm_tree', [-0.1, 0.5, 0.8], { scale: 1.5 }),
+    prop(planet.id, 'vd-palma-libre-3', 'palm_tree', [0.7, 0.4, 0.2], { scale: 1.4 }),
+    prop(planet.id, 'vd-palma-libre-4', 'palm_tree', [-0.5, 0.2, 0.7], { scale: 1.4 }),
+    prop(planet.id, 'vd-helecho-libre-1', 'fern_cluster', [0.2, 0.15, 0.9]),
+    prop(planet.id, 'vd-helecho-libre-2', 'fern_cluster', [-0.8, 0.5, -0.2]),
+    prop(planet.id, 'vd-totem-libre', 'ancient_statue', [0.6, 0.55, 0.55]),
+    prop(planet.id, 'vd-arco-libre', 'vine_arch', [0.45, 0.75, 0.5]),
   ];
 
   const npcs: NpcSpec[] = [
     {
-      id: 'takeshi',
-      name: 'Maestro Takeshi',
-      role: 'Sabio del Shogunato',
+      id: 'solis',
+      name: 'Dr. Solís',
+      role: 'Botánico',
       planetId: planet.id,
-      sphericalDir: frameDir(fV, 0, -15),
-      yaw: yawFace(fV, 0, -15, fV.t2.clone().negate()),
-      accentColor: '#f97316',
+      sphericalDir: frameDir(fV, 0, -12),
+      yaw: yawFace(fV, 0, -12, fV.t2),
+      accentColor: '#4ade80',
       dialogue: [
-        'El Castillo del Shogunato selló sus portones. El Capitán que patrulla la Pagoda Central lleva la llave maestra; si prefieres no enfrentarlo, busca la pared agrietada detrás del santuario o sube por las burbujas hasta las almenas.',
-        'El almacén del pueblo guarda un generador tras su valla láser. La palanca está en la casa lateral... o cava por debajo con Digger.',
-        'Noquea al Capitán por la espalda con [E] para robarle la llave y quedarte con su disfraz.',
+        '¡Cuidado con las panteras entre los helechos! Para abrir el Gran Zigurat necesitas el Ídolo-Llave del Alfa de la Ruina Oeste, o volar el muro agrietado cubierto de musgo por la espalda.',
+        'La hierba alta de la selva es tu aliada: dentro de ella los vigías del templo pierden tu rastro... salvo a quemarropa. Noquea por la espalda con [E] y quédate el disfraz.',
+        'El Altar Oeste guarda su generador tras una valla láser: la palanca está en la plataforma lateral, o cava por debajo con Digger. Y Axel puede subir a la terraza del Zigurat siguiendo las burbujas sobre la laguna.',
       ],
     },
   ];

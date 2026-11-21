@@ -143,7 +143,12 @@ export type PropKind =
   | 'pipe'
   | 'antenna'
   | 'reactor'
-  | 'spotlight';
+  | 'spotlight'
+  // --- Selva Tropical (Verdant · Templos de Jade) ---
+  | 'palm_tree'
+  | 'fern_cluster'
+  | 'ancient_statue'
+  | 'vine_arch';
 
 /** Prop ambiental sin colisión: puro set dressing sobre la superficie. */
 export interface PropSpec {
@@ -170,12 +175,31 @@ export interface PlanetRuntime {
 
 export type EnemyKind = 'guard' | 'officer' | 'drone' | 'turret' | 'brute' | 'kronos';
 
+/**
+ * Skin temática del modelo de un enemigo: la Selva Tropical de Verdant usa
+ * animales salvajes (pantera, mono, gorila, avispa); los pasos 3 y 4 añadirán
+ * samuráis/onis (Planeta 2) y guardias cibernéticos (Planeta 3).
+ */
+export type EnemySkin =
+  | 'default'
+  | 'panther'
+  | 'monkey'
+  | 'gorilla'
+  | 'wasp'
+  | 'samurai'
+  | 'oni'
+  | 'cyber_guard'
+  | 'cyber_officer'
+  | 'cyber_drone';
+
 export type EnemyAlertState = 'patrol' | 'suspicious' | 'searching' | 'combat' | 'knocked_out';
 
 export interface EnemySpawnSpec {
   kind: EnemyKind;
   planetId: string;
   patrolDirs: [number, number, number][];
+  /** Skin temática del modelo (por defecto 'default': uniforme de Kronos). */
+  skin?: EnemySkin;
   hasHelmet?: boolean;
   pairedWithNext?: boolean;
   /** Al caer K.O. entrega la llave/tarjeta del sector (keycardsCollected++). */
