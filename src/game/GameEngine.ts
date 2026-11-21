@@ -16,6 +16,7 @@ import { WorldObjectsManager, type WorldPlayerState } from './entities/WorldObje
 import { LEVELS, createLevelObjectives } from './levels/levelDefinitions';
 import { BehaviorTracker } from './ai/BehaviorTracker';
 import { computePlanetAdaptation } from './ai/AdaptationDirector';
+import { SynthAudio } from './audio/SynthAudio';
 
 // ============================================================================
 // Constantes de cámara y portal
@@ -86,6 +87,25 @@ export class GameEngine {
   private adaptation: PlanetAdaptationConfig = DEFAULT_ADAPTATION;
   private pendingAdaptation: PlanetAdaptationConfig = DEFAULT_ADAPTATION;
 
+  // Vector combinado de la run (acumulado + planeta actual), preasignado y
+  // actualizado cada frame: es la fuente de entrada de la red MLP de KRONOS.
+  private readonly kronosBehavior: PlayerBehaviorVector = {
+    stealthKnockouts: 0,
+    disguiseTimeSec: 0,
+    alarmsTriggered: 0,
+    bruteKills: 0,
+    aerialAttacks: 0,
+    burrowDistance: 0,
+    burrowTimeSec: 0,
+    stasisThrows: 0,
+    parriesLanded: 0,
+    damageTaken: 0,
+    totalTimeSec: 0,
+  };
+
+  // Audio procedural Web Audio API (Hito 4): desbloqueo al primer gesto.
+  private readonly audio = new SynthAudio();
+
   // Estado del jugador que el mundo necesita (preasignado, sin GC).
   private readonly worldState: WorldPlayerState = {
     pos: new THREE.Vector3(),
@@ -99,6 +119,7 @@ export class GameEngine {
     stealthMul: 1,
     sprinting: false,
     airborne: false,
+    characterId: 'kitsune',
   };
 
   // Temporales preasignados (sin GC en el loop)
@@ -114,7 +135,10 @@ export class GameEngine {
   private readonly boundMouseDown = (e: MouseEvent) => this.onMouseDown(e);
   private readonly boundMouseUp = (e: MouseEvent) => this.onMouseUp(e);
   private readonly boundWheel = (e: WheelEvent) => this.onWheel(e);
-  private readonly boundClick = () => this.requestPointerLock();
+  private readonly boundClick = () => {
+    this.audio.unlock();
+    this.requestPointerLock();
+  };
   private readonly boundContextMenu = (e: Event) => e.preventDefault();
   private readonly boundPointerLockChange = () => this.onPointerLockChange();
   private readonly boundResize = () => this.onResize();
@@ -237,11 +261,14 @@ export class GameEngine {
     // IA inter-planeta: el AdaptationDirector lee la run acumulada y el nivel
     // se construye con las contramedidas ya desplegadas (patrullas extra,
     // cascos, drones, parejas, escáneres, minas sísmicas y torretas).
+    // La arena de KRONOS no despliega guarnición: el jefe se basta solo.
     this.adaptation = computePlanetAdaptation(
       this.behaviorTracker.getAccumulated(),
       this.level.order
     );
-    this.world.applyAdaptation(this.level, this.adaptation);
+    if (this.level.id !== 'kronos') {
+      this.world.applyAdaptation(this.level, this.adaptation);
+    }
 
     this.objectives = createLevelObjectives(this.level.id);
 
@@ -264,6 +291,11 @@ export class GameEngine {
     this.world.onTeleportPlayer = (x, y, z) => {
       this.player?.teleportTo(x, y, z);
     };
+    // Hito 4: audio procedural + victoria por derrota del jefe final.
+    this.world.onSound = (kind) => this.audio.play(kind);
+    this.world.onKronosDefeated = () => this.onKronosDefeated();
+    this.world.setKronosBehaviorSource(this.kronosBehavior);
+    this.player.onSound = (kind) => this.audio.play(kind);
   }
 
   // --------------------------------------------------------------------------
@@ -277,6 +309,13 @@ export class GameEngine {
   /** Reanuda desde pausa: solicita Pointer Lock (requiere gesto del usuario). */
   resume(): void {
     this.requestPointerLock();
+  }
+
+  /** Botón rápido del HUD: alterna el mute del audio procedural. */
+  toggleMute(): void {
+    this.audio.unlock();
+    this.audio.toggleMute();
+    this.emitHud();
   }
 
   /**
@@ -346,7 +385,23 @@ export class GameEngine {
     this.worldState.stealthMul = player.stealthMultiplier;
     this.worldState.sprinting = player.isSprinting;
     this.worldState.airborne = player.isAirborne;
+    this.worldState.characterId = player.characterId;
     this.worldState.inGrass = world.isInGrass(player.position, player.planet);
+
+    // Vector combinado de la run (acumulado + planeta actual) sin allocations:
+    // la red MLP de KRONOS lo lee para predecir su postura en tiempo real.
+    const combined = this.behaviorTracker.getAccumulatedInto(this.kronosBehavior);
+    const level = player.behavior;
+    combined.stealthKnockouts += level.stealthKnockouts;
+    combined.disguiseTimeSec += level.disguiseTimeSec;
+    combined.alarmsTriggered += level.alarmsTriggered;
+    combined.bruteKills += level.bruteKills;
+    combined.aerialAttacks += level.aerialAttacks;
+    combined.burrowDistance += level.burrowDistance;
+    combined.burrowTimeSec += level.burrowTimeSec;
+    combined.stasisThrows += level.stasisThrows;
+    combined.parriesLanded += level.parriesLanded;
+    combined.damageTaken += level.damageTaken;
   }
 
   private updateCamera(dtReal: number): void {
@@ -411,6 +466,18 @@ export class GameEngine {
     const player = this.player;
     if (!player) return;
 
+    if (this.level.id === 'kronos') {
+      // Clímax: el único objetivo es derrotar al Comandante KRONOS.
+      const boss = this.objectives.find((o) => o.id === 'kronos');
+      if (boss && !boss.completed) {
+        boss.currentCount = this.world?.kronosDefeated ? 1 : 0;
+        if (boss.currentCount >= boss.targetCount) {
+          boss.completed = true;
+        }
+      }
+      return;
+    }
+
     if (this.level.id === 'prologue') {
       const explore = this.objectives[0];
       if (explore && !explore.completed && player.walkDistance >= 15) {
@@ -456,8 +523,28 @@ export class GameEngine {
     }
   }
 
+  /**
+   * KRONOS derrotado (Hito 4): la IA cierra la ficha del último planeta, suena
+   * la fanfarria y el Battle Report toma el relevo con el perfil completo.
+   */
+  private onKronosDefeated(): void {
+    if (this.phase !== 'playing') return;
+    const player = this.player;
+    if (player) {
+      player.behavior.totalTimeSec = this.elapsed;
+      this.behaviorTracker.accumulate(player.behavior);
+    }
+    this.audio.play('victory');
+    this.phase = 'victory';
+    this.timeScale = 1;
+    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+    this.emitHud();
+  }
+
   private checkVictory(): void {
     if (this.phase !== 'playing') return;
+    // Clímax: la victoria no llega por el portal, sino derrotando a KRONOS.
+    if (this.level.id === 'kronos') return;
     const player = this.player;
     if (!player) return;
     if (player.planet.spec.id !== this.level.portalPlanetId) return;
@@ -553,6 +640,11 @@ export class GameEngine {
     key = key * 31 + (world.isGlobalAlert ? 1 : 0);
     key = key * 31 + Math.round(world.maxSuspicion * 16);
     key = key * 31 + world.keycardsCollected;
+    // Hito 4: estado del jefe final + mute del audio procedural.
+    key = key * 31 + Math.round((world.kronosHpRatio ?? -1) * 24);
+    key = key * 31 + (world.kronosAdaptedTo === 'kitsune' ? 1 : world.kronosAdaptedTo === 'digger' ? 2 : world.kronosAdaptedTo === 'axel' ? 3 : 0);
+    key = key * 31 + world.kronosUpdates;
+    key = key * 31 + (this.audio.muted ? 1 : 0);
 
     if (key !== this.hudKey) {
       this.hudKey = key;
@@ -626,22 +718,27 @@ export class GameEngine {
       }
     }
 
-    // Vector de comportamiento de la run: acumulado + planeta actual.
+    // Vector de comportamiento de la run: si ya se cerró el planeta actual
+    // (planet_transition / victory), ya está acumulado en behaviorTracker.
     const runVector = this.behaviorTracker.getAccumulated();
     const levelVector = player.behavior;
-    const behavior: PlayerBehaviorVector = {
-      stealthKnockouts: runVector.stealthKnockouts + levelVector.stealthKnockouts,
-      disguiseTimeSec: runVector.disguiseTimeSec + levelVector.disguiseTimeSec,
-      alarmsTriggered: runVector.alarmsTriggered + levelVector.alarmsTriggered,
-      bruteKills: runVector.bruteKills + levelVector.bruteKills,
-      aerialAttacks: runVector.aerialAttacks + levelVector.aerialAttacks,
-      burrowDistance: runVector.burrowDistance + levelVector.burrowDistance,
-      burrowTimeSec: runVector.burrowTimeSec + levelVector.burrowTimeSec,
-      stasisThrows: runVector.stasisThrows + levelVector.stasisThrows,
-      parriesLanded: runVector.parriesLanded + levelVector.parriesLanded,
-      damageTaken: runVector.damageTaken + levelVector.damageTaken,
-      totalTimeSec: this.elapsed,
-    };
+    const includeCurrent =
+      this.phase !== 'planet_transition' && this.phase !== 'victory';
+    const behavior: PlayerBehaviorVector = includeCurrent
+      ? {
+          stealthKnockouts: runVector.stealthKnockouts + levelVector.stealthKnockouts,
+          disguiseTimeSec: runVector.disguiseTimeSec + levelVector.disguiseTimeSec,
+          alarmsTriggered: runVector.alarmsTriggered + levelVector.alarmsTriggered,
+          bruteKills: runVector.bruteKills + levelVector.bruteKills,
+          aerialAttacks: runVector.aerialAttacks + levelVector.aerialAttacks,
+          burrowDistance: runVector.burrowDistance + levelVector.burrowDistance,
+          burrowTimeSec: runVector.burrowTimeSec + levelVector.burrowTimeSec,
+          stasisThrows: runVector.stasisThrows + levelVector.stasisThrows,
+          parriesLanded: runVector.parriesLanded + levelVector.parriesLanded,
+          damageTaken: runVector.damageTaken + levelVector.damageTaken,
+          totalTimeSec: this.elapsed,
+        }
+      : { ...runVector, totalTimeSec: this.elapsed };
 
     // Durante la transición se anuncia la adaptación del planeta entrante.
     const adaptation =
@@ -672,13 +769,15 @@ export class GameEngine {
       interactionPrompt: prompt,
       adaptation: { ...adaptation },
       behaviorVector: behavior,
-      bossHpRatio: null,
-      bossAdaptedTo: null,
+      bossHpRatio: this.level.id === 'kronos' ? world.kronosHpRatio : null,
+      bossAdaptedTo: this.level.id === 'kronos' ? world.kronosAdaptedTo : null,
       gravityShiftCooldownRatio: player.gravityShiftCooldownRatio,
       lockOnActive: player.lockOnActive,
       lockedTargetName,
       lockOnScreenX,
       lockOnScreenY,
+      muted: this.audio.muted,
+      kronosUpdates: world.kronosUpdates,
     });
   }
 
@@ -713,6 +812,14 @@ export class GameEngine {
 
   private onKeyDown(e: KeyboardEvent): void {
     if (e.repeat) return;
+    // Primer gesto del usuario: desbloquea el AudioContext del sintetizador.
+    this.audio.unlock();
+    // Tecla M: alterna el mute del audio procedural (en cualquier fase).
+    if (e.code === 'KeyM') {
+      this.audio.toggleMute();
+      this.emitHud();
+      return;
+    }
     if (this.phase !== 'playing') return;
     // Space y Tab: evita scroll y cambio de foco mientras se juega.
     if (e.code === 'Space' || e.code === 'Tab') e.preventDefault();

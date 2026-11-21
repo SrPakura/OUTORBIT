@@ -222,6 +222,12 @@ export interface HudSnapshot {
   /** Posición de pantalla del marcador Lock-On en NDC (-1..1); null = fuera/oculto. */
   lockOnScreenX?: number | null;
   lockOnScreenY?: number | null;
+
+  // --- Hito 4 (opcionales y retrocompatibles) ---
+  /** Audio silenciado con la tecla M (o el botón rápido del HUD). */
+  muted?: boolean;
+  /** Pasos de backpropagation online de la red MLP de KRONOS en la run. */
+  kronosUpdates?: number;
 }
 
 // ============================================================================

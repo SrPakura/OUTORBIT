@@ -8,6 +8,7 @@ import {
 } from '../types';
 import { alignBasisToUp, findStrongestGravityPlanet, getTangentAxes } from '../math/spherical';
 import { buildCharacterModel, buildDisguiseOverlay } from '../render/proceduralModels';
+import type { GameSoundKind } from '../audio/SynthAudio';
 import type { LockOnHandle, WorldObjectsManager } from './WorldObjects';
 
 // ============================================================================
@@ -140,6 +141,9 @@ export class PlayerController {
   isBurrowing = false;
   isSwimming = false;
   isDisguised = false;
+
+  /** Sonidos sintetizados (SynthAudio) enrutados por el GameEngine. */
+  onSound: ((kind: GameSoundKind) => void) | null = null;
 
   private readonly planets: PlanetRuntime[];
   private readonly camera: THREE.PerspectiveCamera;
@@ -995,6 +999,7 @@ export class PlayerController {
     this.vertVel = 0;
     this.jumpsUsed = 0;
     this.currentPlanet = target;
+    this.onSound?.('gravityShift');
   }
 
   // ------------------------------------------------------------------------
@@ -1087,9 +1092,11 @@ export class PlayerController {
       this.vertVel = this.profile.jumpImpulse;
       this.grounded = false;
       this.jumpsUsed = 1;
+      this.onSound?.('jump');
     } else if (this.jumpsUsed < 2) {
       this.vertVel = this.profile.jumpImpulse * DOUBLE_JUMP_FACTOR;
       this.jumpsUsed = 2;
+      this.onSound?.('jump');
     } else {
       this.tryAnchor();
     }
@@ -1114,6 +1121,7 @@ export class PlayerController {
     this.anchorFx.scale.z = this.profile.anchorRange / 18;
     this.anchorFxTimer = ANCHOR_FX_TIME;
     this.behavior.aerialAttacks++;
+    this.onSound?.('anchor');
   }
 
   // ------------------------------------------------------------------------
@@ -1125,7 +1133,9 @@ export class PlayerController {
     if (this.inFlight || this.isSwimming || this.coreDiveActive || this.isBurrowing) return;
     if (this.world.held >= GAME_CONSTANTS.MAX_STASIS_OBJECTS) return;
     this.getMoveForward(this._forward);
+    const heldBefore = this.world.held;
     this.world.grabNearest(this.pos, this._forward, STASIS_GRAB_RANGE);
+    if (this.world.held > heldBefore) this.onSound?.('stasisGrab');
   }
 
   /** Clic Izquierdo: dispara 1 solo objeto hacia el objetivo fijado o la mira. */
@@ -1140,6 +1150,7 @@ export class PlayerController {
     const thrown = this.world.releaseThrowOne(this._v1);
     if (thrown > 0) {
       this.behavior.stasisThrows += thrown;
+      this.onSound?.('stasisThrow');
       // Estasis delante de un guardia: delata al jugador disfrazado.
       this.world.reportAbilityUse(this.pos);
       this.breakDisguise();
@@ -1198,6 +1209,7 @@ export class PlayerController {
     this.dashTimer = GRAVITY_DASH_TIME;
     this.dashHitTimer = 0;
     this.setGravityShiftCooldown(GRAVITY_DASH_COOLDOWN);
+    this.onSound?.('gravityShift');
     // Gravity Shift delante de un guardia: delata al jugador disfrazado.
     this.world.reportAbilityUse(this.pos);
   }
@@ -1213,6 +1225,8 @@ export class PlayerController {
     if (hit === 'guard') {
       this.behavior.bruteKills++;
       this.breakDisguise();
+    } else if (hit === 'kronos') {
+      this.breakDisguise();
     }
   }
 
@@ -1221,6 +1235,7 @@ export class PlayerController {
     if (this.inFlight || this.isSwimming || this.coreDiveActive) return;
     this.parryTimer = PARRY_WINDOW;
     this.parryCooldown = PARRY_COOLDOWN;
+    this.onSound?.('parry');
   }
 
   private tryKnockout(): void {

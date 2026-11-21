@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type {
+  BehaviorPercentages,
+  CharacterId,
   EnemyKind,
   EnemySpawnSpec,
   GrassZoneSpec,
@@ -7,6 +9,7 @@ import type {
   LevelSpec,
   PlanetAdaptationConfig,
   PlanetRuntime,
+  PlayerBehaviorVector,
   WaterBubbleSpec,
   WorldObjectSpec,
 } from '../types';
@@ -15,10 +18,21 @@ import {
   buildBruteModel,
   buildDroneModel,
   buildGuardModel,
+  buildKronosModel,
   buildOfficerModel,
   buildTurretModel,
 } from '../render/proceduralModels';
 import { findStrongestGravityPlanet } from '../math/spherical';
+import {
+  ANTI_STASIS_INDEX,
+  KRONOS_POSTURES,
+  KronosNeuralNet,
+  buildKronosInput,
+  counterCharacterToPostureIndex,
+  postureToCounterCharacter,
+} from '../ai/KronosNeuralNet';
+import { computeBehaviorPercentagesInto } from '../ai/BehaviorTracker';
+import type { GameSoundKind } from '../audio/SynthAudio';
 
 // ============================================================================
 // Constantes de simulación de los objetos del mundo
@@ -77,6 +91,35 @@ const TELEPORT_PIPE_RADIUS = 2.2;
 const TELEPORT_COOLDOWN = 2.5;
 const KEYCARD_PICKUP_RADIUS = 2.4;
 const ADAPTED_SPAWN_BASE = 3; // semilla determinista para spawns de adaptación;
+
+// --- Jefe final KRONOS (Hito 4): red MLP híbrida + combate ---
+const KRONOS_MAX_HP = 12;
+const KRONOS_CHASE_SPEED = 3.4;
+const KRONOS_MELEE_RANGE = 5.4;
+const KRONOS_WINDUP = 0.85; // windup claro del barrido de maza (parreable)
+const KRONOS_SWING_CD = 2.4;
+const KRONOS_STUN_TIME = 2.5; // aturdido tras un Parry: recibe daño x2
+const KRONOS_STUN_DAMAGE_MUL = 2;
+const KRONOS_ORB_CD = 3.4;
+const KRONOS_ORB_RANGE = 34;
+const KRONOS_ORB_SPEED = 17;
+const KRONOS_ORB_LIFE = 4.0;
+const KRONOS_ORB_HIT_RADIUS = 1.4;
+const KRONOS_ORB_POOL_SIZE = 3;
+const KRONOS_POWER_CD = 5.5;
+const KRONOS_PULSE_RADIUS = 12; // anti_kitsune: pulso anti-sigilo
+const KRONOS_SEISMIC_RADIUS = 15; // anti_digger: onda sísmica
+const KRONOS_AIR_BURST_RANGE = 24; // anti_axel: ráfaga aérea
+const KRONOS_POSTURE_REEVAL = 2.5; // re-predicción de la red MLP
+const KRONOS_FRONT_SHIELD_DOT = 0.35; // escudo frontal anti_stasis
+const KRONOS_FRONT_SHIELD_MUL = 0.25; // reduce el daño frontal salvo flanqueo
+
+const KRONOS_STATE_CHASE = 0;
+const KRONOS_STATE_WINDUP = 1;
+const KRONOS_STATE_STUNNED = 2;
+
+/** Color del anillo de energía según la postura activa de la red MLP. */
+const KRONOS_POSTURE_RING_COLORS = [0xf97316, 0xfacc15, 0x22d3ee, 0xa78bfa];
 
 const GRAB_STATE_IDLE = 0;
 const GRAB_STATE_HELD = 1;
@@ -215,6 +258,34 @@ interface TeleporterObj {
   isExit: boolean;
 }
 
+/**
+ * Comandante KRONOS (jefe final): persigue al jugador sobre la esfera con
+ * barridos de maza parreables, orbes energéticos devolvibles y poderes que
+ * dependen de la postura que su red MLP (offline + online) predice para el
+ * estilo de juego del jugador.
+ */
+interface KronosObj {
+  mesh: THREE.Group;
+  ringMaterial: THREE.MeshBasicMaterial;
+  maceGroup: THREE.Group;
+  planet: PlanetRuntime;
+  pos: THREE.Vector3;
+  dir: THREE.Vector3; // unit desde el centro del planeta
+  forward: THREE.Vector3; // tangente de avance
+  hp: number; // 12
+  net: KronosNeuralNet; // copia mutable de la red por combate
+  postureIdx: number; // 0..3 (KRONOS_POSTURES)
+  state: number;
+  windupT: number;
+  stunT: number;
+  swingCd: number;
+  orbCd: number;
+  powerCd: number;
+  postureCd: number;
+  defeated: boolean;
+  clock: number;
+}
+
 type GrabKind = 'rock' | 'barrel_explosive' | 'snowball' | 'crate';
 
 const GRAB_RADIUS: Record<GrabKind, number> = {
@@ -344,6 +415,8 @@ export interface WorldPlayerState {
   sprinting: boolean;
   /** En el aire (salto/ancla/vuelo): objetivo válido de las torretas antiaéreas. */
   airborne: boolean;
+  /** Personaje activo del escuadrón (entrada one-hot de la red MLP de KRONOS). */
+  characterId: CharacterId;
 }
 
 export type PlayerDamageFn = (
@@ -628,6 +701,20 @@ export class WorldObjectsManager {
   private readonly mines: SeismicMineObj[] = [];
   private readonly teleporters: TeleporterObj[] = [];
   private readonly explosions: ExplosionFx[] = [];
+  private kronos: KronosObj | null = null;
+  private readonly kronosOrbs: TurretProjectile[] = [];
+  /** Vector de comportamiento combinado de la run (referencia, sin copiar). */
+  private kronosBehavior: PlayerBehaviorVector | null = null;
+  private kronosCharacter: CharacterId = 'kitsune';
+  // Scratch preasignado para la red MLP de KRONOS (cero allocations).
+  private readonly kronosPct: BehaviorPercentages = {
+    stealth: 0,
+    aggression: 0,
+    aerial: 0,
+    subterranean: 0,
+    stasis: 0,
+  };
+  private readonly kronosInput: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
   private heldCount = 0;
   private clock = 0;
   private globalAlert = false;
@@ -644,6 +731,10 @@ export class WorldObjectsManager {
   onGlobalAlert: (() => void) | null = null;
   onDisguiseBroken: (() => void) | null = null;
   onTeleportPlayer: ((x: number, y: number, z: number) => void) | null = null;
+  /** Sonidos sintetizados (SynthAudio) enrutados por el GameEngine. */
+  onSound: ((kind: GameSoundKind) => void) | null = null;
+  /** KRONOS derrotado: el GameEngine dispara la victoria y el Battle Report. */
+  onKronosDefeated: (() => void) | null = null;
 
   constructor(group: THREE.Group, planets: PlanetRuntime[]) {
     this.group = group;
@@ -667,6 +758,42 @@ export class WorldObjectsManager {
   /** Alarma global de la guarnición (radio: cuerpo descubierto, intruso). */
   get isGlobalAlert(): boolean {
     return this.globalAlert;
+  }
+
+  // --------------------------------------------------------------------------
+  // Comandante KRONOS (Hito 4)
+  // --------------------------------------------------------------------------
+
+  /** Vida del jefe normalizada 0..1 (null si el nivel no tiene jefe). */
+  get kronosHpRatio(): number | null {
+    const k = this.kronos;
+    if (!k) return null;
+    return Math.max(0, k.hp) / KRONOS_MAX_HP;
+  }
+
+  /** Personaje que la postura MLP activa de Kronos contrarresta. */
+  get kronosAdaptedTo(): CharacterId | null {
+    const k = this.kronos;
+    if (!k) return null;
+    return postureToCounterCharacter(KRONOS_POSTURES[k.postureIdx]);
+  }
+
+  /** Pasos de backpropagation online de la red MLP en este combate. */
+  get kronosUpdates(): number {
+    return this.kronos?.net.onlineUpdates ?? 0;
+  }
+
+  /** El jefe ha caído (dispara la victoria en el GameEngine). */
+  get kronosDefeated(): boolean {
+    return this.kronos?.defeated ?? false;
+  }
+
+  /**
+   * Fuente del vector de comportamiento combinado de la run (referencia
+   * preasignada del GameEngine, actualizada cada frame sin allocations).
+   */
+  setKronosBehaviorSource(vec: PlayerBehaviorVector): void {
+    this.kronosBehavior = vec;
   }
 
   // --------------------------------------------------------------------------
@@ -706,6 +833,29 @@ export class WorldObjectsManager {
       mesh.visible = false;
       this.group.add(mesh);
       this.projectiles.push({
+        mesh,
+        material,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        active: false,
+        reflected: false,
+        life: 0,
+      });
+    }
+
+    // Pool de orbes energéticos de KRONOS (parreables: se los devuelves).
+    for (let i = 0; i < KRONOS_ORB_POOL_SIZE; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xef4444,
+        transparent: true,
+        opacity: 0.95,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 10), material);
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.kronosOrbs.push({
         mesh,
         material,
         pos: new THREE.Vector3(),
@@ -878,7 +1028,10 @@ export class WorldObjectsManager {
   }
 
   private spawnEnemy(spec: EnemySpawnSpec): void {
-    if (spec.kind === 'kronos') return; // Jefe final: Hito 4.
+    if (spec.kind === 'kronos') {
+      this.spawnKronos(spec);
+      return;
+    }
     const planet = this.findPlanet(spec.planetId);
     let mesh: THREE.Group;
     switch (spec.kind) {
@@ -932,6 +1085,332 @@ export class WorldObjectsManager {
       hoverPhase: spec.kind.length * 1.3,
       params: ENEMY_PARAMS[spec.kind],
     });
+  }
+
+  // --------------------------------------------------------------------------
+  // Comandante KRONOS (Hito 4): spawn, red MLP, ataques y daño
+  // --------------------------------------------------------------------------
+
+  private spawnKronos(spec: EnemySpawnSpec): void {
+    const planet = this.findPlanet(spec.planetId);
+    const { group, ringMaterial, maceGroup } = buildKronosModel();
+    const dir = new THREE.Vector3(
+      ...(spec.patrolDirs[0] ?? ([0, 1, 0] as [number, number, number]))
+    ).normalize();
+    const pos = this.placeOnPlanet(group, planet, dir.x, dir.y, dir.z, 0);
+    this.group.add(group);
+    this.kronos = {
+      mesh: group,
+      ringMaterial,
+      maceGroup,
+      planet,
+      pos: pos.clone(),
+      dir: dir.clone(),
+      forward: new THREE.Vector3(0, 0, 1),
+      hp: KRONOS_MAX_HP,
+      net: new KronosNeuralNet(),
+      postureIdx: 0,
+      state: KRONOS_STATE_CHASE,
+      windupT: 0,
+      stunT: 0,
+      swingCd: 1.5,
+      orbCd: 2.0,
+      powerCd: 3.0,
+      postureCd: 0,
+      defeated: false,
+      clock: 0,
+    };
+    this.applyKronosPostureVisual();
+  }
+
+  /** Color del anillo de energía según la postura activa de la red MLP. */
+  private applyKronosPostureVisual(): void {
+    const k = this.kronos;
+    if (!k) return;
+    k.ringMaterial.color.set(KRONOS_POSTURE_RING_COLORS[k.postureIdx]);
+  }
+
+  /** Rota la posición de Kronos sobre la esfera hacia `targetDir`. */
+  private moveKronosTowards(
+    k: KronosObj,
+    targetDir: THREE.Vector3,
+    speed: number,
+    dt: number
+  ): void {
+    const dot = THREE.MathUtils.clamp(k.dir.dot(targetDir), -1, 1);
+    const angle = Math.acos(dot);
+    if (angle < 1e-5) return;
+    const step = Math.min((speed / k.planet.spec.radius) * dt, angle);
+    _v1.copy(k.dir).cross(targetDir);
+    if (_v1.lengthSq() < 1e-10) {
+      _v1.set(1, 0, 0).cross(k.dir);
+      if (_v1.lengthSq() < 1e-10) _v1.set(0, 1, 0).cross(k.dir);
+    }
+    _v1.normalize();
+    _q1.setFromAxisAngle(_v1, step);
+    k.dir.applyQuaternion(_q1).normalize();
+    _v2.copy(targetDir).addScaledVector(k.dir, -THREE.MathUtils.clamp(targetDir.dot(k.dir), -1, 1));
+    if (_v2.lengthSq() > 1e-10) k.forward.copy(_v2).normalize();
+  }
+
+  /** Transform del jefe sobre la esfera (+ tumbado si fue derrotado). */
+  private syncKronosTransform(k: KronosObj): void {
+    k.pos.copy(k.planet.centerVec).addScaledVector(k.dir, k.planet.spec.radius);
+    k.mesh.position.copy(k.pos);
+    _q1.setFromUnitVectors(_upAxis, k.dir);
+    _v3.set(0, 0, 1).applyQuaternion(_q1);
+    const cosYaw = _v3.dot(k.forward);
+    _v4.copy(_v3).cross(k.forward);
+    const yaw = Math.atan2(_v4.dot(k.dir), cosYaw);
+    _q2.setFromAxisAngle(k.dir, yaw);
+    k.mesh.quaternion.copy(_q1).multiply(_q2);
+    if (k.defeated) {
+      _q2.setFromAxisAngle(_v3.set(0, 0, 1), 1.45);
+      k.mesh.quaternion.multiply(_q2);
+    }
+  }
+
+  /**
+   * Un paso de aprendizaje online que refuerza la postura activa (la postura
+   * está funcionando: bloqueó o golpeó al jugador).
+   */
+  private reinforceKronosPosture(k: KronosObj): void {
+    if (!this.kronosBehavior) return;
+    computeBehaviorPercentagesInto(this.kronosBehavior, this.kronosPct);
+    buildKronosInput(this.kronosPct, this.kronosCharacter, this.kronosInput);
+    k.net.trainOnline(this.kronosInput, k.postureIdx);
+  }
+
+  /**
+   * Daño al jefe. El escudo frontal de `anti_stasis` reduce el daño frontal
+   * (salvo flanqueo); si está aturdido por un Parry recibe daño x2. Cada
+   * golpe dispara un paso real de backpropagation online: Kronos aprende a
+   * contrarrestar al personaje que lo está dañando.
+   */
+  private damageKronos(amount: number, fromPos: THREE.Vector3, source: HitSource): void {
+    const k = this.kronos;
+    if (!k || k.defeated) return;
+    let mul = 1;
+    if (k.postureIdx === 3 && k.state !== KRONOS_STATE_STUNNED) {
+      // Escudo frontal: solo protege el arco frontal (flanquea para dañar).
+      _v1.copy(fromPos).sub(k.pos);
+      const d = _v1.length();
+      if (d > 1e-6) {
+        _v1.divideScalar(d);
+        if (k.forward.dot(_v1) > KRONOS_FRONT_SHIELD_DOT) {
+          mul *= KRONOS_FRONT_SHIELD_MUL;
+          this.reinforceKronosPosture(k); // la postura bloqueó: refuerzo online
+        }
+      }
+    }
+    if (k.state === KRONOS_STATE_STUNNED) mul *= KRONOS_STUN_DAMAGE_MUL;
+    k.hp = Math.max(0, k.hp - amount * mul);
+    this.onSound?.('bossHit');
+    this.spawnExplosion(k.pos, 2.2, 0xfca5a5);
+    // Aprendizaje online: postura que contrarresta al personaje que daña.
+    if (this.kronosBehavior) {
+      computeBehaviorPercentagesInto(this.kronosBehavior, this.kronosPct);
+      buildKronosInput(this.kronosPct, this.kronosCharacter, this.kronosInput);
+      const target =
+        source === 'stasis' || source === 'parry'
+          ? ANTI_STASIS_INDEX
+          : counterCharacterToPostureIndex(this.kronosCharacter);
+      k.net.trainOnline(this.kronosInput, target);
+    }
+    if (k.hp <= 0) this.defeatKronos(k);
+  }
+
+  private defeatKronos(k: KronosObj): void {
+    k.defeated = true;
+    k.ringMaterial.opacity = 0;
+    this.spawnExplosion(k.pos, 8, 0xf97316);
+    this.spawnExplosion(k.pos, 5, 0xfacc15);
+    this.onSound?.('explosion');
+    this.onKronosDefeated?.();
+  }
+
+  /** Orbe energético teledirigido al jugador (parreable con F/Q). */
+  private spawnKronosOrb(k: KronosObj, state: WorldPlayerState): void {
+    for (const orb of this.kronosOrbs) {
+      if (orb.active) continue;
+      orb.active = true;
+      orb.reflected = false;
+      orb.life = KRONOS_ORB_LIFE;
+      orb.material.color.set(0xef4444);
+      orb.pos.copy(k.pos).addScaledVector(k.dir, 2.6).addScaledVector(k.forward, 1.5);
+      orb.vel
+        .copy(state.pos)
+        .addScaledVector(state.up, 0.5)
+        .sub(orb.pos)
+        .normalize()
+        .multiplyScalar(KRONOS_ORB_SPEED);
+      orb.mesh.position.copy(orb.pos);
+      orb.mesh.visible = true;
+      return;
+    }
+  }
+
+  /**
+   * Poder según la postura MLP activa: pulso anti-sigilo (anti_kitsune),
+   * onda sísmica contra excavación (anti_digger), ráfaga aérea (anti_axel) o
+   * destello del escudo frontal (anti_stasis, pasivo).
+   */
+  private kronosPosturePower(
+    k: KronosObj,
+    state: WorldPlayerState,
+    onPlayerDamage: PlayerDamageFn
+  ): void {
+    switch (KRONOS_POSTURES[k.postureIdx]) {
+      case 'anti_kitsune': {
+        // Pulso anti-sigilo: delata y daña al jugador oculto (disfraz/hierba).
+        this.spawnExplosion(k.pos, KRONOS_PULSE_RADIUS, 0xf97316);
+        _v1.copy(state.pos).sub(k.pos);
+        if (_v1.length() < KRONOS_PULSE_RADIUS && (state.disguised || state.inGrass)) {
+          _v1.normalize().multiplyScalar(10).addScaledVector(state.up, 5);
+          onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+          this.reinforceKronosPosture(k);
+        }
+        break;
+      }
+      case 'anti_digger': {
+        // Onda sísmica: expulsa del subsuelo a quien excave cerca.
+        this.spawnExplosion(k.pos, KRONOS_SEISMIC_RADIUS, 0xfacc15);
+        if (state.burrowing && k.pos.distanceTo(state.pos) < KRONOS_SEISMIC_RADIUS) {
+          this.burrowEjectPending = true;
+          onPlayerDamage(1, state.up.x * 8, state.up.y * 8, state.up.z * 8);
+          this.reinforceKronosPosture(k);
+        }
+        break;
+      }
+      case 'anti_axel': {
+        // Ráfaga aérea: orbe directo contra el jugador en el aire.
+        if (state.airborne && k.pos.distanceTo(state.pos) < KRONOS_AIR_BURST_RANGE) {
+          this.spawnKronosOrb(k, state);
+          this.reinforceKronosPosture(k);
+        }
+        break;
+      }
+      case 'anti_stasis': {
+        // Destello del escudo frontal (la reducción de daño es pasiva).
+        this.spawnExplosion(k.pos, 3.5, 0xa78bfa);
+        break;
+      }
+    }
+  }
+
+  /** Ciclo de combate del jefe: persecución, maza, orbes, posturas y stun. */
+  private updateKronos(dt: number, state: WorldPlayerState, onPlayerDamage: PlayerDamageFn): void {
+    const k = this.kronos;
+    if (!k) return;
+    if (k.defeated) {
+      this.syncKronosTransform(k);
+      return;
+    }
+    k.clock += dt;
+    k.ringMaterial.opacity = 0.4 + Math.sin(k.clock * 4) * 0.2;
+
+    // Re-predicción de la postura con la red MLP (pesos offline + online).
+    k.postureCd -= dt;
+    if (k.postureCd <= 0 && this.kronosBehavior) {
+      k.postureCd = KRONOS_POSTURE_REEVAL;
+      computeBehaviorPercentagesInto(this.kronosBehavior, this.kronosPct);
+      buildKronosInput(this.kronosPct, state.characterId, this.kronosInput);
+      const idx = k.net.predict(this.kronosInput);
+      if (idx !== k.postureIdx) {
+        k.postureIdx = idx;
+        this.applyKronosPostureVisual();
+      }
+    }
+
+    _v1.copy(state.pos).sub(k.pos);
+    const playerDist = _v1.length();
+
+    if (k.state === KRONOS_STATE_STUNNED) {
+      // Aturdido por Parry: la maza cae y recibe daño x2.
+      k.stunT -= dt;
+      k.maceGroup.rotation.z += (-1.1 - k.maceGroup.rotation.z) * Math.min(1, dt * 6);
+      if (k.stunT <= 0) {
+        k.state = KRONOS_STATE_CHASE;
+        k.maceGroup.rotation.z = -0.25;
+        k.swingCd = 0.6;
+      }
+    } else if (k.state === KRONOS_STATE_WINDUP) {
+      // Windup claro del barrido de maza: ventana de Parry (F/Q).
+      k.windupT -= dt;
+      const p = 1 - Math.max(k.windupT, 0) / KRONOS_WINDUP;
+      k.maceGroup.rotation.x = 1.25 - p * 1.0;
+      if (k.windupT <= 0) {
+        k.state = KRONOS_STATE_CHASE;
+        k.swingCd = KRONOS_SWING_CD;
+        k.maceGroup.rotation.x = 2.3;
+        if (playerDist < KRONOS_MELEE_RANGE + 1.4) {
+          _v1.copy(state.pos).sub(k.pos).divideScalar(Math.max(playerDist, 1e-6));
+          _v1.multiplyScalar(11).addScaledVector(state.up, 5);
+          onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+        }
+      }
+    } else {
+      // Persecución sobre la esfera + selección de ataque.
+      k.maceGroup.rotation.x += (1.25 - k.maceGroup.rotation.x) * Math.min(1, dt * 5);
+      k.swingCd -= dt;
+      k.orbCd -= dt;
+      k.powerCd -= dt;
+      _v2.copy(state.pos).sub(k.planet.centerVec).normalize();
+      this.moveKronosTowards(k, _v2, KRONOS_CHASE_SPEED, dt);
+      if (playerDist < KRONOS_MELEE_RANGE && k.swingCd <= 0) {
+        k.state = KRONOS_STATE_WINDUP;
+        k.windupT = KRONOS_WINDUP;
+      } else if (playerDist < KRONOS_ORB_RANGE && k.orbCd <= 0) {
+        k.orbCd = KRONOS_ORB_CD;
+        this.spawnKronosOrb(k, state);
+      }
+      if (k.powerCd <= 0) {
+        k.powerCd = KRONOS_POWER_CD;
+        this.kronosPosturePower(k, state, onPlayerDamage);
+      }
+    }
+
+    this.syncKronosTransform(k);
+  }
+
+  /** Vuelo de los orbes de KRONOS (parreados vuelven directamente al jefe). */
+  private updateKronosOrbs(
+    dt: number,
+    state: WorldPlayerState,
+    onPlayerDamage: PlayerDamageFn
+  ): void {
+    const k = this.kronos;
+    for (const orb of this.kronosOrbs) {
+      if (!orb.active) continue;
+      orb.life -= dt;
+      orb.pos.addScaledVector(orb.vel, dt);
+      orb.mesh.position.copy(orb.pos);
+
+      // Orbe devuelto con Parry: impacta contra KRONOS.
+      if (orb.reflected && k && !k.defeated && orb.pos.distanceToSquared(k.pos) < 6.5) {
+        this.deactivateProjectile(orb);
+        this.damageKronos(1, orb.pos, 'parry');
+        continue;
+      }
+
+      // Impacto contra el jugador.
+      if (orb.pos.distanceToSquared(state.pos) < KRONOS_ORB_HIT_RADIUS * KRONOS_ORB_HIT_RADIUS) {
+        this.deactivateProjectile(orb);
+        _v1.copy(orb.vel).normalize().multiplyScalar(9).addScaledVector(state.up, 4);
+        onPlayerDamage(1, _v1.x, _v1.y, _v1.z);
+        continue;
+      }
+
+      const planet = findStrongestGravityPlanet(orb.pos, this.planets, null);
+      if (
+        orb.pos.distanceToSquared(planet.centerVec) <=
+        (planet.spec.radius + 0.3) * (planet.spec.radius + 0.3)
+      ) {
+        this.deactivateProjectile(orb);
+      } else if (orb.life <= 0) {
+        this.deactivateProjectile(orb);
+      }
+    }
   }
 
   /**
@@ -1091,6 +1570,16 @@ export class WorldObjectsManager {
     for (const enemy of this.enemies) {
       if (enemy.state !== GUARD_STATE_WINDUP) continue;
       if (enemy.pos.distanceToSquared(pos) < (PARRY_RANGE + 1) ** 2) return true;
+    }
+    // KRONOS en windup: la ventana de Parry de su barrido de maza.
+    const kronos = this.kronos;
+    if (
+      kronos &&
+      !kronos.defeated &&
+      kronos.state === KRONOS_STATE_WINDUP &&
+      kronos.pos.distanceToSquared(pos) < (PARRY_RANGE + 2) ** 2
+    ) {
+      return true;
     }
     return false;
   }
@@ -1296,8 +1785,21 @@ export class WorldObjectsManager {
     return true;
   }
 
-  /** Golpe cuerpo a cuerpo corto: noquea guardias / daña generadores. */
-  meleeStrike(pos: THREE.Vector3, forward: THREE.Vector3): 'guard' | 'generator' | null {
+  /** Golpe cuerpo a cuerpo corto: noquea guardias / daña generadores / KRONOS. */
+  meleeStrike(pos: THREE.Vector3, forward: THREE.Vector3): 'guard' | 'generator' | 'kronos' | null {
+    // KRONOS: golpe directo al jefe (el escudo frontal reduce el daño).
+    const kronos = this.kronos;
+    if (kronos && !kronos.defeated) {
+      _v1.copy(kronos.pos).sub(pos);
+      const dist = _v1.length();
+      if (dist < MELEE_RANGE + 1.6) {
+        _v1.divideScalar(Math.max(dist, 1e-6));
+        if (_v1.dot(forward) > 0.15) {
+          this.damageKronos(1, pos, 'melee');
+          return 'kronos';
+        }
+      }
+    }
     for (const enemy of this.enemies) {
       if (enemy.state === GUARD_STATE_KO) continue;
       // Drones flotan y las torretas están fuera de alcance del melee.
@@ -1324,6 +1826,16 @@ export class WorldObjectsManager {
 
   /** Gravity Dash: derriba guardias y empuja cajas/barriles al chocar. */
   dashImpact(pos: THREE.Vector3, forward: THREE.Vector3): void {
+    // KRONOS: el dash también le hace daño (flanquear rompe su escudo frontal).
+    const kronos = this.kronos;
+    if (kronos && !kronos.defeated) {
+      _v1.copy(kronos.pos).sub(pos);
+      const kDist = _v1.length();
+      if (kDist < DASH_HIT_RANGE + 1.4) {
+        _v1.divideScalar(Math.max(kDist, 1e-6));
+        if (_v1.dot(forward) > 0.1) this.damageKronos(1, pos, 'dash');
+      }
+    }
     for (const enemy of this.enemies) {
       if (enemy.state === GUARD_STATE_KO) continue;
       if (enemy.kind === 'turret') continue;
@@ -1362,9 +1874,36 @@ export class WorldObjectsManager {
 
   /**
    * Parry: noquea al guardia en windup, derriba drones cercanos y refleja los
-   * proyectiles de torreta de vuelta al emisor (destruyéndola).
+   * proyectiles de torreta de vuelta al emisor (destruyéndola). Contra
+   * KRONOS: parrea el barrido de maza (2.5s aturdido, daño x2) y devuelve
+   * sus orbes energéticos directamente contra él.
    */
   checkParry(pos: THREE.Vector3): boolean {
+    const kronos = this.kronos;
+    if (
+      kronos &&
+      !kronos.defeated &&
+      kronos.state === KRONOS_STATE_WINDUP &&
+      kronos.pos.distanceToSquared(pos) < (PARRY_RANGE + 2) ** 2
+    ) {
+      kronos.state = KRONOS_STATE_STUNNED;
+      kronos.stunT = KRONOS_STUN_TIME;
+      this.spawnExplosion(kronos.pos, 3, 0xf8fafc);
+      return true;
+    }
+    // Orbes de KRONOS: se devuelven directamente contra el jefe.
+    for (const orb of this.kronosOrbs) {
+      if (!orb.active || orb.reflected) continue;
+      if (orb.pos.distanceToSquared(pos) > (PARRY_RANGE + 1.5) ** 2) continue;
+      if (kronos && !kronos.defeated) {
+        orb.vel.copy(kronos.pos).sub(orb.pos).normalize().multiplyScalar(22);
+      } else {
+        orb.vel.multiplyScalar(-1);
+      }
+      orb.reflected = true;
+      orb.material.color.set(0x67e8f9);
+      return true;
+    }
     for (const enemy of this.enemies) {
       if (enemy.state === GUARD_STATE_WINDUP) {
         if (enemy.pos.distanceToSquared(pos) > PARRY_RANGE * PARRY_RANGE) continue;
@@ -1412,6 +1951,11 @@ export class WorldObjectsManager {
       if (enemy.kind === 'turret') continue;
       if (enemy.pos.distanceToSquared(pos) < radius * radius) this.koEnemy(enemy, 'shockwave');
     }
+    // KRONOS también cae dentro de la onda expansiva.
+    const kronos = this.kronos;
+    if (kronos && !kronos.defeated && kronos.pos.distanceToSquared(pos) < radius * radius) {
+      this.damageKronos(1, pos, 'shockwave');
+    }
     for (const grab of this.grabs) {
       if (grab.state !== GRAB_STATE_IDLE) continue;
       _v1.copy(grab.pos).sub(pos);
@@ -1427,10 +1971,13 @@ export class WorldObjectsManager {
   // --------------------------------------------------------------------------
   update(dt: number, state: WorldPlayerState, onPlayerDamage: PlayerDamageFn): void {
     this.clock += dt;
+    this.kronosCharacter = state.characterId;
     this.updateHeld(dt, state);
     this.updateFlying(dt, state, onPlayerDamage);
     this.updateGates(dt, state, onPlayerDamage);
     this.updateEnemies(dt, state, onPlayerDamage);
+    this.updateKronos(dt, state, onPlayerDamage);
+    this.updateKronosOrbs(dt, state, onPlayerDamage);
     this.updateBubbles(dt);
     this.updateKeycards(dt, state);
     this.updateScanners(dt, state);
@@ -1493,6 +2040,15 @@ export class WorldObjectsManager {
       }
       if (settled) continue;
 
+      // Impacto contra KRONOS (objeto de Estasis lanzado).
+      const kronos = this.kronos;
+      if (!settled && kronos && !kronos.defeated && grab.pos.distanceToSquared(kronos.pos) < 7.2) {
+        this.damageKronos(1, grab.pos, 'stasis');
+        this.settleGrab(grab, planet);
+        settled = true;
+      }
+      if (settled) continue;
+
       // Impacto contra generadores (1 objeto lanzado los destruye).
       for (const gen of this.generators) {
         if (gen.destroyed) continue;
@@ -1537,12 +2093,22 @@ export class WorldObjectsManager {
     onPlayerDamage: PlayerDamageFn
   ): void {
     this.spawnExplosion(pos, EXPLOSION_RADIUS, 0xfb923c);
+    this.onSound?.('explosion');
     for (const enemy of this.enemies) {
       if (enemy.state === GUARD_STATE_KO) continue;
       if (enemy.pos.distanceToSquared(pos) < EXPLOSION_RADIUS * EXPLOSION_RADIUS) {
         if (enemy.kind === 'turret') this.destroyTurret(enemy);
         else this.koEnemy(enemy, 'explosive');
       }
+    }
+    // Barriles explosivos: la forma rápida de abrirle la guardia a KRONOS.
+    const kronos = this.kronos;
+    if (
+      kronos &&
+      !kronos.defeated &&
+      kronos.pos.distanceToSquared(pos) < EXPLOSION_RADIUS * EXPLOSION_RADIUS
+    ) {
+      this.damageKronos(1, pos, 'explosive');
     }
     for (const gen of this.generators) {
       if (gen.destroyed) continue;
@@ -1916,6 +2482,7 @@ export class WorldObjectsManager {
   private triggerGlobalAlert(): void {
     if (this.globalAlert) return;
     this.globalAlert = true;
+    this.onSound?.('alert');
     this.onGlobalAlert?.();
   }
 
@@ -2167,6 +2734,10 @@ export class WorldObjectsManager {
     this.mines.length = 0;
     this.teleporters.length = 0;
     this.explosions.length = 0;
+    this.kronos = null;
+    this.kronosOrbs.length = 0;
+    this.kronosBehavior = null;
+    this.kronosCharacter = 'kitsune';
     this.heldCount = 0;
     this.generatorsDestroyed = 0;
     this.guardsKnockedOut = 0;
@@ -2179,6 +2750,8 @@ export class WorldObjectsManager {
     this.onGlobalAlert = null;
     this.onDisguiseBroken = null;
     this.onTeleportPlayer = null;
+    this.onSound = null;
+    this.onKronosDefeated = null;
   }
 
   /**

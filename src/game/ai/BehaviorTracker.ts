@@ -41,19 +41,40 @@ function rawStyleScores(vec: PlayerBehaviorVector): BehaviorPercentages {
  * hay actividad registrada). Sin datos, todo queda a 0.
  */
 export function computeBehaviorPercentages(vec: PlayerBehaviorVector): BehaviorPercentages {
+  return computeBehaviorPercentagesInto(vec, {
+    stealth: 0,
+    aggression: 0,
+    aerial: 0,
+    subterranean: 0,
+    stasis: 0,
+  });
+}
+
+/**
+ * Variante sin allocations: escribe los porcentajes 0..100 en `out`
+ * preasignado (usada por la red MLP de KRONOS dentro del loop).
+ */
+export function computeBehaviorPercentagesInto(
+  vec: PlayerBehaviorVector,
+  out: BehaviorPercentages
+): BehaviorPercentages {
   const raw = rawStyleScores(vec);
   const total = raw.stealth + raw.aggression + raw.aerial + raw.subterranean + raw.stasis;
   if (total <= 1e-6) {
-    return { stealth: 0, aggression: 0, aerial: 0, subterranean: 0, stasis: 0 };
+    out.stealth = 0;
+    out.aggression = 0;
+    out.aerial = 0;
+    out.subterranean = 0;
+    out.stasis = 0;
+    return out;
   }
   const clamp = (v: number) => Math.min(100, Math.max(0, (v / total) * 100));
-  return {
-    stealth: clamp(raw.stealth),
-    aggression: clamp(raw.aggression),
-    aerial: clamp(raw.aerial),
-    subterranean: clamp(raw.subterranean),
-    stasis: clamp(raw.stasis),
-  };
+  out.stealth = clamp(raw.stealth);
+  out.aggression = clamp(raw.aggression);
+  out.aerial = clamp(raw.aerial);
+  out.subterranean = clamp(raw.subterranean);
+  out.stasis = clamp(raw.stasis);
+  return out;
 }
 
 /** Etiqueta legible del estilo dominante detectado por la IA. */
@@ -103,6 +124,25 @@ export class BehaviorTracker {
   /** Copia del vector acumulado de toda la run (no mutar el interno). */
   getAccumulated(): PlayerBehaviorVector {
     return { ...this.accumulated };
+  }
+
+  /**
+   * Variante sin allocations: escribe el acumulado en `out` preasignado
+   * (usado por el GameEngine cada frame para la red MLP de KRONOS).
+   */
+  getAccumulatedInto(out: PlayerBehaviorVector): PlayerBehaviorVector {
+    out.stealthKnockouts = this.accumulated.stealthKnockouts;
+    out.disguiseTimeSec = this.accumulated.disguiseTimeSec;
+    out.alarmsTriggered = this.accumulated.alarmsTriggered;
+    out.bruteKills = this.accumulated.bruteKills;
+    out.aerialAttacks = this.accumulated.aerialAttacks;
+    out.burrowDistance = this.accumulated.burrowDistance;
+    out.burrowTimeSec = this.accumulated.burrowTimeSec;
+    out.stasisThrows = this.accumulated.stasisThrows;
+    out.parriesLanded = this.accumulated.parriesLanded;
+    out.damageTaken = this.accumulated.damageTaken;
+    out.totalTimeSec = this.accumulated.totalTimeSec;
+    return out;
   }
 
   /** Reinicio entre runs. */

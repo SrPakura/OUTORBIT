@@ -412,10 +412,80 @@ export const BASTION_LEVEL: LevelSpec = {
 };
 
 // ============================================================================
-// Campaña progresiva del Hito 3B
+// Nivel 4 — Clímax: Arena del Comandante KRONOS (jefe final, Hito 4)
 // ============================================================================
 
-export const LEVELS: LevelSpec[] = [PROLOGUE_LEVEL, VERDANT_LEVEL, CRYO_LEVEL, BASTION_LEVEL];
+export const KRONOS_LEVEL: LevelSpec = {
+  id: 'kronos',
+  order: 4,
+  title: 'CLÍMAX',
+  subtitle: 'Arena de Kronos · Núcleo Volcánico',
+  skyTopColor: '#0b0208',
+  skyBottomColor: '#dc2626',
+  planets: [
+    {
+      id: 'arena-kronos',
+      name: 'Arena de Kronos',
+      biome: 'kronos',
+      center: [0, 0, 0],
+      radius: 54,
+      gravityStrength: 1.2,
+      surfaceColor: '#3f1d2e',
+      patchColor: '#7f1d1d',
+      atmosphereColor: '#fb7185',
+      hasOrbitalRings: true,
+      ringColor: '#ef4444',
+    },
+  ],
+  // Burbujas de agua en órbita: maniobras de nado de Axel para esquivar a Kronos.
+  waterBubbles: [
+    { id: 'kronos-burbuja-1', center: [0, 86, 0], radius: 13 },
+    { id: 'kronos-burbuja-2', center: [58, 42, -34], radius: 11 },
+  ],
+  grassZones: [],
+  objects: [
+    // Rocas para el Campo de Estasis.
+    { id: 'kronos-roca-1', kind: 'rock', planetId: 'arena-kronos', sphericalDir: [0.3, 0.88, 0.35] },
+    { id: 'kronos-roca-2', kind: 'rock', planetId: 'arena-kronos', sphericalDir: [-0.55, 0.55, 0.62] },
+    { id: 'kronos-roca-3', kind: 'rock', planetId: 'arena-kronos', sphericalDir: [0.75, 0.25, -0.55] },
+    { id: 'kronos-roca-4', kind: 'rock', planetId: 'arena-kronos', sphericalDir: [-0.2, 0.9, -0.4] },
+    // Barriles explosivos: la forma rápida de abrirle la guardia a Kronos.
+    { id: 'kronos-barril-1', kind: 'barrel_explosive', planetId: 'arena-kronos', sphericalDir: [0.25, 0.9, 0.3] },
+    { id: 'kronos-barril-2', kind: 'barrel_explosive', planetId: 'arena-kronos', sphericalDir: [0.8, 0.2, -0.5] },
+    { id: 'kronos-barril-3', kind: 'barrel_explosive', planetId: 'arena-kronos', sphericalDir: [-0.35, 0.75, 0.55] },
+    { id: 'kronos-barril-4', kind: 'barrel_explosive', planetId: 'arena-kronos', sphericalDir: [-0.65, 0.45, 0.6] },
+    // Cajas agarrables.
+    { id: 'kronos-caja-1', kind: 'crate', planetId: 'arena-kronos', sphericalDir: [0.35, 0.85, 0.4] },
+    { id: 'kronos-caja-2', kind: 'crate', planetId: 'arena-kronos', sphericalDir: [-0.6, 0.5, 0.62] },
+  ],
+  // El Comandante KRONOS aguarda en el lado opuesto al spawn.
+  enemies: [
+    {
+      kind: 'kronos',
+      planetId: 'arena-kronos',
+      patrolDirs: [[-0.25, -0.85, -0.45]],
+    },
+  ],
+  spawnPlanetId: 'arena-kronos',
+  spawnDir: [0.25, 0.85, 0.45],
+  // El portal no decide el final: la victoria llega al derrotar a KRONOS.
+  portalPlanetId: 'arena-kronos',
+  portalDir: [0, 1, 0],
+  objectiveSummary:
+    'Sobrevive a la lectura en tiempo real de la red MLP de KRONOS: flanquea su escudo, parrea su maza y devuélvele sus orbes.',
+};
+
+// ============================================================================
+// Campaña progresiva del Hito 3B + clímax del Hito 4
+// ============================================================================
+
+export const LEVELS: LevelSpec[] = [
+  PROLOGUE_LEVEL,
+  VERDANT_LEVEL,
+  CRYO_LEVEL,
+  BASTION_LEVEL,
+  KRONOS_LEVEL,
+];
 
 export function getLevelSpec(id: LevelId): LevelSpec {
   const level = LEVELS.find((l) => l.id === id);
@@ -494,6 +564,17 @@ export function createLevelObjectives(id: LevelId): LevelObjective[] {
       {
         id: 'portal',
         description: 'Cruza el portal de la Torre de Mando',
+        completed: false,
+        currentCount: 0,
+        targetCount: 1,
+      },
+    ];
+  }
+  if (id === 'kronos') {
+    return [
+      {
+        id: 'kronos',
+        description: 'Derrota al Comandante KRONOS (12 HP · parrea su maza con F/Q)',
         completed: false,
         currentCount: 0,
         targetCount: 1,

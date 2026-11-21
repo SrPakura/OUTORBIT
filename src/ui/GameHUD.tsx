@@ -12,15 +12,20 @@ interface GameHUDProps {
   snapshot: HudSnapshot;
   onResume: () => void;
   onExitToTitle: () => void;
+  /** Botón rápido M: Audio (alterna el mute del SynthAudio del GameEngine). */
+  onToggleMute?: () => void;
 }
 
 /**
- * HUD del Hito 2: barra superior (planeta, objetivos, reloj), selector de
+ * HUD del Hito 2/3: barra superior (planeta, objetivos, reloj), selector de
  * escuadrón, HP, indicadores de Estasis (0/4), Disfraz, Subsuelo, Nado,
  * ventana de Parry y cooldown del Ancla, prompt contextual de interacción,
- * transición de planeta y pantallas de pausa/game over/victoria.
+ * transición de planeta y pantallas de pausa/game over.
+ *
+ * Hito 4: barra prominente del COMANDANTE KRONOS (vida + personaje que su
+ * red MLP está contrarrestando) e indicador M: Audio.
  */
-export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDProps) {
+export default function GameHUD({ snapshot, onResume, onExitToTitle, onToggleMute }: GameHUDProps) {
   const shifting = snapshot.isGravityShifting;
   const anchorReady = 1 - snapshot.anchorCooldownRatio;
   const gravityReady = 1 - (snapshot.gravityShiftCooldownRatio ?? 0);
@@ -64,6 +69,39 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
           </p>
         </div>
       </div>
+
+      {/* --- Barra prominente del COMANDANTE KRONOS (Hito 4) --- */}
+      {snapshot.bossHpRatio !== null && (
+        <div className="absolute left-1/2 top-24 w-[min(560px,82vw)] -translate-x-1/2 rounded-lg border-2 border-black bg-[#160b2e]/90 px-4 py-2 shadow-[4px_4px_0_#000]">
+          <div className="mb-1 flex items-center justify-between gap-3">
+            <p className="animate-pulse text-[11px] font-black tracking-[0.25em] text-red-400">
+              COMANDANTE KRONOS
+            </p>
+            <p className="text-[10px] font-bold text-slate-300">
+              {snapshot.bossAdaptedTo
+                ? `MLP CONTRARRESTANDO A: ${GAME_CONSTANTS.CHARACTERS[snapshot.bossAdaptedTo].displayName.toUpperCase()}`
+                : 'ESCUDO FRONTAL · FLANQUEA O PARREA'}
+            </p>
+          </div>
+          <div className="h-3.5 overflow-hidden rounded-full border-2 border-black bg-slate-800">
+            <div
+              className="h-full bg-gradient-to-r from-red-600 to-orange-400 transition-all"
+              style={{ width: `${Math.round(snapshot.bossHpRatio * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* --- Botón rápido M: Audio --- */}
+      {onToggleMute && (
+        <button
+          type="button"
+          onClick={onToggleMute}
+          className="pointer-events-auto absolute right-4 top-[84px] rounded-lg border-2 border-black bg-[#160b2e]/85 px-3 py-1.5 text-[10px] font-black tracking-[0.2em] text-cyan-300 shadow-[3px_3px_0_#000] transition-colors hover:bg-[#1d1240]"
+        >
+          M: AUDIO {snapshot.muted ? 'OFF' : 'ON'}
+        </button>
+      )}
 
       {/* --- Esquina inferior izquierda: HP, escuadrón e indicadores --- */}
       <div className="absolute bottom-4 left-4 space-y-2">
@@ -216,6 +254,10 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
           <span className="text-yellow-300">F/Q</span> Parry ·{' '}
           <span className="text-yellow-300">RUEDA</span> Zoom
         </p>
+        <p>
+          <span className="text-yellow-300">M</span> Audio{' '}
+          {snapshot.muted ? '(silenciado)' : '(activado)'}
+        </p>
       </div>
 
       {/* --- Prompt contextual de interacción --- */}
@@ -346,33 +388,7 @@ export default function GameHUD({ snapshot, onResume, onExitToTitle }: GameHUDPr
         </div>
       )}
 
-      {/* --- Victoria / Hito completado --- */}
-      {snapshot.phase === 'victory' && (
-        <div className="pointer-events-auto absolute inset-0 flex items-center justify-center bg-[#05010f]/85">
-          <div className="rounded-2xl border-4 border-cyan-300 bg-[#160b2e] p-10 text-center shadow-[10px_10px_0_#000]">
-            <h2 className="mb-2 text-4xl font-black tracking-widest text-cyan-300">
-              {snapshot.levelId === 'verdant'
-                ? '¡PLANETA VERDANT COMPLETADO!'
-                : '¡PORTAL ALCANZADO!'}
-            </h2>
-            <p className="mb-1 text-sm font-bold text-slate-200">
-              {snapshot.levelId === 'verdant'
-                ? 'Hito 2 completado: el escuadrón está operativo.'
-                : 'Has completado el Prólogo Orbital.'}
-            </p>
-            <p className="mb-6 font-mono text-2xl font-black text-yellow-300">
-              {formatTime(snapshot.elapsedRunSec)}
-            </p>
-            <button
-              type="button"
-              onClick={onExitToTitle}
-              className="cursor-pointer rounded-xl border-4 border-black bg-yellow-400 px-8 py-3 text-lg font-black tracking-widest text-black shadow-[6px_6px_0_#000] transition-transform hover:-translate-y-0.5"
-            >
-              VOLVER AL TÍTULO
-            </button>
-          </div>
-        </div>
-      )}
+      {/* --- Victoria: el BattleReportScreen (App) toma el relevo --- */}
     </div>
   );
 }
