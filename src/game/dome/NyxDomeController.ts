@@ -115,16 +115,15 @@ const EDEN_ATTACK_DRAIN = 2.0;
 const EDEN_IDLE_REGEN_FRAC = 0.01; // 1% de maxEden por segundo
 
 // --- Cámara Lenta (Bullet-Time)
-const BULLET_TIME_SCALE = 0.22;
-const BULLET_TIME_DURATION = 1.25;
+const BULLET_TIME_SCALE = 0.25;
+const BULLET_TIME_DURATION = 1.6;
 
 // --- Cámara Lenta de Redirección (Dash durante speed_attack)
-const REDIRECT_TIME_SCALE = 0.20;
-const REDIRECT_WINDOW_K = 0.95;
-const REDIRECT_WINDOW_MIN = 0.45;
-const REDIRECT_WINDOW_MAX = 0.90;
-const REDIRECT_REARM_COOLDOWN = 1.1;
-const REDIRECT_DASH_SPEED_BONUS = 4.0;
+const REDIRECT_TIME_SCALE = 0.25;
+const REDIRECT_WINDOW_MIN = 1.25;
+const REDIRECT_WINDOW_MAX = 2.6;
+const REDIRECT_REARM_COOLDOWN = 0.9;
+const REDIRECT_SPEED_RETENTION = 0.80;
 
 // --- Cámara
 const CAM_PITCH_LIMIT = 1.15;
@@ -255,6 +254,7 @@ export class NyxDomeController {
   ];
   onSlotTriggered?: (slotIndex: 0 | 1 | 2) => void;
   onDomeBounceDamage?: (damage: number) => void;
+  onRedirectionSuccess?: () => void;
   private domeBounceFlash = 0;
   private shake = 0;
 
@@ -326,22 +326,29 @@ export class NyxDomeController {
   }
 
   /**
+   * Calcula el tiempo real disponible en cámara lenta (0.25x) mientras un dash
+   * lateral óptimo manteniendo el 80% de la velocidad todavía permite girar y
+   * alcanzar al objetivo antes de sobrepasarlo por completo.
+   */
+  private computeRedirectWindowSec(target: TestEnemySphere): number {
+    const dist = this.nyxRoot.position.distanceTo(target.position);
+    const speed = Math.max(this.velocity.length() * REDIRECT_SPEED_RETENTION, 10);
+    const worldTimeAvailable = dist / speed;
+    const realTimeAvailable = worldTimeAvailable / REDIRECT_TIME_SCALE;
+    return THREE.MathUtils.clamp(realTimeAvailable, REDIRECT_WINDOW_MIN, REDIRECT_WINDOW_MAX);
+  }
+
+  /**
    * El motor de enemigos llama aquí cuando el enemigo lockeado hace un dash
    * evasivo: guarda el objetivo, rompe el lock y abre la ventana de Cámara
-   * Lenta de Redirección (timeScale 0.20) durante el tiempo físico en el que
+   * Lenta de Redirección (timeScale 0.25) durante el tiempo físico en el que
    * un Dash todavía puede curvar el golpe para alcanzarlo.
    */
   notifyEnemyEvaded(): void {
     const target = this.lockedEnemy ?? this.redirectTargetEnemy;
     if (target) {
       this.redirectTargetEnemy = target;
-      const dist = this.nyxRoot.position.distanceTo(target.position);
-      const speed = this.velocity.length();
-      this.redirectWindowTimer = THREE.MathUtils.clamp(
-        (dist / Math.max(speed, 12)) * REDIRECT_WINDOW_K,
-        REDIRECT_WINDOW_MIN,
-        REDIRECT_WINDOW_MAX,
-      );
+      this.redirectWindowTimer = this.computeRedirectWindowSec(target);
     }
     if (this.lockedEnemy) {
       this.lockedEnemy = null;
@@ -806,11 +813,17 @@ export class NyxDomeController {
     return true;
   }
 
-  /** Rompe el lock-in; si estabas atacando, activa la cámara lenta. */
+  /** Rompe el lock-in; si estabas atacando, guarda el objetivo y abre cámara lenta de redirección. */
   private breakLock(wasAttacking: boolean): void {
+    const prev = this.lockedEnemy;
     this.lockedEnemy = null;
     this.reticleLockState = 'none'; // se recalcula a 'can_lock'/'none' en el mismo frame
-    if (wasAttacking) this.bulletTimeTimer = BULLET_TIME_DURATION;
+    if (wasAttacking && prev) {
+      this.redirectTargetEnemy = prev;
+      this.redirectWindowTimer = this.computeRedirectWindowSec(prev);
+    } else if (wasAttacking) {
+      this.bulletTimeTimer = BULLET_TIME_DURATION;
+    }
   }
 
   // ==========================================================================
@@ -832,8 +845,8 @@ export class NyxDomeController {
       this.animator.setState('zero_g_float');
       this.audio?.playAnchor();
     } else if (this.mode === 'speed_attack') {
-      // Espacio frena del todo: cancela patada o Caída al Vacío con kick_flip.
-      this.startKickRecover(this.velocity.length());
+      // Espacio frena del todo: 1 flip tras patada simple, 2 tras taladro.
+      this.startKickRecover(this.speedAttackKind === 'spiral_drill_kick' ? 2 : 1);
     }
     // En 'floating'/'dashing'/'kick_recover': Espacio NO hace nada.
   }
@@ -842,14 +855,20 @@ export class NyxDomeController {
   private handleDash(f: number, r: number): void {
     if (this.mode === 'speed_attack') {
       if (this.eden < EDEN_DASH_COST) return;
-      // Dash de redirección: W/A/D apuntando al enemigo (lockeado, guardado
-      // por la cámara lenta o recapturado con el visor) curva el vector de
-      // golpe hacia él SIN cortar la patada/taladro.
+      // Dash de redirección: en cámara lenta o apuntando al enemigo (lockeado,
+      // guardado por la ventana de redirección o recapturado con el visor)
+      // re-lockea y curva el golpe hacia él SIN cortar la patada/taladro.
+      const inSlowMo = this.redirectWindowTimer > 0 || this.bulletTimeTimer > 0;
       const target =
+        (this.reticleLockState === 'can_lock' ? this.candidateEnemy : null) ??
         this.lockedEnemy ??
-        this.redirectTargetEnemy ??
-        (this.reticleLockState === 'can_lock' ? this.candidateEnemy : null);
-      if (target && (f > 0 || r !== 0) && this.isRedirectDashDir(f, r, target)) {
+        this.redirectTargetEnemy;
+      const isBrakeBack = f < 0 && r === 0;
+      if (
+        target &&
+        !isBrakeBack &&
+        (inSlowMo || ((f > 0 || r !== 0) && this.isRedirectDashDir(f, r, target)))
+      ) {
         this.redirectDash(target);
         return;
       }
@@ -894,6 +913,15 @@ export class NyxDomeController {
       // Caída al Vacío sin enemigo, el dash solo corta el vector: NUNCA la toca.
       if (hadLockedEnemy) this.bulletTimeTimer = BULLET_TIME_DURATION;
       this.audio?.playGravityShift();
+    } else if (this.mode === 'dashing' && (this.redirectWindowTimer > 0 || this.bulletTimeTimer > 0)) {
+      if (this.eden < EDEN_DASH_COST) return;
+      const target =
+        (this.reticleLockState === 'can_lock' ? this.candidateEnemy : null) ??
+        this.redirectTargetEnemy;
+      if (target) {
+        this.redirectDash(target);
+        return;
+      }
     } else if (this.mode === 'floating') {
       if (this.eden < EDEN_DASH_COST) return;
       const dir = this.tmpA.set(0, 0, 0);
@@ -954,8 +982,20 @@ export class NyxDomeController {
     this.aimForward.copy(toEnemy);
     this.prevAimFwd.copy(this.aimForward);
     this.facing.copy(toEnemy);
-    const newSpeed = this.velocity.length() + REDIRECT_DASH_SPEED_BONUS;
+    // Mantiene al menos el 80% de la velocidad actual al girar bruscamente con el dash.
+    const speed = this.velocity.length();
+    const newSpeed = Math.max(
+      speed * REDIRECT_SPEED_RETENTION,
+      DASH_SPEED * 0.85 * this.speedMultiplier,
+    );
     this.velocity.copy(toEnemy).multiplyScalar(newSpeed);
+    this.mode = 'speed_attack';
+    this.dashTimer = 0;
+    if (this.speedAttackKind === 'void_fall' || this.speedAttackKind === null) {
+      this.speedAttackKind =
+        newSpeed >= DRILL_SPEED_THRESHOLD ? 'spiral_drill_kick' : 'gravity_kick';
+      this.animator.setState(this.speedAttackKind);
+    }
     this.attackElapsed = 0;
     // El dash de redirección corta TODA cámara lenta.
     this.bulletTimeTimer = 0;
@@ -965,11 +1005,28 @@ export class NyxDomeController {
     this.dashWobbleImpulse = 1.3;
     this.shake = Math.max(this.shake, 0.2);
     this.audio?.playGravityShift();
+    this.onRedirectionSuccess?.();
   }
 
   /** Clic Izquierdo: Ataque de Velocidad (patada con lock-in o void_fall). */
   private handleAttack(): void {
-    if (this.mode === 'speed_attack') return;
+    if (this.mode === 'speed_attack') {
+      // Si estaba atacando sin lock (p.ej. tras perderlo en cámara lenta) y mete
+      // al enemigo dentro de la mira, permite re-lockear con Clic Izquierdo.
+      if (!this.lockedEnemy && this.reticleLockState === 'can_lock' && this.candidateEnemy) {
+        this.lockedEnemy = this.candidateEnemy;
+        this.redirectTargetEnemy = null;
+        this.reticleLockState = 'locked';
+        this.bulletTimeTimer = 0;
+        this.redirectWindowTimer = 0;
+        if (this.speedAttackKind === 'void_fall' || this.speedAttackKind === null) {
+          this.speedAttackKind =
+            this.velocity.length() >= DRILL_SPEED_THRESHOLD ? 'spiral_drill_kick' : 'gravity_kick';
+          this.animator.setState(this.speedAttackKind);
+        }
+      }
+      return;
+    }
     // En kick_recover espera a terminar de frenar, salvo re-lock en cámara lenta.
     if (this.mode === 'kick_recover' && this.bulletTimeTimer <= 0) return;
     if (this.eden <= 0.01) return;
@@ -1013,11 +1070,10 @@ export class NyxDomeController {
   }
 
   /**
-   * Encadena 1-3 kick_flip según la velocidad en el instante de la cancelación
-   * (se calcula UNA sola vez) y frena suavemente hasta casi 0.
+   * Recuperación tras patada: 1 flip en patada simple, 2 flips en taladro espiral.
    */
-  private startKickRecover(speed: number): void {
-    this.flipsTotal = speed < 12 ? 1 : speed < 19 ? 2 : 3;
+  private startKickRecover(flips: 1 | 2): void {
+    this.flipsTotal = flips;
     this.flipsPlayed = 0;
     this.recoverElapsed = 0;
     this.wantAttack = false;
@@ -1057,7 +1113,7 @@ export class NyxDomeController {
     this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, Math.min(1.3, kineticMult));
     this.lockedEnemy = null;
     this.speedAttackKind = null;
-    this.startKickRecover(impactSpeed);
+    this.startKickRecover(isDrill ? 2 : 1);
     // Rebote corto tras conectar: la voltereta frena la inercia.
     this.velocity.multiplyScalar(-0.3);
     this.audio?.playMelee();
@@ -1184,11 +1240,7 @@ export class NyxDomeController {
         const maxCentripetalTurnRate = VEL_ALIGN_RATE / (1 + speed * CENTRIPETAL_SPEED_K);
         if (missAngle > 0.12 && requiredTurnRate > maxCentripetalTurnRate) {
           this.redirectTargetEnemy = this.lockedEnemy;
-          this.redirectWindowTimer = THREE.MathUtils.clamp(
-            timeToImpact * REDIRECT_WINDOW_K,
-            REDIRECT_WINDOW_MIN,
-            REDIRECT_WINDOW_MAX,
-          );
+          this.redirectWindowTimer = this.computeRedirectWindowSec(this.lockedEnemy);
         }
       }
     }

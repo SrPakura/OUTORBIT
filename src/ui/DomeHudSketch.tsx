@@ -56,16 +56,14 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
   const lock = hud.reticleLockState;
   const isLocked = lock === 'locked';
 
-  // --- Estrella central: blanca → roja (lockeable) → roja incandescente (lock)
-  const starStroke = lock === 'none' ? '#ffffff' : lock === 'can_lock' ? '#ff2a55' : '#ff1e42';
-  const starFill = isLocked ? 'rgba(255, 30, 66, 0.22)' : 'none';
+  // --- Estrella central: blanca -> rojo suave (rojo + blanco 25% = #ff4040) -> rojo puro + glow (#ff0000)
+  const starStroke = lock === 'none' ? '#ffffff' : lock === 'can_lock' ? '#ff4040' : '#ff0000';
+  const starFill = isLocked ? 'rgba(255, 0, 0, 0.24)' : 'none';
   const starStyle =
     lock === 'locked'
-      ? { filter: 'drop-shadow(0 0 10px #ff1e42)' }
-      : lock === 'can_lock'
-        ? { filter: 'drop-shadow(0 0 4px rgba(255,42,85,0.55))' }
-        : undefined;
-  const dotFill = lock === 'none' ? '#ffffff' : lock === 'can_lock' ? '#ff2a55' : '#ff1e42';
+      ? { filter: 'drop-shadow(0 0 10px #ff0000) drop-shadow(0 0 22px rgba(255,0,0,0.85))' }
+      : undefined;
+  const dotFill = lock === 'none' ? '#ffffff' : lock === 'can_lock' ? '#ff4040' : '#ff0000';
 
   const enemyPos =
     hud.lockedEnemyScreenPos != null && (lock === 'locked' || lock === 'can_lock')
@@ -81,7 +79,7 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
   const pressureOpacity = Math.min(0.72, 0.24 + halftoneOpacity * 0.55);
 
   const isVoidFall = hud.mode === 'speed_attack' && hud.speedAttackKind === 'void_fall';
-  const bulletRingRatio = Math.max(0, Math.min(1, hud.bulletTimeRemaining / 1.25));
+  const bulletRingRatio = Math.max(0, Math.min(1, hud.bulletTimeRemaining / 2.2));
   const expPct =
     hud.expToNext > 0 ? Math.max(0, Math.min(100, (hud.exp / hud.expToNext) * 100)) : 0;
 

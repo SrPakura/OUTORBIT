@@ -251,6 +251,9 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
         controller.onDomeBounceDamage = () => {
           combat.applyDomeBarrierDamageToNyx();
         };
+        controller.onRedirectionSuccess = () => {
+          runTracker.recordRedirection();
+        };
         controller.onSlotTriggered = (slotIdx) => {
           if (levelUpOpenRef.current || battleReportOpenRef.current || !controller) return;
           const slot = progression.slots[slotIdx];
