@@ -28,7 +28,7 @@ import type { SynthAudio } from '@/game/audio/SynthAudio';
 
 // ============================================================================
 // NyxDomeController — movimiento, física espacial, cámara y ataques de Nyx
-// dentro de la cúpula de 50 m, según el diseño exacto de la bóveda.
+// dentro de la cúpula de 90 m, según el diseño exacto de la bóveda.
 //
 // Modos (NyxMovementMode):
 //  - 'grounded'     Adherida a cualquier SlabCollider (suelo, pared o techo).
@@ -39,21 +39,22 @@ import type { SynthAudio } from '@/game/audio/SynthAudio';
 //                   ~nulo), WASD acelera hacia la cámara (1.0 Edén/s), la cámara
 //                   va pegada a la espalda y el cuerpo gira con desfase elástico
 //                   limitado por la física centrípeta 1/(1+speed*0.11).
-//  - 'dashing'      Clic Derecho (3.0 Edén): 0.38 s a ~32 m/s según WASD,
+//  - 'dashing'      Clic Derecho (3.0 Edén): 0.36 s a 24 m/s según WASD,
 //                   redirigible en vivo con el ratón.
 //  - 'speed_attack' Clic Izquierdo (2.0 Edén/s): patada con lock-in al enemigo
-//                   de la mira (gravity_kick / spiral_drill_kick según
-//                   accelTimeSec >= 1.5 s) o Caída al Vacío (void_fall) sin
-//                   enemigo. Dash lateral/trasero para cortar vector y
-//                   Espacio para cancelar en 1-3 kick_flip.
-//  - 'kick_recover' Frenado suave encadenando kick_flip.
+//                   de la mira (gravity_kick / spiral_drill_kick según la
+//                   velocidad instantánea >= 14.5 m/s) o Caída al Vacío
+//                   (void_fall) sin enemigo. Dash lateral/trasero para cortar
+//                   vector y Espacio para frenar del todo en 1-3 kick_flip.
+//  - 'kick_recover' Frenado suave hasta casi 0 encadenando kick_flip.
 //
-// Economía de Edén (base 100): flotar sin WASD 0/s (+1.0/s de regeneración si
-// velocidad < 1.5 m/s sin input), WASD 1.0/s, Dash 3.0 de golpe, Ataque 2.0/s.
+// Economía de Edén (base 100): +1%/s de regeneración en suelo o flotación sin
+// WASD ni clics (aunque te deslices por inercia en 0G), WASD 1.0/s, Dash 3.0
+// de golpe, Ataque 2.0/s.
 //
-// Lock-In del visor: enemigo más cercano al centro de la mira a <= 200 px
-// (can_lock); se rompe a > 500 px o si queda detrás → Cámara Lenta real de
-// 1.25 s (timeScale 0.22) para reaccionar.
+// Lock-In del visor: enemigo más cercano al centro de la mira a <= 105 px
+// (can_lock); se rompe a > 262 px o si queda detrás → Cámara Lenta real de
+// 1.25 s (timeScale 0.22) para reaccionar (solo si había enemigo marcado).
 // ============================================================================
 
 const DEG = Math.PI / 180;
@@ -61,51 +62,53 @@ const DEG = Math.PI / 180;
 // --- Suelo (cualquier SlabCollider: suelo, pared o techo)
 const PLAYER_RADIUS = 0.45;
 const GRAVITY = 22; // solo como fuerza de adherencia al suelo
-const WALK_SPEED = 4.6;
-const RUN_SPEED = 8.6;
-const SLIDE_SPEED = 11.5;
+const WALK_SPEED = 4.2;
+const RUN_SPEED = 7.4;
+const SLIDE_SPEED = 10.0;
 const GROUND_ACCEL_LAMBDA = 10;
 const GROUND_STICK_RANGE = 0.35;
 const WALL_FLIP_ANGLE = 45 * DEG;
-const LAND_RECOVER_SPEED = 12;
-const JUMP_LAND_SPEED = 3;
+const LAND_RECOVER_SPEED = 7;
+const JUMP_LAND_SPEED = 2;
 const FLOAT_ENTRY_OFFSET = 0.65;
 const FLOAT_ENTRY_SPEED = 3.0;
+// Aterrizaje real vs choque lateral (hit_stagger) según el alineamiento de
+// los pies con la normal de la superficie.
+const FLOAT_LAND_MAX_SPEED = 14; // contacto suave en flotación: aterriza
+const FLOAT_LAND_MIN_ALIGN = -0.25;
+const LAND_ALIGN_MIN = 0.35; // pies orientados a la superficie: aterriza
+const WALL_BOUNCE_KEEP = 0.45; // rebote lateral amortiguado al 45%
 
 // --- Flotación 0G
-const FLOAT_ACCEL = 13;
-const FLOAT_MAX_SPEED = 28;
+const FLOAT_ACCEL = 10.0;
+const FLOAT_MAX_SPEED = 21.0;
 const FLOAT_DRAG = 0.06; // exp(-0.06*dt): conserva ~95% de la velocidad por segundo
 const CENTRIPETAL_SPEED_K = 0.11; // centripetalFactor = 1/(1+speed*0.11)
 const BODY_TURN_RATE = 10;
 const VEL_ALIGN_RATE = 4.0;
 
 // --- Dash (Clic Derecho)
-const DASH_SPEED = 32;
-const DASH_DURATION = 0.38;
+const DASH_SPEED = 24.0;
+const DASH_DURATION = 0.36;
 const DASH_TURN_RATE = 5.0;
 const DASH_SIDE_SPEED = 24;
 const DASH_BACK_IMPULSE = 12;
 
 // --- Ataque de Velocidad (Clic Izquierdo)
 const ATTACK_ACCEL = 11;
-const ATTACK_MIN_SPEED = 24;
-const SPIRAL_MIN_SPEED = 28;
-const ATTACK_MAX_SPEED = 34;
-const AUTO_AIM_TURN = 2.8; // maxTurnRate = 2.8/(1+speed*0.04) rad/s
-const AUTO_AIM_SPEED_K = 0.04;
-const KICK_FLIP_SPEED_2 = 18;
-const KICK_FLIP_SPEED_3 = 28;
-const ACCEL_TIME_DRILL = 1.5; // s de aceleración -> isDrillReady
-const ACCEL_TIME_DECAY = 1.1;
-const ACCEL_TIME_HOLD_SPEED = 20; // por debajo de esto, sin acelerar, decae
+const DRILL_SPEED_THRESHOLD = 14.5; // m/s instantáneos -> spiral_drill_kick
+const GRAVITY_KICK_SPEED = 18.0; // velocidad tope de la patada gravitatoria
+const SPIRAL_DRILL_SPEED = 26.0; // velocidad tope del taladro espiral
+const VOID_FALL_START_SPEED = 17.0;
+const VOID_FALL_MAX_SPEED = 25.0;
+const KICK_RECOVER_BRAKE = 4.2; // exp(-4.2*dt): frena hasta casi 0
+const KICK_RECOVER_MAX_TIME_PER_FLIP = 0.9; // seguridad anti-atasco por flip
 
 // --- Economía de Edén
 const EDEN_MOVE_DRAIN = 1.0;
 const EDEN_DASH_COST = 3.0;
 const EDEN_ATTACK_DRAIN = 2.0;
 const EDEN_IDLE_REGEN_FRAC = 0.01; // 1% de maxEden por segundo
-const IDLE_REGEN_MAX_SPEED = 1.5;
 
 // --- Cámara Lenta (Bullet-Time)
 const BULLET_TIME_SCALE = 0.22;
@@ -117,7 +120,24 @@ const AIM_PITCH_MAX_DOT = 0.985;
 const CAM_DISTANCE = 6.2;
 const CAM_LOOK_HEIGHT = 1.35;
 const FOV_SPEED_REF = 32;
-const FOV_BOOST = 20;
+const FOV_BOOST = 22;
+// Tirachinas de distancia: tira +1.25 m al arrancar y recoge a 5.6 m a tope.
+const CAM_TUG_DISTANCE = 1.25;
+const CAM_HIGH_SPEED_DISTANCE = 5.6;
+// Encuadre de ataque: sube el look para que Nyx quede baja de centro.
+const CAM_ATTACK_LOOK_LIFT = 0.28;
+// Dutch roll del horizonte (±0.22 rad ≈ ±12.5°).
+const CAM_ROLL_MAX = 0.22;
+const CAM_ROLL_TURN_K = 0.016;
+const CAM_ROLL_DASH_SIDE = 0.11;
+// Muelle de aterrizaje: hundimiento de cámara proporcional al impacto.
+const LANDING_DIP_MAX = 0.48;
+const LANDING_DIP_K = 0.045;
+// Hit-stop + FOV punch del impacto de patada/taladro.
+const HIT_STOP_KICK = 0.042;
+const HIT_STOP_DRILL = 0.068;
+const FOV_PUNCH_KICK = -7;
+const FOV_PUNCH_DRILL = -11;
 
 const DOME_BOUNCE_DAMAGE = 10;
 
@@ -146,6 +166,8 @@ export class NyxDomeController {
   private wantJump = false;
   private wantDash = false;
   private wantAttack = false;
+  private attackHeld = false; // Clic Izquierdo mantenida
+  private dashHeld = false; // Clic Derecho mantenida
   private wantSlot: 1 | 2 | 3 | null = null;
   private activeSlot: 1 | 2 | 3 = 1;
 
@@ -182,10 +204,9 @@ export class NyxDomeController {
   private bulletTimeTimer = 0;
   private animLock: NyxAnimState | null = null;
 
-  // --- Aceleración sostenida (isDrillReady a partir de 1.5 s)
-  private accelTimeSec = 0;
-
   // --- Ataque de velocidad / lock-in
+  private attackElapsed = 0; // tiempo llevado en speed_attack
+  private recoverElapsed = 0; // seguridad del frenado kick_recover
   private speedAttackKind: SpeedAttackKind | null = null;
   private lockedEnemy: TestEnemySphere | null = null;
   private candidateEnemy: TestEnemySphere | null = null;
@@ -203,6 +224,18 @@ export class NyxDomeController {
   private readonly expToNext = 100;
   private domeBounceFlash = 0;
   private shake = 0;
+
+  // --- Dirección de cámara arcade (Gravity Rush x Persona 5)
+  private camDist = CAM_DISTANCE; // muelle de distancia de cámara (tirachinas)
+  private lookLift = 0; // subida del look en patada / caída al vacío
+  private landingDip = 0; // hundimiento vertical del look al aterrizar
+  private cameraRollRad = 0; // Dutch roll del horizonte (±0.22 rad)
+  private rollImpulse = 0; // impulso de roll por choque lateral (hit_stagger)
+  private dashSideRoll = 0; // roll sostenido por dash lateral (A/D)
+  private hitStopTimer = 0; // segundos REALES de hit-stop restantes
+  private fovPunch = 0; // grados de zoom puntual en el impacto
+  private impactFlash = 0; // 0..1 para el HUD
+  private gyroSpinRad = 0; // ángulo acumulado de los arcos giroscópicos del visor
 
   // --- Scratch (ninguno vive más allá de un helper o de un tramo de update)
   private readonly camFwd = new THREE.Vector3();
@@ -296,8 +329,18 @@ export class NyxDomeController {
 
   onMouseDown(button: number): void {
     if (!this.pointerLocked) return;
-    if (button === 0) this.wantAttack = true;
-    else if (button === 2) this.wantDash = true;
+    if (button === 0) {
+      this.wantAttack = true;
+      this.attackHeld = true;
+    } else if (button === 2) {
+      this.wantDash = true;
+      this.dashHeld = true;
+    }
+  }
+
+  onMouseUp(button: number): void {
+    if (button === 0) this.attackHeld = false;
+    else if (button === 2) this.dashHeld = false;
   }
 
   onKeyDown(code: string): void {
@@ -316,7 +359,11 @@ export class NyxDomeController {
 
   setPointerLocked(locked: boolean): void {
     this.pointerLocked = locked;
-    if (!locked) this.codesDown.clear();
+    if (!locked) {
+      this.codesDown.clear();
+      this.attackHeld = false;
+      this.dashHeld = false;
+    }
   }
 
   getPosition(): THREE.Vector3 {
@@ -327,8 +374,9 @@ export class NyxDomeController {
     return this.lockedEnemy;
   }
 
+  /** Segundos llevados en speed_attack (cuánto llevas atacando a un enemigo). */
   getAttackAccelTime(): number {
-    return this.mode === 'speed_attack' ? this.accelTimeSec : 0;
+    return this.mode === 'speed_attack' ? this.attackElapsed : 0;
   }
 
   getHudState(): DomeHudState {
@@ -342,9 +390,8 @@ export class NyxDomeController {
       expToNext: this.expToNext,
       level: this.level,
       speed,
-      accelTimeSec: this.accelTimeSec,
-      drillThreshold: ACCEL_TIME_DRILL,
-      isDrillReady: this.accelTimeSec >= ACCEL_TIME_DRILL,
+      drillThreshold: DRILL_SPEED_THRESHOLD,
+      isDrillReady: speed >= DRILL_SPEED_THRESHOLD,
       speedLinesIntensity: clamp01((speed - 10) / 16),
       mode: this.mode,
       speedAttackKind: this.mode === 'speed_attack' ? this.speedAttackKind : null,
@@ -360,6 +407,9 @@ export class NyxDomeController {
         { keyLabel: formatKeyCode(this.settings.bindings.slot3), name: null, level: 0 },
       ],
       domeBounceFlash: this.domeBounceFlash,
+      impactFlash: this.impactFlash,
+      cameraRollDeg: this.cameraRollRad * (180 / Math.PI),
+      gyroSpinRad: this.gyroSpinRad,
     };
   }
 
@@ -381,7 +431,16 @@ export class NyxDomeController {
     if (this.bulletTimeTimer > 0) {
       this.bulletTimeTimer = Math.max(0, this.bulletTimeTimer - rawDt);
     }
-    this.time += sdt;
+    // Hit-Stop: tras conectar una patada/taladro (o un choque lateral fuerte)
+    // se congela la simulación de Nyx unos ms de reloj mientras la cámara
+    // vibra y el FOV hace punch. El resto del frame sigue en tiempo real.
+    let hitStop = false;
+    if (this.hitStopTimer > 0) {
+      this.hitStopTimer = Math.max(0, this.hitStopTimer - rawDt);
+      hitStop = true;
+    }
+    const simDt = hitStop ? 0 : sdt;
+    this.time += simDt;
     updateSlabMotion(slabs, this.time);
 
     // --- Decaimientos
@@ -390,6 +449,10 @@ export class NyxDomeController {
       this.domeBounceFlash = Math.max(0, this.domeBounceFlash - sdt * 2.2);
     }
     this.shake *= Math.exp(-6 * sdt);
+    // El flash de impacto y el punch de FOV decaen en TIEMPO REAL para que
+    // se sientan incluso dentro del hit-stop y de la cámara lenta.
+    this.impactFlash = Math.max(0, this.impactFlash - rawDt * 3.8);
+    this.fovPunch *= Math.exp(-14 * rawDt);
 
     // --- Base de cámara del frame (dirección de mira según el modo)
     this.computeCameraBasis();
@@ -421,55 +484,67 @@ export class NyxDomeController {
       this.handleAttack();
     }
 
-    // --- Física por modo
+    // --- Física por modo (simDt = 0 durante el hit-stop: Nyx congelada)
     switch (this.mode) {
       case 'grounded':
-        this.updateGrounded(sdt, f, r, sprintHeld, hasMoveInput);
+        this.updateGrounded(simDt, f, r, sprintHeld, hasMoveInput);
         break;
       case 'floating':
-        this.updateFloating(sdt, f, r);
+        this.updateFloating(simDt, f, r);
         break;
       case 'dashing':
-        this.updateDashing(sdt);
+        this.updateDashing(simDt);
         break;
       case 'speed_attack':
-        this.updateSpeedAttack(sdt, onHitEnemy);
+        this.updateSpeedAttack(simDt, onHitEnemy);
         break;
       case 'kick_recover':
-        this.updateKickRecover(sdt);
+        this.updateKickRecover(simDt);
         break;
     }
 
-    // --- Integración
-    this.nyxRoot.position.addScaledVector(this.velocity, sdt);
+    // --- Integración (congelada durante el hit-stop)
+    if (!hitStop) {
+      this.nyxRoot.position.addScaledVector(this.velocity, simDt);
 
-    // --- Colisiones con slabs (aterrizaje en cualquier superficie) y cúpula
-    this.resolveGround(slabs);
-    this.resolveDomeBound();
+      // --- Colisiones con slabs (aterrizaje en cualquier superficie) y cúpula
+      this.resolveGround(slabs);
+      this.resolveDomeBound();
+    }
 
     const speed = this.velocity.length();
 
     // --- Marco de vuelo (transporte paralelo) + orientación del cuerpo
     this.updateFlightFrame();
-    this.updateOrientation(sdt, speed);
+    this.updateOrientation(simDt, speed);
 
     // --- Animación, acelerómetro y recursos
     this.updateAnimState(speed, hasMoveInput);
-    this.updateAccelTime(sdt, f, speed);
-    this.updateEden(sdt, hasMoveInput, speed);
+    this.updateEden(simDt, hasMoveInput);
 
-    // --- Cámara
-    this.updateCamera(sdt, slabs, camera, speed);
+    // --- Giroscopio del visor: los arcos giran según la velocidad real
+    const isDrillReady = speed >= DRILL_SPEED_THRESHOLD;
+    this.gyroSpinRad += rawDt * (0.45 + speed * 0.22 + (isDrillReady ? 2.4 : 0));
+
+    // --- Cámara (siempre en tiempo real: vibra durante el hit-stop)
+    this.updateCamera(rawDt, slabs, camera, speed);
 
     // --- Animador y VFX
     const hairG = this.mode === 'grounded' ? -1 : -0.25;
-    this.animator.update(sdt, {
+    this.animator.update(simDt, {
       speed01: clamp01(speed / RUN_SPEED),
       turnRate: this.turnRate,
       verticalVel: this.velocity.dot(this.up),
       hairGravityLocal: [0, hairG, 0],
     });
-    this.vfx.update(sdt);
+    this.vfx.update(
+      sdt,
+      this.nyxRoot.position,
+      this.velocity,
+      this.facing,
+      this.mode,
+      isDrillReady,
+    );
   }
 
   // ==========================================================================
@@ -508,10 +583,10 @@ export class NyxDomeController {
   ): void {
     this.lockedEnemyScreenPos = null;
     if (this.lockedEnemy && (!enemies || enemies.indexOf(this.lockedEnemy) < 0)) {
-      this.breakLock(this.mode === 'speed_attack');
+      this.breakLock(this.mode === 'speed_attack' && this.lockedEnemy !== null);
     }
     if (!enemies || enemies.length === 0) {
-      if (this.lockedEnemy) this.breakLock(this.mode === 'speed_attack');
+      if (this.lockedEnemy) this.breakLock(this.mode === 'speed_attack' && this.lockedEnemy !== null);
       this.candidateEnemy = null;
       if (this.reticleLockState === 'locked') this.reticleLockState = 'none';
       return;
@@ -532,8 +607,10 @@ export class NyxDomeController {
         this.lockedScreenPos.y = this.screenPos.y;
         this.lockedEnemyScreenPos = this.lockedScreenPos;
       } else {
-        // Se sale a > 500 px del centro de la mira o queda detrás: break.
-        this.breakLock(this.mode === 'speed_attack');
+        // Se sale a > 262 px del centro de la mira o queda detrás: break.
+        // La cámara lenta solo se activa aquí si HAY enemigo marcado
+        // (lockedEnemy !== null, que es quien llega a esta rama).
+        this.breakLock(this.mode === 'speed_attack' && this.lockedEnemy !== null);
       }
     }
 
@@ -599,10 +676,8 @@ export class NyxDomeController {
       this.animator.setState('zero_g_float');
       this.audio?.playAnchor();
     } else if (this.mode === 'speed_attack') {
-      // Cancelación del ataque: 1, 2 o 3 kick_flip según la velocidad.
-      this.lockedEnemy = null;
-      this.speedAttackKind = null;
-      this.startKickRecover();
+      // Espacio frena del todo: cancela patada o Caída al Vacío con kick_flip.
+      this.startKickRecover(this.velocity.length());
     }
     // En 'floating'/'dashing'/'kick_recover': Espacio NO hace nada.
   }
@@ -624,15 +699,24 @@ export class NyxDomeController {
         return;
       }
       this.eden -= EDEN_DASH_COST;
+      const hadLockedEnemy = this.lockedEnemy !== null;
       this.lockedEnemy = null;
       this.speedAttackKind = null;
       this.dashDir.copy(this.velocity).normalize();
       this.dashSpeed = this.velocity.length();
       this.mode = 'dashing';
       this.dashTimer = DASH_DURATION;
-      this.animator.setState('air_dash');
-      // Cámara lenta para re-aimar y volver a lockear al enemigo.
-      this.bulletTimeTimer = BULLET_TIME_DURATION;
+      // Tirachinas de cámara: tira +1.25 m y luego recoge con la velocidad.
+      this.camDist = Math.min(this.camDist + CAM_TUG_DISTANCE, CAM_DISTANCE + CAM_TUG_DISTANCE);
+      // Dutch roll sostenido hacia el lado del dash lateral.
+      this.dashSideRoll = -Math.sign(r) * CAM_ROLL_DASH_SIDE;
+      // Libera el lock de jump_land/land_recover para que el dash anime ya.
+      this.animLock = null;
+      if (r !== 0) this.animator.setState('air_dash', { dashDir: r > 0 ? -1 : 1 });
+      else this.animator.setState('air_dash');
+      // Cámara lenta SOLO si había enemigo marcado (para re-lockear). En una
+      // Caída al Vacío sin enemigo, el dash solo corta el vector: NUNCA la toca.
+      if (hadLockedEnemy) this.bulletTimeTimer = BULLET_TIME_DURATION;
       this.audio?.playGravityShift();
     } else if (this.mode === 'floating') {
       if (this.eden < EDEN_DASH_COST) return;
@@ -648,14 +732,22 @@ export class NyxDomeController {
       this.dashSpeed = DASH_SPEED;
       this.mode = 'dashing';
       this.dashTimer = DASH_DURATION;
-      this.animator.setState('air_dash');
+      // Tirachinas de cámara + roll hacia el lado del dash lateral.
+      this.camDist = Math.min(this.camDist + CAM_TUG_DISTANCE, CAM_DISTANCE + CAM_TUG_DISTANCE);
+      this.dashSideRoll = -r * CAM_ROLL_DASH_SIDE;
+      // Libera el lock de jump_land/land_recover para que el dash anime ya.
+      this.animLock = null;
+      if (r !== 0) this.animator.setState('air_dash', { dashDir: r > 0 ? -1 : 1 });
+      else this.animator.setState('air_dash');
       this.audio?.playGravityShift();
     }
   }
 
   /** Clic Izquierdo: Ataque de Velocidad (patada con lock-in o void_fall). */
   private handleAttack(): void {
-    if (this.mode === 'speed_attack' || this.mode === 'kick_recover') return;
+    if (this.mode === 'speed_attack') return;
+    // En kick_recover espera a terminar de frenar, salvo re-lock en cámara lenta.
+    if (this.mode === 'kick_recover' && this.bulletTimeTimer <= 0) return;
     if (this.eden <= 0.01) return;
     const speed = this.velocity.length();
 
@@ -667,14 +759,15 @@ export class NyxDomeController {
       this.prevAimFwd.copy(this.aimForward);
     }
 
+    this.animLock = null;
+    this.attackElapsed = 0;
+
     if (this.reticleLockState === 'can_lock' && this.candidateEnemy) {
-      // Patada con lock-in: taladro si llevas >= 1.5 s acelerando o >= 22 m/s.
+      // Patada con lock-in: taladro si la velocidad instantánea ya es >= 14.5 m/s.
       this.lockedEnemy = this.candidateEnemy;
       this.reticleLockState = 'locked';
       this.speedAttackKind =
-        this.accelTimeSec >= ACCEL_TIME_DRILL || speed >= 22
-          ? 'spiral_drill_kick'
-          : 'gravity_kick';
+        speed >= DRILL_SPEED_THRESHOLD ? 'spiral_drill_kick' : 'gravity_kick';
       this.animator.setState(this.speedAttackKind);
     } else {
       // Sin enemigo en la mira: Caída al Vacío.
@@ -683,18 +776,29 @@ export class NyxDomeController {
     }
 
     this.facing.copy(this.aimForward);
-    const floor = this.speedAttackKind === 'spiral_drill_kick' ? SPIRAL_MIN_SPEED : ATTACK_MIN_SPEED;
-    this.velocity.copy(this.facing).multiplyScalar(Math.max(speed, floor));
+    // La Caída al Vacío arranca a 17 m/s; las patadas conservan la velocidad
+    // actual y aceleran en vuelo hacia su tope (18 / 26 m/s).
+    const startSpeed =
+      this.speedAttackKind === 'void_fall' ? Math.max(speed, VOID_FALL_START_SPEED) : speed;
+    this.velocity.copy(this.facing).multiplyScalar(startSpeed);
     this.mode = 'speed_attack';
     this.dashTimer = 0;
+    // Tirachinas de cámara: la patada/caída arranca con un tirón de distancia.
+    this.camDist = Math.min(this.camDist + CAM_TUG_DISTANCE, CAM_DISTANCE + CAM_TUG_DISTANCE);
     this.audio?.playMelee();
   }
 
-  /** Encadena 1-3 kick_flip según la velocidad actual. */
-  private startKickRecover(): void {
-    const speed = this.velocity.length();
-    this.flipsTotal = speed < KICK_FLIP_SPEED_2 ? 1 : speed < KICK_FLIP_SPEED_3 ? 2 : 3;
+  /**
+   * Encadena 1-3 kick_flip según la velocidad en el instante de la cancelación
+   * (se calcula UNA sola vez) y frena suavemente hasta casi 0.
+   */
+  private startKickRecover(speed: number): void {
+    this.flipsTotal = speed < 12 ? 1 : speed < 19 ? 2 : 3;
     this.flipsPlayed = 0;
+    this.recoverElapsed = 0;
+    this.wantAttack = false;
+    this.lockedEnemy = null;
+    this.speedAttackKind = null;
     this.mode = 'kick_recover';
     this.animator.setState('kick_flip');
   }
@@ -706,9 +810,13 @@ export class NyxDomeController {
     onHitEnemy?.(enemy, this.tmpE.copy(this.facing), isDrill);
     this.vfx.spawnBurst(enemy.position, this.facing, 0xffc24d, 30);
     this.shake = Math.max(this.shake, 0.28);
+    // Hit-Stop + FOV Punch + flash de impacto: el taladro pega más fuerte.
+    this.hitStopTimer = Math.max(this.hitStopTimer, isDrill ? HIT_STOP_DRILL : HIT_STOP_KICK);
+    this.fovPunch = Math.min(this.fovPunch, isDrill ? FOV_PUNCH_DRILL : FOV_PUNCH_KICK);
+    this.impactFlash = Math.max(this.impactFlash, isDrill ? 1.0 : 0.75);
     this.lockedEnemy = null;
     this.speedAttackKind = null;
-    this.startKickRecover();
+    this.startKickRecover(this.velocity.length());
     // Rebote corto tras conectar: la voltereta frena la inercia.
     this.velocity.multiplyScalar(-0.3);
     this.audio?.playMelee();
@@ -790,24 +898,28 @@ export class NyxDomeController {
   }
 
   private updateSpeedAttack(dt: number, onHitEnemy: HitEnemyCallback | undefined): void {
+    this.attackElapsed += dt;
     this.eden = Math.max(0, this.eden - EDEN_ATTACK_DRAIN * dt);
 
-    // Evolución en vuelo: gravity_kick -> spiral_drill_kick a los 1.5 s.
-    if (this.speedAttackKind === 'gravity_kick' && this.accelTimeSec >= ACCEL_TIME_DRILL) {
+    const speed = this.velocity.length();
+
+    // Evolución en vuelo: gravity_kick -> spiral_drill_kick al cruzar 14.5 m/s.
+    if (this.speedAttackKind === 'gravity_kick' && speed >= DRILL_SPEED_THRESHOLD) {
       this.speedAttackKind = 'spiral_drill_kick';
       this.animator.setState('spiral_drill_kick');
     }
 
-    // Auto-aim con física: la mira (y el cuerpo tras ella) se curva hacia el
-    // enemigo lockeado, limitada por 2.8/(1+speed*0.04) rad/s.
+    // Lock-In suave: la mira y el cuerpo giran hacia el enemigo lockeado con
+    // una tasa proporcional a la velocidad (sigue al enemigo en el centro de
+    // la mira/estrella sin tirones imposibles).
     if (this.lockedEnemy) {
       const toEnemy = this.tmpA.copy(this.lockedEnemy.position).sub(this.nyxRoot.position);
       const dist = toEnemy.length();
       if (dist > 1e-4) {
         toEnemy.multiplyScalar(1 / dist);
-        const speed = this.velocity.length();
-        const maxTurn = (AUTO_AIM_TURN / (1 + speed * AUTO_AIM_SPEED_K)) * dt;
-        this.rotateToward(this.aimForward, toEnemy, maxTurn);
+        const trackRate = THREE.MathUtils.clamp(1.8 + speed * 0.14, 2.2, 5.5);
+        this.rotateToward(this.aimForward, toEnemy, trackRate * dt);
+        this.rotateToward(this.facing, toEnemy, trackRate * dt);
       }
       // Impacto contra la esfera enemiga.
       if (dist <= PLAYER_RADIUS + this.lockedEnemy.radius + 0.45) {
@@ -816,11 +928,18 @@ export class NyxDomeController {
       }
     }
 
-    // Acelera velozmente (~24-34 m/s) curvando el vector de golpe hacia el
-    // facing con la física centrípeta.
-    const speed = this.velocity.length();
-    const floor = this.speedAttackKind === 'spiral_drill_kick' ? SPIRAL_MIN_SPEED : ATTACK_MIN_SPEED;
-    const targetSpeed = Math.min(ATTACK_MAX_SPEED, Math.max(floor, speed) + ATTACK_ACCEL * dt);
+    // Acelera hacia el tope del tipo de ataque (18/26/25 m/s) curvando el
+    // vector de golpe hacia el facing con la física centrípeta.
+    const maxSpeed =
+      this.speedAttackKind === 'spiral_drill_kick'
+        ? SPIRAL_DRILL_SPEED
+        : this.speedAttackKind === 'void_fall'
+          ? VOID_FALL_MAX_SPEED
+          : GRAVITY_KICK_SPEED;
+    const targetSpeed =
+      speed < maxSpeed
+        ? Math.min(maxSpeed, speed + ATTACK_ACCEL * dt)
+        : Math.max(maxSpeed, speed - ATTACK_ACCEL * dt);
     const dir = this.tmpB.copy(this.velocity);
     if (dir.lengthSq() < 1e-4) dir.copy(this.facing);
     else dir.normalize();
@@ -841,15 +960,20 @@ export class NyxDomeController {
   }
 
   private updateKickRecover(dt: number): void {
-    // Frena suavemente mientras encadena las volteretas.
-    this.velocity.multiplyScalar(Math.exp(-2.6 * dt));
-    if (this.animator.getState() === 'kick_flip' && this.animator.isFinished()) {
-      this.flipsPlayed++;
-      if (this.flipsPlayed < this.flipsTotal) {
-        this.animator.setState('kick_flip');
-      } else {
-        this.mode = 'floating';
-      }
+    this.recoverElapsed += dt;
+    // Frena suavemente hasta casi 0 mientras reproduce exactamente flipsTotal
+    // volteretas. recoverElapsed es un seguro anti-atasco si isFinished() falla.
+    this.velocity.multiplyScalar(Math.exp(-KICK_RECOVER_BRAKE * dt));
+    const flipDone =
+      (this.animator.getState() === 'kick_flip' && this.animator.isFinished()) ||
+      this.recoverElapsed >= KICK_RECOVER_MAX_TIME_PER_FLIP * this.flipsTotal;
+    if (!flipDone) return;
+    this.flipsPlayed++;
+    if (this.flipsPlayed < this.flipsTotal) {
+      this.animator.setState('kick_flip');
+    } else {
+      this.mode = 'floating';
+      this.animator.setState('zero_g_float');
     }
   }
 
@@ -869,16 +993,57 @@ export class NyxDomeController {
       const n = this.contact.normal;
       const approach = this.velocity.dot(n); // < 0 = entrando en la superficie
 
+      if (this.mode !== 'grounded') {
+        // Aterrizaje real vs choque lateral según el alineamiento de los pies.
+        const footAlign = this.up.dot(n);
+        const canLand =
+          (this.mode === 'floating' &&
+            this.velocity.length() < FLOAT_LAND_MAX_SPEED &&
+            footAlign > FLOAT_LAND_MIN_ALIGN) ||
+          footAlign > LAND_ALIGN_MIN;
+
+        if (canLand) {
+          // Aterriza: esfera apoyada sobre la superficie, nunca al centro del slab.
+          this.nyxRoot.position.copy(this.contact.point).addScaledVector(n, PLAYER_RADIUS);
+          this.landOn(n, Math.max(0, -approach));
+        } else {
+          // Choque lateral / canto / de cabeza: rebota físicamente y NO entra
+          // en grounded; se queda en floating recomponiéndose con hit_stagger.
+          this.nyxRoot.position
+            .copy(this.contact.point)
+            .addScaledVector(n, PLAYER_RADIUS + 0.08);
+          const vn = this.velocity.dot(n);
+          if (vn < 0) this.velocity.addScaledVector(n, -2 * vn); // reflect
+          this.velocity.multiplyScalar(WALL_BOUNCE_KEEP);
+          if (this.mode === 'speed_attack') {
+            this.lockedEnemy = null;
+            this.speedAttackKind = null;
+          }
+          this.mode = 'floating';
+          if (this.bounceCooldown <= 0) {
+            this.playOneShot('hit_stagger');
+            this.vfx.spawnBurst(this.nyxRoot.position, n, 0xffc24d, 18);
+            this.shake = Math.max(this.shake, 0.22);
+            // Choque lateral fuerte: mini hit-stop, punch de FOV, flash y un
+            // impulso de Dutch roll que inclina el horizonte hacia fuera.
+            this.hitStopTimer = Math.max(this.hitStopTimer, HIT_STOP_KICK);
+            this.fovPunch = Math.min(this.fovPunch, FOV_PUNCH_KICK);
+            this.impactFlash = Math.max(this.impactFlash, 0.75);
+            this.rollImpulse = THREE.MathUtils.clamp(
+              this.rollImpulse + n.dot(this.camRight) * 0.18,
+              -CAM_ROLL_MAX,
+              CAM_ROLL_MAX,
+            );
+            this.bounceCooldown = 0.4;
+          }
+        }
+        return;
+      }
+
       // Corrección posicional: esfera apoyada sobre la superficie.
       this.nyxRoot.position.copy(this.contact.point).addScaledVector(n, PLAYER_RADIUS);
-
-      if (this.mode !== 'grounded') {
-        // Flotando/volando/atacando y tocas un suelo o pared: SIEMPRE aterrizas.
-        this.landOn(n, Math.max(0, -approach));
-      } else {
-        if (approach < 0) this.velocity.addScaledVector(n, -approach);
-        this.groundNormal.copy(n);
-      }
+      if (approach < 0) this.velocity.addScaledVector(n, -approach);
+      this.groundNormal.copy(n);
       return;
     }
 
@@ -933,9 +1098,14 @@ export class NyxDomeController {
     this.camYaw = 0;
     this.camPitch = 0;
 
+    // Muelle de aterrizaje: la cámara baja acompañando la flexión de rodillas
+    // de land_recover / jump_land, proporcional a la velocidad de impacto.
+    this.landingDip = -Math.min(LANDING_DIP_MAX, impact * LANDING_DIP_K);
+
     // Animación según el ángulo de reorientación y la velocidad de impacto.
     if (angle > WALL_FLIP_ANGLE) {
       this.playOneShot('wall_shift_flip');
+      this.vfx.spawnBurst(this.nyxRoot.position, normal, 0xffc24d, 22);
       this.audio?.playGravityShift();
     } else if (impact > LAND_RECOVER_SPEED) {
       this.playOneShot('land_recover');
@@ -943,6 +1113,7 @@ export class NyxDomeController {
       this.audio?.playLand();
     } else if (impact > JUMP_LAND_SPEED) {
       this.playOneShot('jump_land');
+      this.vfx.spawnBurst(this.nyxRoot.position, normal, 0xffc24d, 14);
     }
 
     // Frena la inercia tangencial según la dureza del impacto.
@@ -1105,24 +1276,14 @@ export class NyxDomeController {
     }
   }
 
-  private updateAccelTime(dt: number, f: number, speed: number): void {
-    if (this.mode === 'speed_attack' || this.mode === 'dashing') {
-      this.accelTimeSec += dt;
-    } else if (this.mode === 'floating' && f > 0) {
-      this.accelTimeSec += dt;
-    } else if (speed < ACCEL_TIME_HOLD_SPEED) {
-      // Baja suavemente cuando frenas.
-      this.accelTimeSec = Math.max(0, this.accelTimeSec - ACCEL_TIME_DECAY * dt);
-    }
-    if (this.accelTimeSec > 6) this.accelTimeSec = 6;
-  }
-
-  private updateEden(dt: number, hasMoveInput: boolean, speed: number): void {
-    // Quieta en suelo o flotando a < 1.5 m/s sin input: +1% / s.
+  private updateEden(dt: number, hasMoveInput: boolean): void {
+    // Sin WASD ni clics (en suelo o flotando, incluso deslizándote por inercia
+    // en 0G a cualquier velocidad): +1% de maxEden por segundo.
     const idle =
       (this.mode === 'grounded' || this.mode === 'floating') &&
       !hasMoveInput &&
-      speed < IDLE_REGEN_MAX_SPEED;
+      !this.attackHeld &&
+      !this.dashHeld;
     if (idle) {
       this.eden += this.maxEden * EDEN_IDLE_REGEN_FRAC * dt;
     }
@@ -1137,27 +1298,68 @@ export class NyxDomeController {
   ): void {
     // Dirección de mira final del frame (puede haber curvado el auto-aim).
     this.computeCameraBasis();
+    const camUp = this.tmpD.copy(this.mode === 'grounded' ? this.up : this.aimUp);
 
-    const look = this.tmpA.copy(this.nyxRoot.position).addScaledVector(this.up, CAM_LOOK_HEIGHT);
+    // --- Tirachinas de distancia: el tirón del dash/ataque se recoge
+    // suavemente de 6.2 m hasta 5.6 m a velocidad máxima.
+    const speed01 = clamp01(speed / FOV_SPEED_REF);
+    const distTarget = THREE.MathUtils.lerp(CAM_DISTANCE, CAM_HIGH_SPEED_DISTANCE, speed01);
+    this.camDist += (distTarget - this.camDist) * (1 - Math.exp(-(2.0 + speed * 0.45) * dt));
+
+    // --- Encuadre de ataque: en patada/taladro/Caída al Vacío el look sube
+    // para que Nyx quede más abajo del centro del visor y no tape al enemigo.
+    const liftTarget =
+      this.mode === 'speed_attack' && this.speedAttackKind !== null ? CAM_ATTACK_LOOK_LIFT : 0;
+    this.lookLift += (liftTarget - this.lookLift) * (1 - Math.exp(-6 * dt));
+
+    // --- Muelle de aterrizaje: el hundimiento recupera hacia 0 en ~0.35 s.
+    this.landingDip += -this.landingDip * (1 - Math.exp(-7 * dt));
+
+    // --- Dutch roll del horizonte: derrape del giro cerrado + dash lateral
+    // + impulso del choque lateral (hit_stagger). Máx ±0.22 rad (~12.5°).
+    const rollTarget =
+      THREE.MathUtils.clamp(
+        this.turnRate * CAM_ROLL_TURN_K + this.dashSideRoll,
+        -CAM_ROLL_MAX,
+        CAM_ROLL_MAX,
+      ) + this.rollImpulse;
+    this.cameraRollRad = THREE.MathUtils.clamp(
+      this.cameraRollRad + (rollTarget - this.cameraRollRad) * (1 - Math.exp(-8 * dt)),
+      -CAM_ROLL_MAX,
+      CAM_ROLL_MAX,
+    );
+    this.rollImpulse *= Math.exp(-5 * dt);
+    this.dashSideRoll *= Math.exp(-2.5 * dt);
+
+    const look = this.tmpA
+      .copy(this.nyxRoot.position)
+      .addScaledVector(this.up, CAM_LOOK_HEIGHT + this.landingDip)
+      .addScaledVector(camUp, this.lookLift);
     const back = this.tmpB.copy(this.camFwd).multiplyScalar(-1);
 
     // Evita atravesar slabs con la cámara.
-    let camDist = CAM_DISTANCE;
-    const camHit = raycastSlabs(slabs, look, back, CAM_DISTANCE);
+    let camDist = this.camDist;
+    const camHit = raycastSlabs(slabs, look, back, this.camDist);
     if (camHit) camDist = Math.max(1.1, camHit.distance - 0.25);
 
     const camPos = this.tmpC.copy(look).addScaledVector(back, camDist);
-    if (this.shake > 0.001) {
-      camPos.x += (Math.random() * 2 - 1) * this.shake;
-      camPos.y += (Math.random() * 2 - 1) * this.shake;
-      camPos.z += (Math.random() * 2 - 1) * this.shake;
+    // Vibración: shake de impactos + micro-temblor extra durante el hit-stop.
+    const jitter = this.shake + (this.hitStopTimer > 0 ? 0.05 : 0);
+    if (jitter > 0.001) {
+      camPos.x += (Math.random() * 2 - 1) * jitter;
+      camPos.y += (Math.random() * 2 - 1) * jitter;
+      camPos.z += (Math.random() * 2 - 1) * jitter;
     }
     camera.position.copy(camPos);
-    camera.up.copy(this.mode === 'grounded' ? this.up : this.aimUp);
+    camera.up.copy(camUp);
+    if (Math.abs(this.cameraRollRad) > 1e-4) {
+      this.quat.setFromAxisAngle(this.camFwd, this.cameraRollRad);
+      camera.up.applyQuaternion(this.quat);
+    }
     camera.lookAt(look);
 
-    // Frenesí: FOV dinámico con la velocidad.
-    const targetFov = this.settings.baseFov + FOV_BOOST * clamp01(speed / FOV_SPEED_REF);
+    // Frenesí: FOV dinámico con la velocidad + punch de impacto (zoom corto).
+    const targetFov = this.settings.baseFov + FOV_BOOST * speed01 + this.fovPunch;
     if (Math.abs(targetFov - camera.fov) > 0.05) {
       camera.fov = targetFov;
       camera.updateProjectionMatrix();

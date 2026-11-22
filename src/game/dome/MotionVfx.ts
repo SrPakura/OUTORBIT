@@ -1,12 +1,16 @@
 import * as THREE from 'three';
+import type { NyxMovementMode } from '@/game/dome/domeTypes';
 
 // ============================================================================
 // MotionVfx — efectos de partículas del movimiento de Nyx en la cúpula.
 //
-// Dos pools preasignados (cero allocations por frame salvo en los eventos):
-// - Puntos aditivos (`THREE.Points`) para ráfagas de aterrizaje / impactos.
-//   El fade se hace llevando el color a negro (con blending aditivo = invisible).
-// - Anillos (`RingGeometry`) para el rebote contra la barrera blanca de la cúpula.
+// Tres pools preasignados (cero allocations por frame salvo en los eventos):
+// - Puntos aditivos (`THREE.Points`) para ráfagas de aterrizaje / impactos y
+//   para las motas de túnel (speed motes) que pasan junto a la cámara a alta
+//   velocidad. El fade se hace llevando el color a negro (aditivo = invisible).
+// - Anillos (`RingGeometry`) para el rebote contra la barrera blanca.
+// - Aros de barrena (`TorusGeometry`) que envuelven a Nyx cuando el taladro
+//   espiral está listo, girando a toda velocidad sobre su rumbo.
 // ============================================================================
 
 const MAX_PARTICLES = 320;
@@ -14,6 +18,17 @@ const MAX_RINGS = 6;
 const RING_LIFETIME = 0.7;
 const RING_MAX_SCALE = 8;
 const RING_FORWARD = new THREE.Vector3(0, 0, 1);
+
+// --- Motas de túnel / caída libre (Gravity Rush speed motes)
+const MOTE_MIN_SPEED = 11; // m/s a partir de los cuales aparecen
+const MOTE_SPAWN_BASE = 0.03; // s entre motas a la velocidad mínima
+const MOTE_FORWARD_DIST = 7; // spawnean delante de Nyx, alrededor de su rumbo
+const MOTE_RADIUS_MIN = 0.8;
+const MOTE_RADIUS_MAX = 3.0;
+const MOTE_MAX_PER_FRAME = 6;
+
+// --- Aros de barrena (drill spiral rings)
+const DRILL_SPIN_BASE = 14; // rad/s de giro sobre el rumbo (+ speed * 0.9)
 
 export class MotionVfxSystem {
   private readonly scene: THREE.Scene;
@@ -29,6 +44,15 @@ export class MotionVfxSystem {
   private readonly rings: THREE.Mesh[] = [];
   private readonly ringLife: Float32Array;
   private ringCursor = 0;
+
+  private readonly drillGroup: THREE.Group;
+  private readonly drillMatA: THREE.MeshBasicMaterial;
+  private readonly drillMatB: THREE.MeshBasicMaterial;
+  private drillAlpha = 0;
+  private moteAcc = 0;
+  private readonly tmpRight = new THREE.Vector3();
+  private readonly tmpUp = new THREE.Vector3();
+  private readonly tmpDir = new THREE.Vector3();
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -73,6 +97,31 @@ export class MotionVfxSystem {
       this.rings.push(ring);
       scene.add(ring);
     }
+
+    // Aros de barrena (drill spiral rings) alrededor de Nyx a alta velocidad
+    this.drillGroup = new THREE.Group();
+    this.drillGroup.visible = false;
+    this.drillMatA = new THREE.MeshBasicMaterial({
+      color: 0x22d3ee,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.drillMatB = new THREE.MeshBasicMaterial({
+      color: 0xf43f5e,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const torusA = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.032, 8, 32), this.drillMatA);
+    const torusB = new THREE.Mesh(new THREE.TorusGeometry(0.68, 0.026, 8, 28), this.drillMatB);
+    torusA.rotation.x = 0.45;
+    torusB.rotation.y = -0.55;
+    torusB.position.z = 0.35;
+    this.drillGroup.add(torusA, torusB);
+    scene.add(this.drillGroup);
   }
 
   /**
@@ -136,7 +185,79 @@ export class MotionVfxSystem {
     this.ringLife[idx] = RING_LIFETIME;
   }
 
-  update(dt: number): void {
+  update(
+    dt: number,
+    nyxPos?: THREE.Vector3,
+    nyxVel?: THREE.Vector3,
+    nyxForward?: THREE.Vector3,
+    mode?: NyxMovementMode,
+    isDrillReady?: boolean,
+  ): void {
+    if (nyxPos && nyxVel && nyxForward) {
+      const speed = nyxVel.length();
+      // 1. Speed motes (motas de túnel en caída al vacío / alta velocidad)
+      if (speed > MOTE_MIN_SPEED && mode !== 'grounded') {
+        this.tmpDir.copy(nyxVel).multiplyScalar(1 / speed);
+        if (Math.abs(this.tmpDir.y) < 0.9) this.tmpUp.set(0, 1, 0);
+        else this.tmpUp.set(1, 0, 0);
+        this.tmpRight.crossVectors(this.tmpDir, this.tmpUp).normalize();
+        this.tmpUp.crossVectors(this.tmpRight, this.tmpDir).normalize();
+
+        const rate = MOTE_SPAWN_BASE / Math.max(1, (speed - MOTE_MIN_SPEED) * 0.25 + 1);
+        this.moteAcc += dt;
+        let spawned = 0;
+        while (this.moteAcc >= rate && spawned < MOTE_MAX_PER_FRAME) {
+          this.moteAcc -= rate;
+          spawned++;
+          const idx = this.cursor;
+          this.cursor = (this.cursor + 1) % MAX_PARTICLES;
+          const i3 = idx * 3;
+          const ang = Math.random() * Math.PI * 2;
+          const rad = MOTE_RADIUS_MIN + Math.random() * (MOTE_RADIUS_MAX - MOTE_RADIUS_MIN);
+          const fwdDist = MOTE_FORWARD_DIST + (Math.random() - 0.3) * 4;
+          const rx = Math.cos(ang) * rad;
+          const ry = Math.sin(ang) * rad;
+
+          this.positions[i3] =
+            nyxPos.x + this.tmpDir.x * fwdDist + this.tmpRight.x * rx + this.tmpUp.x * ry;
+          this.positions[i3 + 1] =
+            nyxPos.y + this.tmpDir.y * fwdDist + this.tmpRight.y * rx + this.tmpUp.y * ry;
+          this.positions[i3 + 2] =
+            nyxPos.z + this.tmpDir.z * fwdDist + this.tmpRight.z * rx + this.tmpUp.z * ry;
+
+          const backSpeed = speed * 0.45 + 4;
+          this.velocities[i3] = -this.tmpDir.x * backSpeed;
+          this.velocities[i3 + 1] = -this.tmpDir.y * backSpeed;
+          this.velocities[i3 + 2] = -this.tmpDir.z * backSpeed;
+
+          const l = 0.28 + Math.random() * 0.24;
+          this.life[idx] = l;
+          this.maxLife[idx] = l;
+          const isDrillMote = isDrillReady && Math.random() < 0.45;
+          this.baseColor[i3] = isDrillMote ? 0.96 : 0.22;
+          this.baseColor[i3 + 1] = isDrillMote ? 0.35 : 0.85;
+          this.baseColor[i3 + 2] = 0.98;
+        }
+      } else {
+        this.moteAcc = 0;
+      }
+
+      // 2. Aros de barrena (drill spiral rings)
+      const wantDrill = Boolean(isDrillReady) && mode !== 'grounded';
+      const targetAlpha = wantDrill ? (mode === 'speed_attack' ? 0.88 : 0.48) : 0;
+      this.drillAlpha += (targetAlpha - this.drillAlpha) * (1 - Math.exp(-12 * dt));
+      if (this.drillAlpha > 0.02) {
+        this.drillGroup.visible = true;
+        this.drillGroup.position.copy(nyxPos).addScaledVector(nyxForward, 0.55);
+        this.drillGroup.quaternion.setFromUnitVectors(RING_FORWARD, nyxForward);
+        this.drillGroup.rotateZ((DRILL_SPIN_BASE + speed * 0.9) * dt);
+        this.drillMatA.opacity = this.drillAlpha;
+        this.drillMatB.opacity = this.drillAlpha * 0.85;
+      } else {
+        this.drillGroup.visible = false;
+      }
+    }
+
     const drag = Math.exp(-3 * dt);
     for (let i = 0; i < MAX_PARTICLES; i++) {
       if (this.life[i] <= 0) continue;
@@ -185,5 +306,12 @@ export class MotionVfxSystem {
       ring.geometry.dispose();
       (ring.material as THREE.MeshBasicMaterial).dispose();
     }
+    this.scene.remove(this.drillGroup);
+    this.drillGroup.traverse((obj) => {
+      const m = obj as THREE.Mesh;
+      if (m.isMesh) m.geometry.dispose();
+    });
+    this.drillMatA.dispose();
+    this.drillMatB.dispose();
   }
 }

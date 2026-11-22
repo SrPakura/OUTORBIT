@@ -208,19 +208,19 @@ const SLAB_SPECS: ReadonlyArray<{
   rim: string;
 }> = [
   // Plataforma central amplia para empezar de pie
-  { pos: [0, -3.0, 0], size: [15, 1.2, 15], rot: [0, 0.15, 0], bob: 0.18, rim: '#22d3ee' },
-  // Paredes inclinadas y verticales
-  { pos: [-18, 5.5, -12], size: [10, 1.0, 10], rot: [0.35, 0.4, 1.15], bob: 0.35, rim: '#a855f7' },
-  { pos: [19, 9.0, -9], size: [11, 1.0, 8], rot: [-0.25, -0.5, -0.95], bob: 0.32, rim: '#22d3ee' },
-  { pos: [0, 11.0, -24], size: [12, 1.0, 9], rot: [Math.PI * 0.48, 0.1, 0], bob: 0.28, rim: '#f43f5e' },
-  { pos: [-22, -2.0, 16], size: [9, 1.0, 11], rot: [0.2, -0.3, 1.35], bob: 0.38, rim: '#a855f7' },
+  { pos: [0, -3.0, 0], size: [22, 1.4, 22], rot: [0, 0.15, 0], bob: 0.18, rim: '#22d3ee' },
+  // Paredes inclinadas y verticales repartidas por la cúpula de 90 m
+  { pos: [-30, 9.0, -20], size: [15, 1.2, 15], rot: [0.35, 0.4, 1.15], bob: 0.35, rim: '#a855f7' },
+  { pos: [32, 15.0, -16], size: [16, 1.2, 12], rot: [-0.25, -0.5, -0.95], bob: 0.32, rim: '#22d3ee' },
+  { pos: [0, 18.0, -42], size: [18, 1.2, 14], rot: [Math.PI * 0.48, 0.1, 0], bob: 0.28, rim: '#f43f5e' },
+  { pos: [-38, -4.0, 28], size: [14, 1.2, 16], rot: [0.2, -0.3, 1.35], bob: 0.38, rim: '#a855f7' },
   // Techo invertido (para caminar boca abajo)
-  { pos: [3, 21.0, -14], size: [13, 1.1, 10], rot: [Math.PI, 0.3, 0.12], bob: 0.25, rim: '#22d3ee' },
+  { pos: [6, 36.0, -24], size: [20, 1.3, 15], rot: [Math.PI, 0.3, 0.12], bob: 0.25, rim: '#22d3ee' },
   // Escalones / fragmentos inferiores y laterales
-  { pos: [-11, -13.0, 13], size: [9, 1.0, 9], rot: [0.42, -0.25, 0.35], bob: 0.4, rim: '#22d3ee' },
-  { pos: [16, -9.5, 17], size: [10, 1.0, 10], rot: [-0.65, 0.2, 0.48], bob: 0.36, rim: '#a855f7' },
-  { pos: [24, 2.0, 18], size: [8, 1.0, 8], rot: [0.55, 0.8, -0.45], bob: 0.42, rim: '#22d3ee' },
-  { pos: [-14, 16.0, 15], size: [10, 1.0, 9], rot: [-2.6, 0.4, 0.25], bob: 0.3, rim: '#a855f7' },
+  { pos: [-20, -22.0, 24], size: [14, 1.2, 14], rot: [0.42, -0.25, 0.35], bob: 0.4, rim: '#22d3ee' },
+  { pos: [28, -16.0, 30], size: [15, 1.2, 15], rot: [-0.65, 0.2, 0.48], bob: 0.36, rim: '#a855f7' },
+  { pos: [42, 4.0, 30], size: [13, 1.2, 13], rot: [0.55, 0.8, -0.45], bob: 0.42, rim: '#22d3ee' },
+  { pos: [-24, 28.0, 26], size: [15, 1.2, 14], rot: [-2.6, 0.4, 0.25], bob: 0.3, rim: '#a855f7' },
 ];
 
 /**

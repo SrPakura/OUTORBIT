@@ -51,7 +51,6 @@ export interface DomeHudState {
   expToNext: number;
   level: number;
   speed: number;
-  accelTimeSec: number;
   drillThreshold: number;
   isDrillReady: boolean;
   speedLinesIntensity: number;
@@ -69,12 +68,20 @@ export interface DomeHudState {
     { keyLabel: string; name: string | null; level: number },
   ];
   domeBounceFlash: number;
+  /** Flash de impacto (0..1) al golpear un enemigo o estrellarse de lado (hit_stagger) */
+  impactFlash: number;
+  /** Ángulo de roll/inclinación lateral de la cámara en grados (-15..+15) para el giroscopio del visor */
+  cameraRollDeg: number;
+  /** Rotación acumulada en radianes de los arcos giroscópicos del visor según la velocidad */
+  gyroSpinRad: number;
 }
 
-/** Radio en píxeles de pantalla del octógono exterior de visor.svg para poder lockear */
-export const RETICLE_LOCK_RADIUS_PX = 200;
+/** Radio visual en píxeles de pantalla del octógono exterior de visor.svg (180x180 px total) */
+export const RETICLE_SIZE_PX = 180;
+/** Radio lógico en píxeles para poder lockear un enemigo dentro del visor */
+export const RETICLE_LOCK_RADIUS_PX = 105;
 /** Distancia en píxeles (2.5x radio) a la que se rompe el auto-lock si el enemigo escapa */
-export const RETICLE_BREAK_RADIUS_PX = 500;
+export const RETICLE_BREAK_RADIUS_PX = 262;
 
-export const DOME_ARENA_RADIUS = 50;
-export const DOME_PLAYER_BOUND_RADIUS = 48.8;
+export const DOME_ARENA_RADIUS = 90;
+export const DOME_PLAYER_BOUND_RADIUS = 88.6;

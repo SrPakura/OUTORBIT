@@ -32,7 +32,7 @@ export interface DomeArenaBackdrop {
   dispose: () => void;
 }
 
-const DOME_RADIUS = 50;
+const DOME_RADIUS = 90;
 
 // Menos objetos, más grandes y legibles: el escenario respira.
 const MONOLITH_COUNT = 14;
@@ -1217,7 +1217,7 @@ export function createDomeArenaBackdrop(scene: THREE.Scene): DomeArenaBackdrop {
     const y = 1 - (i / (MONOLITH_COUNT - 1)) * 2;
     const ring = Math.sqrt(Math.max(0, 1 - y * y));
     const theta = goldenAngle * i;
-    const radius = 100 + rng() * 130;
+    const radius = 120 + rng() * 140;
     _v.set(Math.cos(theta) * ring * radius, y * radius * 0.85, Math.sin(theta) * ring * radius);
     randomQuat(rng, _q);
     _s.set(2.4 + rng() * 2.2, 3.0 + rng() * 3.0, 2.4 + rng() * 2.2);
@@ -1610,7 +1610,7 @@ export function createDomeArenaBackdrop(scene: THREE.Scene): DomeArenaBackdrop {
   const starPalette = [0x22d3ee, 0xf8fafc, 0xfbbf24, 0xf43f5e].map((c) => new THREE.Color(c));
   for (let i = 0; i < STAR_COUNT; i++) {
     const i3 = i * 3;
-    shellPoint(rng, 60, 210, _v);
+    shellPoint(rng, 105, 250, _v);
     starPos[i3] = _v.x;
     starPos[i3 + 1] = _v.y;
     starPos[i3 + 2] = _v.z;
@@ -1683,7 +1683,7 @@ export function createDomeArenaBackdrop(scene: THREE.Scene): DomeArenaBackdrop {
     prismV[i3] = _u.x;
     prismV[i3 + 1] = _u.y;
     prismV[i3 + 2] = _u.z;
-    prismRadius[i] = 60 + rng() * 150;
+    prismRadius[i] = 105 + rng() * 150;
     prismSpeed[i] = (0.01 + rng() * 0.035) * (rng() < 0.5 ? -1 : 1);
     prismPhase[i] = rng() * Math.PI * 2;
     prismScale[i] = 1.4 + rng() * 2.2;

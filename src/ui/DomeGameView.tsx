@@ -25,8 +25,7 @@ const INITIAL_HUD: DomeHudState = {
   expToNext: 1,
   level: 1,
   speed: 0,
-  accelTimeSec: 0,
-  drillThreshold: 1.5,
+  drillThreshold: 14.5,
   isDrillReady: false,
   speedLinesIntensity: 0,
   mode: 'floating',
@@ -43,6 +42,9 @@ const INITIAL_HUD: DomeHudState = {
     { keyLabel: '3', name: null, level: 0 },
   ],
   domeBounceFlash: 0,
+  impactFlash: 0,
+  cameraRollDeg: 0,
+  gyroSpinRad: 0,
 };
 
 export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
@@ -139,6 +141,10 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       controller?.onMouseDown(e.button);
     };
 
+    const onMouseUp = (e: MouseEvent) => {
+      controller?.onMouseUp(e.button);
+    };
+
     const onContextMenu = (e: MouseEvent) => {
       e.preventDefault();
     };
@@ -163,6 +169,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
     document.addEventListener('pointerlockchange', onPointerLockChange);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('resize', onResize);
@@ -231,6 +238,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       document.removeEventListener('pointerlockchange', onPointerLockChange);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('resize', onResize);

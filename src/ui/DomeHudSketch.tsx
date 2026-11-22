@@ -1,14 +1,13 @@
 import { memo } from 'react';
 import type { DomeHudState } from '@/game/dome/domeTypes';
-import { RETICLE_LOCK_RADIUS_PX } from '@/game/dome/domeTypes';
+import { RETICLE_SIZE_PX } from '@/game/dome/domeTypes';
 
 interface DomeHudSketchProps {
   hud: DomeHudState;
   onExit: () => void;
 }
 
-const RETICLE_SIZE = RETICLE_LOCK_RADIUS_PX * 2; // 400px en pantalla
-const DRILL_CHARGE_SEC = 1.5;
+const RETICLE_SIZE = RETICLE_SIZE_PX; // 180px en pantalla para enmarcar sin tapar a Nyx
 
 function modeLabel(hud: DomeHudState): string {
   switch (hud.mode) {
@@ -89,7 +88,14 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
     hud.lockedEnemyScreenPos != null && (lock === 'locked' || lock === 'can_lock')
       ? hud.lockedEnemyScreenPos
       : null;
-  const drillPct = Math.max(0, Math.min(100, (hud.accelTimeSec / DRILL_CHARGE_SEC) * 100));
+
+  // --- Efectos dinámicos del visor (Gravity Rush × Persona 5) ---
+  const isVoidFall = hud.mode === 'speed_attack' && hud.speedAttackKind === 'void_fall';
+  const octaVibrate = isVoidFall || hud.isDrillReady;
+  const impactShake = hud.impactFlash > 0.05;
+  const gyroArcsStroke = hud.isDrillReady ? '#22d3ee' : '#ffffff';
+  const gyroArcsOpacity = hud.isDrillReady ? 0.9 : 0.45;
+  const bulletRingRatio = Math.max(0, Math.min(1, hud.bulletTimeRemaining / 1.25));
 
   return (
     <div className="pointer-events-none absolute inset-0 z-20 select-none overflow-hidden font-mono text-white">
@@ -121,6 +127,45 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
         />
       )}
 
+      {/* 2b. Destello de impacto cómic — Hit-Stop cuando la bota revienta a un enemigo */}
+      {impactShake && (
+        <div
+          className="absolute inset-0 mix-blend-screen"
+          style={{
+            opacity: Math.min(1, hud.impactFlash * 0.65),
+            background:
+              'radial-gradient(circle at 50% 50%, rgba(255,255,255,0.20) 0%, rgba(34,211,238,0.32) 45%, rgba(244,63,94,0.60) 100%)',
+            maskImage: 'radial-gradient(circle at 50% 50%, transparent 40%, black 82%)',
+            WebkitMaskImage:
+              'radial-gradient(circle at 50% 50%, transparent 40%, black 82%)',
+          }}
+        />
+      )}
+
+      {/* 2c. Viñeta abisal de Caída al Vacío — índigo/violeta + líneas de velocidad densas */}
+      {isVoidFall && (
+        <>
+          <div
+            className="absolute inset-0"
+            style={{
+              boxShadow:
+                'inset 0 0 220px 70px rgba(109,40,217,0.45), inset 0 0 130px 36px rgba(79,70,229,0.35)',
+            }}
+          />
+          <div
+            className="absolute inset-0 mix-blend-screen"
+            style={{
+              opacity: 0.85,
+              background:
+                'repeating-conic-gradient(from 0deg at 50% 50%, rgba(34,211,238,0.50) 0deg 0.5deg, rgba(167,139,250,0.45) 0.5deg 1deg, transparent 1deg 2.1deg)',
+              maskImage: 'radial-gradient(circle at 50% 50%, transparent 26%, black 70%)',
+              WebkitMaskImage:
+                'radial-gradient(circle at 50% 50%, transparent 26%, black 70%)',
+            }}
+          />
+        </>
+      )}
+
       {/* 3. Tinte de Cámara Lenta (Bullet-Time) en los bordes */}
       {hud.bulletTimeActive && (
         <div
@@ -140,6 +185,15 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
           height={RETICLE_SIZE}
           viewBox="0 0 512 512"
           className="overflow-visible"
+          style={
+            impactShake
+              ? {
+                  filter:
+                    'drop-shadow(-3px 0 0 #22d3ee) drop-shadow(3px 0 0 #f43f5e)',
+                  transform: `scale(${1 + hud.impactFlash * 0.16})`,
+                }
+              : undefined
+          }
         >
           <defs>
             <filter id="hud-contrast" x="-15%" y="-15%" width="130%" height="130%">
@@ -154,15 +208,30 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
           </defs>
 
           <g id="visor-gravity" fill="none" stroke="#ffffff" filter="url(#hud-contrast)">
-            {/* Doble anillo octogonal */}
-            <polygon
-              id="octagon-outer"
-              stroke="#ffffff"
-              strokeWidth="2"
-              strokeLinejoin="round"
-              strokeOpacity="0.85"
-              points="256,40 331.01,74.92 408.74,103.26 437.08,180.99 472,256 437.08,331.01 408.74,408.74 331.01,437.08 256,472 180.99,437.08 103.26,408.74 74.92,331.01 40,256 74.92,180.99 103.26,103.26 180.99,74.92"
-            />
+            {/* Doble anillo octogonal — diafragma que se contrae con la velocidad */}
+            <g
+              style={
+                octaVibrate
+                  ? {
+                      animation: 'domeHudOctaVibrate 0.18s ease-in-out infinite',
+                      transformOrigin: '256px 256px',
+                    }
+                  : undefined
+              }
+            >
+              <polygon
+                id="octagon-outer"
+                stroke="#ffffff"
+                strokeWidth="2"
+                strokeLinejoin="round"
+                strokeOpacity="0.85"
+                points="256,40 331.01,74.92 408.74,103.26 437.08,180.99 472,256 437.08,331.01 408.74,408.74 331.01,437.08 256,472 180.99,437.08 103.26,408.74 74.92,331.01 40,256 74.92,180.99 103.26,103.26 180.99,74.92"
+                style={{
+                  transform: `scale(${1 - Math.min(0.1, hud.speed * 0.004)})`,
+                  transformOrigin: '256px 256px',
+                }}
+              />
+            </g>
             <polygon
               id="octagon-inner"
               stroke={innerOctStroke}
@@ -171,21 +240,58 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
               points="256,54 325.65,87.85 398.84,113.16 424.15,186.35 458,256 424.15,325.65 398.84,398.84 325.65,424.15 256,458 186.35,424.15 113.16,398.84 87.85,325.65 54,256 87.85,186.35 113.16,113.16 186.35,87.85"
             />
 
-            {/* Arcos giroscópicos sutiles en las diagonales */}
-            <g id="gyro-arcs" strokeWidth="1.75" strokeLinecap="round" strokeOpacity="0.45">
+            {/* Arcos giroscópicos — giran con el spin; cian brillante con Taladro listo */}
+            <g
+              id="gyro-arcs"
+              stroke={gyroArcsStroke}
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeOpacity={gyroArcsOpacity}
+              style={{
+                transform: `rotate(${(hud.gyroSpinRad * 57.2958) % 360}deg)`,
+                transformOrigin: '256px 256px',
+              }}
+            >
               <path d="M 305.03 159.77 A 108 108 0 0 1 352.23 206.97" />
               <path d="M 352.23 305.03 A 108 108 0 0 1 305.03 352.23" />
               <path d="M 206.97 352.23 A 108 108 0 0 1 159.77 305.03" />
               <path d="M 159.77 206.97 A 108 108 0 0 1 206.97 159.77" />
             </g>
 
-            {/* Ticks cardinales (ejes de gravedad) */}
-            <g id="cardinal-ticks" strokeWidth="2.5" strokeLinecap="round" strokeOpacity="0.75">
+            {/* Ticks cardinales — horizonte artificial, contra-roll de cámara */}
+            <g
+              id="cardinal-ticks"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeOpacity="0.75"
+              style={{
+                transform: `rotate(${-hud.cameraRollDeg}deg)`,
+                transformOrigin: '256px 256px',
+              }}
+            >
               <line x1="256" y1="68" x2="256" y2="78" />
               <line x1="256" y1="434" x2="256" y2="444" />
               <line x1="68" y1="256" x2="78" y2="256" />
               <line x1="434" y1="256" x2="444" y2="256" />
             </g>
+
+            {/* Anillo de cuenta atrás de Cámara Lenta — cuánto queda para el Dash */}
+            {hud.bulletTimeActive && (
+              <circle
+                id="bullet-time-ring"
+                cx="256"
+                cy="256"
+                r="150"
+                fill="none"
+                stroke="#22d3ee"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeOpacity="0.9"
+                strokeDasharray={`${2 * Math.PI * 150 * bulletRingRatio} ${2 * Math.PI * 150}`}
+                transform="rotate(-90 256 256)"
+                style={{ filter: 'drop-shadow(0 0 6px #22d3ee)' }}
+              />
+            )}
 
             {/* Estrella central de 4 puntas — color según estado de lock */}
             <path
@@ -292,25 +398,6 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
             />
           </div>
 
-          {/* Carga de Taladro */}
-          <div className="mt-2 flex items-baseline justify-between text-[10px] tracking-widest">
-            <span className="text-amber-300">TALADRO</span>
-            <span className={hud.isDrillReady ? 'text-amber-300' : 'text-white/70'}>
-              {hud.isDrillReady ? 'TALADRO LISTO' : `${drillPct.toFixed(0)}%`}
-            </span>
-          </div>
-          <div className="mt-0.5">
-            <Bar
-              value={hud.accelTimeSec}
-              max={DRILL_CHARGE_SEC}
-              className={`${
-                hud.isDrillReady
-                  ? 'bg-gradient-to-r from-amber-300 to-fuchsia-400 shadow-[0_0_10px_rgba(232,121,249,0.9)]'
-                  : 'bg-amber-500/70'
-              }`}
-            />
-          </div>
-
           {/* Modo de movimiento + velocidad */}
           <div className="mt-3 flex items-center justify-between border-t border-white/20 pt-2">
             <span
@@ -411,6 +498,12 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
         @keyframes domeHudBulletPulse {
           0%, 100% { opacity: 1; transform: translateX(-50%) scale(1); }
           50% { opacity: 0.7; transform: translateX(-50%) scale(1.04); }
+        }
+        @keyframes domeHudOctaVibrate {
+          0%, 100% { transform: scale(1); }
+          25% { transform: scale(1.012) translate(0.8px, -0.6px); }
+          50% { transform: scale(0.994); }
+          75% { transform: scale(1.008) translate(-0.8px, 0.6px); }
         }
       `}</style>
     </div>

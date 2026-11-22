@@ -42,10 +42,10 @@ const FLOAT_BOB_AMPLITUDE = 0.9; // Amplitud del bob senoidal alrededor de homeP
 const FLOAT_BOB_SPEED = 0.9;     // Velocidad del bob (rad/s)
 const LEASH_RADIUS = 9.0;        // Distancia a homePos desde la que tira del correa
 const HOME_PULL = 6.5;           // Aceleración extra al superar el correa
-const DOME_KEEP_RADIUS = 44.0;   // R a partir del cual vuelve suavemente a homePos
+const DOME_KEEP_RADIUS = 78.0;   // R a partir del cual vuelve suavemente a homePos
 const DOME_KEEP_PULL = 9.0;      // Aceleración de contención dentro de la cúpula
 
-const EVASIVE_DASH_SPEED = 38.0; // Dash lateral brusco (m/s)
+const EVASIVE_DASH_SPEED = 28.0; // Dash lateral brusco (m/s)
 const EVASIVE_DASH_TIME = 0.38;  // Duración durante la que el dash no se frena
 const EVASIVE_DASH_LIFT = 5.5;    // Componente vertical del dash (m/s)
 const EVASIVE_COOLDOWN = 3.0;    // Segundos entre dashes evasivos
@@ -90,10 +90,10 @@ export function createTestEnemySpheres(scene: THREE.Scene): TestEnemyManager {
     color: number;
     rim: number;
   }> = [
-    { home: [0, 4, -14], evasive: false, color: 0xffc46b, rim: 0xffe3a3 }, // melocotón dorado
-    { home: [0, 16, 16], evasive: false, color: 0x7ae8dc, rim: 0xbafff2 },  // aqua-menta
-    { home: [-14, 10, -18], evasive: true, color: 0xff5f9e, rim: 0xffb3d4 }, // cuarzo rosa
-    { home: [15, 8, -15], evasive: true, color: 0xdf9fff, rim: 0xf0d4ff },  // lavanda-rosa
+    { home: [0, 7, -26], evasive: false, color: 0xffc46b, rim: 0xffe3a3 },   // melocotón dorado
+    { home: [0, 24, 30], evasive: false, color: 0x7ae8dc, rim: 0xbafff2 },   // aqua-menta
+    { home: [-26, 15, -30], evasive: true, color: 0xff5f9e, rim: 0xffb3d4 }, // cuarzo rosa
+    { home: [28, 12, -26], evasive: true, color: 0xdf9fff, rim: 0xf0d4ff },  // lavanda-rosa
   ];
 
   const internals: EnemyInternal[] = [];
