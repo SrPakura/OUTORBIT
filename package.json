@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "esbuild src/game/render/nyxAnimator.ts --bundle --format=esm --outfile=public/nyx-animator-bundle.js && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

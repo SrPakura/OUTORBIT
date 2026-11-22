@@ -578,9 +578,9 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 let NyxAnimatorCtor = null;
 let animStateNames = null;
 try {
-  ({ NyxAnimator: NyxAnimatorCtor, NYX_ANIM_STATES: animStateNames } = await import('/src/game/render/nyxAnimator.ts'));
+  ({ NyxAnimator: NyxAnimatorCtor, NYX_ANIM_STATES: animStateNames } = await import('/nyx-animator-bundle.js'));
 } catch (err) {
-  console.warn('[character-sheet] nyxAnimator.ts no disponible; solo poses clásicas.', err);
+  console.warn('[character-sheet] nyx-animator-bundle.js no disponible; solo poses clásicas.', err);
   document.getElementById('anim-btns')?.closest('.ctrl')?.setAttribute('hidden', '');
 }
 
