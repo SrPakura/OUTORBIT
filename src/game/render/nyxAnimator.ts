@@ -81,14 +81,16 @@ export interface NyxAnimParams {
 
 // --- Índices de hueso (orden fijo; 3 floats por hueso en las poses) ---------
 // 0..14: cuerpo · 15..18: cadena del pelo (hair_1..hair_4) · 19..24: nuevos ·
-// 25..26: mangas (sleeve_L/R, opcionales, física de resorte).
+// 25..26: mangas (sleeve_L/R, opcionales, física de resorte) ·
+// 27: aro orbital (halo_ring, opcional, gira sobre su eje).
 const HIPS = 0, SPINE = 1, CHEST = 2, NECK = 3, HEAD = 4;
 const UA_L = 5, FA_L = 6, HAND_L = 7, UA_R = 8, FA_R = 9, HAND_R = 10;
 const TH_L = 11, SH_L = 12, TH_R = 13, SH_R = 14;
 const HAIR_1 = 15, HAIR_2 = 16, HAIR_3 = 17, HAIR_4 = 18;
 const CLAV_L = 19, CLAV_R = 20, FOOT_L = 21, TOE_L = 22, FOOT_R = 23, TOE_R = 24;
 const SLEEVE_L = 25, SLEEVE_R = 26;
-const BONE_COUNT = 27;
+const HALO = 27;
+const BONE_COUNT = 28;
 
 const BONE_NAMES: readonly string[] = [
   'hips', 'spine', 'chest', 'neck', 'head',
@@ -96,7 +98,7 @@ const BONE_NAMES: readonly string[] = [
   'thigh_L', 'shin_L', 'thigh_R', 'shin_R',
   'hair_1', 'hair_2', 'hair_3', 'hair_4',
   'clavicle_L', 'clavicle_R', 'foot_L', 'toe_L', 'foot_R', 'toe_R',
-  'sleeve_L', 'sleeve_R',
+  'sleeve_L', 'sleeve_R', 'halo_ring',
 ];
 
 const INF = Number.POSITIVE_INFINITY;
@@ -332,6 +334,7 @@ export class NyxAnimator {
 
     this.updateHair(dt, params, st);
     this.updateSleeves(dt, params, st);
+    this.updateHalo(st);
   }
 
   // ==========================================================================
@@ -405,6 +408,22 @@ export class NyxAnimator {
       const b = s === 0 ? bL : bR;
       if (b) b.rotation.set(0, A[ip], A[ir]);
     }
+  }
+
+  // ==========================================================================
+  // Aro orbital: gira suavemente sobre su eje (normal del aro = +Z local)
+  // ==========================================================================
+  private updateHalo(st: NyxAnimState): void {
+    const b = this.bones[HALO];
+    if (!b) return;
+    const zero = HAIR_GRAVITY_SCALE[st] < 0.3;
+    const t = this.time;
+    // más vivo en 0G; leve cabeceo para que no parezca un disco rígido
+    b.rotation.set(
+      Math.sin(t * 0.7) * (zero ? 0.12 : 0.05),
+      Math.cos(t * 0.53) * (zero ? 0.1 : 0.04),
+      t * (zero ? 0.9 : 0.45),
+    );
   }
 
   // ==========================================================================
