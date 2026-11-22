@@ -7,6 +7,10 @@ import {
   type DomeEnemyEntity,
   type EnemyArchetype,
 } from './DomeCombatSystem';
+import {
+  instantiateEnemyVisual,
+  preloadEnemyModels,
+} from './DomeEnemyModels';
 
 // ============================================================================
 // DomeWaveManager — ciclo infinito de oleadas de la cúpula.
@@ -302,8 +306,10 @@ function buildArchetypeVisuals(): Record<EnemyArchetype, ArchetypeVisual> {
 
 interface EnemyInternal {
   enemy: ManagedWaveEnemy;
-  material: THREE.ShaderMaterial;
-  outlineMaterial: THREE.ShaderMaterial;
+  material: THREE.ShaderMaterial | null;
+  outlineMaterial: THREE.ShaderMaterial | null;
+  starCores: THREE.Object3D[];
+  mixer?: THREE.AnimationMixer;
   /** Timer del ciclo de pinchos (Necrozma). */
   spikeTimer: number;
   /** Segundos restantes de embestida en curso (0 = libre). */
@@ -346,6 +352,7 @@ export class DomeWaveManager {
   constructor(scene: THREE.Scene) {
     this.scene = scene;
     this.visuals = buildArchetypeVisuals();
+    preloadEnemyModels();
 
     this.darkProjectileMaterial = createComicCelMaterial(0x1c1030, {
       rimColor: 0x6b4bff,
@@ -407,26 +414,50 @@ export class DomeWaveManager {
   private spawnEnemy(archetype: EnemyArchetype, index: number, rng: () => number): void {
     const stats = DOME_ENEMY_ARCHETYPES[archetype];
     const visual = this.visuals[archetype];
+    const glbVisual = instantiateEnemyVisual(archetype);
 
-    const material = createComicCelMaterial(visual.color, {
-      rimColor: visual.rim,
-      rimStrength: 0.7,
-      emissiveBoost: 0.0,
-    });
-    const mesh = new THREE.Mesh(visual.geometry, material);
-    mesh.name = `waveEnemy_${this.currentWave}_${archetype}_${index}`;
-    const outline = addComicOutline(mesh, visual.outlineThickness);
-    const outlineMaterial = outline.material as THREE.ShaderMaterial;
+    let mesh: THREE.Object3D;
+    let material: THREE.ShaderMaterial | null = null;
+    let outlineMaterial: THREE.ShaderMaterial | null = null;
+    let starCores: THREE.Object3D[] = [];
+    let mixer: THREE.AnimationMixer | undefined;
 
-    // Estrella interior de prueba: núcleo brillante visible a través del cuerpo.
-    const starMaterial = createComicCelMaterial(visual.starColor, {
-      rimColor: visual.starColor,
-      rimStrength: 1.0,
-      emissiveBoost: 0.95,
-    });
-    const star = new THREE.Mesh(this.starGeometry, starMaterial);
-    star.scale.setScalar(visual.starScale);
-    mesh.add(star);
+    if (glbVisual) {
+      mesh = glbVisual.root;
+      mesh.name = `waveEnemy_${this.currentWave}_${archetype}_${index}`;
+      starCores = glbVisual.starCores;
+      mixer = glbVisual.mixer;
+      mesh.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh && !material) {
+          const m = (child as THREE.Mesh).material;
+          if (m instanceof THREE.ShaderMaterial && m.uniforms.uEmissiveBoost) {
+            material = m;
+          }
+        }
+      });
+    } else {
+      material = createComicCelMaterial(visual.color, {
+        rimColor: visual.rim,
+        rimStrength: 0.7,
+        emissiveBoost: 0.0,
+      });
+      const fallbackMesh = new THREE.Mesh(visual.geometry, material);
+      fallbackMesh.name = `waveEnemy_${this.currentWave}_${archetype}_${index}`;
+      const outline = addComicOutline(fallbackMesh, visual.outlineThickness);
+      outlineMaterial = outline.material as THREE.ShaderMaterial;
+
+      // Estrella interior de prueba: núcleo brillante visible a través del cuerpo.
+      const starMaterial = createComicCelMaterial(visual.starColor, {
+        rimColor: visual.starColor,
+        rimStrength: 1.0,
+        emissiveBoost: 0.95,
+      });
+      const star = new THREE.Mesh(this.starGeometry, starMaterial);
+      star.scale.setScalar(visual.starScale);
+      fallbackMesh.add(star);
+      starCores = [star];
+      mesh = fallbackMesh;
+    }
 
     // Posición de aparición: anillo distribuido + jitter determinista.
     const angle = (index / Math.max(1, this.enemies.length + 6)) * Math.PI * 2 + rng() * 1.2;
@@ -464,6 +495,8 @@ export class DomeWaveManager {
       enemy,
       material,
       outlineMaterial,
+      starCores,
+      mixer,
       spikeTimer: NECROZMA_SPIKES_OFF_SEC,
       chargeTimer: 0,
       chargeSpeed: 0,
@@ -518,8 +551,8 @@ export class DomeWaveManager {
     enemy.entity.alive = false;
     enemy.entity.hp = 0;
     this.scene.remove(enemy.mesh);
-    internal.material.dispose();
-    internal.outlineMaterial.dispose();
+    internal.material?.dispose();
+    internal.outlineMaterial?.dispose();
     // Estrella interior: material propio por enemigo, geometría compartida.
     for (const child of enemy.mesh.children) {
       if (child instanceof THREE.Mesh) {
@@ -570,6 +603,13 @@ export class DomeWaveManager {
       }
       enemy.dashTimer = Math.max(0, enemy.dashTimer - dt);
       enemy.attackTimer -= dt;
+
+      // Rotación continua de la estrella interior sobre sí misma y mixer GLB
+      for (const star of internal.starCores) {
+        star.rotation.y += dt * 2.1;
+        star.rotation.x += dt * 1.3;
+      }
+      internal.mixer?.update(dt);
 
       // --- Dash evasivo: rompe el lock-in de los arquetipos escurridizos ---
       if (
@@ -641,13 +681,15 @@ export class DomeWaveManager {
       const flash = enemy.hitFlash;
       enemy.mesh.scale.setScalar(1 + flash * HIT_FLASH_SCALE);
       let emissive = flash * HIT_FLASH_EMISSIVE;
-      if (enemy.entity.spikesActive) {
-        emissive += 0.5;
-        internal.material.uniforms.uRimColor.value.setHex(NECROZMA_SPIKES_RIM);
-      } else if (enemy.entity.archetype === 'prisma_necrozma') {
-        internal.material.uniforms.uRimColor.value.setHex(NECROZMA_BASE_RIM);
+      if (internal.material) {
+        if (enemy.entity.spikesActive) {
+          emissive += 0.5;
+          internal.material.uniforms.uRimColor.value.setHex(NECROZMA_SPIKES_RIM);
+        } else if (enemy.entity.archetype === 'prisma_necrozma') {
+          internal.material.uniforms.uRimColor.value.setHex(NECROZMA_BASE_RIM);
+        }
+        internal.material.uniforms.uEmissiveBoost.value = emissive;
       }
-      internal.material.uniforms.uEmissiveBoost.value = emissive;
     }
 
     this.updateProjectiles(dt, playerPos, onPlayerHit, onOctopusInk);

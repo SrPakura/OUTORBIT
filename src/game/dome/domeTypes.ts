@@ -38,7 +38,7 @@ export interface SlabRaycastHit {
 
 export interface TestEnemySphere {
   id: string;
-  mesh: THREE.Mesh;
+  mesh: THREE.Object3D;
   position: THREE.Vector3;
   velocity: THREE.Vector3;
   homePos: THREE.Vector3;
