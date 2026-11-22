@@ -9,6 +9,7 @@ import {
 } from './DomeCombatSystem';
 import {
   instantiateEnemyVisual,
+  onEnemyModelLoaded,
   preloadEnemyModels,
 } from './DomeEnemyModels';
 
@@ -310,6 +311,7 @@ interface EnemyInternal {
   outlineMaterial: THREE.ShaderMaterial | null;
   starCores: THREE.Object3D[];
   mixer?: THREE.AnimationMixer;
+  isGlb?: boolean;
   /** Timer del ciclo de pinchos (Necrozma). */
   spikeTimer: number;
   /** Segundos restantes de embestida en curso (0 = libre). */
@@ -349,9 +351,14 @@ export class DomeWaveManager {
   private waveTime = 0;
   private speedMult = 1;
 
+  private readonly unsubModelLoaded: () => void;
+
   constructor(scene: THREE.Scene) {
     this.scene = scene;
     this.visuals = buildArchetypeVisuals();
+    this.unsubModelLoaded = onEnemyModelLoaded((archetype) => {
+      this.upgradeSpawnedVisuals(archetype);
+    });
     preloadEnemyModels();
 
     this.darkProjectileMaterial = createComicCelMaterial(0x1c1030, {
@@ -408,6 +415,45 @@ export class DomeWaveManager {
         this.spawnEnemy(archetype, spawnIndex, rng);
         spawnIndex++;
       }
+    }
+  }
+
+  private upgradeSpawnedVisuals(archetype: EnemyArchetype): void {
+    for (const enemy of this.enemies) {
+      if (enemy.entity.archetype !== archetype || !enemy.entity.alive) continue;
+      const internal = this.internals.get(enemy.id);
+      if (!internal || internal.isGlb) continue;
+      const glbVisual = instantiateEnemyVisual(archetype);
+      if (!glbVisual) continue;
+
+      const oldMesh = enemy.mesh;
+      glbVisual.root.name = oldMesh.name;
+      glbVisual.root.position.copy(oldMesh.position);
+      glbVisual.root.quaternion.copy(oldMesh.quaternion);
+      this.scene.remove(oldMesh);
+      this.scene.add(glbVisual.root);
+
+      internal.material?.dispose();
+      internal.outlineMaterial?.dispose();
+
+      let nextMat: THREE.ShaderMaterial | null = null;
+      glbVisual.root.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh && !nextMat) {
+          const m = (child as THREE.Mesh).material;
+          if (m instanceof THREE.ShaderMaterial && m.uniforms.uEmissiveBoost) {
+            nextMat = m;
+          }
+        }
+      });
+
+      enemy.mesh = glbVisual.root;
+      enemy.position = glbVisual.root.position;
+      enemy.entity.mesh = glbVisual.root;
+      internal.material = nextMat;
+      internal.outlineMaterial = null;
+      internal.starCores = glbVisual.starCores;
+      internal.mixer = glbVisual.mixer;
+      internal.isGlb = true;
     }
   }
 
@@ -497,6 +543,7 @@ export class DomeWaveManager {
       outlineMaterial,
       starCores,
       mixer,
+      isGlb: glbVisual !== null,
       spikeTimer: NECROZMA_SPIKES_OFF_SEC,
       chargeTimer: 0,
       chargeSpeed: 0,
@@ -698,6 +745,7 @@ export class DomeWaveManager {
   }
 
   dispose(): void {
+    this.unsubModelLoaded();
     this.clearEnemies();
     this.deactivateAllProjectiles();
     for (const projectile of this.projectiles) {

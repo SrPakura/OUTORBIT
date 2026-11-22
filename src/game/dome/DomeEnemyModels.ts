@@ -90,6 +90,7 @@ function loadEnemyModel(archetype: EnemyArchetype): Promise<void> {
           animations: gltf.animations,
           hasSkinnedMesh,
         });
+        for (const cb of loadedCallbacks) cb(archetype);
         resolve();
       },
       undefined,
@@ -116,7 +117,14 @@ export function preloadEnemyModels(): void {
   }
 }
 
-/** Visual instanciado de un enemigo desde su GLB cacheado. */
+const loadedCallbacks = new Set<(archetype: EnemyArchetype) => void>();
+
+export function onEnemyModelLoaded(cb: (archetype: EnemyArchetype) => void): () => void {
+  loadedCallbacks.add(cb);
+  return () => {
+    loadedCallbacks.delete(cb);
+  };
+}
 export interface EnemyVisual {
   root: THREE.Group;
   /** Mallas star_core: rotan sobre sí mismas cada frame. */
@@ -168,6 +176,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
     // una sola comprobación cubre nombre de malla y de material.
     const names = `${mesh.name} ${materialNames(mesh)}`;
     if (names.includes('star_core')) {
+      mesh.renderOrder = 0;
       mesh.material = createComicCelMaterial(STAR_CORE_COLOR, {
         rimColor: STAR_CORE_RIM,
         rimStrength: 1.0,
@@ -176,6 +185,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       addComicOutline(mesh, STAR_CORE_OUTLINE_THICKNESS, STAR_CORE_INK).name = OUTLINE_MARKER;
       starCores.push(mesh);
     } else if (names.includes('flesh')) {
+      mesh.renderOrder = 1;
       const fleshMaterial = createComicCelMaterial(palette.color, {
         rimColor: palette.rim,
         rimStrength: 0.7,
