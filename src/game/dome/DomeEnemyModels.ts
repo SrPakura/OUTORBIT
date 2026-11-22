@@ -44,15 +44,28 @@ const STAR_CORE_EMISSIVE = 1.45;
 const STAR_CORE_OUTLINE_THICKNESS = 0.035;
 const STAR_CORE_INK = 0xffe58f;
 
-// --- Carne: rojos y morados oscuros aleatorios + tinta fucsia o azul oscurillo ---
+// --- Carne: paletas por tipo + tinta exterior blanca para máxima legibilidad ---
+const FLESH_SLIME_STOPS = [
+  new THREE.Color(0x7f1d1d), // rojo oscuro
+  new THREE.Color(0x9a3412), // naranja oscuro
+  new THREE.Color(0x854d0e), // amarillo/ámbar oscuro
+];
+const FLESH_SLIME_NEBULA = [
+  new THREE.Color(0xb91c1c),
+  new THREE.Color(0xd97706),
+  new THREE.Color(0xca8a04),
+];
+const FLESH_OCTOPUS_A = new THREE.Color(0x2e1065);
+const FLESH_OCTOPUS_B = new THREE.Color(0x581c87);
+const FLESH_OCTOPUS_NEBULA_A = new THREE.Color(0x6b21a8);
+const FLESH_OCTOPUS_NEBULA_B = new THREE.Color(0x9333ea);
+
 const FLESH_CRIMSON_DARK = new THREE.Color(0x7f152e);
 const FLESH_PURPLE_DARK = new THREE.Color(0x3b0d63);
 const FLESH_CRIMSON_NEBULA = new THREE.Color(0xa12045);
 const FLESH_PURPLE_NEBULA = new THREE.Color(0x5b21b6);
-const FLESH_INK_FUCHSIA = 0xff2a9d;
-const FLESH_INK_DARK_BLUE = 0x1e3a8a;
+const FLESH_INK_WHITE = 0xffffff;
 const FLESH_OUTLINE_THICKNESS = 0.05;
-const FLESH_INK = 0x1e3a8a;
 
 // --- Vibración de energía descontrolada (compartida carne + contorno) ---
 const ENERGY_WOBBLE_GLSL = /* glsl */ `
@@ -165,27 +178,36 @@ const enemyNebulaFrag = /* glsl */ `
  * (fucsia o azul oscurillo) para que borde y contorno casen. Translúcido y sin
  * `depthWrite` para que la estrella dorada interior se vea claramente.
  */
+function sampleGradient(stops: THREE.Color[], t: number): THREE.Color {
+  const scaled = Math.max(0, Math.min(1, t)) * (stops.length - 1);
+  const idx = Math.min(stops.length - 2, Math.floor(scaled));
+  return new THREE.Color().lerpColors(stops[idx], stops[idx + 1], scaled - idx);
+}
+
 export function createEnemyNebulaMaterial(
   archetype: EnemyArchetype,
-  inkColor: number
+  rimColor: number
 ): THREE.ShaderMaterial {
-  const colorA = new THREE.Color().lerpColors(
-    FLESH_CRIMSON_DARK,
-    FLESH_PURPLE_DARK,
-    Math.random(),
-  );
-  const colorB = new THREE.Color().lerpColors(
-    FLESH_CRIMSON_NEBULA,
-    FLESH_PURPLE_NEBULA,
-    Math.random(),
-  );
+  let colorA: THREE.Color;
+  let colorB: THREE.Color;
+  if (archetype === 'abyssal_cell') {
+    const t = Math.random();
+    colorA = sampleGradient(FLESH_SLIME_STOPS, t);
+    colorB = sampleGradient(FLESH_SLIME_NEBULA, (t + 0.25) % 1);
+  } else if (archetype === 'spiral_octopus') {
+    colorA = new THREE.Color().lerpColors(FLESH_OCTOPUS_A, FLESH_OCTOPUS_B, Math.random());
+    colorB = new THREE.Color().lerpColors(FLESH_OCTOPUS_NEBULA_A, FLESH_OCTOPUS_NEBULA_B, Math.random());
+  } else {
+    colorA = new THREE.Color().lerpColors(FLESH_CRIMSON_DARK, FLESH_PURPLE_DARK, Math.random());
+    colorB = new THREE.Color().lerpColors(FLESH_CRIMSON_NEBULA, FLESH_PURPLE_NEBULA, Math.random());
+  }
   return new THREE.ShaderMaterial({
     vertexShader: enemyNebulaVert,
     fragmentShader: enemyNebulaFrag,
     uniforms: {
       uColorA: { value: colorA },
       uColorB: { value: colorB },
-      uRimColor: { value: new THREE.Color(inkColor) },
+      uRimColor: { value: new THREE.Color(rimColor) },
       uTime: { value: 0 },
       uOpacity: { value: archetype === 'abyssal_cell' ? 0.56 : 0.78 },
       uEmissiveBoost: { value: 0 },
@@ -349,9 +371,12 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
 
   const starCores: THREE.Object3D[] = [];
   const animatedMaterials: THREE.ShaderMaterial[] = [];
-  // Tinta de la instancia: fucsia o azul oscurillo, compartida por el borde
-  // Fresnel de la carne nebulosa y su contorno de tinta.
-  const inkColor = Math.random() < 0.5 ? FLESH_INK_FUCHSIA : FLESH_INK_DARK_BLUE;
+  const rimColor =
+    archetype === 'abyssal_cell'
+      ? 0xf59e0b
+      : archetype === 'spiral_octopus'
+        ? 0xc084fc
+        : 0xff2a9d;
 
   root.traverse((obj) => {
     // Los contornos que añadimos aquí mismo no se re-visten.
@@ -380,9 +405,9 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       mesh.renderOrder = 1;
       // Carne nebulosa estilo NYX: universo rojo/morado con estrellas y
       // vibración de energía; translúcida para ver el star_core dorado.
-      const fleshMaterial = createEnemyNebulaMaterial(archetype, inkColor);
+      const fleshMaterial = createEnemyNebulaMaterial(archetype, rimColor);
       mesh.material = fleshMaterial;
-      const outline = addVibratingInkOutline(mesh, FLESH_OUTLINE_THICKNESS, inkColor);
+      const outline = addVibratingInkOutline(mesh, FLESH_OUTLINE_THICKNESS, FLESH_INK_WHITE);
       outline.name = OUTLINE_MARKER;
       animatedMaterials.push(fleshMaterial, outline.material as THREE.ShaderMaterial);
     } else {
@@ -390,7 +415,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
         rimColor: DETAIL_RIM,
         rimStrength: 0.4,
       });
-      addComicOutline(mesh, DETAIL_OUTLINE_THICKNESS, FLESH_INK).name = OUTLINE_MARKER;
+      addComicOutline(mesh, DETAIL_OUTLINE_THICKNESS, FLESH_INK_WHITE).name = OUTLINE_MARKER;
     }
   });
 
