@@ -47,10 +47,22 @@ const STAR_CORE_INK = 0xffe58f;
 // --- Carne: rojos y morados oscuros aleatorios + tinta fucsia o azul oscurillo ---
 const FLESH_CRIMSON_DARK = new THREE.Color(0x7f152e);
 const FLESH_PURPLE_DARK = new THREE.Color(0x3b0d63);
+const FLESH_CRIMSON_NEBULA = new THREE.Color(0xa12045);
+const FLESH_PURPLE_NEBULA = new THREE.Color(0x5b21b6);
 const FLESH_INK_FUCHSIA = 0xff2a9d;
 const FLESH_INK_DARK_BLUE = 0x1e3a8a;
 const FLESH_OUTLINE_THICKNESS = 0.05;
 const FLESH_INK = 0x1e3a8a;
+
+// --- Vibración de energía descontrolada (compartida carne + contorno) ---
+const ENERGY_WOBBLE_GLSL = /* glsl */ `
+  // Vibración orgánica de alta frecuencia: toda la silueta tiembla como
+  // energía inestable. Misma fórmula en carne y contorno para que el borde
+  // de tinta acompañe exactamente a la superficie.
+  float energyWobble( vec3 pos, float uTime ) {
+    return sin( pos.x * 9.0 + uTime * 22.0 ) * cos( pos.y * 7.0 - uTime * 19.0 );
+  }
+`;
 
 // --- Piezas secundarias (detail_*): cel oscuro limpio --- 
 const DETAIL_COLOR = 0x241d38;
@@ -59,6 +71,175 @@ const DETAIL_OUTLINE_THICKNESS = 0.04;
 
 /** Nombre marcado en las mallas de contorno para saltarlas en el traverse. */
 const OUTLINE_MARKER = '__comic_outline__';
+
+// ============================================================================
+// Carne nebulosa estilo NYX: universo interior FBM + estrellas titilantes en
+// espacio de pantalla, con paleta roja/morada oscura aleatoria por instancia y
+// vibración de energía descontrolada en el vertex shader.
+// ============================================================================
+
+const enemyNebulaVert = /* glsl */ `
+  uniform float uTime;
+  varying vec3 vNormalWorld;
+  varying vec3 vViewDir;
+  ${ENERGY_WOBBLE_GLSL}
+  void main() {
+    // Energía descontrolada: la superficie entera vibra a alta frecuencia.
+    vec3 pos = position + normal * energyWobble( position, uTime ) * 0.045;
+    vec4 worldPos = modelMatrix * vec4( pos, 1.0 );
+    vNormalWorld = normalize( mat3( modelMatrix ) * normal );
+    vViewDir = normalize( cameraPosition - worldPos.xyz );
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
+  }
+`;
+
+const enemyNebulaFrag = /* glsl */ `
+  uniform vec3 uColorA;
+  uniform vec3 uColorB;
+  uniform vec3 uRimColor;
+  uniform float uTime;
+  uniform float uOpacity;
+  uniform float uEmissiveBoost;
+  varying vec3 vNormalWorld;
+  varying vec3 vViewDir;
+
+  float hash21( vec2 p ) {
+    p = fract( p * vec2( 234.34, 435.345 ) );
+    p += dot( p, p + 34.23 );
+    return fract( p.x * p.y );
+  }
+  float noise2( vec2 p ) {
+    vec2 i = floor( p );
+    vec2 f = fract( p );
+    f = f * f * ( 3.0 - 2.0 * f );
+    return mix(
+      mix( hash21( i ), hash21( i + vec2( 1.0, 0.0 ) ), f.x ),
+      mix( hash21( i + vec2( 0.0, 1.0 ) ), hash21( i + vec2( 1.0, 1.0 ) ), f.x ),
+      f.y
+    );
+  }
+  float fbm( vec2 p ) {
+    float v = 0.0; float a = 0.5;
+    mat2 m = mat2( 0.8, 0.6, -0.6, 0.8 );
+    for ( int i = 0; i < 4; i++ ) { v += a * noise2( p ); p = m * p * 2.02; a *= 0.5; }
+    return v;
+  }
+  float starLayer( vec2 uv, float scale, float speed ) {
+    vec2 gv = fract( uv * scale ) - 0.5;
+    vec2 id = floor( uv * scale );
+    float h = hash21( id );
+    if ( h < 0.82 ) return 0.0;
+    vec2 offset = vec2( hash21( id + 7.1 ), hash21( id + 13.7 ) ) - 0.5;
+    float d = length( gv - offset * 0.65 );
+    float tw = 0.55 + 0.45 * sin( uTime * speed + h * 40.0 );
+    return smoothstep( mix( 0.04, 0.14, fract( h * 19.3 ) ), 0.0, d ) * tw;
+  }
+  void main() {
+    vec3 N = normalize( vNormalWorld );
+    vec3 V = normalize( vViewDir );
+    // Nebulosa en espacio de pantalla (mismo truco que el cuerpo de NYX).
+    vec2 uv = gl_FragCoord.xy * 0.0042;
+    vec2 drift = vec2( uTime * 0.045, -uTime * 0.03 );
+    float n1 = fbm( uv * 1.4 + drift );
+    float n2 = fbm( uv * 2.2 - drift * 1.3 + n1 * 0.85 );
+    vec3 col = mix( uColorA * 0.35, uColorA, smoothstep( 0.34, 0.78, n1 ) * 0.85 );
+    col = mix( col, uColorB, smoothstep( 0.44, 0.86, n2 ) * 0.75 );
+    // Vetas de energía: estrellas titilando dentro de la carne.
+    float stars = starLayer( uv + drift * 0.35, 16.0, 2.4 ) * 0.9
+                + starLayer( uv - drift * 0.20, 28.0, 3.6 ) * 1.25;
+    col += mix( vec3( 1.0 ), uRimColor, 0.35 ) * stars;
+    // Borde Fresnel fucsia/azul oscuro: recorta la silueta contra el fondo.
+    float fresnel = pow( 1.0 - max( dot( N, V ), 0.0 ), 2.6 );
+    col += uRimColor * smoothstep( 0.25, 0.9, fresnel ) * 0.65;
+    // Flash de impacto (lo alimenta DomeWaveManager).
+    col += mix( uColorA, uColorB, 0.5 ) * uEmissiveBoost;
+    gl_FragColor = vec4( col, uOpacity );
+  }
+`;
+
+/**
+ * Material de nebulosa/universo para la carne de los enemigos, inspirado en el
+ * shader Raven Nebula de NYX pero en rojos y morados oscuros. Cada instancia
+ * recibe un matiz único: `uColorA`/`uColorB` se interpolan al azar entre
+ * carmesí oscuro y morado abisal, y `uRimColor` toma el tono de la tinta
+ * (fucsia o azul oscurillo) para que borde y contorno casen. Translúcido y sin
+ * `depthWrite` para que la estrella dorada interior se vea claramente.
+ */
+export function createEnemyNebulaMaterial(
+  archetype: EnemyArchetype,
+  inkColor: number
+): THREE.ShaderMaterial {
+  const colorA = new THREE.Color().lerpColors(
+    FLESH_CRIMSON_DARK,
+    FLESH_PURPLE_DARK,
+    Math.random(),
+  );
+  const colorB = new THREE.Color().lerpColors(
+    FLESH_CRIMSON_NEBULA,
+    FLESH_PURPLE_NEBULA,
+    Math.random(),
+  );
+  return new THREE.ShaderMaterial({
+    vertexShader: enemyNebulaVert,
+    fragmentShader: enemyNebulaFrag,
+    uniforms: {
+      uColorA: { value: colorA },
+      uColorB: { value: colorB },
+      uRimColor: { value: new THREE.Color(inkColor) },
+      uTime: { value: 0 },
+      uOpacity: { value: archetype === 'abyssal_cell' ? 0.56 : 0.78 },
+      uEmissiveBoost: { value: 0 },
+    },
+    transparent: true,
+    depthWrite: false,
+  });
+}
+
+/**
+ * Contorno de tinta Inverted Hull que vibra con la misma energía descontrolada
+ * que la carne (`uTime` compartido): la silueta de tinta acompaña al cuerpo
+ * tembloroso en cada frame. Devuelve la malla de contorno (hija de `mesh`).
+ */
+function addVibratingInkOutline(
+  mesh: THREE.Mesh,
+  thickness: number,
+  inkColor: number
+): THREE.Mesh {
+  const outlineMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: {
+      uThickness: { value: thickness },
+      uNoiseAmp: { value: 0.35 },
+      uInkColor: { value: new THREE.Color(inkColor) },
+      uTime: { value: 0 },
+    },
+    vertexShader: /* glsl */ `
+      uniform float uThickness;
+      uniform float uNoiseAmp;
+      uniform float uTime;
+      ${ENERGY_WOBBLE_GLSL}
+      void main() {
+        // La tinta vibra exactamente igual que la superficie de la carne.
+        vec3 pos = position + normal * energyWobble( position, uTime ) * 0.045;
+        // Grosor de pincel irregular (mismo trazo que addComicOutline).
+        float brushVar = sin( position.x * 7.3 + position.y * 5.1 ) * cos( position.z * 6.7 - position.y * 4.2 );
+        float width = max( 0.008, uThickness * ( 1.0 + brushVar * uNoiseAmp ) );
+        vec3 extruded = pos + normalize( normal ) * width;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4( extruded, 1.0 );
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uInkColor;
+      void main() {
+        gl_FragColor = vec4( uInkColor, 1.0 );
+      }
+    `,
+  });
+
+  const outline = new THREE.Mesh(mesh.geometry, outlineMat);
+  mesh.add(outline);
+  return outline;
+}
 
 interface CachedEnemyModel {
   scene: THREE.Group;
@@ -135,6 +316,11 @@ export interface EnemyVisual {
   starCores: THREE.Object3D[];
   /** Mixer con los clips del GLB ya en play (undefined si no tiene clips). */
   mixer?: THREE.AnimationMixer;
+  /**
+   * Materiales con uniform `uTime` (carne nebulosa + contorno de tinta
+   * vibrante): el caller debe avanzarles `uTime` cada frame.
+   */
+  animatedMaterials: THREE.ShaderMaterial[];
 }
 
 /** Nombres de material de una malla, concatenados para la detección por nombre. */
@@ -161,15 +347,10 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
     cached.hasSkinnedMesh ? cloneSkinned(cached.scene) : cached.scene.clone(true)
   ) as THREE.Group;
 
-  const palette = ENEMY_MODEL_COLORS[archetype];
-  const fleshOpacity = archetype === 'abyssal_cell' ? 0.52 : 0.72;
   const starCores: THREE.Object3D[] = [];
-  // Variación aleatoria por instancia entre rojo oscuro y morado oscuro
-  const fleshColor = new THREE.Color().lerpColors(
-    FLESH_CRIMSON_DARK,
-    FLESH_PURPLE_DARK,
-    Math.random(),
-  );
+  const animatedMaterials: THREE.ShaderMaterial[] = [];
+  // Tinta de la instancia: fucsia o azul oscurillo, compartida por el borde
+  // Fresnel de la carne nebulosa y su contorno de tinta.
   const inkColor = Math.random() < 0.5 ? FLESH_INK_FUCHSIA : FLESH_INK_DARK_BLUE;
 
   root.traverse((obj) => {
@@ -197,16 +378,13 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       starCores.push(mesh);
     } else if (names.includes('flesh')) {
       mesh.renderOrder = 1;
-      const fleshMaterial = createComicCelMaterial(fleshColor.getHex(), {
-        rimColor: palette.rim,
-        rimStrength: 0.8,
-        transparent: true,
-        opacity: fleshOpacity,
-      });
-      // Translúcido: sin depthWrite la estrella del interior se ve perfecta.
-      fleshMaterial.depthWrite = false;
+      // Carne nebulosa estilo NYX: universo rojo/morado con estrellas y
+      // vibración de energía; translúcida para ver el star_core dorado.
+      const fleshMaterial = createEnemyNebulaMaterial(archetype, inkColor);
       mesh.material = fleshMaterial;
-      addComicOutline(mesh, FLESH_OUTLINE_THICKNESS, inkColor).name = OUTLINE_MARKER;
+      const outline = addVibratingInkOutline(mesh, FLESH_OUTLINE_THICKNESS, inkColor);
+      outline.name = OUTLINE_MARKER;
+      animatedMaterials.push(fleshMaterial, outline.material as THREE.ShaderMaterial);
     } else {
       mesh.material = createComicCelMaterial(DETAIL_COLOR, {
         rimColor: DETAIL_RIM,
@@ -224,7 +402,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
     }
   }
 
-  return { root, starCores, mixer };
+  return { root, starCores, mixer, animatedMaterials };
 }
 
 /** Libera las escenas GLB cacheadas (geometrías y materiales originales). */

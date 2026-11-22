@@ -309,6 +309,8 @@ interface EnemyInternal {
   enemy: ManagedWaveEnemy;
   material: THREE.ShaderMaterial | null;
   outlineMaterial: THREE.ShaderMaterial | null;
+  /** Materiales con `uTime` (carne nebulosa + contorno vibrante): reloj por frame. */
+  animatedMaterials: THREE.ShaderMaterial[];
   starCores: THREE.Object3D[];
   mixer?: THREE.AnimationMixer;
   isGlb?: boolean;
@@ -319,6 +321,32 @@ interface EnemyInternal {
   chargeSpeed: number;
   chargeDamage: number;
   chargeDir: THREE.Vector3;
+}
+
+/**
+ * Localiza el material del cuerpo del enemigo para el flash de impacto:
+ * prefiere la carne nebulosa (uniforms `uTime` + `uEmissiveBoost`) y cae al
+ * primer material cel con `uEmissiveBoost` (star_core, forma provisional).
+ */
+function findBodyMaterial(root: THREE.Object3D): THREE.ShaderMaterial | null {
+  let cel: THREE.ShaderMaterial | null = null;
+  let nebula: THREE.ShaderMaterial | null = null;
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) {
+      return;
+    }
+    const m = mesh.material;
+    if (!(m instanceof THREE.ShaderMaterial) || !m.uniforms.uEmissiveBoost) {
+      return;
+    }
+    if (m.uniforms.uTime) {
+      if (!nebula) nebula = m;
+    } else if (!cel) {
+      cel = m;
+    }
+  });
+  return nebula ?? cel;
 }
 
 interface WaveProjectile {
@@ -436,21 +464,12 @@ export class DomeWaveManager {
       internal.material?.dispose();
       internal.outlineMaterial?.dispose();
 
-      let nextMat: THREE.ShaderMaterial | null = null;
-      glbVisual.root.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh && !nextMat) {
-          const m = (child as THREE.Mesh).material;
-          if (m instanceof THREE.ShaderMaterial && m.uniforms.uEmissiveBoost) {
-            nextMat = m;
-          }
-        }
-      });
-
       enemy.mesh = glbVisual.root;
       enemy.position = glbVisual.root.position;
       enemy.entity.mesh = glbVisual.root;
-      internal.material = nextMat;
+      internal.material = findBodyMaterial(glbVisual.root);
       internal.outlineMaterial = null;
+      internal.animatedMaterials = glbVisual.animatedMaterials;
       internal.starCores = glbVisual.starCores;
       internal.mixer = glbVisual.mixer;
       internal.isGlb = true;
@@ -467,20 +486,15 @@ export class DomeWaveManager {
     let outlineMaterial: THREE.ShaderMaterial | null = null;
     let starCores: THREE.Object3D[] = [];
     let mixer: THREE.AnimationMixer | undefined;
+    let animatedMaterials: THREE.ShaderMaterial[] = [];
 
     if (glbVisual) {
       mesh = glbVisual.root;
       mesh.name = `waveEnemy_${this.currentWave}_${archetype}_${index}`;
       starCores = glbVisual.starCores;
       mixer = glbVisual.mixer;
-      mesh.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh && !material) {
-          const m = (child as THREE.Mesh).material;
-          if (m instanceof THREE.ShaderMaterial && m.uniforms.uEmissiveBoost) {
-            material = m;
-          }
-        }
-      });
+      animatedMaterials = glbVisual.animatedMaterials;
+      material = findBodyMaterial(glbVisual.root);
     } else {
       material = createComicCelMaterial(visual.color, {
         rimColor: visual.rim,
@@ -541,6 +555,7 @@ export class DomeWaveManager {
       enemy,
       material,
       outlineMaterial,
+      animatedMaterials,
       starCores,
       mixer,
       isGlb: glbVisual !== null,
@@ -600,6 +615,10 @@ export class DomeWaveManager {
     this.scene.remove(enemy.mesh);
     internal.material?.dispose();
     internal.outlineMaterial?.dispose();
+    // Carne nebulosa + contornos vibrantes: material propio por instancia.
+    for (const animatedMaterial of internal.animatedMaterials) {
+      animatedMaterial.dispose();
+    }
     // Estrella interior: material propio por enemigo, geometría compartida.
     for (const child of enemy.mesh.children) {
       if (child instanceof THREE.Mesh) {
@@ -650,6 +669,11 @@ export class DomeWaveManager {
       }
       enemy.dashTimer = Math.max(0, enemy.dashTimer - dt);
       enemy.attackTimer -= dt;
+
+      // Reloj de los shaders animados: carne nebulosa y contorno vibrante.
+      for (const animatedMaterial of internal.animatedMaterials) {
+        animatedMaterial.uniforms.uTime.value = elapsed;
+      }
 
       // Rotación continua de la estrella interior en 2 ejes + vibración de energía
       for (const star of internal.starCores) {
