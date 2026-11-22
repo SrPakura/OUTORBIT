@@ -260,10 +260,34 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
         controller.onRedirectionSuccess = () => {
           runTracker.recordRedirection();
         };
+        controller.onLeftClickAttackOverride = () => {
+          if (!controller || !skillExecutor.hasActiveGravityRocks()) return false;
+          const target = controller.getLockedEnemy() ?? controller.getCandidateEnemy();
+          const fired = skillExecutor.fireOneGravityRock(
+            controller.getPosition(),
+            controller.getAimForward(),
+            target,
+          );
+          if (fired) {
+            controller.triggerSkillAnim('stasis_throw');
+            audio.playMelee();
+            if (!skillExecutor.hasActiveGravityRocks()) {
+              const gSlot = progression.slots.find((s) => s.skillId === 'gravity_field');
+              if (gSlot) gSlot.cooldownRemaining = ACTIVE_SKILLS_CATALOG.gravity_field.cooldown;
+            }
+          }
+          return fired;
+        };
         controller.onSlotTriggered = (slotIdx) => {
           if (levelUpOpenRef.current || battleReportOpenRef.current || !controller) return;
           const slot = progression.slots[slotIdx];
-          if (!slot.skillId || slot.cooldownRemaining > 0) return;
+          if (!slot.skillId) return;
+          // Si pulsa el slot de Campo Gravitacional teniendo rocas activas -> cancela y las suelta
+          if (slot.skillId === 'gravity_field' && skillExecutor.hasActiveGravityRocks()) {
+            skillExecutor.cancelGravityField();
+            return;
+          }
+          if (slot.cooldownRemaining > 0) return;
           const def = ACTIVE_SKILLS_CATALOG[slot.skillId];
           if (controller.getEden() < def.edenCost) return;
 
@@ -282,7 +306,10 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           });
           if (res.triggered) {
             controller.spendEden(def.edenCost);
-            slot.cooldownRemaining = def.cooldown;
+            // El cooldown de gravity_field empieza al gastar/cancelar la última roca
+            if (slot.skillId !== 'gravity_field') {
+              slot.cooldownRemaining = def.cooldown;
+            }
             if (res.animOverride) controller.triggerSkillAnim(res.animOverride);
           }
         };
@@ -427,8 +454,14 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           nextWaveDelay = 0;
         }
 
-        // Actualizar habilidades activas (agujero negro, ondas, pozo de atracción)
-        skillExecutor.update(worldDt, waveMgr.getActiveEnemies(), handleSkillDamageEnemy);
+        // Actualizar habilidades activas (rocas orbitando frente a Nyx, agujero negro, ondas, pozo)
+        skillExecutor.update(
+          worldDt,
+          waveMgr.getActiveEnemies(),
+          handleSkillDamageEnemy,
+          controller.getPosition(),
+          controller.getAimForward(),
+        );
 
         // Actualizar partículas de EXP / Edén con magnetismo por nivel
         const pickupGains = pickups.update(

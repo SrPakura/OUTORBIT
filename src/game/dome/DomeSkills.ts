@@ -89,8 +89,13 @@ function nearestEnemy(
 // Estados internos de los efectos activos
 // ---------------------------------------------------------------------------
 
+type GravityRockSize = 'small' | 'medium' | 'large';
+
 interface OrbitFragment {
   mesh: THREE.Mesh;
+  sizeKind: GravityRockSize;
+  damage: number;
+  hitRadius: number;
   angle: number;
   angularSpeed: number;
   dist: number;
@@ -196,10 +201,12 @@ export class DomeSkillExecutor {
   private readonly haloGeometry = new THREE.TorusGeometry(1.15, 0.06, 8, 42);
   private readonly flashGeometry = new THREE.SphereGeometry(1, 16, 12);
 
-  // --- Materiales compartidos (los que se desvanecen se clonan por instancia) ---
-  private readonly rockMaterial = createComicCelMaterial(0x8a93b8, {
-    rimColor: 0x9db8ff,
-    emissiveBoost: 0.18,
+  // --- Materiales compartidos (roca sólida limpia sin shader galáctico) ---
+  private readonly rockMaterial = new THREE.MeshStandardMaterial({
+    color: 0x5a6275,
+    roughness: 0.85,
+    metalness: 0.12,
+    flatShading: true,
   });
   private readonly waveMaterial = new THREE.MeshBasicMaterial({
     color: 0x7ae8dc,
@@ -284,37 +291,108 @@ export class DomeSkillExecutor {
     }
   }
 
+  hasActiveGravityRocks(): boolean {
+    return this.gravityField !== null && this.gravityField.fragments.length > 0;
+  }
+
+  cancelGravityField(): void {
+    const gf = this.gravityField;
+    if (gf === null) return;
+    this.gravityField = null;
+    for (const fragment of gf.fragments) {
+      this.scene.remove(fragment.mesh);
+    }
+  }
+
+  /** Dispara 1 sola roca del Campo Gravitacional hacia `target` (o hacia la mira). */
+  fireOneGravityRock(
+    playerPos: THREE.Vector3,
+    forwardDir: THREE.Vector3,
+    target: SkillTargetEnemy | null,
+  ): boolean {
+    const gf = this.gravityField;
+    if (gf === null || gf.fragments.length === 0) return false;
+    const fragment = gf.fragments.shift()!;
+    if (gf.fragments.length === 0) {
+      this.gravityField = null;
+    }
+
+    const aimPoint =
+      target !== null
+        ? target.position
+        : _v1.copy(playerPos).addScaledVector(forwardDir, 45);
+    _v2.subVectors(aimPoint, fragment.mesh.position);
+    if (_v2.lengthSq() < 1e-6) _v2.copy(forwardDir);
+    _v2.normalize();
+
+    const speed = 34 + gf.level * 6;
+    this.projectiles.push({
+      mesh: fragment.mesh,
+      material: null,
+      velocity: _v2.clone().multiplyScalar(speed),
+      remainingLife: 3.2,
+      damage: fragment.damage,
+      hitRadius: fragment.hitRadius,
+      homingTarget: target,
+      homingStrength: target !== null ? 10.5 : 0,
+      hitIds: new Set<string>(),
+      pierce: false,
+      orientToVelocity: false,
+    });
+    return true;
+  }
+
   /**
-   * Campo Gravitacional: 1ª pulsación captura `1 + skillLevel` fragmentos de
-   * roca cósmica orbitando frente a Nyx; 2ª pulsación (o esta función) los
-   * lanza contra el objetivo.
+   * Campo Gravitacional: captura rocas según nivel:
+   * - Nv1: 2 pequeñas
+   * - Nv2: aleatorio [3 pequeñas | 2 medianas | 1 mediana + 2 pequeñas]
+   * - Nv3+: aleatorio [1 grande | 3 medianas | 4 pequeñas]
    */
   private triggerGravityField(level: number, ctx: SkillTriggerContext): SkillTriggerResult {
     if (this.gravityField !== null) {
-      const target =
-        ctx.lockedEnemy ??
-        nearestEnemy(ctx.playerPos, ctx.enemies, GRAVITY_FIELD_RELEASE_RANGE);
-      const targetPos =
-        target !== null
-          ? target.position
-          : _v1.copy(ctx.playerPos).addScaledVector(ctx.forwardDir, 30).clone();
-      this.releaseGravityField(targetPos);
-      return { triggered: true, animOverride: 'stasis_throw' };
+      this.cancelGravityField();
+      return { triggered: true };
     }
 
-    const count = 1 + level;
-    const anchor = ctx.playerPos.clone().addScaledVector(ctx.forwardDir, 2.4);
+    let plan: GravityRockSize[];
+    if (level <= 1) {
+      plan = ['small', 'small'];
+    } else if (level === 2) {
+      const opts: GravityRockSize[][] = [
+        ['small', 'small', 'small'],
+        ['medium', 'medium'],
+        ['medium', 'small', 'small'],
+      ];
+      plan = opts[Math.floor(Math.random() * opts.length)];
+    } else {
+      const opts: GravityRockSize[][] = [
+        ['large'],
+        ['medium', 'medium', 'medium'],
+        ['small', 'small', 'small', 'small'],
+      ];
+      plan = opts[Math.floor(Math.random() * opts.length)];
+    }
+
+    const anchor = ctx.playerPos.clone().addScaledVector(ctx.forwardDir, 2.3);
     const fragments: OrbitFragment[] = [];
+    const count = plan.length;
     for (let i = 0; i < count; i++) {
+      const sizeKind = plan[i];
+      const scale = sizeKind === 'large' ? 2.85 : sizeKind === 'medium' ? 1.7 : 0.95;
+      const damage = sizeKind === 'large' ? 58 : sizeKind === 'medium' ? 28 : 15;
+      const hitRadius = sizeKind === 'large' ? 1.85 : sizeKind === 'medium' ? 1.25 : 0.85;
       const mesh = new THREE.Mesh(this.fragGeometry, this.rockMaterial);
-      mesh.scale.setScalar(0.7 + Math.random() * 0.6 + level * 0.08);
+      mesh.scale.setScalar(scale);
       this.scene.add(mesh);
       fragments.push({
         mesh,
+        sizeKind,
+        damage,
+        hitRadius,
         angle: (i / count) * Math.PI * 2,
-        angularSpeed: 2.2 + Math.random() * 0.8,
-        dist: 1.6 + Math.random() * 0.8,
-        height: (Math.random() - 0.5) * 1.2,
+        angularSpeed: 2.1 + Math.random() * 0.7,
+        dist: sizeKind === 'large' ? 2.1 : 1.55 + Math.random() * 0.55,
+        height: (Math.random() - 0.5) * 0.9,
         spinAxis: new THREE.Vector3(
           Math.random() - 0.5,
           Math.random() - 0.5,
@@ -331,34 +409,15 @@ export class DomeSkillExecutor {
     return { triggered: true, animOverride: 'stasis_cast' };
   }
 
-  /** Lanza los fragmentos en estasis contra `targetPos` (o hacia delante). */
+  /** Lanza todos los fragmentos restantes contra `targetPos` (helper legacy). */
   releaseGravityField(targetPos?: THREE.Vector3): void {
     const gf = this.gravityField;
     if (gf === null) return;
-    this.gravityField = null;
-
-    const target =
-      targetPos ?? _v1.copy(gf.anchor).addScaledVector(gf.forwardDir, 30).clone();
-    const speed = 26 + gf.level * 7;
-    const damage = 7 + gf.level * 4;
-
-    for (const fragment of gf.fragments) {
-      _v2.subVectors(target, fragment.mesh.position);
-      if (_v2.lengthSq() < 1e-6) _v2.copy(gf.forwardDir);
-      _v2.normalize();
-      this.projectiles.push({
-        mesh: fragment.mesh,
-        material: null,
-        velocity: _v2.clone().multiplyScalar(speed),
-        remainingLife: 3,
-        damage,
-        hitRadius: 0.6,
-        homingTarget: null,
-        homingStrength: 0,
-        hitIds: new Set<string>(),
-        pierce: false,
-        orientToVelocity: false,
-      });
+    while (this.gravityField !== null && this.gravityField.fragments.length > 0) {
+      const targetDummy = targetPos
+        ? { id: '__pos__', position: targetPos, velocity: _v1, radius: 1, mesh: gf.fragments[0].mesh }
+        : null;
+      this.fireOneGravityRock(gf.anchor, gf.forwardDir, targetDummy);
     }
   }
 
@@ -531,8 +590,14 @@ export class DomeSkillExecutor {
   // Actualización por frame
   // ------------------------------------------------------------------
 
-  update(dt: number, enemies: SkillTargetEnemy[], onDamageEnemy: DamageEnemyFn): void {
-    this.updateGravityField(dt);
+  update(
+    dt: number,
+    enemies: SkillTargetEnemy[],
+    onDamageEnemy: DamageEnemyFn,
+    playerPos?: THREE.Vector3,
+    forwardDir?: THREE.Vector3,
+  ): void {
+    this.updateGravityField(dt, playerPos, forwardDir);
     this.updateProjectiles(dt, enemies, onDamageEnemy);
     this.updateWaves(dt);
     this.updateWells(dt, enemies, onDamageEnemy);
@@ -541,9 +606,17 @@ export class DomeSkillExecutor {
     this.updateFadingVfx(this.halos, dt);
   }
 
-  private updateGravityField(dt: number): void {
+  private updateGravityField(
+    dt: number,
+    playerPos?: THREE.Vector3,
+    forwardDir?: THREE.Vector3,
+  ): void {
     const gf = this.gravityField;
     if (gf === null) return;
+    if (playerPos && forwardDir) {
+      gf.forwardDir.copy(forwardDir).normalize();
+      gf.anchor.copy(playerPos).addScaledVector(gf.forwardDir, 2.3);
+    }
     for (const fragment of gf.fragments) {
       fragment.angle += fragment.angularSpeed * dt;
       fragment.mesh.position.set(

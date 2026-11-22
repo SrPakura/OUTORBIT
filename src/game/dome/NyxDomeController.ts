@@ -258,6 +258,8 @@ export class NyxDomeController {
   onSlotTriggered?: (slotIndex: 0 | 1 | 2) => void;
   onDomeBounceDamage?: (damage: number) => void;
   onRedirectionSuccess?: () => void;
+  /** Si devuelve true (p.ej. al lanzar una roca de Campo Gravitacional), bloquea la patada/caída */
+  onLeftClickAttackOverride?: () => boolean;
   private domeBounceFlash = 0;
   private shake = 0;
 
@@ -436,6 +438,10 @@ export class NyxDomeController {
 
   getLockedEnemy(): TestEnemySphere | null {
     return this.lockedEnemy;
+  }
+
+  getCandidateEnemy(): TestEnemySphere | null {
+    return this.reticleLockState === 'can_lock' ? this.candidateEnemy : null;
   }
 
   /** Segundos llevados en speed_attack (cuánto llevas atacando a un enemigo). */
@@ -1040,8 +1046,9 @@ export class NyxDomeController {
     this.onRedirectionSuccess?.();
   }
 
-  /** Clic Izquierdo: Ataque de Velocidad (patada con lock-in o void_fall). */
+  /** Clic Izquierdo: Ataque de Velocidad (o disparo de habilidad si hay override). */
   private handleAttack(): void {
+    if (this.onLeftClickAttackOverride?.()) return;
     if (this.mode === 'speed_attack') {
       // Si estaba atacando sin lock (p.ej. tras perderlo en cámara lenta) y mete
       // al enemigo dentro de la mira, permite re-lockear con Clic Izquierdo.
