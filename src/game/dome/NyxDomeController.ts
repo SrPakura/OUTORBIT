@@ -202,6 +202,12 @@ export class NyxDomeController {
     depth: 0,
     point: new THREE.Vector3(),
   };
+  // --- Plataforma anclada (Moving Platform Ride): slab sobre el que Nyx
+  // está de pie, con su pose del frame anterior para heredar el
+  // desplazamiento y la rotación del suelo sin allocations por frame.
+  private groundedSlab: SlabCollider | null = null;
+  private readonly groundedSlabPrevPos = new THREE.Vector3();
+  private readonly groundedSlabPrevQuat = new THREE.Quaternion();
 
   // --- Cámara de suelo (ángulos escalares: NUNCA se invierte)
   private camYaw = 0;
@@ -619,6 +625,40 @@ export class NyxDomeController {
     this.time += simDt;
     updateSlabMotion(slabs, this.time);
 
+    // --- Moving Platform Ride: si Nyx está de pie sobre un suelo que se
+    // mueve (los suelos flotantes trasladan su center y giran su quaternion
+    // cada frame), hereda su desplazamiento y rotación ANTES de la física,
+    // para que el suelo no se le escape de debajo.
+    if (this.mode === 'grounded' && this.groundedSlab !== null) {
+      if (slabs.indexOf(this.groundedSlab) < 0) {
+        // El suelo anclado desapareció (desvanecido/reciclado): a flotación.
+        this.mode = 'floating';
+        this.groundedSlab = null;
+        this.aimForward.copy(this.facing).normalize();
+        this.aimUp.copy(this.up);
+        this.prevAimFwd.copy(this.aimForward);
+      } else {
+        // deltaQuat = quatActual * inv(quatAnterior) del suelo anclado.
+        this.quat.copy(this.groundedSlabPrevQuat).invert();
+        this.quatB.copy(this.groundedSlab.quaternion).multiply(this.quat);
+        // Rota la posición alrededor del centro anterior del suelo y luego
+        // súmale la traslación del centro de este frame.
+        this.tmpA
+          .copy(this.nyxRoot.position)
+          .sub(this.groundedSlabPrevPos)
+          .applyQuaternion(this.quatB);
+        this.nyxRoot.position
+          .copy(this.groundedSlabPrevPos)
+          .add(this.tmpA)
+          .add(this.tmpB.copy(this.groundedSlab.center).sub(this.groundedSlabPrevPos));
+        // El marco de suelo acompaña el giro: normal, rumbo, up y facing.
+        this.groundNormal.applyQuaternion(this.quatB);
+        this.groundFwd.applyQuaternion(this.quatB);
+        this.up.applyQuaternion(this.quatB);
+        this.facing.applyQuaternion(this.quatB);
+      }
+    }
+
     // --- Decaimientos
     if (this.bounceCooldown > 0) this.bounceCooldown -= sdt;
     if (this.domeBounceFlash > 0) {
@@ -862,6 +902,7 @@ export class NyxDomeController {
       this.prevAimFwd.copy(this.aimForward);
       this.facing.copy(this.aimForward);
       this.mode = 'floating';
+      this.groundedSlab = null;
       this.animator.setState('zero_g_float');
       this.audio?.playAnchor();
     } else if (this.mode === 'speed_attack') {
@@ -1083,6 +1124,7 @@ export class NyxDomeController {
       this.aimForward.copy(this.camFwd).normalize();
       this.aimUp.copy(this.up);
       this.prevAimFwd.copy(this.aimForward);
+      this.groundedSlab = null;
     }
 
     this.animLock = null;
@@ -1405,6 +1447,7 @@ export class NyxDomeController {
             this.speedAttackKind = null;
           }
           this.mode = 'floating';
+          this.groundedSlab = null;
           if (this.bounceCooldown <= 0) {
             this.playOneShot('hit_stagger');
             this.vfx.spawnBurst(this.nyxRoot.position, n, 0xffc24d, 18);
@@ -1429,6 +1472,12 @@ export class NyxDomeController {
       this.nyxRoot.position.copy(this.contact.point).addScaledVector(n, PLAYER_RADIUS);
       if (approach < 0) this.velocity.addScaledVector(n, -approach);
       this.groundNormal.copy(n);
+      // Re-ancla al slab de contacto (puede ser otro suelo al caminar).
+      this.groundedSlab = this.contact.slab;
+      if (this.contact.slab) {
+        this.groundedSlabPrevPos.copy(this.contact.slab.center);
+        this.groundedSlabPrevQuat.copy(this.contact.slab.quaternion);
+      }
       return;
     }
 
@@ -1445,9 +1494,16 @@ export class NyxDomeController {
     if (stick) {
       this.nyxRoot.position.copy(stick.point).addScaledVector(stick.normal, PLAYER_RADIUS);
       this.groundNormal.copy(stick.normal);
+      // Mantiene el ancla fresca (y la cambia si caminó a otro suelo).
+      this.groundedSlab = stick.slab;
+      if (stick.slab) {
+        this.groundedSlabPrevPos.copy(stick.slab.center);
+        this.groundedSlabPrevQuat.copy(stick.slab.quaternion);
+      }
     } else {
       // Te sales del borde: pasas a flotación 0G (no existe caída con gravedad).
       this.mode = 'floating';
+      this.groundedSlab = null;
       this.aimForward.copy(this.facing).normalize();
       this.aimUp.copy(this.up);
       this.prevAimFwd.copy(this.aimForward);
@@ -1462,6 +1518,12 @@ export class NyxDomeController {
     this.groundNormal.copy(normal);
     this.up.copy(normal);
     this.dashTimer = 0;
+    // Ancla al suelo pisado para heredar su movimiento (Moving Platform Ride).
+    this.groundedSlab = this.contact.slab;
+    if (this.contact.slab) {
+      this.groundedSlabPrevPos.copy(this.contact.slab.center);
+      this.groundedSlabPrevQuat.copy(this.contact.slab.quaternion);
+    }
 
     if (prevMode === 'speed_attack') {
       this.lockedEnemy = null;
