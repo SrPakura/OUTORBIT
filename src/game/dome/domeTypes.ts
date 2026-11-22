@@ -1,12 +1,15 @@
 import type * as THREE from 'three';
 
 export type NyxMovementMode =
-  | 'grounded'
-  | 'zero_g'
-  | 'falling'
-  | 'kicking'
-  | 'kick_recover'
-  | 'dashing';
+  | 'grounded'      // Adherida a un suelo/pared/techo (cámara libre 360º)
+  | 'floating'      // Flotando en 0G (cámara pegada a la espalda con lag + inercia espacial)
+  | 'dashing'       // Dash con Clic Derecho + dirección (redirigible con cámara)
+  | 'speed_attack'  // Clic Izq: Patada (con lock-in a enemigo) o Caída al Vacío (sin enemigo)
+  | 'kick_recover'; // Frenado con 1, 2 o 3 kick_flip tras cancelar con Espacio o impactar
+
+export type SpeedAttackKind = 'gravity_kick' | 'spiral_drill_kick' | 'void_fall';
+
+export type ReticleLockState = 'none' | 'can_lock' | 'locked';
 
 export interface SlabCollider {
   id: string;
@@ -27,6 +30,18 @@ export interface SlabRaycastHit {
   distance: number;
 }
 
+export interface TestEnemySphere {
+  id: string;
+  mesh: THREE.Mesh;
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  homePos: THREE.Vector3;
+  radius: number;
+  evasive: boolean;
+  evadeCooldown: number;
+  hitFlash: number;
+}
+
 export interface DomeHudState {
   hp: number;
   maxHp: number;
@@ -36,13 +51,17 @@ export interface DomeHudState {
   expToNext: number;
   level: number;
   speed: number;
+  accelTimeSec: number;
   drillThreshold: number;
   isDrillReady: boolean;
   speedLinesIntensity: number;
   mode: NyxMovementMode;
+  speedAttackKind: SpeedAttackKind | null;
   pointerLocked: boolean;
-  aimingAtSurface: boolean;
-  aimDistance: number | null;
+  reticleLockState: ReticleLockState;
+  lockedEnemyScreenPos: { x: number; y: number } | null;
+  bulletTimeActive: boolean;
+  bulletTimeRemaining: number;
   activeSlot: 1 | 2 | 3;
   slots: [
     { keyLabel: string; name: string | null; level: number },
@@ -51,6 +70,11 @@ export interface DomeHudState {
   ];
   domeBounceFlash: number;
 }
+
+/** Radio en píxeles de pantalla del octógono exterior de visor.svg para poder lockear */
+export const RETICLE_LOCK_RADIUS_PX = 200;
+/** Distancia en píxeles (2.5x radio) a la que se rompe el auto-lock si el enemigo escapa */
+export const RETICLE_BREAK_RADIUS_PX = 500;
 
 export const DOME_ARENA_RADIUS = 50;
 export const DOME_PLAYER_BOUND_RADIUS = 48.8;

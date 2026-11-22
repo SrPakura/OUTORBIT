@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { createDomeArenaBackdrop } from '@/game/render/domeArenaScene';
 import { loadNyxRigged, type LoadedNyx } from '@/game/render/nyxModelLoader';
 import { createDomeSlabs } from '@/game/dome/DomeSlabs';
+import { createTestEnemySpheres } from '@/game/dome/TestEnemySpheres';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
 import type { DomeHudState } from '@/game/dome/domeTypes';
@@ -24,13 +25,17 @@ const INITIAL_HUD: DomeHudState = {
   expToNext: 1,
   level: 1,
   speed: 0,
-  drillThreshold: 24,
+  accelTimeSec: 0,
+  drillThreshold: 1.5,
   isDrillReady: false,
   speedLinesIntensity: 0,
-  mode: 'zero_g',
+  mode: 'floating',
+  speedAttackKind: null,
   pointerLocked: false,
-  aimingAtSurface: false,
-  aimDistance: null,
+  reticleLockState: 'none',
+  lockedEnemyScreenPos: null,
+  bulletTimeActive: false,
+  bulletTimeRemaining: 0,
   activeSlot: 1,
   slots: [
     { keyLabel: '1', name: null, level: 0 },
@@ -77,6 +82,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
 
     const backdrop = createDomeArenaBackdrop(scene);
     const slabRig = createDomeSlabs(scene);
+    const enemyMgr = createTestEnemySpheres(scene);
     const vfx = new MotionVfxSystem(scene);
     const audio = new SynthAudio();
     audio.setVolumeMultiplier(settingsRef.current.masterVolume);
@@ -93,7 +99,8 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           return;
         }
         loadedNyx = nyx;
-        nyx.root.position.set(0, 0, 0);
+        // Posicionada justo sobre la plataforma central para aterrizar o flotar desde el inicio
+        nyx.root.position.set(0, -1.8, 0);
         scene.add(nyx.root);
         controller = new NyxDomeController(
           nyx.root,
@@ -168,19 +175,38 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const now = performance.now();
-      const dt = Math.min((now - last) / 1000, 0.05);
+      const rawDt = Math.min((now - last) / 1000, 0.05);
       last = now;
-      elapsed += dt;
+
+      const timeScale = controller ? controller.getTimeScale() : 1.0;
+      const worldDt = rawDt * timeScale;
+      elapsed += worldDt;
 
       if (loadedNyx) {
         loadedNyx.universeMat.uniforms.uTime.value = elapsed;
       }
 
-      backdrop.update(dt, elapsed);
+      backdrop.update(worldDt, elapsed);
 
       if (controller) {
-        controller.update(dt, slabRig.slabs, camera);
-        hudTimer += dt;
+        const { didEnemyEvadeDash } = enemyMgr.update(
+          worldDt,
+          elapsed,
+          controller.getPosition(),
+          controller.getLockedEnemy(),
+          controller.getAttackAccelTime(),
+        );
+        if (didEnemyEvadeDash) {
+          controller.notifyEnemyEvaded();
+        }
+        controller.update(
+          rawDt,
+          slabRig.slabs,
+          camera,
+          enemyMgr.enemies,
+          (enemy, hitDir, isDrill) => enemyMgr.onHitEnemy(enemy, hitDir, isDrill),
+        );
+        hudTimer += rawDt;
         if (hudTimer >= 1 / 30) {
           hudTimer = 0;
           setHud(controller.getHudState());
@@ -211,6 +237,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       controllerRef.current = null;
       audioRef.current = null;
       loadedNyx?.dispose();
+      enemyMgr.dispose();
       vfx.dispose();
       slabRig.dispose();
       backdrop.dispose();
@@ -220,7 +247,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[#040510]">
-      <canvas ref={canvasRef} className="block h-full w-full cursor-crosshair" />
+      <canvas ref={canvasRef} className="block h-full w-full cursor-none" />
       <DomeHudSketch hud={hud} onExit={onExit} />
     </div>
   );
