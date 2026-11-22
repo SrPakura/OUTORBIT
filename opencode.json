@@ -1,0 +1,13 @@
+{
+  "mcp": {
+    "servers": {
+      "blender": {
+        "type": "local",
+        "command": [
+          "uvx",
+          "mcp-for-blender"
+        ]
+      }
+    }
+  }
+}
