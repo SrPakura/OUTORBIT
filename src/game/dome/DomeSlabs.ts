@@ -153,12 +153,46 @@ export function resolveSphereSlabCollision(
         _triOut.z,
       );
     } else if (slab.icebergDepth && slab.icebergDepth > 0 && _local.y < -he.y) {
-      // Colisión cónica contra la raíz del iceberg que cuelga bajo -he.y
-      const clampedY = Math.max(-he.y - slab.icebergDepth, _local.y);
-      const t = Math.min(1, Math.max(0, (-he.y - clampedY) / slab.icebergDepth));
-      const topR = (he.x + he.z) * 0.44;
-      const rAtY = topR * (1 - t) + 0.5 * t;
+      // Colisión cónica contra la raíz del iceberg que cuelga bajo -he.y.
+      // El cono interpola de topR en la base (y = -he.y, donde empalma con el
+      // OBB superior) a 0.75 m en la punta (y = -he.y - icebergDepth).
+      const icebergDepth = slab.icebergDepth;
+      const bottomY = -he.y - icebergDepth;
+      const clampedY = Math.max(bottomY, _local.y);
+      const t = Math.min(1, Math.max(0, (-he.y - clampedY) / icebergDepth));
+      const topR = Math.max(he.x, he.z) * 0.95;
+      const botR = Math.max(1.5, topR * 0.35);
+      const rAtY = topR * (1 - t) + botR * t;
       const radial = Math.hypot(_local.x, _local.z);
+      if (radial <= rAtY && _local.y >= bottomY) {
+        // Centro DENTRO del cono: expulsa hacia fuera por la dirección de
+        // menor penetración (lateral radial o fondo), nunca contra la tapa.
+        const penLateral = rAtY - radial;
+        const penBottom = _local.y - bottomY;
+        if (radial > 1e-6 && penLateral <= penBottom) {
+          const depth = radius + penLateral;
+          if (depth > bestDepth) {
+            bestDepth = depth;
+            bestSlab = slab;
+            const invRadial = 1 / radial;
+            _bestNormal.set(_local.x * invRadial, 0, _local.z * invRadial);
+            _bestPoint.set(
+              _local.x * rAtY * invRadial,
+              _local.y,
+              _local.z * rAtY * invRadial,
+            );
+          }
+        } else {
+          const depth = radius + penBottom;
+          if (depth > bestDepth) {
+            bestDepth = depth;
+            bestSlab = slab;
+            _bestNormal.set(0, -1, 0);
+            _bestPoint.set(_local.x, bottomY, _local.z);
+          }
+        }
+        continue;
+      }
       if (radial > rAtY && radial > 1e-6) {
         const s = rAtY / radial;
         _closest.set(_local.x * s, clampedY, _local.z * s);

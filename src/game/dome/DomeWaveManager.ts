@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { addComicOutline, createComicCelMaterial } from '@/game/render/toonMaterials';
-import type { TestEnemySphere } from './domeTypes';
+import type { SlabCollider, TestEnemySphere } from './domeTypes';
+import { resolveSphereSlabCollision, type SlabContact } from './DomeSlabs';
 import {
   createDomeEnemyEntity,
   DOME_ENEMY_ARCHETYPES,
@@ -113,6 +114,43 @@ const PROJECTILE_BOUND_RADIUS = 88.0;
 const CHARGE_TRIGGER_DISTANCE = 26.0;
 const CHARGE_CONTACT_PADDING = 1.9;
 
+// --- Pulpo Espiral: orientación procedural + tentáculos sin clips ---
+const OCTOPUS_TURN_RATE = 3.2; // Velocidad de giro hacia Nyx (slerp/seg).
+const OCTOPUS_SPIRAL_TILT = 0.38; // Inclinación máx. de la espiral al desplazarse.
+const OCTOPUS_SPIRAL_SPEED = 2.6; // Velocidad del balanceo en espiral.
+const TENTACLE_WAVE_SPEED = 4.5; // Math.sin(elapsed * 4.5 + phase + i).
+const TENTACLE_BASE_AMPLITUDE = 0.32;
+const TENTACLE_TIP_AMPLITUDE = 0.45;
+const OCTOPUS_INK_FORWARD = 0.55; // Fracción del radius: frente del manto.
+const OCTOPUS_INK_UP = 0.35; // Elevación del manto sobre el centro.
+
+// --- Cangrejo Artillero: pegado a suelos + cañón que apunta ---
+const CRAB_TURN_RATE = 4.0; // Giro del cuerpo sobre el slab (slerp/seg).
+const CRAB_TURRET_TURN_RATE = 6.0; // Giro del cañón hacia Nyx (slerp/seg).
+const CANNON_MUZZLE_DISTANCE = 1.4; // Boca del cañón desde el hueso turret.
+const CRAB_SLAB_MARGIN = 1.1; // Margen para no salirse del borde del slab.
+const CRAB_ATTACH_BLEND_TIME = 0.45; // Aterrizaje suave al cambiar de slab.
+// --- Cangrejo Artillero: spawn sobre suelos + salto entre ellos ---
+const CRAB_SPAWN_MAX_R = 70.0; // Radio preferido del slab de spawn.
+const CRAB_LEAVE_R = 72.0; // El slab flotante sale de la cúpula: saltar.
+const CRAB_JUMP_TARGET_MAX_R = 68.0; // Radio preferido del slab de aterrizaje.
+const CRAB_JUMP_DURATION = 0.75; // Duración base del arco del salto (s).
+const CRAB_JUMP_DURATION_MAX = 2.4; // Techo de duración en saltos largos (s).
+const CRAB_JUMP_H_SPEED = 22.0; // Velocidad horizontal de referencia (m/s).
+const CRAB_JUMP_ARC_MIN = 2.5; // Altura mínima del arco (m).
+const CRAB_JUMP_ARC_MAX = 9.0; // Altura máxima del arco (m).
+const CRAB_GRAB_RANGE = 55.0; // Alcance del salto de agarre desde el aire (m).
+const CRAB_SKID_DAMPING = 6.0; // Fricción del deslizamiento por knockback (1/s).
+const CRAB_AIR_DAMPING = 3.0; // Fricción del desvío por knockback en vuelo (1/s).
+const CRAB_LEG_WAVE_SPEED = 14.0; // Velocidad del aleteo de patas en vuelo.
+const CRAB_LEG_WAVE_AMPLITUDE = 0.3; // Amplitud del aleteo de patas (rad).
+const CRAB_FLIGHT_WOBBLE = 0.12; // Guiñeo ligero del cuerpo en vuelo (rad).
+const CRAB_FLIGHT_WOBBLE_SPEED = 2.7; // Frecuencia del guiñeo de vuelo (rad/s).
+const CRAB_STAND_HEIGHT = 1.0; // Altura del cuerpo sobre la cara superior del slab (m).
+
+// --- Voladores contra icebergs (activeSlabs): nunca atraviesan los suelos ---
+const SLAB_BOUNCE_RESTITUTION = 0.35; // Rebote suave de la velocidad contra la normal.
+
 // --- Scratch vectors a nivel de módulo: sin allocations por frame --- 
 const _toHome = new THREE.Vector3();
 const _toEnemy = new THREE.Vector3();
@@ -120,6 +158,35 @@ const _perp = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
 const _flat = new THREE.Vector3();
 const _shotDir = new THREE.Vector3();
+const _lookDir = new THREE.Vector3();
+const _aimDir = new THREE.Vector3();
+const _basisX = new THREE.Vector3();
+const _basisMat = new THREE.Matrix4();
+const _targetQuat = new THREE.Quaternion();
+const _rollQuat = new THREE.Quaternion();
+const _invQuat = new THREE.Quaternion();
+const _turretWorldQuat = new THREE.Quaternion();
+const _slabUp = new THREE.Vector3();
+const _slabForward = new THREE.Vector3();
+const _localOffset = new THREE.Vector3();
+const _targetPos = new THREE.Vector3();
+const _muzzlePos = new THREE.Vector3();
+const _muzzleDir = new THREE.Vector3();
+const _legWaveQuat = new THREE.Quaternion();
+const _legWaveAxis = new THREE.Vector3(1, 0, 0);
+const _origin = new THREE.Vector3();
+const _slabContact: SlabContact = {
+  slab: null,
+  normal: new THREE.Vector3(),
+  depth: 0,
+  point: new THREE.Vector3(),
+};
+
+/** Cuaternión que orienta el +Z local hacia `dir` con la referencia `up`. */
+function lookAtQuat(dir: THREE.Vector3, up: THREE.Vector3, out: THREE.Quaternion): THREE.Quaternion {
+  _basisMat.lookAt(dir, _origin, up);
+  return out.setFromRotationMatrix(_basisMat);
+}
 
 // ---------------------------------------------------------------------------
 // Plan de oleada
@@ -305,6 +372,243 @@ function buildArchetypeVisuals(): Record<EnemyArchetype, ArchetypeVisual> {
 // Internos por enemigo (materiales y estado de comportamiento)
 // ---------------------------------------------------------------------------
 
+/** Hueso procedural con su pose de reposo: la animación se compone encima
+ * para no romper el bind del skin. Sirve a los tentáculos del pulpo
+ * (`tentacle_*`) y a las patas del cangrejo (`leg_*`). */
+interface TentacleBone {
+  bone: THREE.Object3D;
+  rest: THREE.Quaternion;
+  amplitude: number;
+}
+
+/**
+ * Recolecta los huesos `tentacle_*` del rig (octopus_rig) ordenados de base a
+ * punta, guardando su pose de reposo: la oscilación procedural se compone
+ * encima para no romper el bind del skin.
+ */
+function collectTentacleBones(root: THREE.Object3D): TentacleBone[] {
+  const tentacles: TentacleBone[] = [];
+  root.traverse((obj) => {
+    const match = /^tentacle_(\d+)_(\d+)$/.exec(obj.name);
+    if (!match) {
+      return;
+    }
+    const segment = parseInt(match[2], 10);
+    tentacles.push({
+      bone: obj,
+      rest: obj.quaternion.clone(),
+      amplitude: segment <= 1 ? TENTACLE_BASE_AMPLITUDE : TENTACLE_TIP_AMPLITUDE,
+    });
+  });
+  tentacles.sort((a, b) => a.bone.name.localeCompare(b.bone.name));
+  return tentacles;
+}
+
+interface TurretRig {
+  node: THREE.Object3D;
+  /** Eje local por el que dispara el cañón. */
+  forward: THREE.Vector3;
+}
+
+/**
+ * Localiza el cañón del cangrejo dentro del GLB: hueso `turret` (los huesos de
+ * Blender apuntan por su +Y local) o, en su defecto, el mesh `detail_cannon`
+ * (geometría extendida hacia +Z local).
+ */
+function findTurretRig(root: THREE.Object3D): TurretRig | null {
+  const turret = root.getObjectByName('turret');
+  if (turret) {
+    return { node: turret, forward: new THREE.Vector3(0, 1, 0) };
+  }
+  const cannon = root.getObjectByName('detail_cannon');
+  if (cannon) {
+    return { node: cannon, forward: new THREE.Vector3(0, 0, 1) };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Cangrejo Artillero: suelos (spawn pegado + salto entre ellos)
+// ---------------------------------------------------------------------------
+
+/** Huesos `leg_*` del cangrejo para el aleteo procedural en el aire. */
+function collectLegBones(root: THREE.Object3D): TentacleBone[] {
+  const legs: TentacleBone[] = [];
+  root.traverse((obj) => {
+    if (/^leg_/.test(obj.name)) {
+      legs.push({ bone: obj, rest: obj.quaternion.clone(), amplitude: CRAB_LEG_WAVE_AMPLITUDE });
+    }
+  });
+  legs.sort((a, b) => a.bone.name.localeCompare(b.bone.name));
+  return legs;
+}
+
+/** Punto mundial sobre la cara superior (+Y local) del slab para un offset local. */
+function slabTopPoint(slab: SlabCollider, local: THREE.Vector2, out: THREE.Vector3): THREE.Vector3 {
+  _localOffset.set(local.x, slab.halfExtents.y, local.y).applyQuaternion(slab.quaternion);
+  return out.copy(slab.center).add(_localOffset);
+}
+
+/**
+ * Offset local (lx, lz) aleatorio dentro de la zona pisable del slab: el
+ * rectángulo OBB con margen, o un punto baricéntrico del triángulo 2D si el
+ * slab es un triángulo de la esfera (Miniboss/Boss).
+ */
+function pickSlabLocalPoint(slab: SlabCollider, rng: () => number, out: THREE.Vector2): void {
+  const tri = slab.localTriangle2D;
+  if (tri) {
+    let u = rng();
+    let v = rng();
+    if (u + v > 1) {
+      u = 1 - u;
+      v = 1 - v;
+    }
+    const w = 1 - u - v;
+    const gx = (tri[0] + tri[2] + tri[4]) / 3;
+    const gz = (tri[1] + tri[3] + tri[5]) / 3;
+    // Contraído hacia el centroide para respetar el margen del borde.
+    out.set(
+      gx + (u * tri[0] + v * tri[2] + w * tri[4] - gx) * 0.65,
+      gz + (u * tri[1] + v * tri[3] + w * tri[5] - gz) * 0.65,
+    );
+    return;
+  }
+  const mx = Math.max(0, slab.halfExtents.x - CRAB_SLAB_MARGIN);
+  const mz = Math.max(0, slab.halfExtents.z - CRAB_SLAB_MARGIN);
+  out.set((rng() * 2 - 1) * mx, (rng() * 2 - 1) * mz);
+}
+
+/** Fija el offset local dentro de los bordes del slab (el knockback desliza). */
+function clampSlabLocalPoint(slab: SlabCollider, local: THREE.Vector2): void {
+  const tri = slab.localTriangle2D;
+  if (tri) {
+    // Triángulo: si el deslizamiento salió del triángulo, tira al centroide.
+    const s1 = (tri[2] - tri[0]) * (local.y - tri[1]) - (tri[3] - tri[1]) * (local.x - tri[0]);
+    const s2 = (tri[4] - tri[2]) * (local.y - tri[3]) - (tri[5] - tri[3]) * (local.x - tri[2]);
+    const s3 = (tri[0] - tri[4]) * (local.y - tri[5]) - (tri[1] - tri[5]) * (local.x - tri[4]);
+    if ((s1 < 0 || s2 < 0 || s3 < 0) && (s1 > 0 || s2 > 0 || s3 > 0)) {
+      local.set((tri[0] + tri[2] + tri[4]) / 3, (tri[1] + tri[3] + tri[5]) / 3);
+    }
+    return;
+  }
+  const mx = Math.max(0, slab.halfExtents.x - CRAB_SLAB_MARGIN);
+  const mz = Math.max(0, slab.halfExtents.z - CRAB_SLAB_MARGIN);
+  local.x = THREE.MathUtils.clamp(local.x, -mx, mx);
+  local.y = THREE.MathUtils.clamp(local.y, -mz, mz);
+}
+
+/**
+ * Slab de spawn del cangrejo: uno aleatorio dentro de R < 70 m; si todos están
+ * lejos, el más cercano al centro de la cúpula.
+ */
+function pickCrabSpawnSlab(activeSlabs: SlabCollider[], rng: () => number): SlabCollider | null {
+  if (activeSlabs.length === 0) {
+    return null;
+  }
+  let nearCount = 0;
+  for (const slab of activeSlabs) {
+    if (slab.center.length() < CRAB_SPAWN_MAX_R) {
+      nearCount++;
+    }
+  }
+  if (nearCount > 0) {
+    let pick = Math.floor(rng() * nearCount);
+    for (const slab of activeSlabs) {
+      if (slab.center.length() < CRAB_SPAWN_MAX_R && pick-- === 0) {
+        return slab;
+      }
+    }
+  }
+  let best = activeSlabs[0];
+  for (const slab of activeSlabs) {
+    if (slab.center.length() < best.center.length()) {
+      best = slab;
+    }
+  }
+  return best;
+}
+
+/**
+ * Destino del salto del cangrejo: el slab disponible más cercano al cangrejo
+ * con center < 68 m o, si todos están lejos, el más cercano al centro de la
+ * cúpula. Excluye el slab que está abandonando.
+ */
+function pickCrabJumpSlab(
+  activeSlabs: SlabCollider[] | undefined,
+  leavingSlabId: string | null,
+  fromPos: THREE.Vector3,
+): SlabCollider | null {
+  if (!activeSlabs || activeSlabs.length === 0) {
+    return null;
+  }
+  let best: SlabCollider | null = null;
+  let bestScore = Infinity;
+  for (const slab of activeSlabs) {
+    if (slab.id === leavingSlabId) {
+      continue;
+    }
+    if (slab.center.length() < CRAB_JUMP_TARGET_MAX_R) {
+      const score = fromPos.distanceTo(slab.center);
+      if (score < bestScore) {
+        best = slab;
+        bestScore = score;
+      }
+    }
+  }
+  if (best) {
+    return best;
+  }
+  for (const slab of activeSlabs) {
+    if (slab.id === leavingSlabId) {
+      continue;
+    }
+    const score = slab.center.length();
+    if (score < bestScore) {
+      best = slab;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+/** Altura del arco del salto según la distancia al slab destino. */
+function crabJumpArc(dist: number): number {
+  return Math.min(CRAB_JUMP_ARC_MAX, CRAB_JUMP_ARC_MIN + dist * 0.22);
+}
+
+/** Busca un slab por id dentro de la lista de suelos activos. */
+function findSlabById(slabs: SlabCollider[], id: string): SlabCollider | null {
+  for (const slab of slabs) {
+    if (slab.id === id) {
+      return slab;
+    }
+  }
+  return null;
+}
+
+/** Duración del salto: ~0.75 s en saltos cortos, algo más en saltos largos. */
+function crabJumpDuration(dist: number): number {
+  return Math.min(CRAB_JUMP_DURATION_MAX, Math.max(CRAB_JUMP_DURATION, dist / CRAB_JUMP_H_SPEED));
+}
+
+/** Salto parabólico del cangrejo entre suelos (estado en vuelo). */
+interface CrabJump {
+  /** Punto de despegue en espacio mundo. */
+  from: THREE.Vector3;
+  /** Id del slab de aterrizaje. */
+  targetSlabId: string;
+  /** Offset local (lx, lz) de aterrizaje dentro del slab destino. */
+  targetLocal: THREE.Vector2;
+  /** Duración total del salto (s). */
+  duration: number;
+  /** Segundos de vuelo transcurridos. */
+  time: number;
+  /** Altura del vértice del arco sobre la línea despegue→aterrizaje (m). */
+  arcHeight: number;
+  /** Desvío acumulado por knockback durante el vuelo (m). */
+  offset: THREE.Vector3;
+}
+
 interface EnemyInternal {
   enemy: ManagedWaveEnemy;
   material: THREE.ShaderMaterial | null;
@@ -321,6 +625,24 @@ interface EnemyInternal {
   chargeSpeed: number;
   chargeDamage: number;
   chargeDir: THREE.Vector3;
+  /** Pulpo: huesos `tentacle_*` para la oscilación procedural. */
+  tentacles: TentacleBone[];
+  /** Cangrejo: huesos `leg_*` para el aleteo procedural en el aire. */
+  legs: TentacleBone[];
+  /** Cangrejo: nodo del cañón (hueso `turret` o mesh `detail_cannon`). */
+  turretNode: THREE.Object3D | null;
+  /** Cangrejo: eje local de disparo del cañón. */
+  turretForward: THREE.Vector3;
+  /** Cangrejo: id del slab al que está pegado (null = flotación suave). */
+  attachedSlabId: string | null;
+  /** Cangrejo: offset local (lx, lz) dentro del slab para no salirse del borde. */
+  slabLocalOffset: THREE.Vector2;
+  /** Cangrejo: progreso 0..1 del aterrizaje en el slab actual. */
+  attachBlend: number;
+  /** Cangrejo: posición de partida del aterrizaje suave. */
+  attachFrom: THREE.Vector3;
+  /** Cangrejo: salto en curso entre suelos (null = pegado o flotando). */
+  jump: CrabJump | null;
 }
 
 /**
@@ -420,8 +742,12 @@ export class DomeWaveManager {
   // Ciclo de oleadas
   // -------------------------------------------------------------------------
 
-  /** Limpia la oleada anterior y despliega la composición de `waveNumber`. */
-  startWave(waveNumber: number): void {
+  /**
+   * Limpia la oleada anterior y despliega la composición de `waveNumber`.
+   * Con `activeSlabs`, los Cangrejos Artilleros aparecen pegados a un suelo
+   * flotante dentro de la cúpula (center < 70 m).
+   */
+  startWave(waveNumber: number, activeSlabs?: SlabCollider[]): void {
     this.clearEnemies();
     this.deactivateAllProjectiles();
 
@@ -440,7 +766,7 @@ export class DomeWaveManager {
           spawn.archetype === 'basic_mix'
             ? BASIC_ARCHETYPES[spawnIndex % BASIC_ARCHETYPES.length]
             : spawn.archetype;
-        this.spawnEnemy(archetype, spawnIndex, rng);
+        this.spawnEnemy(archetype, spawnIndex, rng, activeSlabs);
         spawnIndex++;
       }
     }
@@ -473,10 +799,23 @@ export class DomeWaveManager {
       internal.starCores = glbVisual.starCores;
       internal.mixer = glbVisual.mixer;
       internal.isGlb = true;
+      // Huesos procedurales del GLB: tentáculos del pulpo, patas y cañón del cangrejo.
+      internal.tentacles = collectTentacleBones(glbVisual.root);
+      internal.legs = collectLegBones(glbVisual.root);
+      const turretRig = findTurretRig(glbVisual.root);
+      internal.turretNode = turretRig?.node ?? null;
+      if (turretRig) {
+        internal.turretForward.copy(turretRig.forward);
+      }
     }
   }
 
-  private spawnEnemy(archetype: EnemyArchetype, index: number, rng: () => number): void {
+  private spawnEnemy(
+    archetype: EnemyArchetype,
+    index: number,
+    rng: () => number,
+    activeSlabs?: SlabCollider[],
+  ): void {
     const stats = DOME_ENEMY_ARCHETYPES[archetype];
     const visual = this.visuals[archetype];
     const glbVisual = instantiateEnemyVisual(archetype);
@@ -527,6 +866,21 @@ export class DomeWaveManager {
       6 + rng() * 30,
       Math.sin(angle) * dist,
     );
+
+    // Cangrejo Artillero: aparece directamente encima de un suelo flotante
+    // dentro de la cúpula (preferiblemente center < 70 m).
+    let attachedSlabId: string | null = null;
+    const slabLocalOffset = new THREE.Vector2();
+    if (archetype === 'crab_gunner' && activeSlabs && activeSlabs.length > 0) {
+      const slab = pickCrabSpawnSlab(activeSlabs, rng);
+      if (slab) {
+        pickSlabLocalPoint(slab, rng, slabLocalOffset);
+        slabTopPoint(slab, slabLocalOffset, homePos);
+        _slabUp.set(0, 1, 0).applyQuaternion(slab.quaternion);
+        homePos.addScaledVector(_slabUp, CRAB_STAND_HEIGHT);
+        attachedSlabId = slab.id;
+      }
+    }
     mesh.position.copy(homePos);
     this.scene.add(mesh);
 
@@ -551,6 +905,7 @@ export class DomeWaveManager {
     };
 
     this.enemies.push(enemy);
+    const turretRig = findTurretRig(mesh);
     this.internals.set(enemy.id, {
       enemy,
       material,
@@ -564,6 +919,15 @@ export class DomeWaveManager {
       chargeSpeed: 0,
       chargeDamage: 0,
       chargeDir: new THREE.Vector3(),
+      tentacles: collectTentacleBones(mesh),
+      legs: collectLegBones(mesh),
+      turretNode: turretRig?.node ?? null,
+      turretForward: turretRig ? turretRig.forward : new THREE.Vector3(0, 0, 1),
+      attachedSlabId,
+      slabLocalOffset,
+      attachBlend: attachedSlabId ? 1 : 0,
+      attachFrom: homePos.clone(),
+      jump: null,
     });
   }
 
@@ -633,8 +997,18 @@ export class DomeWaveManager {
   }
 
   /**
+   * true mientras el enemigo salta entre suelos (el Cangrejo Artillero en
+   * pleno arco no muere por la Barrera Blanca).
+   */
+  isEnemyJumping(enemy: TestEnemySphere): boolean {
+    return (this.internals.get(enemy.id)?.jump ?? null) !== null;
+  }
+
+  /**
    * Update por frame: flotación, dashes evasivos, ataques (proyectiles
-   * oscuros / tinta / embestidas), pinchos de Necrozma y proyectiles en vuelo.
+   * oscuros / tinta / embestidas), pinchos de Necrozma, cangrejo pegado a
+   * `activeSlabs` (con saltos entre ellos), colisión de voladores contra los
+   * icebergs y proyectiles en vuelo.
    */
   update(
     dt: number,
@@ -642,6 +1016,7 @@ export class DomeWaveManager {
     playerPos: THREE.Vector3,
     lockedEnemy: TestEnemySphere | null,
     playerAttackTime: number,
+    activeSlabs: SlabCollider[] | undefined,
     onPlayerHit: (damage: number) => void,
     onOctopusInk: () => void,
   ): { didEnemyEvadeDash: boolean } {
@@ -722,34 +1097,37 @@ export class DomeWaveManager {
       // --- Comportamiento ofensivo por arquetipo ---
       this.updateEnemyBehavior(enemy, internal, dt, playerPos, onPlayerHit, onOctopusInk);
 
-      // --- Flotación: bob + muelle hacia homePos (salvo dash/embestida) ---
-      const bob = Math.sin(elapsed * FLOAT_BOB_SPEED + enemy.phase) * FLOAT_BOB_AMPLITUDE;
-      _toHome.subVectors(enemy.homePos, enemy.position);
-      const homeDist = _toHome.length();
-      _toHome.y += bob * 0.35;
-
-      if (internal.chargeTimer > 0) {
-        // Embestida: velocidad constante hacia Nyx, sin freno ni muelle.
-        enemy.velocity.copy(internal.chargeDir).multiplyScalar(internal.chargeSpeed);
-        internal.chargeTimer = Math.max(0, internal.chargeTimer - dt);
-      } else if (enemy.dashTimer <= 0) {
-        enemy.velocity.addScaledVector(_toHome, FLOAT_SPRING * dt);
-        if (homeDist > LEASH_RADIUS) {
-          _toHome.normalize();
-          enemy.velocity.addScaledVector(_toHome, HOME_PULL * dt);
-        }
-        _flat.set(enemy.position.x, 0, enemy.position.z);
-        const flatDist = _flat.length();
-        if (flatDist > DOME_KEEP_RADIUS) {
-          _flat.normalize();
-          enemy.velocity.addScaledVector(_flat, -DOME_KEEP_PULL * dt);
-        }
-        enemy.velocity.multiplyScalar(Math.exp(-FLOAT_DAMPING * dt));
+      // --- Movimiento: cangrejo pegado a suelos / flotación del resto ---
+      const isCrab = enemy.entity.archetype === 'crab_gunner';
+      if (isCrab) {
+        this.updateCrabEnemy(enemy, internal, dt, elapsed, playerPos, activeSlabs);
       } else {
-        enemy.velocity.multiplyScalar(Math.exp(-0.25 * dt));
+        this.applyFloatMovement(enemy, internal, dt, elapsed);
       }
 
-      enemy.position.addScaledVector(enemy.velocity, dt);
+      // --- Voladores contra los icebergs: nunca atraviesan los suelos ---
+      const crabOnSlab = isCrab && (internal.jump !== null || internal.attachedSlabId !== null);
+      if (
+        activeSlabs &&
+        !crabOnSlab &&
+        resolveSphereSlabCollision(activeSlabs, enemy.position, enemy.radius, _slabContact)
+      ) {
+        enemy.position.addScaledVector(_slabContact.normal, _slabContact.depth);
+        const into = enemy.velocity.dot(_slabContact.normal);
+        if (into < 0) {
+          // Reflejo suave de la velocidad contra la normal del slab.
+          enemy.velocity.addScaledVector(
+            _slabContact.normal,
+            -into * (1 + SLAB_BOUNCE_RESTITUTION),
+          );
+        }
+      }
+
+      // --- Pose procedural: el pulpo encara a Nyx y ondea sus tentáculos ---
+      if (enemy.entity.archetype === 'spiral_octopus') {
+        this.updateOctopusPose(enemy, internal, dt, elapsed, playerPos);
+      }
+
       enemy.entity.position.copy(enemy.position);
       enemy.entity.velocity.copy(enemy.velocity);
 
@@ -841,16 +1219,36 @@ export class DomeWaveManager {
 
     switch (archetype) {
       case 'crab_gunner':
-        // Torreta: dispara esferas oscuras lentas a distancia.
-        this.fireProjectile(enemy, playerPos, 'dark', 8, 10 * mult);
+        // Torreta: dispara esferas oscuras lentas desde la boca del cañón.
+        // En pleno salto entre suelos aguanta el disparo hasta aterrizar.
+        if (internal.jump) {
+          enemy.attackTimer = 0.35;
+          break;
+        }
+        if (this.computeCrabMuzzle(internal, _muzzlePos)) {
+          this.fireProjectile(enemy, playerPos, 'dark', 8, 10 * mult, 0, _muzzlePos);
+        } else {
+          this.fireProjectile(enemy, playerPos, 'dark', 8, 10 * mult);
+        }
         enemy.attackTimer = 2.8 / mult;
         break;
 
-      case 'spiral_octopus':
-        // Chorro de tinta: mancha la pantalla de Nyx al impactar.
-        this.fireProjectile(enemy, playerPos, 'ink', 0, 8 * mult);
+      case 'spiral_octopus': {
+        // Chorro de tinta desde el frente del manto: mancha la pantalla de Nyx.
+        _muzzleDir.subVectors(playerPos, enemy.position);
+        if (_muzzleDir.lengthSq() < 1e-4) {
+          _muzzleDir.set(0, 0, 1);
+        } else {
+          _muzzleDir.normalize();
+        }
+        _muzzlePos
+          .copy(enemy.position)
+          .addScaledVector(_muzzleDir, enemy.radius * OCTOPUS_INK_FORWARD)
+          .addScaledVector(_up, enemy.radius * OCTOPUS_INK_UP);
+        this.fireProjectile(enemy, playerPos, 'ink', 0, 8 * mult, 0, _muzzlePos);
         enemy.attackTimer = 4.5 / mult;
         break;
+      }
 
       case 'ground_golem':
         // Rompesuelos: embiste si Nyx se acerca.
@@ -914,6 +1312,11 @@ export class DomeWaveManager {
     enemy.hitFlash = Math.max(enemy.hitFlash, 0.25);
   }
 
+  /**
+   * Dispara un proyectil del pool hacia Nyx. Con `origin` (boca del cañón o
+   * frente del manto) nace allí y sale rugiendo hacia el jugador; sin él,
+   * nace en el borde de la esfera del enemigo.
+   */
   private fireProjectile(
     enemy: ManagedWaveEnemy,
     playerPos: THREE.Vector3,
@@ -921,12 +1324,14 @@ export class DomeWaveManager {
     damage: number,
     speed: number,
     spreadRad = 0,
+    origin?: THREE.Vector3,
   ): void {
     const projectile = this.projectiles.find((p) => !p.active);
     if (!projectile) {
       return;
     }
-    _shotDir.subVectors(playerPos, enemy.position);
+    const from = origin ?? enemy.position;
+    _shotDir.subVectors(playerPos, from);
     if (_shotDir.lengthSq() < 1e-4) {
       _shotDir.set(0, 0, 1);
     } else {
@@ -948,7 +1353,10 @@ export class DomeWaveManager {
     projectile.life = PROJECTILE_LIFE_SEC;
     projectile.velocity.copy(_shotDir).multiplyScalar(speed);
     projectile.mesh.material = kind === 'ink' ? this.inkProjectileMaterial : this.darkProjectileMaterial;
-    projectile.mesh.position.copy(enemy.position).addScaledVector(_shotDir, enemy.radius + 0.6);
+    projectile.mesh.position.copy(from).addScaledVector(
+      _shotDir,
+      origin ? 0.35 : enemy.radius + 0.6,
+    );
     projectile.mesh.visible = true;
   }
 
@@ -992,6 +1400,333 @@ export class DomeWaveManager {
   private deactivateAllProjectiles(): void {
     for (const projectile of this.projectiles) {
       this.deactivateProjectile(projectile);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Movimiento y pose procedural
+  // -------------------------------------------------------------------------
+
+  /**
+   * Flotación estándar: bob senoidal + muelle hacia homePos (salvo dash o
+   * embestida en curso) e integración de la velocidad en la posición.
+   */
+  private applyFloatMovement(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    elapsed: number,
+  ): void {
+    const bob = Math.sin(elapsed * FLOAT_BOB_SPEED + enemy.phase) * FLOAT_BOB_AMPLITUDE;
+    _toHome.subVectors(enemy.homePos, enemy.position);
+    const homeDist = _toHome.length();
+    _toHome.y += bob * 0.35;
+
+    if (internal.chargeTimer > 0) {
+      // Embestida: velocidad constante hacia Nyx, sin freno ni muelle.
+      enemy.velocity.copy(internal.chargeDir).multiplyScalar(internal.chargeSpeed);
+      internal.chargeTimer = Math.max(0, internal.chargeTimer - dt);
+    } else if (enemy.dashTimer <= 0) {
+      enemy.velocity.addScaledVector(_toHome, FLOAT_SPRING * dt);
+      if (homeDist > LEASH_RADIUS) {
+        _toHome.normalize();
+        enemy.velocity.addScaledVector(_toHome, HOME_PULL * dt);
+      }
+      _flat.set(enemy.position.x, 0, enemy.position.z);
+      const flatDist = _flat.length();
+      if (flatDist > DOME_KEEP_RADIUS) {
+        _flat.normalize();
+        enemy.velocity.addScaledVector(_flat, -DOME_KEEP_PULL * dt);
+      }
+      enemy.velocity.multiplyScalar(Math.exp(-FLOAT_DAMPING * dt));
+    } else {
+      enemy.velocity.multiplyScalar(Math.exp(-0.25 * dt));
+    }
+
+    enemy.position.addScaledVector(enemy.velocity, dt);
+  }
+
+  /**
+   * Cangrejo Artillero: anclaje a suelos, salto parabólico entre ellos cuando
+   * el suyo sale de la cúpula o desaparece, y flotación suave (con agarre de
+   * suelos cercanos) mientras no quede ninguno disponible.
+   */
+  private updateCrabEnemy(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    elapsed: number,
+    playerPos: THREE.Vector3,
+    activeSlabs: SlabCollider[] | undefined,
+  ): void {
+    const slab =
+      internal.attachedSlabId && activeSlabs
+        ? findSlabById(activeSlabs, internal.attachedSlabId)
+        : null;
+
+    // El slab salió de la cúpula (>72 m) o desapareció: salta hacia otro.
+    if (internal.attachedSlabId && (!slab || slab.center.length() > CRAB_LEAVE_R)) {
+      this.startCrabJump(enemy, internal, activeSlabs, internal.attachedSlabId);
+    }
+
+    if (internal.jump) {
+      this.updateCrabJump(enemy, internal, dt, activeSlabs);
+      this.flapCrabLegs(enemy, internal, elapsed);
+      return;
+    }
+
+    if (internal.attachedSlabId && slab) {
+      this.updateCrabOnSlab(enemy, internal, slab, dt, playerPos);
+      return;
+    }
+
+    // Sin slab: flotación suave + guiñeo de vuelo + agarre de suelos cercanos.
+    this.applyFloatMovement(enemy, internal, dt, elapsed);
+    this.orientCrabInFlight(enemy, dt, elapsed, playerPos);
+    this.flapCrabLegs(enemy, internal, elapsed);
+    if (activeSlabs && activeSlabs.length > 0) {
+      const target = pickCrabJumpSlab(activeSlabs, null, enemy.position);
+      if (target && enemy.position.distanceTo(target.center) <= CRAB_GRAB_RANGE) {
+        this.startCrabJump(enemy, internal, activeSlabs, null);
+      }
+    }
+  }
+
+  /**
+   * Arranca el salto parabólico hacia el mejor slab disponible (center < 68 m
+   * o el más cercano al centro). Sin destino, el cangrejo pasa a flotación
+   * suave anclada donde está.
+   */
+  private startCrabJump(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    activeSlabs: SlabCollider[] | undefined,
+    leavingSlabId: string | null,
+  ): CrabJump | null {
+    const target = pickCrabJumpSlab(activeSlabs, leavingSlabId, enemy.position);
+    if (!target) {
+      internal.attachedSlabId = null;
+      internal.jump = null;
+      enemy.homePos.copy(enemy.position);
+      return null;
+    }
+    const targetLocal = new THREE.Vector2();
+    pickSlabLocalPoint(target, Math.random, targetLocal);
+    slabTopPoint(target, targetLocal, _targetPos);
+    _slabUp.set(0, 1, 0).applyQuaternion(target.quaternion);
+    _targetPos.addScaledVector(_slabUp, CRAB_STAND_HEIGHT);
+    const dist = enemy.position.distanceTo(_targetPos);
+    internal.jump = {
+      from: enemy.position.clone(),
+      targetSlabId: target.id,
+      targetLocal,
+      duration: crabJumpDuration(dist),
+      time: 0,
+      arcHeight: crabJumpArc(dist),
+      offset: new THREE.Vector3(),
+    };
+    internal.attachedSlabId = null;
+    return internal.jump;
+  }
+
+  /** Progresa el arco del salto en curso hasta aterrizar pegado al destino. */
+  private updateCrabJump(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    activeSlabs: SlabCollider[] | undefined,
+  ): void {
+    const jump = internal.jump;
+    if (!jump) {
+      return;
+    }
+
+    // El knockback en vuelo desvía el arco; el amortiguador de aire lo frena.
+    jump.offset.addScaledVector(enemy.velocity, dt);
+    enemy.velocity.multiplyScalar(Math.exp(-CRAB_AIR_DAMPING * dt));
+
+    const targetSlab = activeSlabs ? findSlabById(activeSlabs, jump.targetSlabId) : null;
+    if (!targetSlab) {
+      // El slab destino desapareció en pleno vuelo: re-objetiva o flota.
+      const next = this.startCrabJump(enemy, internal, activeSlabs, jump.targetSlabId);
+      if (next) {
+        next.offset.add(jump.offset);
+      }
+      return;
+    }
+
+    jump.time += dt;
+    const t = Math.min(1, jump.time / jump.duration);
+
+    // Aterrizaje sobre la cara superior del slab destino (sigue su bob).
+    slabTopPoint(targetSlab, jump.targetLocal, _targetPos);
+    _slabUp.set(0, 1, 0).applyQuaternion(targetSlab.quaternion);
+    _targetPos.addScaledVector(_slabUp, CRAB_STAND_HEIGHT);
+
+    // Arco parabólico: línea despegue→aterrizaje más la altura del salto.
+    enemy.position.lerpVectors(jump.from, _targetPos, t);
+    enemy.position.y += jump.arcHeight * 4 * t * (1 - t);
+    enemy.position.add(jump.offset);
+
+    if (t >= 1) {
+      // Aterrizaje pegado al slab destino, con blend suave desde donde tocó.
+      internal.jump = null;
+      internal.attachedSlabId = jump.targetSlabId;
+      internal.slabLocalOffset.copy(jump.targetLocal);
+      internal.attachBlend = 0;
+      internal.attachFrom.copy(enemy.position);
+    }
+  }
+
+  /** Cangrejo pegado a su slab: anclaje, deslizamiento por knockback y apuntado. */
+  private updateCrabOnSlab(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    slab: SlabCollider,
+    dt: number,
+    playerPos: THREE.Vector3,
+  ): void {
+    // El knockback desliza el offset local, fijado dentro de los bordes.
+    if (enemy.velocity.lengthSq() > 1e-6) {
+      _localOffset.copy(enemy.velocity).applyQuaternion(slab.invQuaternion);
+      internal.slabLocalOffset.x += _localOffset.x * dt;
+      internal.slabLocalOffset.y += _localOffset.z * dt;
+      clampSlabLocalPoint(slab, internal.slabLocalOffset);
+      enemy.velocity.multiplyScalar(Math.exp(-CRAB_SKID_DAMPING * dt));
+    }
+
+    // Anclaje a la cara superior (+Y local) del slab.
+    slabTopPoint(slab, internal.slabLocalOffset, _targetPos);
+    _slabUp.set(0, 1, 0).applyQuaternion(slab.quaternion);
+    _targetPos.addScaledVector(_slabUp, CRAB_STAND_HEIGHT);
+    if (internal.attachBlend < 1) {
+      internal.attachBlend = Math.min(1, internal.attachBlend + dt / CRAB_ATTACH_BLEND_TIME);
+      const t = internal.attachBlend;
+      enemy.position.lerpVectors(internal.attachFrom, _targetPos, t * t * (3 - 2 * t));
+    } else {
+      enemy.position.copy(_targetPos);
+    }
+
+    // El cuerpo gira sobre el slab para encarar a Nyx.
+    _aimDir.subVectors(playerPos, enemy.position);
+    if (_aimDir.lengthSq() > 1e-6) {
+      _aimDir.normalize();
+      _slabForward.copy(_aimDir).addScaledVector(_slabUp, -_aimDir.dot(_slabUp));
+      if (_slabForward.lengthSq() > 1e-4) {
+        _slabForward.normalize();
+        _basisX.crossVectors(_slabUp, _slabForward).normalize();
+        _basisMat.makeBasis(_basisX, _slabUp, _slabForward);
+        _targetQuat.setFromRotationMatrix(_basisMat);
+        enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-CRAB_TURN_RATE * dt));
+      }
+    }
+
+    // El cañón apunta fino hacia Nyx por encima del giro del cuerpo.
+    this.aimCrabTurret(internal, dt, playerPos);
+  }
+
+  /** Boca del cañón en espacio mundo (hueso `turret` o mesh `detail_cannon`). */
+  private computeCrabMuzzle(internal: EnemyInternal, out: THREE.Vector3): boolean {
+    const node = internal.turretNode;
+    if (!node) {
+      return false;
+    }
+    node.updateWorldMatrix(true, false);
+    node.getWorldPosition(out);
+    node.getWorldQuaternion(_turretWorldQuat);
+    _muzzleDir.copy(internal.turretForward).applyQuaternion(_turretWorldQuat);
+    out.addScaledVector(_muzzleDir, CANNON_MUZZLE_DISTANCE);
+    return true;
+  }
+
+  /** Gira el hueso del cañón para apuntar su eje de disparo hacia Nyx. */
+  private aimCrabTurret(internal: EnemyInternal, dt: number, playerPos: THREE.Vector3): void {
+    const node = internal.turretNode;
+    if (!node) {
+      return;
+    }
+    node.updateWorldMatrix(true, false);
+    node.getWorldPosition(_muzzlePos);
+    _lookDir.subVectors(playerPos, _muzzlePos);
+    if (_lookDir.lengthSq() < 1e-6) {
+      return;
+    }
+    _lookDir.normalize();
+    // Orientación mundial deseada: el eje local del cañón apunta a Nyx.
+    _targetQuat.setFromUnitVectors(internal.turretForward, _lookDir);
+    const parent = node.parent;
+    if (parent) {
+      parent.getWorldQuaternion(_invQuat).invert();
+      _targetQuat.premultiply(_invQuat);
+    }
+    node.quaternion.slerp(_targetQuat, 1 - Math.exp(-CRAB_TURRET_TURN_RATE * dt));
+  }
+
+  /** Cangrejo en el aire sin slab: encara a Nyx con un guiñeo ligero. */
+  private orientCrabInFlight(
+    enemy: ManagedWaveEnemy,
+    dt: number,
+    elapsed: number,
+    playerPos: THREE.Vector3,
+  ): void {
+    _lookDir.subVectors(playerPos, enemy.position);
+    if (_lookDir.lengthSq() < 1e-6) {
+      _lookDir.set(0, 0, 1);
+    } else {
+      _lookDir.normalize();
+    }
+    lookAtQuat(_lookDir, _up, _targetQuat);
+    _rollQuat.setFromAxisAngle(
+      _up,
+      Math.sin(elapsed * CRAB_FLIGHT_WOBBLE_SPEED + enemy.phase) * CRAB_FLIGHT_WOBBLE,
+    );
+    _targetQuat.premultiply(_rollQuat);
+    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-CRAB_TURN_RATE * dt));
+  }
+
+  /** Aleteo procedural de las patas (`leg_*`) mientras el cangrejo vuela. */
+  private flapCrabLegs(enemy: ManagedWaveEnemy, internal: EnemyInternal, elapsed: number): void {
+    for (let i = 0; i < internal.legs.length; i++) {
+      const leg = internal.legs[i];
+      _legWaveQuat.setFromAxisAngle(
+        _legWaveAxis,
+        Math.sin(elapsed * CRAB_LEG_WAVE_SPEED + enemy.phase + i * 0.8) * leg.amplitude,
+      );
+      leg.bone.quaternion.copy(leg.rest).multiply(_legWaveQuat);
+    }
+  }
+
+  /** Pulpo: orientación suave hacia Nyx con balanceo en espiral y tentáculos ondeando. */
+  private updateOctopusPose(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    elapsed: number,
+    playerPos: THREE.Vector3,
+  ): void {
+    _lookDir.subVectors(playerPos, enemy.position);
+    if (_lookDir.lengthSq() < 1e-6) {
+      _lookDir.set(0, 0, 1);
+    } else {
+      _lookDir.normalize();
+    }
+    lookAtQuat(_lookDir, _up, _targetQuat);
+    // Espiral: rodillo alrededor del eje de avance mientras se desplaza.
+    _rollQuat.setFromAxisAngle(
+      _lookDir,
+      Math.sin(elapsed * OCTOPUS_SPIRAL_SPEED + enemy.phase) * OCTOPUS_SPIRAL_TILT,
+    );
+    _targetQuat.premultiply(_rollQuat);
+    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-OCTOPUS_TURN_RATE * dt));
+
+    // Oscilación procedural de los tentáculos sobre su pose de reposo.
+    for (let i = 0; i < internal.tentacles.length; i++) {
+      const tentacle = internal.tentacles[i];
+      _legWaveQuat.setFromAxisAngle(
+        _legWaveAxis,
+        Math.sin(elapsed * TENTACLE_WAVE_SPEED + enemy.phase + i) * tentacle.amplitude,
+      );
+      tentacle.bone.quaternion.copy(tentacle.rest).multiply(_legWaveQuat);
     }
   }
 

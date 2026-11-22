@@ -172,11 +172,11 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       }
     };
 
-    waveMgr.startWave(1);
+    let activeSlabs: SlabCollider[] = [];
+    waveMgr.startWave(1, activeSlabs);
     runTracker.recordWave(1);
     applyFloorMode(waveMgr.getWaveInfo().floorMode);
     let nextWaveDelay = 0;
-    let activeSlabs: SlabCollider[] = [];
 
     const openLevelUpModal = (forLevel: number) => {
       if (document.pointerLockElement === canvas) {
@@ -421,6 +421,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           controller.getPosition(),
           controller.getLockedEnemy(),
           controller.getAttackAccelTime(),
+          activeSlabs,
           (dmg) => controller?.applyDamage(dmg),
           () => combat.applyOctopusInkAttack(),
         );
@@ -433,6 +434,8 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
         // Regla de Barrera Blanca para enemigos
         for (const enemy of activeEnemies) {
           if (!enemy.entity.alive) continue;
+          // El cangrejo en pleno salto entre suelos no muere por la barrera.
+          if (waveMgr.isEnemyJumping(enemy)) continue;
           if (combat.checkDomeBarrierKill(enemy.entity, DOME_PLAYER_BOUND_RADIUS)) {
             killWaveEnemy(enemy, true);
           }
@@ -445,7 +448,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
             nextWaveDelay -= worldDt;
             if (nextWaveDelay <= 0) {
               const nextWave = waveMgr.getWaveInfo().wave + 1;
-              waveMgr.startWave(nextWave);
+              waveMgr.startWave(nextWave, activeSlabs);
               runTracker.recordWave(nextWave);
               applyFloorMode(waveMgr.getWaveInfo().floorMode);
             }
