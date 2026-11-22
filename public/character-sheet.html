@@ -501,8 +501,32 @@
         </div>
       </div>
       <div class="ctrl">
-        <span class="ctrl__label">ANIMACIÓN (NyxAnimator)</span>
+        <span class="ctrl__label">ANIMACIÓN (NyxAnimator · 19)</span>
         <div class="toggles" id="anim-btns">
+          <button class="toggle" id="t-anim-prev" type="button" title="Anterior">◀</button>
+          <select class="toggle" id="anim-select" style="font-family:inherit;cursor:pointer;padding:6px 10px;">
+            <option value="">— Elegir animación —</option>
+            <option value="idle">idle</option>
+            <option value="run">run</option>
+            <option value="jump_land">jump_land</option>
+            <option value="land_recover">land_recover</option>
+            <option value="zero_g_float">zero_g_float</option>
+            <option value="gravity_fall">gravity_fall</option>
+            <option value="air_dash">air_dash</option>
+            <option value="gravity_kick">gravity_kick</option>
+            <option value="kick_flip">kick_flip</option>
+            <option value="spiral_drill_kick">spiral_drill_kick</option>
+            <option value="gravity_slide">gravity_slide</option>
+            <option value="counter_parry">counter_parry</option>
+            <option value="wall_shift_flip">wall_shift_flip</option>
+            <option value="dome_bounce">dome_bounce</option>
+            <option value="victory_float">victory_float</option>
+            <option value="stasis_cast">stasis_cast</option>
+            <option value="stasis_throw">stasis_throw</option>
+            <option value="hit_stagger">hit_stagger</option>
+            <option value="eden_absorb">eden_absorb</option>
+          </select>
+          <button class="toggle" id="t-anim-next" type="button" title="Siguiente">▶</button>
           <button class="toggle" id="t-dashdir" type="button" aria-pressed="false">DASH ➜ +X</button>
           <button class="toggle is-on" id="t-autoloop" type="button" aria-pressed="true">AUTO-REPETIR</button>
         </div>
@@ -1252,13 +1276,27 @@ for (const btn of poseBtns) {
 }
 
 const animBtns = document.querySelectorAll('#anim-btns [data-anim]');
+const animSelect = document.getElementById('anim-select');
+const animPrev = document.getElementById('t-anim-prev');
+const animNext = document.getElementById('t-anim-next');
+const ANIM_LIST = [
+  'idle', 'run', 'jump_land', 'land_recover', 'zero_g_float', 'gravity_fall',
+  'air_dash', 'gravity_kick', 'kick_flip', 'spiral_drill_kick', 'gravity_slide',
+  'counter_parry', 'wall_shift_flip', 'dome_bounce', 'victory_float',
+  'stasis_cast', 'stasis_throw', 'hit_stagger', 'eden_absorb',
+];
 const animParams = { speed01: 0.85, turnRate: 0, verticalVel: -14, hairGravityLocal: [0, -1, 0] };
 let animDashDir = 1;
 let animRetriggerAt = 0;
 
 function selectAnim(name) {
+  if (!name) return;
   state.pose = 'anim';
   state.anim = name;
+  if (animSelect) {
+    animSelect.value = name;
+    animSelect.classList.add('is-on');
+  }
   for (const rig of rigs) rig.animator?.setState(name, { dashDir: animDashDir });
   for (const b of animBtns) {
     const on = b.dataset.anim === name;
@@ -1268,6 +1306,25 @@ function selectAnim(name) {
   for (const b of poseBtns) { b.classList.remove('is-on'); b.setAttribute('aria-pressed', 'false'); }
 }
 for (const btn of animBtns) btn.addEventListener('click', () => selectAnim(btn.dataset.anim));
+if (animSelect) {
+  animSelect.addEventListener('change', () => {
+    if (animSelect.value) selectAnim(animSelect.value);
+  });
+}
+if (animPrev) {
+  animPrev.addEventListener('click', () => {
+    const idx = ANIM_LIST.indexOf(state.anim);
+    const nextIdx = idx <= 0 ? ANIM_LIST.length - 1 : idx - 1;
+    selectAnim(ANIM_LIST[nextIdx]);
+  });
+}
+if (animNext) {
+  animNext.addEventListener('click', () => {
+    const idx = ANIM_LIST.indexOf(state.anim);
+    const nextIdx = idx < 0 || idx >= ANIM_LIST.length - 1 ? 0 : idx + 1;
+    selectAnim(ANIM_LIST[nextIdx]);
+  });
+}
 
 const dashBtn = document.getElementById('t-dashdir');
 dashBtn.addEventListener('click', () => {
