@@ -32,6 +32,13 @@ export default function TitleScreen({
   settingsRef.current = settings;
 
   const [modal, setModal] = useState<MenuModal>(null);
+  const [nyxVariant, setNyxVariant] = useState<'new' | 'legacy'>('new');
+
+  const handleToggleNyxVariant = () => {
+    const next = nyxVariant === 'new' ? 'legacy' : 'new';
+    setNyxVariant(next);
+    sandboxRef.current?.setNyxModelVariant(next);
+  };
 
   // Montaje único del runtime WebGL (el sandbox se reconstruye solo al salir).
   useEffect(() => {
@@ -119,10 +126,25 @@ export default function TitleScreen({
         hecho por srpakura
       </p>
 
-      {/* --- Etiqueta minimalista del roguelite de gravedad cero --- */}
-      <p className="absolute bottom-14 right-4 z-10 text-[10px] font-black uppercase tracking-[0.22em] text-cyan-200/70">
-        NYX // ZERO-G GRAVITY ROGUELITE
-      </p>
+      {/* --- Etiqueta minimalista + comparador de modelo Nyx (Nuevo vs Anterior) --- */}
+      <div className="absolute bottom-14 right-4 z-10 flex flex-col items-end gap-2">
+        <button
+          type="button"
+          onClick={handleToggleNyxVariant}
+          className="-skew-x-12 cursor-pointer border-2 border-white/80 bg-[#090314]/80 px-3.5 py-1.5 text-white shadow-[4px_4px_0_#000000] backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300"
+        >
+          <span className="block skew-x-12 text-[11px] font-black uppercase tracking-[0.14em]">
+            Nyx:{' '}
+            <span className={nyxVariant === 'new' ? 'text-cyan-300' : 'text-amber-300'}>
+              {nyxVariant === 'new' ? 'Nuevo (25 huesos)' : 'Anterior (18 huesos)'}
+            </span>
+            {' · Cambiar'}
+          </span>
+        </button>
+        <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-200/70">
+          NYX // ZERO-G GRAVITY ROGUELITE
+        </p>
+      </div>
 
       {modal === 'controls' && (
         <ControlsModal
