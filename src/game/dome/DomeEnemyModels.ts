@@ -27,26 +27,30 @@ export interface EnemyModelPalette {
 
 /** Paleta por arquetipo: fuente única para el GLB y la forma provisional. */
 export const ENEMY_MODEL_COLORS: Record<EnemyArchetype, EnemyModelPalette> = {
-  abyssal_cell: { color: 0x7ae8dc, rim: 0xbafff2 },
-  spiral_octopus: { color: 0xff5f9e, rim: 0xffb3d4 },
-  crab_gunner: { color: 0xff8c42, rim: 0xffd0a3 },
-  ground_golem: { color: 0x9c8f7a, rim: 0xd8c9a8 },
-  lightning_butterfly: { color: 0xfff45f, rim: 0xffffffa8 },
-  giant_sparrow: { color: 0xff4d5e, rim: 0xffb0b8 },
-  prisma_necrozma: { color: 0xb06bff, rim: 0xd9baff },
-  kronos_leviathan: { color: 0x2f6bff, rim: 0x9fc0ff },
+  abyssal_cell: { color: 0x6b143b, rim: 0xff2a9d },
+  spiral_octopus: { color: 0x4b1369, rim: 0x2563eb },
+  crab_gunner: { color: 0x7c192d, rim: 0xff2a9d },
+  ground_golem: { color: 0x3b0f54, rim: 0x1e40af },
+  lightning_butterfly: { color: 0x831843, rim: 0xff2a9d },
+  giant_sparrow: { color: 0x7f1d1d, rim: 0x2563eb },
+  prisma_necrozma: { color: 0x4c1d95, rim: 0xff2a9d },
+  kronos_leviathan: { color: 0x31105c, rim: 0x1d4ed8 },
 };
 
-// --- Núcleos star_core: dorado brillante con rim rojo neón --- 
-const STAR_CORE_COLOR = 0xffd166;
-const STAR_CORE_RIM = 0xff2a6d;
-const STAR_CORE_EMISSIVE = 0.95;
+// --- Núcleos star_core: dorado con brillo intenso y borde dorado cálido ---
+const STAR_CORE_COLOR = 0xffcc33;
+const STAR_CORE_RIM = 0xfff3b0;
+const STAR_CORE_EMISSIVE = 1.45;
 const STAR_CORE_OUTLINE_THICKNESS = 0.035;
-const STAR_CORE_INK = 0xffffff;
+const STAR_CORE_INK = 0xffe58f;
 
-// --- Carne: cel del color del arquetipo, translúcida para ver la estrella --- 
-const FLESH_OUTLINE_THICKNESS = 0.045;
-const FLESH_INK = 0x05030f;
+// --- Carne: rojos y morados oscuros aleatorios + tinta fucsia o azul oscurillo ---
+const FLESH_CRIMSON_DARK = new THREE.Color(0x7f152e);
+const FLESH_PURPLE_DARK = new THREE.Color(0x3b0d63);
+const FLESH_INK_FUCHSIA = 0xff2a9d;
+const FLESH_INK_DARK_BLUE = 0x1e3a8a;
+const FLESH_OUTLINE_THICKNESS = 0.05;
+const FLESH_INK = 0x1e3a8a;
 
 // --- Piezas secundarias (detail_*): cel oscuro limpio --- 
 const DETAIL_COLOR = 0x241d38;
@@ -158,8 +162,15 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
   ) as THREE.Group;
 
   const palette = ENEMY_MODEL_COLORS[archetype];
-  const fleshOpacity = archetype === 'abyssal_cell' ? 0.48 : 0.72;
+  const fleshOpacity = archetype === 'abyssal_cell' ? 0.52 : 0.72;
   const starCores: THREE.Object3D[] = [];
+  // Variación aleatoria por instancia entre rojo oscuro y morado oscuro
+  const fleshColor = new THREE.Color().lerpColors(
+    FLESH_CRIMSON_DARK,
+    FLESH_PURPLE_DARK,
+    Math.random(),
+  );
+  const inkColor = Math.random() < 0.5 ? FLESH_INK_FUCHSIA : FLESH_INK_DARK_BLUE;
 
   root.traverse((obj) => {
     // Los contornos que añadimos aquí mismo no se re-visten.
@@ -186,16 +197,16 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       starCores.push(mesh);
     } else if (names.includes('flesh')) {
       mesh.renderOrder = 1;
-      const fleshMaterial = createComicCelMaterial(palette.color, {
+      const fleshMaterial = createComicCelMaterial(fleshColor.getHex(), {
         rimColor: palette.rim,
-        rimStrength: 0.7,
+        rimStrength: 0.8,
         transparent: true,
         opacity: fleshOpacity,
       });
       // Translúcido: sin depthWrite la estrella del interior se ve perfecta.
       fleshMaterial.depthWrite = false;
       mesh.material = fleshMaterial;
-      addComicOutline(mesh, FLESH_OUTLINE_THICKNESS, FLESH_INK).name = OUTLINE_MARKER;
+      addComicOutline(mesh, FLESH_OUTLINE_THICKNESS, inkColor).name = OUTLINE_MARKER;
     } else {
       mesh.material = createComicCelMaterial(DETAIL_COLOR, {
         rimColor: DETAIL_RIM,

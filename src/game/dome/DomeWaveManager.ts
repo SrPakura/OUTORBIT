@@ -651,10 +651,15 @@ export class DomeWaveManager {
       enemy.dashTimer = Math.max(0, enemy.dashTimer - dt);
       enemy.attackTimer -= dt;
 
-      // Rotación continua de la estrella interior sobre sí misma y mixer GLB
+      // Rotación continua de la estrella interior en 2 ejes + vibración de energía
       for (const star of internal.starCores) {
-        star.rotation.y += dt * 2.1;
-        star.rotation.x += dt * 1.3;
+        star.rotation.y += dt * 2.8;
+        star.rotation.x += dt * 2.0;
+        star.position.set(
+          Math.sin(elapsed * 29 + enemy.phase) * 0.035,
+          Math.cos(elapsed * 34 + enemy.phase) * 0.035,
+          Math.sin(elapsed * 23 + enemy.phase * 1.4) * 0.035,
+        );
       }
       internal.mixer?.update(dt);
 
@@ -724,9 +729,14 @@ export class DomeWaveManager {
       enemy.entity.position.copy(enemy.position);
       enemy.entity.velocity.copy(enemy.velocity);
 
-      // --- Flash de impacto + pinchos: escala y emissive/rim ---
+      // --- Flash de impacto + vibración de energía descontrolada + pinchos ---
       const flash = enemy.hitFlash;
-      enemy.mesh.scale.setScalar(1 + flash * HIT_FLASH_SCALE);
+      const baseScale = 1 + flash * HIT_FLASH_SCALE;
+      enemy.mesh.scale.set(
+        baseScale + Math.sin(elapsed * 27 + enemy.phase) * 0.026,
+        baseScale + Math.cos(elapsed * 31 + enemy.phase) * 0.026,
+        baseScale + Math.sin(elapsed * 24 + enemy.phase * 1.7) * 0.026,
+      );
       let emissive = flash * HIT_FLASH_EMISSIVE;
       if (internal.material) {
         if (enemy.entity.spikesActive) {
