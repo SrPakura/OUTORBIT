@@ -84,27 +84,27 @@ const LAND_ALIGN_MIN = 0.35; // pies orientados a la superficie: aterriza
 const WALL_BOUNCE_KEEP = 0.45; // rebote lateral amortiguado al 45%
 
 // --- Flotación 0G
-const FLOAT_ACCEL = 10.0;
-const FLOAT_MAX_SPEED = 21.0;
+const FLOAT_ACCEL = 13.5;
+const FLOAT_MAX_SPEED = 28.0;
 const FLOAT_DRAG = 0.06; // exp(-0.06*dt): conserva ~95% de la velocidad por segundo
 const CENTRIPETAL_SPEED_K = 0.11; // centripetalFactor = 1/(1+speed*0.11)
 const BODY_TURN_RATE = 10;
 const VEL_ALIGN_RATE = 4.0;
 
 // --- Dash (Clic Derecho)
-const DASH_SPEED = 24.0;
+const DASH_SPEED = 31.0;
 const DASH_DURATION = 0.36;
 const DASH_TURN_RATE = 5.0;
-const DASH_SIDE_SPEED = 24;
-const DASH_BACK_IMPULSE = 12;
+const DASH_SIDE_SPEED = 30;
+const DASH_BACK_IMPULSE = 14;
 
 // --- Ataque de Velocidad (Clic Izquierdo)
-const ATTACK_ACCEL = 11;
-const DRILL_SPEED_THRESHOLD = 14.5; // m/s instantáneos -> spiral_drill_kick
-const GRAVITY_KICK_SPEED = 18.0; // velocidad tope de la patada gravitatoria
-const SPIRAL_DRILL_SPEED = 26.0; // velocidad tope del taladro espiral
-const VOID_FALL_START_SPEED = 17.0;
-const VOID_FALL_MAX_SPEED = 25.0;
+const ATTACK_ACCEL = 15;
+const DRILL_SPEED_THRESHOLD = 18.0; // m/s instantáneos -> spiral_drill_kick
+const GRAVITY_KICK_SPEED = 23.5; // velocidad tope de la patada gravitatoria
+const SPIRAL_DRILL_SPEED = 34.0; // velocidad tope del taladro espiral
+const VOID_FALL_START_SPEED = 22.0;
+const VOID_FALL_MAX_SPEED = 33.0;
 const KICK_RECOVER_BRAKE = 4.2; // exp(-4.2*dt): frena hasta casi 0
 const KICK_RECOVER_MAX_TIME_PER_FLIP = 0.9; // seguridad anti-atasco por flip
 
@@ -1169,7 +1169,7 @@ export class NyxDomeController {
       const dir = this.tmpA.set(0, 0, 0).addScaledVector(this.camFwd, f).addScaledVector(this.camRight, r);
       if (dir.lengthSq() > 1e-6) {
         dir.normalize();
-        this.velocity.addScaledVector(dir, FLOAT_ACCEL * dt);
+        this.velocity.addScaledVector(dir, FLOAT_ACCEL * this.speedMultiplier * dt);
         this.eden = Math.max(0, this.eden - EDEN_MOVE_DRAIN * dt);
       }
     }
