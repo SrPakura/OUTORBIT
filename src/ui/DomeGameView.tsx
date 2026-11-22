@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { createDomeArenaBackdrop } from '@/game/render/domeArenaScene';
 import { loadNyxRigged, type LoadedNyx } from '@/game/render/nyxModelLoader';
@@ -6,10 +6,25 @@ import { createDomeSlabs } from '@/game/dome/DomeSlabs';
 import { createTestEnemySpheres } from '@/game/dome/TestEnemySpheres';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
-import type { DomeHudState } from '@/game/dome/domeTypes';
+import {
+  ACTIVE_SKILLS_CATALOG,
+  DomeProgressionManager,
+  type LevelUpCardOption,
+} from '@/game/dome/DomeProgression';
+import { DomePickupManager } from '@/game/dome/DomePickups';
+import { DomeSkillExecutor, type SkillTargetEnemy } from '@/game/dome/DomeSkills';
+import {
+  createDomeEnemyEntity,
+  DomeCombatSystem,
+  type DomeEnemyEntity,
+} from '@/game/dome/DomeCombatSystem';
+import { DomeRunTracker, submitDomeRunToLeaderboard } from '@/game/dome/DomeRunStats';
+import { DOME_PLAYER_BOUND_RADIUS, type DomeHudState, type TestEnemySphere } from '@/game/dome/domeTypes';
 import type { GameSettings } from '@/game/settings';
 import { SynthAudio } from '@/game/audio/SynthAudio';
 import DomeHudSketch from '@/ui/DomeHudSketch';
+import FluidLevelUpModal, { type FluidCardOption } from '@/ui/FluidLevelUpModal';
+import DomeBattleReport, { type DomeBattleReportData } from '@/ui/DomeBattleReport';
 
 interface DomeGameViewProps {
   settings: GameSettings;
@@ -51,15 +66,64 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const controllerRef = useRef<NyxDomeController | null>(null);
   const audioRef = useRef<SynthAudio | null>(null);
+  const progressionRef = useRef<DomeProgressionManager | null>(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
+  const [runSeed, setRunSeed] = useState(0);
   const [hud, setHud] = useState<DomeHudState>(INITIAL_HUD);
+  const [levelUpState, setLevelUpState] = useState<{
+    isOpen: boolean;
+    newLevel: number;
+    choices: [LevelUpCardOption, LevelUpCardOption] | null;
+    requiresSlotReplacement: boolean;
+  }>({ isOpen: false, newLevel: 1, choices: null, requiresSlotReplacement: false });
+  const levelUpOpenRef = useRef(false);
+  levelUpOpenRef.current = levelUpState.isOpen;
+
+  const [battleReport, setBattleReport] = useState<DomeBattleReportData | null>(null);
+  const battleReportOpenRef = useRef(false);
+  battleReportOpenRef.current = battleReport !== null;
+  const runTrackerRef = useRef<DomeRunTracker | null>(null);
 
   useEffect(() => {
     controllerRef.current?.applySettings(settings);
     audioRef.current?.setVolumeMultiplier(settings.masterVolume);
   }, [settings]);
+
+  const handleSelectCard = useCallback(
+    (option: FluidCardOption, replaceSlotIndex?: 0 | 1 | 2) => {
+      const prog = progressionRef.current;
+      const choices = levelUpState.choices;
+      if (!prog || !choices) return;
+      const fullOption = choices.find((c) => c.id === option.id) ?? choices[0];
+      prog.applyChoice(fullOption, replaceSlotIndex);
+      setLevelUpState({ isOpen: false, newLevel: prog.level, choices: null, requiresSlotReplacement: false });
+      const canvas = canvasRef.current;
+      if (canvas && document.pointerLockElement !== canvas) {
+        canvas.requestPointerLock?.();
+      }
+    },
+    [levelUpState.choices],
+  );
+
+  const handlePlayAgain = useCallback(() => {
+    setBattleReport(null);
+    setHud(INITIAL_HUD);
+    setRunSeed((s) => s + 1);
+  }, []);
+
+  const handleSubmitScore = useCallback(async (playerName: string) => {
+    const tracker = runTrackerRef.current;
+    const prog = progressionRef.current;
+    if (!tracker || !prog) return false;
+    const equipped = prog.slots
+      .filter((s) => s.skillId !== null)
+      .map((s) => ({ id: s.skillId as string, level: s.level }));
+    const summary = tracker.getSummary(equipped, prog.passives);
+    const saved = await submitDomeRunToLeaderboard(summary, playerName);
+    return saved !== null;
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -85,14 +149,87 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
     const backdrop = createDomeArenaBackdrop(scene);
     const slabRig = createDomeSlabs(scene);
     const enemyMgr = createTestEnemySpheres(scene);
+    const pickups = new DomePickupManager(scene);
+    const skillExecutor = new DomeSkillExecutor(scene);
+    const progression = new DomeProgressionManager();
+    progressionRef.current = progression;
+    const combat = new DomeCombatSystem(progression.maxHp);
+    const runTracker = new DomeRunTracker();
+    runTrackerRef.current = runTracker;
     const vfx = new MotionVfxSystem(scene);
     const audio = new SynthAudio();
     audio.setVolumeMultiplier(settingsRef.current.masterVolume);
     audioRef.current = audio;
 
+    // Envoltorio de combate para las esferas de prueba (compatible con el futuro Bestiario)
+    const enemyEntities = new Map<string, DomeEnemyEntity>();
+    const respawnTimers = new Map<string, number>();
+    for (const s of enemyMgr.enemies) {
+      const archetype = s.evasive ? 'spiral_octopus' : 'abyssal_cell';
+      enemyEntities.set(s.id, createDomeEnemyEntity(s.id, archetype, s.mesh, s.position));
+    }
+
+    const openLevelUpModal = (forLevel: number) => {
+      if (document.pointerLockElement === canvas) {
+        document.exitPointerLock?.();
+      }
+      const choices = progression.generateLevelUpChoices(forLevel);
+      const allSlotsFull = progression.slots.every((s) => s.skillId !== null);
+      setLevelUpState({
+        isOpen: true,
+        newLevel: forLevel,
+        choices,
+        requiresSlotReplacement: allSlotsFull,
+      });
+    };
+
+    // Nivel 1: abre elección inicial en el segundo 1 (Carta 1 fija Campo Gravitacional)
+    if (progression.pendingInitialPick) {
+      openLevelUpModal(1);
+    }
+
     let loadedNyx: LoadedNyx | null = null;
     let controller: NyxDomeController | null = null;
     let disposed = false;
+
+    const killEnemyEntity = (sphere: TestEnemySphere, entity: DomeEnemyEntity, viaBarrier: boolean) => {
+      entity.alive = false;
+      entity.hp = 0;
+      sphere.mesh.visible = false;
+      respawnTimers.set(sphere.id, 2.5);
+      pickups.spawnFromEnemy(sphere.position, entity.expValue, 6);
+      runTracker.recordKill({
+        isElite: entity.isElite,
+        isBoss: entity.isBoss,
+      });
+      if (viaBarrier) runTracker.recordBarrierKill();
+    };
+
+    const handleSkillDamageEnemy = (
+      target: SkillTargetEnemy,
+      amount: number,
+      impulse: THREE.Vector3,
+      bypassFlesh = false,
+    ) => {
+      const sphere = enemyMgr.enemies.find((e) => e.id === target.id);
+      const entity = enemyEntities.get(target.id);
+      if (!sphere || !entity || !entity.alive) return;
+
+      entity.position.copy(sphere.position);
+      const res = combat.computeKineticImpact(
+        entity,
+        Math.max(12, amount * 0.4),
+        progression.getModifiers().forceMultiplier,
+        false,
+        bypassFlesh,
+      );
+      sphere.velocity.add(impulse);
+      sphere.hitFlash = 1;
+      runTracker.recordDamage(Math.max(amount, res.damage));
+      if (entity.hp <= 0 || res.killed) {
+        killEnemyEntity(sphere, entity, false);
+      }
+    };
 
     loadNyxRigged()
       .then((nyx) => {
@@ -111,6 +248,35 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           settingsRef.current,
           audio,
         );
+        controller.onDomeBounceDamage = () => {
+          combat.applyDomeBarrierDamageToNyx();
+        };
+        controller.onSlotTriggered = (slotIdx) => {
+          if (levelUpOpenRef.current || battleReportOpenRef.current || !controller) return;
+          const slot = progression.slots[slotIdx];
+          if (!slot.skillId || slot.cooldownRemaining > 0) return;
+          const def = ACTIVE_SKILLS_CATALOG[slot.skillId];
+          if (controller.getEden() < def.edenCost) return;
+
+          const activeTargets = enemyMgr.enemies.filter((e) => enemyEntities.get(e.id)?.alive);
+          const locked = controller.getLockedEnemy();
+          const res = skillExecutor.triggerSkill(slot.skillId, slot.level, {
+            playerPos: controller.getPosition(),
+            forwardDir: controller.getAimForward(),
+            isGrounded: controller.isPlayerGrounded(),
+            isStill: controller.isPlayerStill(),
+            lockedEnemy: locked && enemyEntities.get(locked.id)?.alive ? locked : null,
+            enemies: activeTargets,
+            slabs: slabRig.slabs,
+            onDamageEnemy: handleSkillDamageEnemy,
+            onHealPlayer: (hp, eden) => controller?.restoreResources(hp, eden),
+          });
+          if (res.triggered) {
+            controller.spendEden(def.edenCost);
+            slot.cooldownRemaining = def.cooldown;
+            if (res.animOverride) controller.triggerSkillAnim(res.animOverride);
+          }
+        };
         controllerRef.current = controller;
         setHud(controller.getHudState());
       })
@@ -178,6 +344,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
     let elapsed = 0;
     let hudTimer = 0;
     let raf = 0;
+    let gameOverTriggered = false;
 
     const tick = () => {
       raf = requestAnimationFrame(tick);
@@ -185,8 +352,10 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       const rawDt = Math.min((now - last) / 1000, 0.05);
       last = now;
 
+      const isPaused = levelUpOpenRef.current || battleReportOpenRef.current;
+      const effRawDt = isPaused ? 0 : rawDt;
       const timeScale = controller ? controller.getTimeScale() : 1.0;
-      const worldDt = rawDt * timeScale;
+      const worldDt = effRawDt * timeScale;
       elapsed += worldDt;
 
       if (loadedNyx) {
@@ -195,7 +364,34 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
 
       backdrop.update(worldDt, elapsed);
 
-      if (controller) {
+      if (controller && !isPaused) {
+        progression.updateCooldowns(effRawDt);
+        const mods = progression.getModifiers();
+        const playerStatus = combat.updatePlayerStatus(effRawDt);
+        if (playerStatus.inkDamageThisFrame > 0) {
+          controller.applyDamage(playerStatus.inkDamageThisFrame);
+        }
+
+        // Respawn temporal de esferas de prueba tras morir
+        for (const [id, t] of respawnTimers.entries()) {
+          const next = t - worldDt;
+          if (next <= 0) {
+            respawnTimers.delete(id);
+            const sphere = enemyMgr.enemies.find((e) => e.id === id);
+            const entity = enemyEntities.get(id);
+            if (sphere && entity) {
+              sphere.position.copy(sphere.homePos);
+              sphere.velocity.set(0, 0, 0);
+              sphere.mesh.visible = true;
+              const fresh = createDomeEnemyEntity(id, entity.archetype, sphere.mesh, sphere.position);
+              enemyEntities.set(id, fresh);
+            }
+          } else {
+            respawnTimers.set(id, next);
+          }
+        }
+
+        const activeEnemies = enemyMgr.enemies.filter((e) => enemyEntities.get(e.id)?.alive);
         const { didEnemyEvadeDash } = enemyMgr.update(
           worldDt,
           elapsed,
@@ -206,20 +402,131 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
         if (didEnemyEvadeDash) {
           controller.notifyEnemyEvaded();
         }
+
+        // Regla de Barrera Blanca para enemigos
+        for (const sphere of activeEnemies) {
+          const entity = enemyEntities.get(sphere.id);
+          if (!entity || !entity.alive) continue;
+          entity.position.copy(sphere.position);
+          entity.velocity.copy(sphere.velocity);
+          if (combat.checkDomeBarrierKill(entity, DOME_PLAYER_BOUND_RADIUS)) {
+            killEnemyEntity(sphere, entity, true);
+          }
+        }
+
+        // Actualizar habilidades activas (agujero negro, ondas, pozo de atracción)
+        skillExecutor.update(worldDt, activeEnemies, handleSkillDamageEnemy);
+
+        // Actualizar partículas de EXP / Edén con magnetismo por nivel
+        const pickupGains = pickups.update(
+          worldDt,
+          controller.getPosition(),
+          mods.magnetRadius,
+          mods.magnetSpeed,
+        );
+        if (pickupGains.hpGained > 0 || pickupGains.edenGained > 0) {
+          controller.restoreResources(pickupGains.hpGained, pickupGains.edenGained);
+        }
+        if (pickupGains.expGained > 0) {
+          const leveled = progression.addExp(pickupGains.expGained);
+          runTracker.recordLevel(progression.level);
+          if (leveled) {
+            openLevelUpModal(progression.level);
+          }
+        }
+
+        // Sincronizar estadísticas/slots con NyxDomeController
+        controller.syncProgression({
+          level: progression.level,
+          exp: progression.exp,
+          expToNext: progression.expToNext,
+          maxHp: progression.maxHp,
+          maxEden: progression.maxEden,
+          speedMultiplier: mods.speedMultiplier,
+          edenRegenFrac: mods.edenRegenPctPerSec,
+          hpRegenFrac: mods.hpRegenPctPerSec,
+          inkOverlayIntensity: playerStatus.inkIntensity,
+          slots: [
+            {
+              name: progression.slots[0].skillId ? ACTIVE_SKILLS_CATALOG[progression.slots[0].skillId].name : null,
+              level: progression.slots[0].level,
+              cooldownRemaining: progression.slots[0].cooldownRemaining,
+              maxCooldown: progression.slots[0].maxCooldown,
+            },
+            {
+              name: progression.slots[1].skillId ? ACTIVE_SKILLS_CATALOG[progression.slots[1].skillId].name : null,
+              level: progression.slots[1].level,
+              cooldownRemaining: progression.slots[1].cooldownRemaining,
+              maxCooldown: progression.slots[1].maxCooldown,
+            },
+            {
+              name: progression.slots[2].skillId ? ACTIVE_SKILLS_CATALOG[progression.slots[2].skillId].name : null,
+              level: progression.slots[2].level,
+              cooldownRemaining: progression.slots[2].cooldownRemaining,
+              maxCooldown: progression.slots[2].maxCooldown,
+            },
+          ],
+        });
+
         controller.update(
-          rawDt,
+          effRawDt,
           slabRig.slabs,
           camera,
-          enemyMgr.enemies,
-          (enemy, hitDir, isDrill, impactSpeed) =>
-            enemyMgr.onHitEnemy(enemy, hitDir, isDrill, impactSpeed),
+          activeEnemies,
+          (enemy, hitDir, isDrill, impactSpeed) => {
+            enemyMgr.onHitEnemy(enemy, hitDir, isDrill, impactSpeed);
+            const entity = enemyEntities.get(enemy.id);
+            if (entity && entity.alive) {
+              const res = combat.computeKineticImpact(
+                entity,
+                impactSpeed ?? 14,
+                mods.forceMultiplier,
+                isDrill,
+              );
+              runTracker.recordDamage(res.damage);
+              if (entity.hp <= 0 || res.killed) {
+                killEnemyEntity(enemy, entity, false);
+              }
+            }
+          },
         );
+
+        runTracker.tick(worldDt);
+        runTracker.recordSpeed(controller.getCurrentSpeed());
+
+        if (controller.getHp() <= 0 && !gameOverTriggered) {
+          gameOverTriggered = true;
+          if (document.pointerLockElement === canvas) {
+            document.exitPointerLock?.();
+          }
+          const equippedIds = progression.slots
+            .filter((s) => s.skillId !== null)
+            .map((s) => ({ id: s.skillId as string, level: s.level }));
+          const summary = runTracker.getSummary(equippedIds, progression.passives);
+          setBattleReport({
+            score: summary.score,
+            wave: summary.wave,
+            level: summary.maxLevelReached,
+            kills: summary.kills,
+            barrierKills: summary.barrierKills,
+            maxSpeed: summary.maxSpeedReached,
+            survivalTimeSec: summary.survivalTimeSec,
+            perfectRedirections: summary.perfectRedirections,
+            equippedSkills: progression.slots
+              .filter((s) => s.skillId !== null)
+              .map((s) => ({
+                name: ACTIVE_SKILLS_CATALOG[s.skillId!].name,
+                level: s.level,
+              })),
+          });
+        }
+
         hudTimer += rawDt;
         if (hudTimer >= 1 / 30) {
           hudTimer = 0;
           setHud(controller.getHudState());
         }
-      } else {
+      } else if (!controller) {
         camera.position.set(0, 2.8, 7.5);
         camera.lookAt(0, 1.0, 0);
       }
@@ -245,19 +552,42 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       window.removeEventListener('resize', onResize);
       controllerRef.current = null;
       audioRef.current = null;
+      progressionRef.current = null;
       loadedNyx?.dispose();
+      pickups.dispose();
+      skillExecutor.dispose();
       enemyMgr.dispose();
       vfx.dispose();
       slabRig.dispose();
       backdrop.dispose();
       renderer.dispose();
     };
-  }, []);
+  }, [runSeed]);
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[#040510]">
       <canvas ref={canvasRef} className="block h-full w-full cursor-none" />
-      <DomeHudSketch hud={hud} onExit={onExit} />
+      <DomeHudSketch
+        hud={hud}
+        onExit={onExit}
+        hidePointerLockPrompt={levelUpState.isOpen || battleReport !== null}
+      />
+      <FluidLevelUpModal
+        isOpen={levelUpState.isOpen}
+        newLevel={levelUpState.newLevel}
+        choices={levelUpState.choices}
+        equippedSlots={hud.slots.map((s) => ({ name: s.name, level: s.level }))}
+        requiresSlotReplacement={levelUpState.requiresSlotReplacement}
+        onSelect={handleSelectCard}
+      />
+      {battleReport && (
+        <DomeBattleReport
+          data={battleReport}
+          onPlayAgain={handlePlayAgain}
+          onExitToMenu={onExit}
+          onSubmitScore={handleSubmitScore}
+        />
+      )}
     </div>
   );
 }

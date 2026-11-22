@@ -232,14 +232,29 @@ export class NyxDomeController {
   private readonly lockedScreenPos = { x: 0, y: 0 };
   private lockedEnemyScreenPos: { x: number; y: number } | null = null;
 
-  // --- Recursos
+  // --- Recursos y progresión
   private hp = 100;
-  private readonly maxHp = 100;
+  private maxHp = 100;
   private eden = 100;
-  private readonly maxEden = 100;
-  private readonly level = 1;
-  private readonly exp = 0;
-  private readonly expToNext = 100;
+  private maxEden = 100;
+  private level = 1;
+  private exp = 0;
+  private expToNext = 1;
+  private speedMultiplier = 1;
+  private edenRegenFrac = EDEN_IDLE_REGEN_FRAC;
+  private hpRegenFrac = 0;
+  private inkOverlayIntensity = 0;
+  private slotHudInfo: [
+    { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+  ] = [
+    { name: null, level: 0 },
+    { name: null, level: 0 },
+    { name: null, level: 0 },
+  ];
+  onSlotTriggered?: (slotIndex: 0 | 1 | 2) => void;
+  onDomeBounceDamage?: (damage: number) => void;
   private domeBounceFlash = 0;
   private shake = 0;
 
@@ -418,6 +433,91 @@ export class NyxDomeController {
     return this.mode === 'speed_attack' ? this.attackElapsed : 0;
   }
 
+  getAimForward(): THREE.Vector3 {
+    return this.aimForward;
+  }
+
+  getCurrentSpeed(): number {
+    return this.velocity.length();
+  }
+
+  getHp(): number {
+    return this.hp;
+  }
+
+  getEden(): number {
+    return this.eden;
+  }
+
+  isPlayerGrounded(): boolean {
+    return this.mode === 'grounded';
+  }
+
+  isPlayerStill(): boolean {
+    return (
+      (this.mode === 'grounded' || this.mode === 'floating') &&
+      this.velocity.length() < 1.25 &&
+      !this.attackHeld &&
+      !this.dashHeld
+    );
+  }
+
+  spendEden(amount: number): boolean {
+    if (this.eden < amount) return false;
+    this.eden = Math.max(0, this.eden - amount);
+    return true;
+  }
+
+  restoreResources(hpDelta: number, edenDelta: number): void {
+    if (hpDelta > 0) this.hp = Math.min(this.maxHp, this.hp + hpDelta);
+    if (edenDelta > 0) this.eden = Math.min(this.maxEden, this.eden + edenDelta);
+  }
+
+  applyDamage(amount: number): void {
+    if (amount <= 0) return;
+    this.hp = Math.max(0, this.hp - amount);
+    this.impactFlash = Math.max(this.impactFlash, 0.85);
+    this.shake = Math.max(this.shake, 0.25);
+  }
+
+  triggerSkillAnim(anim: NyxAnimState): void {
+    this.playOneShot(anim);
+  }
+
+  syncProgression(params: {
+    level: number;
+    exp: number;
+    expToNext: number;
+    maxHp: number;
+    maxEden: number;
+    speedMultiplier: number;
+    edenRegenFrac: number;
+    hpRegenFrac: number;
+    inkOverlayIntensity: number;
+    slots: [
+      { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+      { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+      { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    ];
+  }): void {
+    if (params.maxHp > this.maxHp) {
+      this.hp = Math.min(params.maxHp, this.hp + (params.maxHp - this.maxHp));
+    }
+    if (params.maxEden > this.maxEden) {
+      this.eden = Math.min(params.maxEden, this.eden + (params.maxEden - this.maxEden));
+    }
+    this.level = params.level;
+    this.exp = params.exp;
+    this.expToNext = params.expToNext;
+    this.maxHp = params.maxHp;
+    this.maxEden = params.maxEden;
+    this.speedMultiplier = params.speedMultiplier;
+    this.edenRegenFrac = params.edenRegenFrac;
+    this.hpRegenFrac = params.hpRegenFrac;
+    this.inkOverlayIntensity = params.inkOverlayIntensity;
+    this.slotHudInfo = params.slots;
+  }
+
   getHudState(): DomeHudState {
     const speed = this.velocity.length();
     return {
@@ -441,11 +541,12 @@ export class NyxDomeController {
       bulletTimeRemaining: Math.max(this.bulletTimeTimer, this.redirectWindowTimer),
       activeSlot: this.activeSlot,
       slots: [
-        { keyLabel: formatKeyCode(this.settings.bindings.slot1), name: null, level: 0 },
-        { keyLabel: formatKeyCode(this.settings.bindings.slot2), name: null, level: 0 },
-        { keyLabel: formatKeyCode(this.settings.bindings.slot3), name: null, level: 0 },
+        { keyLabel: formatKeyCode(this.settings.bindings.slot1), ...this.slotHudInfo[0] },
+        { keyLabel: formatKeyCode(this.settings.bindings.slot2), ...this.slotHudInfo[1] },
+        { keyLabel: formatKeyCode(this.settings.bindings.slot3), ...this.slotHudInfo[2] },
       ],
       domeBounceFlash: this.domeBounceFlash,
+      inkOverlayIntensity: this.inkOverlayIntensity,
       impactFlash: this.impactFlash,
       cameraRollDeg: this.cameraRollRad * (180 / Math.PI),
       gyroSpinRad: this.gyroSpinRad,
@@ -518,8 +619,10 @@ export class NyxDomeController {
 
     // --- Acciones encoladas por los eventos
     if (this.wantSlot !== null) {
+      const idx = (this.wantSlot - 1) as 0 | 1 | 2;
       this.activeSlot = this.wantSlot;
       this.wantSlot = null;
+      this.onSlotTriggered?.(idx);
     }
     if (this.wantJump) {
       this.wantJump = false;
@@ -800,9 +903,10 @@ export class NyxDomeController {
         dir.copy(this.camFwd); // W o sin teclas = hacia delante
       }
       this.eden -= EDEN_DASH_COST;
-      this.velocity.copy(dir).multiplyScalar(DASH_SPEED);
+      const dashSpd = DASH_SPEED * this.speedMultiplier;
+      this.velocity.copy(dir).multiplyScalar(dashSpd);
       this.dashDir.copy(dir);
-      this.dashSpeed = DASH_SPEED;
+      this.dashSpeed = dashSpd;
       this.mode = 'dashing';
       this.dashTimer = DASH_DURATION;
       // Tirachinas de cámara + roll hacia el lado del dash lateral.
@@ -1009,10 +1113,11 @@ export class NyxDomeController {
     // Inercia espacial real: rozamiento casi nulo (conserva ~95% por segundo).
     this.velocity.multiplyScalar(Math.exp(-FLOAT_DRAG * dt));
 
-    // Tope suave ~28 m/s.
+    // Tope suave ~28 m/s (escalado por pasiva de velocidad).
     const sp = this.velocity.length();
-    if (sp > FLOAT_MAX_SPEED) {
-      this.velocity.setLength(THREE.MathUtils.lerp(sp, FLOAT_MAX_SPEED, 1 - Math.exp(-1.6 * dt)));
+    const floatMax = FLOAT_MAX_SPEED * this.speedMultiplier;
+    if (sp > floatMax) {
+      this.velocity.setLength(THREE.MathUtils.lerp(sp, floatMax, 1 - Math.exp(-1.6 * dt)));
     }
 
     // Física centrípeta: al acelerar, el vector de velocidad curva hacia el
@@ -1091,11 +1196,11 @@ export class NyxDomeController {
     // Acelera hacia el tope del tipo de ataque (18/26/25 m/s) curvando el
     // vector de golpe hacia el facing con la física centrípeta.
     const maxSpeed =
-      this.speedAttackKind === 'spiral_drill_kick'
+      (this.speedAttackKind === 'spiral_drill_kick'
         ? SPIRAL_DRILL_SPEED
         : this.speedAttackKind === 'void_fall'
           ? VOID_FALL_MAX_SPEED
-          : GRAVITY_KICK_SPEED;
+          : GRAVITY_KICK_SPEED) * this.speedMultiplier;
     const targetSpeed =
       speed < maxSpeed
         ? Math.min(maxSpeed, speed + ATTACK_ACCEL * dt)
@@ -1298,7 +1403,11 @@ export class NyxDomeController {
     if (inward > -3) this.velocity.addScaledVector(n, -3 - inward);
 
     this.hp = Math.max(0, this.hp - DOME_BOUNCE_DAMAGE);
-    if (this.hp <= 0) this.hp = this.maxHp; // reset temporal hasta tener respawn real
+    if (this.onDomeBounceDamage) {
+      this.onDomeBounceDamage(DOME_BOUNCE_DAMAGE);
+    } else if (this.hp <= 0) {
+      this.hp = this.maxHp; // reset temporal hasta tener respawn real
+    }
 
     if (this.mode === 'speed_attack') {
       this.lockedEnemy = null;
@@ -1444,16 +1553,21 @@ export class NyxDomeController {
 
   private updateEden(dt: number, hasMoveInput: boolean): void {
     // Sin WASD ni clics (en suelo o flotando, incluso deslizándote por inercia
-    // en 0G a cualquier velocidad): +1% de maxEden por segundo.
+    // en 0G a cualquier velocidad): regenera según edenRegenFrac (base +1%/s).
     const idle =
       (this.mode === 'grounded' || this.mode === 'floating') &&
       !hasMoveInput &&
       !this.attackHeld &&
       !this.dashHeld;
     if (idle) {
-      this.eden += this.maxEden * EDEN_IDLE_REGEN_FRAC * dt;
+      this.eden += this.maxEden * this.edenRegenFrac * dt;
     }
     this.eden = Math.min(this.maxEden, this.eden);
+
+    // Regeneración constante de HP por pasiva (hp_regen).
+    if (this.hpRegenFrac > 0 && this.hp > 0 && this.hp < this.maxHp) {
+      this.hp = Math.min(this.maxHp, this.hp + this.maxHp * this.hpRegenFrac * dt);
+    }
   }
 
   private updateCamera(

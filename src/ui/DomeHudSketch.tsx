@@ -5,6 +5,7 @@ import { RETICLE_SIZE_PX } from '@/game/dome/domeTypes';
 interface DomeHudSketchProps {
   hud: DomeHudState;
   onExit: () => void;
+  hidePointerLockPrompt?: boolean;
 }
 
 const RETICLE_SIZE = RETICLE_SIZE_PX; // 180px en pantalla para enmarcar sin tapar a Nyx
@@ -51,7 +52,7 @@ function Meter({
   );
 }
 
-function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
+function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketchProps) {
   const lock = hud.reticleLockState;
   const isLocked = lock === 'locked';
 
@@ -125,6 +126,18 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
           style={{
             opacity: Math.min(1, hud.domeBounceFlash),
             boxShadow: 'inset 0 0 120px 30px rgba(244,63,94,0.45)',
+          }}
+        />
+      )}
+
+      {/* 2b. Mancha de tinta del Pulpo Espiral */}
+      {(hud.inkOverlayIntensity ?? 0) > 0.01 && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            opacity: Math.min(0.92, hud.inkOverlayIntensity ?? 0),
+            background:
+              'radial-gradient(circle at 22% 30%, rgba(10,4,22,0.94) 0%, transparent 42%), radial-gradient(circle at 76% 65%, rgba(10,4,22,0.92) 0%, transparent 46%), radial-gradient(circle at 50% 50%, rgba(15,6,30,0.45) 0%, rgba(6,2,14,0.88) 95%)',
           }}
         />
       )}
@@ -358,7 +371,13 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
                   }`}
                 >
                   {slot.name ?? 'VACÍO'}
+                  {slot.name && slot.level > 0 ? ` Nv.${slot.level}` : ''}
                 </span>
+                {slot.cooldownRemaining !== undefined && slot.cooldownRemaining > 0.05 && (
+                  <span className="ml-1 text-[9px] font-bold tabular-nums text-amber-300">
+                    {slot.cooldownRemaining.toFixed(1)}s
+                  </span>
+                )}
               </div>
             </div>
           );
@@ -366,7 +385,7 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
       </div>
 
       {/* 9. Overlay de captura de ratón — única superficie con la guía de controles */}
-      {!hud.pointerLocked && (
+      {!hud.pointerLocked && !hidePointerLockPrompt && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-[#090314]/45">
           <div className="-skew-x-12 border border-white/80 bg-[#090314]/90 px-6 py-2 shadow-[6px_6px_0_rgba(34,211,238,0.45)]">
             <span className="block skew-x-12 text-[11px] font-bold tracking-[0.24em] text-white">

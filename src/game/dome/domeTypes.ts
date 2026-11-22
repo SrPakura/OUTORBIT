@@ -63,11 +63,13 @@ export interface DomeHudState {
   bulletTimeRemaining: number;
   activeSlot: 1 | 2 | 3;
   slots: [
-    { keyLabel: string; name: string | null; level: number },
-    { keyLabel: string; name: string | null; level: number },
-    { keyLabel: string; name: string | null; level: number },
+    { keyLabel: string; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { keyLabel: string; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { keyLabel: string; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
   ];
   domeBounceFlash: number;
+  /** Intensidad de mancha de tinta del Pulpo Espiral (0..1) */
+  inkOverlayIntensity?: number;
   /** Flash de impacto (0..1) al golpear un enemigo o estrellarse de lado (hit_stagger) */
   impactFlash: number;
   /** Ángulo de roll/inclinación lateral de la cámara en grados (-15..+15) para el giroscopio del visor */
