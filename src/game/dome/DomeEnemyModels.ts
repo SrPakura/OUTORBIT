@@ -230,6 +230,8 @@ function addVibratingInkOutline(
 ): THREE.Mesh {
   const outlineMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
+    transparent: true,
+    depthWrite: true,
     uniforms: {
       uThickness: { value: thickness },
       uNoiseAmp: { value: 0.35 },
