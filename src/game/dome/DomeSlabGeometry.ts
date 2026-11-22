@@ -3,8 +3,8 @@ import * as THREE from 'three';
 // ============================================================================
 // Geometría y material de los suelos arrancados de la cúpula (estética Persona
 // 3 Reload / Tartarus): tapa superior 100% plana con damero de baldosas
-// cel-shaded y masa de roca/tierra irregular por debajo, como arrancada del
-// suelo con la mano.
+// cel-shaded y raíz inferior tipo iceberg (profunda, asimétrica y facetada),
+// como un bloque de suelo arrancado por una explosión.
 // ============================================================================
 
 /**
@@ -148,7 +148,10 @@ const tileFragmentShader = /* glsl */ `
     vec3 normalW = normalize( vWorldNormal );
     float ndl = dot( normalW, normalize( uSunDir ) );
     float band = celBands( ndl );
-    float topFace = ( vIsTop > 0.5 || vLocalNormal.y > 0.65 ) ? 1.0 : 0.0;
+    // Solo el atributo aIsTop decide: con flat shading, facetas de roca que
+    // miran casi hacia arriba (espolones, crestas) no deben pintarse como
+    // baldosas.
+    float topFace = ( vIsTop > 0.5 ) ? 1.0 : 0.0;
 
     vec3 color;
     if ( topFace > 0.5 ) {
@@ -249,7 +252,11 @@ export function createP3RTileMaterial(
 // ============================================================================
 
 const CONTOUR_VERTS = 20;
-const RING_COUNT = 4;
+/**
+ * Anillos de estrechamiento de la raíz tipo iceberg bajo la tapa (el borde de
+ * la propia tapa actúa como anillo 0).
+ */
+const ICEBERG_RINGS = 5;
 
 /**
  * Contorno irregular 2D (20 vértices) alrededor del origen: elipse base con
@@ -281,19 +288,24 @@ function buildContour(
 }
 
 /**
- * Genera un trozo de suelo arrancado:
+ * Genera un trozo de suelo arrancado con raíz tipo iceberg:
  *
  * - Tapa superior (`Y = +thickness/2`): polígono irregular de 20 vértices
  *   triangulado en abanico, 100% plano y liso, con UVs planas
- *   `(x * 0.35, z * 0.35)` para el damero y atributo `aIsTop = 1`.
- * - Laterales y fondo: el contorno se extruye en 4 anillos hacia abajo hasta
- *   cerrar en un vértice inferior (apex). Los vértices del anillo superior NO
- *   se mueven (coinciden exactamente con el borde de la tapa); los demás se
- *   perturban con FBM determinista 3D para parecer piedra/tierra arrancada,
- *   con `aIsTop = 0`.
+ *   `(x * 0.35, z * 0.35)` para el damero P3R y atributo `aIsTop = 1`.
+ * - Raíz inferior: el contorno se estrecha en `ICEBERG_RINGS` (5) anillos
+ *   colgantes hasta un ápice a `(radiusX + radiusZ) * 0.55..0.85` bajo la
+ *   tapa. El ápice está desplazado en XZ con ruido según `seed` (masa
+ *   asimétrica, nunca un cono centrado) y los anillos intermedios llevan FBM
+ *   radial y vertical fuerte: crestas, entrantes y espolones rocosos.
+ * - La roca usa triángulos con vértices NO compartidos y normal por cara
+ *   (flat shading): las aristas de la rotura se leen nítidas y con volumen
+ *   cel-shaded, nunca como un blob liso. La tapa conserva la normal exacta
+ *   `(0, 1, 0)` al ser coplanar.
  *
- * La tapa usa vértices propios (no compartidos con el lateral), así que
- * `computeVertexNormals()` le deja la normal exacta `(0, 1, 0)`.
+ * `halfExtents.y = thickness / 2`: la cara superior del collider OBB coincide
+ * exactamente con la tapa, así que Nyx aterriza cómodamente sobre
+ * `Y = topY = +halfExtents.y`. La raíz colgante es solo visual.
  */
 export function createTornSlabGeometry(
   seed: number,
@@ -302,92 +314,133 @@ export function createTornSlabGeometry(
   thickness: number
 ): { geometry: THREE.BufferGeometry; halfExtents: THREE.Vector3 } {
   const halfH = thickness * 0.5;
+  const topY = halfH;
   const contour = buildContour(seed, radiusX, radiusZ);
   const n = contour.length;
 
-  const positions: number[] = [];
-  const uvs: number[] = [];
-  const isTop: number[] = [];
-  const indices: number[] = [];
+  // PRNG propio de la raíz (no altera el contorno de la tapa).
+  const rand = mulberry32((seed * 0x85ebca6b + 0x9e3779b9) >>> 0);
+  // Profundidad de la raíz colgante: 55%..85% de (radiusX + radiusZ).
+  const depth = (radiusX + radiusZ) * (0.55 + rand() * 0.3);
+  // Centro del ápice desplazado en XZ: estrechamiento asimétrico.
+  const apexOffX = (rand() * 2 - 1) * radiusX * 0.38;
+  const apexOffZ = (rand() * 2 - 1) * radiusZ * 0.38;
 
-  // --- Tapa superior: abanico desde el centro, plano en Y = +halfH ---
-  const capCenter = positions.length / 3;
-  positions.push(0, halfH, 0);
-  uvs.push(0, 0);
-  isTop.push(1);
+  type RingVert = { x: number; y: number; z: number };
 
-  const capRing: number[] = [];
-  for (const p of contour) {
-    capRing.push(positions.length / 3);
-    positions.push(p.x, halfH, p.z);
-    uvs.push(p.x * 0.35, p.z * 0.35);
-    isTop.push(1);
-  }
-  for (let i = 0; i < n; i++) {
-    // (centro, v[i+1], v[i]): winding CCW visto desde +Y -> normal (0, 1, 0).
-    indices.push(capCenter, capRing[(i + 1) % n], capRing[i]);
-  }
-
-  // --- Laterales: 4 anillos de extrusión hacia abajo ---
-  const rings: number[][] = [];
-  for (let k = 0; k < RING_COUNT; k++) {
-    const ring: number[] = [];
-    const depth = k / (RING_COUNT - 1); // 0 en el borde superior, 1 abajo
+  // --- Anillos de la raíz: el 0 es el borde exacto de la tapa; 1..5
+  // estrechan hacia el ápice con ruido creciente. ---
+  const rings: RingVert[][] = [];
+  for (let k = 0; k <= ICEBERG_RINGS; k++) {
+    const ring: RingVert[] = [];
+    const t = k / ICEBERG_RINGS; // 0 en el borde de la tapa, 1 en el último anillo
+    // Perfil vertical: el anillo 1 marca el labio de la losa (`thickness`);
+    // los demás descienden dejando al ápice como punto más bajo.
+    const yBase =
+      k === 0
+        ? topY
+        : topY -
+          thickness -
+          (depth - thickness) * ((k - 1) / (ICEBERG_RINGS - 1)) * 0.85;
     for (let i = 0; i < n; i++) {
       const c = contour[i];
-      let x = c.x;
-      let y = halfH;
-      let z = c.z;
-      if (k > 0) {
-        // Ruido FBM 3D creciente con la profundidad: el borde superior queda
-        // intacto y encaja con la tapa; abajo la roca se hincha y se muerde.
-        const swell = fbm3(c.x * 0.4, k * 1.4, c.z * 0.4, seed);
-        const lateral = fbm3(c.z * 0.5 + 7.7, k * 1.2, c.x * 0.5 - 3.1, seed + 77);
-        const yNoise = fbm3(c.x * 0.6 - 5.5, k * 2.1, c.z * 0.6 + 8.8, seed + 133);
-        const bite = Math.max(0, lateral) * 0.5 * depth;
-        const s = 1 + swell * 0.22 * depth - bite;
-        x = c.x * s;
-        z = c.z * s;
-        y = halfH - thickness * depth * (0.94 + yNoise * 0.12);
+      if (k === 0) {
+        // Coincide exactamente con el borde de la tapa.
+        ring.push({ x: c.x, y: topY, z: c.z });
+        continue;
       }
-      ring.push(positions.length / 3);
-      positions.push(x, y, z);
-      uvs.push(x * 0.35, z * 0.35);
-      isTop.push(0);
+      // Deriva asimétrica: la raíz se desplaza progresivamente hacia el ápice.
+      const drift = Math.pow(t, 1.6);
+      const taper = 1 - 0.5 * Math.pow(t, 1.25);
+      // Crestas y entrantes radiales, más fuertes cuanto más abajo.
+      const swell = fbm3(c.x * 0.45, k * 1.7, c.z * 0.45, seed + 31);
+      const radialAmp = 0.36 * Math.pow(t, 1.3);
+      // Espolones rocosos: salientes puntuales en los anillos profundos.
+      const spur = fbm3(c.z * 0.8 + 11.3, k * 1.3, c.x * 0.8 - 5.9, seed + 57);
+      const spurAmt = spur > 0.4 ? (spur - 0.4) * 0.85 * t : 0;
+      const s = taper * (1 + swell * radialAmp + spurAmt);
+      // Variación vertical fuerte: entrantes y crestas en Y.
+      const yNoise = fbm3(c.x * 0.7 - 5.5, k * 2.3, c.z * 0.7 + 8.8, seed + 133);
+      const y = yBase - yNoise * depth * 0.09 * Math.pow(t, 1.4);
+      ring.push({
+        x: c.x * s + apexOffX * drift,
+        y,
+        z: c.z * s + apexOffZ * drift,
+      });
     }
     rings.push(ring);
   }
 
-  // --- Fondo: cono hacia un vértice inferior (apex) ---
-  const apex = positions.length / 3;
-  const apexX = fbm3(3.7, 1.1, 2.4, seed + 512) * 0.9;
-  const apexZ = fbm3(-1.6, 5.2, 0.8, seed + 913) * 0.9;
-  positions.push(apexX, -halfH, apexZ);
-  uvs.push(apexX * 0.35, apexZ * 0.35);
-  isTop.push(0);
+  // --- Ápice: punta colgante bajo el último anillo, desplazada según la
+  // seed. Queda siempre por debajo del anillo más bajo para que el abanico
+  // final no se invierta. ---
+  const apex: RingVert = {
+    x: apexOffX,
+    y: topY - depth * (1.0 + rand() * 0.1),
+    z: apexOffZ,
+  };
 
-  for (let k = 0; k < RING_COUNT - 1; k++) {
+  // --- Triangulación no indexada (flat shading): cada triángulo lleva sus
+  // propios 3 vértices y la normal de su cara. ---
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  const isTop: number[] = [];
+
+  const pushTri = (a: RingVert, b: RingVert, c: RingVert, top: number): void => {
+    const e1x = b.x - a.x;
+    const e1y = b.y - a.y;
+    const e1z = b.z - a.z;
+    const e2x = c.x - a.x;
+    const e2y = c.y - a.y;
+    const e2z = c.z - a.z;
+    let nx = e1y * e2z - e1z * e2y;
+    let ny = e1z * e2x - e1x * e2z;
+    let nz = e1x * e2y - e1y * e2x;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    nx /= len;
+    ny /= len;
+    nz /= len;
+    for (const v of [a, b, c]) {
+      positions.push(v.x, v.y, v.z);
+      normals.push(nx, ny, nz);
+      uvs.push(v.x * 0.35, v.z * 0.35);
+      isTop.push(top);
+    }
+  };
+
+  // Tapa superior: abanico desde el centro, plano en Y = topY.
+  const center: RingVert = { x: 0, y: topY, z: 0 };
+  for (let i = 0; i < n; i++) {
+    // (centro, v[i+1], v[i]): winding CCW visto desde +Y -> normal (0, 1, 0).
+    pushTri(center, rings[0][(i + 1) % n], rings[0][i], 1);
+  }
+
+  // Laterales: quads entre anillos consecutivos (winding hacia fuera).
+  for (let k = 0; k < ICEBERG_RINGS; k++) {
     const upper = rings[k];
     const lower = rings[k + 1];
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n;
-      indices.push(upper[i], upper[j], lower[j]);
-      indices.push(upper[i], lower[j], lower[i]);
+      pushTri(upper[i], upper[j], lower[j], 0);
+      pushTri(upper[i], lower[j], lower[i], 0);
     }
   }
-  const last = rings[RING_COUNT - 1];
+
+  // Fondo: abanico del último anillo al ápice.
+  const last = rings[ICEBERG_RINGS];
   for (let i = 0; i < n; i++) {
-    indices.push(last[i], last[(i + 1) % n], apex);
+    pushTri(last[i], last[(i + 1) % n], apex, 0);
   }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geometry.setAttribute('aIsTop', new THREE.Float32BufferAttribute(isTop, 1));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
 
-  // Half extents reales del trozo (incluye el ruido de los laterales).
+  // Half extents reales del trozo (incluye el ruido de los laterales). La
+  // cara superior del collider queda exactamente en la tapa (Y = +halfH).
   let maxX = 0;
   let maxZ = 0;
   for (let i = 0; i < positions.length; i += 3) {
