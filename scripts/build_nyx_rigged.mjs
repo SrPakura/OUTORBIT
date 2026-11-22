@@ -135,15 +135,17 @@ class MeshBuilder {
     this.wgt = [];
   }
 
-  vert(x, y, z, pairs) {
+  vert(x, y, z, pairs = []) {
     const vi = this.pos.length / 3;
     this.pos.push(x, y, z);
     let s = 0;
     const p = [0, 0, 0, 0], w = [0, 0, 0, 0];
-    for (let k = 0; k < Math.min(4, pairs.length); k++) {
-      p[k] = pairs[k][0];
-      w[k] = pairs[k][1];
-      s += w[k];
+    if (pairs && pairs.length) {
+      for (let k = 0; k < Math.min(4, pairs.length); k++) {
+        p[k] = pairs[k][0];
+        w[k] = pairs[k][1];
+        s += w[k];
+      }
     }
     if (s <= 0) { p[0] = HIPS; w[0] = 1; s = 1; }
     for (let k = 0; k < 4; k++) {
@@ -327,94 +329,177 @@ function pathFrames(pathPts, ref) {
 // ---------------------------------------------------------------------------
 const FRAME_Z = [[0, 0, 1], [1, 0, 0]]; // A = frente, B = izquierda
 
-// Torso→cadera: UNA superficie continua. Cuello abierto arriba (r 0.049 en
-// Y 1.45, coincidente con el anillo 1 del cuello de nyx_face) y cierre en el
-// perineo. bust/glute = gaussianas suaves de pecho y glúteo.
-const TORSO_ROWS = [
-  { y: 1.450, rx: 0.049, rzF: 0.049, rzB: 0.049, p: 2.0 },            // cuello (abierto)
-  { y: 1.420, rx: 0.075, rzF: 0.056, rzB: 0.058, p: 2.0 },            // trapecio
-  { y: 1.390, rx: 0.118, rzF: 0.078, rzB: 0.082, p: 2.05 },
-  { y: 1.360, rx: 0.142, rzF: 0.088, rzB: 0.093, p: 2.1 },
-  { y: 1.330, rx: 0.150, rzF: 0.094, rzB: 0.099, p: 2.15 },
-  { y: 1.300, rx: 0.152, rzF: 0.099, rzB: 0.104, p: 2.2, bust: 0.020 },
-  { y: 1.260, rx: 0.149, rzF: 0.098, rzB: 0.103, p: 2.2, bust: 0.024 },
-  { y: 1.220, rx: 0.143, rzF: 0.095, rzB: 0.100, p: 2.2, bust: 0.018 },
-  { y: 1.180, rx: 0.132, rzF: 0.091, rzB: 0.096, p: 2.15, bust: 0.008 },
-  { y: 1.140, rx: 0.120, rzF: 0.086, rzB: 0.090, p: 2.1 },
-  { y: 1.100, rx: 0.108, rzF: 0.080, rzB: 0.084, p: 2.05 },
-  { y: 1.060, rx: 0.099, rzF: 0.077, rzB: 0.080, p: 2.0 },            // cintura esbelta
-  { y: 1.020, rx: 0.104, rzF: 0.080, rzB: 0.083, p: 2.0 },
-  { y: 0.980, rx: 0.114, rzF: 0.086, rzB: 0.089, p: 2.0 },
-  { y: 0.940, rx: 0.130, rzF: 0.094, rzB: 0.098, p: 2.05 },           // flanco de cadera
-  { y: 0.900, rx: 0.146, rzF: 0.100, rzB: 0.105, p: 2.1 },            // hueso de cadera
-  { y: 0.860, rx: 0.150, rzF: 0.099, rzB: 0.108, p: 2.1, glute: 0.016 },
-  { y: 0.820, rx: 0.140, rzF: 0.094, rzB: 0.104, p: 2.1, glute: 0.024 },
-  { y: 0.780, rx: 0.120, rzF: 0.084, rzB: 0.092, p: 2.05, glute: 0.012 },
-  { y: 0.750, rx: 0.094, rzF: 0.068, rzB: 0.074, p: 2.0 },            // bajo de cadera
-  { y: 0.735, rx: 0.064, rzF: 0.052, rzB: 0.056, p: 2.0 },
-  { y: 0.725, rx: 0.034, rzF: 0.030, rzB: 0.032, p: 2.0 },
-  { y: 0.718, rx: 0.010, rzF: 0.009, rzB: 0.009, p: 2.0 },            // perineo
+/** Interpolación lineal a trozos. `stations` ordenadas DESC por columna 0. */
+function profAt(stations, v) {
+  const n = stations.length;
+  if (v >= stations[0][0]) return stations[0].slice(1);
+  if (v <= stations[n - 1][0]) return stations[n - 1].slice(1);
+  let i = 0;
+  while (i < n - 2 && stations[i + 1][0] > v) i++;
+  const a = stations[i], b = stations[i + 1];
+  const k = (a[0] - v) / (a[0] - b[0]);
+  return a.slice(1).map((x, j) => x + (b[j + 1] - x) * k);
+}
+
+// Torso→pelvis: UNA superficie continua de cuello (Y 1.45, ABIERTO, anillo
+// coincidente con el basal del cuello de nyx_face) al REMATE de pelvis
+// (Y 0.80, ABIERTO: hacia los muslos lo cierran las sillas de montar y el
+// parche del perineo — nunca una tapa). bust/glute = pecho/glúteo gaussianos.
+// Perfil medido sobre cro01_base: cintura avispa w 0.164 (Y 1.13), cadera
+// máxima w 0.322 (Y 0.94) → busto:cintura:cadera ≈ 1.46:1:1.96.
+// [y, rx, rzF, rzB, p, bust, glute]
+const TORSO_PROF = [
+  [1.450, 0.052, 0.050, 0.052, 2.00, 0.000, 0.000],
+  [1.432, 0.070, 0.055, 0.059, 2.00, 0.000, 0.000],
+  [1.414, 0.098, 0.068, 0.074, 2.05, 0.000, 0.000],
+  [1.396, 0.122, 0.076, 0.082, 2.10, 0.000, 0.000],
+  [1.378, 0.132, 0.080, 0.086, 2.10, 0.000, 0.000],
+  [1.360, 0.136, 0.083, 0.089, 2.15, 0.000, 0.000],
+  [1.342, 0.134, 0.084, 0.090, 2.15, 0.004, 0.000],
+  [1.322, 0.128, 0.083, 0.089, 2.15, 0.013, 0.000],
+  [1.300, 0.120, 0.081, 0.087, 2.10, 0.019, 0.000],
+  [1.276, 0.112, 0.079, 0.084, 2.10, 0.015, 0.000],
+  [1.252, 0.104, 0.075, 0.080, 2.05, 0.006, 0.000],
+  [1.228, 0.097, 0.071, 0.076, 2.05, 0.000, 0.000],
+  [1.204, 0.091, 0.068, 0.073, 2.00, 0.000, 0.000],
+  [1.180, 0.086, 0.065, 0.070, 2.00, 0.000, 0.000],
+  [1.156, 0.083, 0.063, 0.068, 2.00, 0.000, 0.000],
+  [1.132, 0.082, 0.062, 0.067, 2.00, 0.000, 0.000],
+  [1.108, 0.085, 0.063, 0.068, 2.00, 0.000, 0.000],
+  [1.084, 0.091, 0.066, 0.071, 2.00, 0.000, 0.000],
+  [1.060, 0.101, 0.070, 0.076, 2.00, 0.000, 0.000],
+  [1.036, 0.116, 0.075, 0.082, 2.05, 0.000, 0.000],
+  [1.012, 0.134, 0.080, 0.089, 2.05, 0.000, 0.004],
+  [0.988, 0.150, 0.084, 0.096, 2.10, 0.000, 0.010],
+  [0.964, 0.159, 0.086, 0.101, 2.10, 0.000, 0.016],
+  [0.940, 0.161, 0.086, 0.103, 2.10, 0.000, 0.018],
+  [0.916, 0.158, 0.084, 0.103, 2.10, 0.000, 0.018],
+  [0.892, 0.154, 0.082, 0.101, 2.05, 0.000, 0.014],
+  [0.868, 0.152, 0.079, 0.099, 2.00, 0.000, 0.010],
+  [0.844, 0.153, 0.076, 0.098, 2.00, 0.000, 0.006],
+  [0.822, 0.155, 0.074, 0.098, 2.00, 0.000, 0.004],
+  [0.800, 0.156, 0.072, 0.098, 2.00, 0.000, 0.002],
+];
+// Anillos del torso: estaciones del perfil + filas extra en la banda del
+// hombro (Y 1.348–1.378) para que la silueta del deltoides salga suave.
+const TORSO_YS = [
+  1.450, 1.432, 1.414, 1.396, 1.378, 1.370, 1.366, 1.360, 1.354, 1.348, 1.342,
+  1.322, 1.300, 1.276, 1.252, 1.228, 1.204, 1.180, 1.156, 1.132, 1.108, 1.084,
+  1.060, 1.036, 1.012, 0.988, 0.964, 0.940, 0.916, 0.892, 0.868, 0.844, 0.822, 0.800,
 ];
 
-// Pierna (izquierda; la derecha se espeja con x → -x): raíz con domo encajado
-// en la pelvis, rodilla estilizada, gemelo, caña de bota con cambio de radio
-// limpio, tobillo y puntera puntiaguda aerodinámica.
-const LEG_PATH = [
-  { c: [0.090, 0.870, 0.000], aF: 0.088, aB: 0.088, b: 0.088 }, // raíz (domo en cadera)
-  { c: [0.090, 0.800, 0.004], aF: 0.086, aB: 0.091, b: 0.083 },
-  { c: [0.090, 0.700, 0.010], aF: 0.081, aB: 0.087, b: 0.078 },
-  { c: [0.090, 0.600, 0.012], aF: 0.075, aB: 0.081, b: 0.072 },
-  { c: [0.089, 0.500, 0.012], aF: 0.067, aB: 0.073, b: 0.064 },
-  { c: [0.088, 0.450, 0.012], aF: 0.061, aB: 0.066, b: 0.058 }, // rodilla
-  { c: [0.087, 0.400, 0.008], aF: 0.059, aB: 0.065, b: 0.056 },
-  { c: [0.086, 0.330, 0.000], aF: 0.056, aB: 0.072, b: 0.055 }, // gemelo
-  { c: [0.085, 0.260, -0.006], aF: 0.052, aB: 0.064, b: 0.052 }, // caña de la bota
-  { c: [0.084, 0.160, -0.010], aF: 0.044, aB: 0.051, b: 0.043 },
-  { c: [0.084, 0.100, -0.008], aF: 0.042, aB: 0.048, b: 0.040 }, // tobillo (hueso Y 0.08)
-  { c: [0.084, 0.060, 0.010], aF: 0.040, aB: 0.050, b: 0.037 },
-  { c: [0.084, 0.038, 0.050], aF: 0.032, aB: 0.036, b: 0.033 }, // empeine
-  { c: [0.084, 0.028, 0.095], aF: 0.026, aB: 0.028, b: 0.028 }, // antepié
-  { c: [0.084, 0.024, 0.130], aF: 0.014, aB: 0.015, b: 0.016 }, // puntera
+// Brazo en T-pose (izquierdo; el derecho se espeja). [x, top, bottom, wz, thumb]:
+// top/bottom MONÓTONOS (top baja desde el deltoide; bottom baja hasta la
+// muñeca y sube en la palma) → todo corte horizontal del brazo es un intervalo
+// conexo y la excursión del anillo del torso nunca se rompe. La mano es una
+// paleta plana (grosor 0.016–0.02) con abultamiento de pulgar en el borde
+// frontal (x≈0.71) y dedos juntos hasta la punta x 0.785.
+const ARM_PROF = [
+  [0.785, 1.368, 1.352, 0.008, 0.000],
+  [0.780, 1.368, 1.352, 0.018, 0.000],
+  [0.735, 1.369, 1.351, 0.030, 0.008],
+  [0.710, 1.370, 1.350, 0.040, 0.016],
+  [0.680, 1.378, 1.344, 0.036, 0.002],
+  [0.640, 1.386, 1.336, 0.026, 0.000],
+  [0.550, 1.402, 1.338, 0.034, 0.000],
+  [0.420, 1.424, 1.343, 0.040, 0.000],
+  [0.300, 1.432, 1.345, 0.047, 0.000],
+  [0.250, 1.436, 1.345, 0.049, 0.000],
+  [0.200, 1.440, 1.346, 0.052, 0.000],
+  [0.160, 1.443, 1.349, 0.055, 0.000],
+  [0.130, 1.442, 1.352, 0.053, 0.000],
+  [0.100, 1.438, 1.358, 0.044, 0.000],
+  [0.080, 1.428, 1.372, 0.030, 0.000],
+  [0.050, 1.400, 1.400, 0.001, 0.000],
 ];
+function armAt(x) { return profAt(ARM_PROF, x); }
+/** Presencia de la sección del brazo en (x, y): fracción de anchura 0..1. */
+function armK(x, y) {
+  const [top, bottom] = armAt(x);
+  const ty = Math.max(1e-6, (top - bottom) / 2);
+  const t = (y - (top + bottom) / 2) / ty;
+  return t <= -1 || t >= 1 ? 0 : Math.sqrt(1 - t * t);
+}
+/** Extremo exterior del corte del brazo a altura y (−1 si no hay brazo). */
+function armXOut(y) {
+  let x = 0.785;
+  while (x >= 0.05) {
+    const [top, bottom] = armAt(x);
+    if (top >= y && bottom <= y) return x;
+    x -= 0.002;
+  }
+  return -1;
+}
+/** x del camino de la excursión en s (0 = fijación, 0.5 = punta). Nudos que
+ *  concentran resolución en muñeca/mano; los que caen más allá de xOut se
+ *  fusionan (sin puntos apilados en la punta). */
+function excX(s, xAtt, xOut) {
+  const raw = [
+    [0, xAtt], [0.15, Math.min(xAtt + 0.05, xOut)], [0.25, Math.min(0.42, xOut)],
+    [0.35, Math.min(0.64, xOut)], [0.5, xOut],
+  ];
+  const knots = [];
+  for (const [ks, kx] of raw) {
+    if (knots.length && kx - knots[knots.length - 1][1] < 1e-6) knots[knots.length - 1][0] = ks;
+    else knots.push([ks, kx]);
+  }
+  let i = 0;
+  while (i + 1 < knots.length && s > knots[i + 1][0]) i++;
+  const [s0, x0] = knots[i];
+  const [s1, x1] = knots[Math.min(i + 1, knots.length - 1)];
+  return s1 === s0 ? x0 : x0 + (x1 - x0) * ((s - s0) / (s1 - s0));
+}
 
-// Brazo en T-pose (izquierdo; el derecho se espeja): domo deltoideo encajado
-// en el hombro, codo, guante con cambio de radio limpio a media antebrazo y
-// mano estilizada plana con yema redondeada.
-const ARM_PATH = [
-  { c: [0.155, 1.400, 0.000], w: 0.056, t: 0.056 },              // domo deltoideo
-  { c: [0.210, 1.398, 0.001], w: 0.050, t: 0.050 },
-  { c: [0.300, 1.392, 0.003], w: 0.047, t: 0.047 },
-  { c: [0.420, 1.380, 0.004], w: 0.043, t: 0.043 },              // codo
-  { c: [0.500, 1.372, 0.003], w: 0.042, t: 0.040 },              // puño del guante
-  { c: [0.580, 1.366, 0.001], w: 0.036, t: 0.034 },
-  { c: [0.640, 1.362, 0.000], w: 0.031, t: 0.029 },              // muñeca
-  { c: [0.695, 1.358, 0.002], w: 0.041, t: 0.021, thumb: 0.010 }, // palma
-  { c: [0.735, 1.356, 0.004], w: 0.033, t: 0.015 },
+// Pierna (izquierda; la derecha se espeja): [y, rx, aF, aB, zc]. Muslo esbelto
+// con curva femenina, rodilla con rótula (aF), gemelo moldeado (aB), caña de
+// bota, tobillo fino y bota con tacón bajo y puntera aerodinámica. El primer
+// anillo (Y 0.80) es el ARO COMPARTIDO del muslo: lo cierra la silla de la
+// pelvis (bifurcación continua, sin domos sueltos).
+const LEG_PROF = [
+  [0.800, 0.0725, 0.068, 0.074, 0.000],
+  [0.760, 0.0700, 0.064, 0.070, 0.002],
+  [0.700, 0.0640, 0.058, 0.064, 0.005],
+  [0.640, 0.0580, 0.053, 0.058, 0.008],
+  [0.560, 0.0530, 0.049, 0.053, 0.010],
+  [0.480, 0.0500, 0.048, 0.051, 0.011],
+  [0.440, 0.0540, 0.057, 0.052, 0.012],
+  [0.400, 0.0520, 0.048, 0.056, 0.008],
+  [0.340, 0.0460, 0.042, 0.050, 0.002],
+  [0.280, 0.0390, 0.036, 0.041, -0.004],
+  [0.220, 0.0360, 0.034, 0.037, -0.007],
+  [0.150, 0.0300, 0.029, 0.031, -0.009],
+  [0.105, 0.0270, 0.028, 0.032, -0.007],
+  [0.062, 0.0270, 0.030, 0.036, -0.024],
+  [0.030, 0.0270, 0.024, 0.010, -0.030],
+  [0.026, 0.0280, 0.022, 0.010, 0.000],
+  [0.022, 0.0290, 0.020, 0.010, 0.040],
+  [0.018, 0.0260, 0.018, 0.009, 0.075],
+  [0.016, 0.0120, 0.010, 0.006, 0.100],
 ];
+// Ángulos ψ de los anillos de pierna: 21 puntos que corresponden 1:1 con la
+// media silla de pelvis (interior-frontal → frontal → exterior → trasero →
+// interior-trasero) + 3 puntos del arco interno (borde del perineo).
+const LEG_PSIS = [
+  135, 108, 81, 54, 46.3, 38.6, 30.9, 23.1, 15.4, 7.7, 0, -7.7, -15.4, -23.1,
+  -30.9, -38.6, -46.3, -54, -81, -108, -135, -157.5, -180, -202.5,
+].map((d) => (d * Math.PI) / 180);
 
-// Cabeza anime: coronilla → barbilla fina (z desplaza el centro hacia el
-// mentón). p > 2 aplana el plano facial (frente/mejillas suaves).
+// Cabeza anime: coronilla → barbilla en V suave (z desplaza el centro hacia
+// el mentón). p > 2 aplana el plano facial (frente/mejillas suaves). nose =
+// ampA del bump frontal (nariz sutil) en las filas de la línea nasal.
 const HEAD_ROWS = [
-  { y: 1.630, rx: 0.046, rzF: 0.049, rzB: 0.051, p: 2.0, z: 0.000 },
-  { y: 1.610, rx: 0.072, rzF: 0.076, rzB: 0.080, p: 2.0, z: 0.000 },
-  { y: 1.588, rx: 0.087, rzF: 0.091, rzB: 0.097, p: 2.05, z: 0.000 },
-  { y: 1.565, rx: 0.093, rzF: 0.096, rzB: 0.102, p: 2.15, z: 0.000 },
-  { y: 1.545, rx: 0.096, rzF: 0.098, rzB: 0.104, p: 2.3, z: 0.000 },
-  { y: 1.525, rx: 0.096, rzF: 0.098, rzB: 0.104, p: 2.35, z: 0.000 }, // línea de ojos
-  { y: 1.505, rx: 0.092, rzF: 0.094, rzB: 0.099, p: 2.3, z: 0.000 },
-  { y: 1.485, rx: 0.085, rzF: 0.086, rzB: 0.091, p: 2.2, z: 0.000 },   // pómulo
-  { y: 1.465, rx: 0.073, rzF: 0.073, rzB: 0.080, p: 2.1, z: 0.002 },   // mejilla
-  { y: 1.450, rx: 0.058, rzF: 0.060, rzB: 0.066, p: 2.05, z: 0.004 },  // mandíbula
-  { y: 1.442, rx: 0.044, rzF: 0.049, rzB: 0.053, p: 2.0, z: 0.010 },   // mentón
-];
-
-// Cuello integrado en nyx_face: el anillo 1 es COINCIDENTE con el cuello del
-// torso (mismo Y/radio/fase) → unión soldada sin costura; arriba queda oculto
-// dentro de la mandíbula.
-const NECK_ROWS = [
-  { c: [0, 1.450, 0.000], r: 0.049 },
-  { c: [0, 1.480, -0.006], r: 0.047 },
-  { c: [0, 1.505, -0.010], r: 0.046 },
+  { y: 1.648, rx: 0.052, rzF: 0.055, rzB: 0.058, p: 2.00, z: 0.000 },
+  { y: 1.630, rx: 0.078, rzF: 0.080, rzB: 0.086, p: 2.00, z: 0.000 },
+  { y: 1.610, rx: 0.094, rzF: 0.094, rzB: 0.100, p: 2.05, z: 0.000 },
+  { y: 1.588, rx: 0.102, rzF: 0.098, rzB: 0.104, p: 2.15, z: 0.000 },
+  { y: 1.566, rx: 0.105, rzF: 0.098, rzB: 0.106, p: 2.30, z: 0.000 },
+  { y: 1.545, rx: 0.105, rzF: 0.098, rzB: 0.106, p: 2.35, z: 0.000 }, // línea de ojos
+  { y: 1.524, rx: 0.103, rzF: 0.097, rzB: 0.105, p: 2.35, z: 0.000 },
+  { y: 1.503, rx: 0.099, rzF: 0.094, rzB: 0.102, p: 2.30, z: 0.001, nose: 0.005 },
+  { y: 1.482, rx: 0.092, rzF: 0.088, rzB: 0.096, p: 2.20, z: 0.003, nose: 0.007 }, // pómulo
+  { y: 1.462, rx: 0.080, rzF: 0.078, rzB: 0.086, p: 2.10, z: 0.006 },   // mejilla
+  { y: 1.446, rx: 0.062, rzF: 0.064, rzB: 0.072, p: 2.05, z: 0.010 },  // mandíbula
+  { y: 1.436, rx: 0.040, rzF: 0.048, rzB: 0.056, p: 2.00, z: 0.014 },  // mentón en V
 ];
 
 /** Interpolación de parámetros de la cabeza por altura. */
@@ -456,30 +541,31 @@ function falloff(d) {
   return 1 / (d * d + SOFT);
 }
 
-// [hueso, desde, hasta] en mundo. Los muslos arrancan en la punta del domo
-// encajado en la pelvis; manos/pies extienden sus segmentos hasta la yema/puntera.
+// [hueso, desde, hasta] en mundo. Muslos a lo largo del fémur (Y 0.86→0.46),
+// espinillas hasta el tobillo, pies/dedos hasta la puntera de la bota; brazos
+// siguiendo la banda del hombro (Y 1.336–1.443) hasta la punta de la mano.
 const SEGS = [
-  [HIPS, [0, 0.88, 0], [0, 0.76, 0]],
-  [SPINE, [0, 1.10, 0], [0, 0.88, 0]],
-  [CHEST, [0, 1.32, 0], [0, 1.10, 0]],
-  [NECK, [0, 1.44, 0], [0, 1.32, 0]],
-  [HEAD, [0, 1.64, 0], [0, 1.44, 0]],
-  [CLAV_L, [0.05, 1.40, 0], [0, 1.32, 0]],
-  [CLAV_R, [-0.05, 1.40, 0], [0, 1.32, 0]],
-  [8, [0.16, 1.40, 0], [0.05, 1.40, 0]],        // upperArm_L
-  [11, [-0.16, 1.40, 0], [-0.05, 1.40, 0]],     // upperArm_R
-  [9, [0.42, 1.38, 0], [0.16, 1.40, 0]],        // forearm_L
-  [12, [-0.42, 1.38, 0], [-0.16, 1.40, 0]],     // forearm_R
-  [10, [0.755, 1.355, 0.005], [0.42, 1.38, 0]], // hand_L (hasta la yema)
-  [13, [-0.755, 1.355, 0.005], [-0.42, 1.38, 0]],
-  [14, [0.09, 0.44, 0], [0.09, 0.905, 0]],      // thigh_L (desde el domo)
-  [16, [-0.09, 0.44, 0], [-0.09, 0.905, 0]],
-  [15, [0.09, 0.08, 0], [0.09, 0.44, 0]],       // shin_L
-  [17, [-0.09, 0.08, 0], [-0.09, 0.44, 0]],
-  [FOOT_L, [0.09, 0.045, 0.135], [0.09, 0.08, 0]],
-  [FOOT_R, [-0.09, 0.045, 0.135], [-0.09, 0.08, 0]],
-  [TOE_L, [0.09, 0.045, 0.135], [0.09, 0.06, 0.06]],
-  [TOE_R, [-0.09, 0.045, 0.135], [-0.09, 0.06, 0.06]],
+  [HIPS, [0, 0.90, 0], [0, 0.78, 0]],
+  [SPINE, [0, 1.12, 0], [0, 0.90, 0]],
+  [CHEST, [0, 1.34, 0], [0, 1.12, 0]],
+  [NECK, [0, 1.45, 0], [0, 1.34, 0]],
+  [HEAD, [0, 1.64, 0], [0, 1.45, 0]],
+  [CLAV_L, [0.05, 1.40, 0], [0, 1.34, 0]],
+  [CLAV_R, [-0.05, 1.40, 0], [0, 1.34, 0]],
+  [8, [0.16, 1.40, 0], [0.42, 1.383, 0]],       // upperArm_L
+  [11, [-0.16, 1.40, 0], [-0.42, 1.383, 0]],    // upperArm_R
+  [9, [0.42, 1.383, 0], [0.64, 1.361, 0]],       // forearm_L
+  [12, [-0.42, 1.383, 0], [-0.64, 1.361, 0]],    // forearm_R
+  [10, [0.785, 1.360, 0], [0.64, 1.361, 0]],     // hand_L (hasta la punta)
+  [13, [-0.785, 1.360, 0], [-0.64, 1.361, 0]],
+  [14, [0.09, 0.86, 0], [0.09, 0.46, 0]],        // thigh_L
+  [16, [-0.09, 0.86, 0], [-0.09, 0.46, 0]],
+  [15, [0.09, 0.46, 0], [0.09, 0.10, 0]],        // shin_L
+  [17, [-0.09, 0.46, 0], [-0.09, 0.10, 0]],
+  [FOOT_L, [0.09, 0.03, 0.055], [0.09, 0.10, 0]],
+  [FOOT_R, [-0.09, 0.03, 0.055], [-0.09, 0.10, 0]],
+  [TOE_L, [0.09, 0.02, 0.10], [0.09, 0.045, 0.02]],
+  [TOE_R, [-0.09, 0.02, 0.10], [-0.09, 0.045, 0.02]],
 ];
 
 function topWeights(cands) {
@@ -577,62 +663,230 @@ function finishPart(mb, name, weightFn) {
 }
 
 // ---------------------------------------------------------------------------
-// nyx_body: torso continuo + piernas y brazos con domos encajados
+// nyx_body: bifurcación orgánica continua (sin tubos ni domos sueltos)
 // ---------------------------------------------------------------------------
+// El torso NO termina en una tapa: su aro de pelvis (Y 0.80) se cierra hacia
+// cada muslo con una "silla de montar" (banda que abraza el aro COMPARTIDO
+// del muslo) y el hueco restante entre ambos muslos lo tapa el parche del
+// perineo (vértices compartidos con los aros de muslo) → UNA silueta continua
+// sin bolas ni costuras en la ingle. Los brazos nacen igual: cada anillo del
+// torso lleva una "excursión" que reemplaza su arco lateral por la superficie
+// real del brazo (cresta del deltoides → paleta plana de la mano), soldando
+// hombro y brazo en la misma malla.
+
+function lerp3(a, b, t) {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+/** Punto del óvalo del torso (con lóbulos de pecho/glúteo) en ángulo phi. */
+function ovalPoint(row, phi) {
+  const [su, sv] = super2(phi, row.p);
+  const a = su >= 0 ? row.rzF : row.rzB;
+  let z = su * a;
+  if (row.bust) z += row.bust * (angGauss(phi, 0.42, 0.5) + angGauss(phi, -0.42, 0.5));
+  if (row.glute) z -= row.glute * (angGauss(phi, Math.PI - 0.55, 0.42) + angGauss(phi, Math.PI + 0.55, 0.42));
+  return [sv * row.rx, row.y, z + (row.zOff || 0)];
+}
+
+/** Fila del torso a altura y (interpolada del perfil medido). */
+function torsoRow(y) {
+  const [rx, rzF, rzB, p, bust, glute] = profAt(TORSO_PROF, y);
+  return { y, rx, rzF, rzB, p, bust, glute };
+}
+
+/** 13 puntos de la excursión del brazo sobre el arco lateral del anillo
+ *  (phiA→phiB, punta en i=7). Sin brazo a esa altura quedan sobre el óvalo. */
+function armExcursion(row, side) {
+  const out = [];
+  const phiA = side > 0 ? 0.942 : 4.084;
+  const phiB = side > 0 ? 2.199 : 5.341;
+  const xOut = armXOut(row.y);
+  for (let i = 1; i <= 13; i++) {
+    const s = i / 14;
+    const arc = ovalPoint(row, phiA + (phiB - phiA) * s);
+    let p = arc;
+    let ref = [0, row.y, 0];
+    if (xOut > 0 && xOut > Math.abs(arc[0]) + 0.004) {
+      const x = excX(s < 0.5 ? s : 1 - s, Math.abs(arc[0]), xOut);
+      const k = armK(x, row.y);
+      const st = armAt(x);
+      const yc = (st[0] + st[1]) / 2;
+      let w;
+      if (i === 7) {
+        w = smooth01((xOut - Math.abs(arc[0]) - 0.008) / 0.03);
+        p = lerp3(arc, [side * x, row.y, 0], w);
+      } else {
+        const edge = (s < 0.5 ? st[2] + st[3] : st[2]) * k;
+        const armP = [side * x, row.y, s < 0.5 ? edge : -edge];
+        w = smooth01(k / 0.06);
+        p = lerp3(arc, armP, w);
+      }
+      ref = lerp3([0, row.y, 0], [side * x, yc, 0], w);
+    }
+    out.push({ p, ref });
+  }
+  return out;
+}
+
+/** Anillo del torso (40 pts): 14 de óvalo + 13+13 de excursión de brazos. */
+function torsoRing(mb, row) {
+  const idx = [], refs = [];
+  const oval = (s) => {
+    const p = ovalPoint(row, (s / 20) * Math.PI * 2);
+    idx.push(mb.vert(p[0], p[1], p[2]));
+    refs.push([0, row.y, 0]);
+  };
+  for (const s of [0, 1, 2, 3]) oval(s);
+  for (const q of armExcursion(row, 1)) {
+    idx.push(mb.vert(q.p[0], q.p[1], q.p[2]));
+    refs.push(q.ref);
+  }
+  for (let s = 7; s <= 13; s++) oval(s);
+  for (const q of armExcursion(row, -1)) {
+    idx.push(mb.vert(q.p[0], q.p[1], q.p[2]));
+    refs.push(q.ref);
+  }
+  for (const s of [17, 18, 19]) oval(s);
+  return { idx, refs };
+}
+
+/** Conecta anillos consecutivos {idx,refs} con quads (winding auto por ref). */
+function loftRings(mb, rings) {
+  for (let r = 0; r + 1 < rings.length; r++) {
+    const A = rings[r], B = rings[r + 1];
+    const n = A.idx.length;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      const fx = (A.refs[i][0] + A.refs[j][0] + B.refs[i][0] + B.refs[j][0]) / 4;
+      const fy = (A.refs[i][1] + A.refs[j][1] + B.refs[i][1] + B.refs[j][1]) / 4;
+      const fz = (A.refs[i][2] + A.refs[j][2] + B.refs[i][2] + B.refs[j][2]) / 4;
+      mb.tri(A.idx[i], B.idx[i], B.idx[j], fx, fy, fz);
+      mb.tri(A.idx[i], B.idx[j], A.idx[j], fx, fy, fz);
+    }
+  }
+}
+
+/** Anillo de pierna (24 pts): ψ 135°→−135° es la silla (21 pts que casan 1:1
+ *  con la media silla de pelvis) y −157.5°→−202.5° el arco interno del
+ *  perineo. A = frente, B = lateral exterior. */
+function legRing(mb, st, frame, side) {
+  const [A, B] = frame;
+  const idx = [], refs = [];
+  for (const psi of LEG_PSIS) {
+    const sp = Math.sin(psi), cp = Math.cos(psi);
+    const a = sp >= 0 ? st.aF : st.aB;
+    idx.push(mb.vert(
+      side * 0.09 + B[0] * st.rx * cp + A[0] * a * sp,
+      st.y + B[1] * st.rx * cp + A[1] * a * sp,
+      st.zc + B[2] * st.rx * cp + A[2] * a * sp
+    ));
+    refs.push([side * 0.09, st.y, st.zc]);
+  }
+  return { idx, refs };
+}
+
+const THIGH_RIM = { y: 0.80, rx: 0.0725, aF: 0.068, aB: 0.074, zc: 0 };
+
+/** Silla de pelvis: banda que une la media circunferencia del aro de pelvis
+ *  con el aro compartido del muslo → bifurcación continua, sin domos. */
+function buildPelvisJoin(mb, rimRing) {
+  const out = [];
+  for (const side of [1, -1]) {
+    const half = side > 0
+      ? rimRing.idx.slice(0, 21)
+      : [rimRing.idx[0], rimRing.idx[39], rimRing.idx[38], rimRing.idx[37],
+        ...Array.from({ length: 13 }, (_, k) => rimRing.idx[36 - k]),
+        rimRing.idx[23], rimRing.idx[22], rimRing.idx[21], rimRing.idx[20]];
+    const ring = legRing(mb, THIGH_RIM, [[0, 0, 1], [side, 0, 0]], side);
+    for (let i = 0; i < 20; i++) {
+      mb.tri(half[i], half[i + 1], ring.idx[i + 1], side * 0.045, 0.85, 0);
+      mb.tri(half[i], ring.idx[i + 1], ring.idx[i], side * 0.045, 0.85, 0);
+    }
+    out.push(ring);
+  }
+  return out;
+}
+
+/** Perineo: parche 5×7 entre los arcos internos de ambos muslos (vértices
+ *  COMPARTIDOS con los aros de muslo) + ventanas frontal/trasera hasta el
+ *  aro de pelvis → cierre estanco de la bifurcación. */
+function buildPerineum(mb, rimRing, thighRims) {
+  const [L, R] = thighRims;
+  const rows = [
+    { ring: 0, psi: 135, cy: 0.790 },
+    { ring: 23, psi: -202.5, cy: 0.778 },
+    { ring: 22, psi: -180, cy: 0.774 },
+    { ring: 21, psi: -157.5, cy: 0.776 },
+    { ring: 20, psi: -135, cy: 0.782 },
+  ].map((r) => {
+    const psi = (r.psi * Math.PI) / 180;
+    const sp = Math.sin(psi), cp = Math.cos(psi);
+    return {
+      li: L.idx[r.ring], ri: R.idx[r.ring],
+      xEnd: 0.09 + THIGH_RIM.rx * cp,
+      z: (sp >= 0 ? THIGH_RIM.aF : THIGH_RIM.aB) * sp,
+      cy: r.cy,
+    };
+  });
+  const grid = rows.map((row) => {
+    const col = [row.li];
+    for (let c = 1; c < 6; c++) {
+      const t = c / 6;
+      col.push(mb.vert(
+        row.xEnd * (1 - 2 * t),
+        0.80 + (row.cy - 0.80) * (1 - Math.abs(2 * t - 1)),
+        row.z
+      ));
+    }
+    col.push(row.ri);
+    return col;
+  });
+  for (let r = 0; r < 4; r++) {
+    const z = (rows[r].z + rows[r + 1].z) / 2;
+    for (let c = 0; c < 6; c++) {
+      mb.tri(grid[r][c], grid[r][c + 1], grid[r + 1][c + 1], 0, 0.82, z);
+      mb.tri(grid[r][c], grid[r + 1][c + 1], grid[r + 1][c], 0, 0.82, z);
+    }
+  }
+  for (let c = 0; c < 6; c++) {
+    mb.tri(rimRing.idx[0], grid[0][c + 1], grid[0][c], 0, 0.85, 0.05);
+    mb.tri(rimRing.idx[20], grid[4][c], grid[4][c + 1], 0, 0.85, -0.05);
+  }
+}
+
+/** Pierna: loft del aro compartido del muslo → rodilla → gemelo → bota. */
+function buildLeg(mb, side, thighRim) {
+  const path = LEG_PROF.map(([y, , , , zc]) => ({ c: [side * 0.09, y, zc] }));
+  const frames = pathFrames(path, [1, 0, 0]);
+  const rings = [thighRim];
+  for (let i = 1; i < LEG_PROF.length; i++) {
+    const [y, rx, aF, aB, zc] = LEG_PROF[i];
+    const f = frames[i].frame;
+    rings.push(legRing(mb, { y, rx, aF, aB, zc }, [f[0], [side * f[1][0], f[1][1], f[1][2]]], side));
+  }
+  loftRings(mb, rings);
+  // Puntera aerodinámica.
+  const last = path[path.length - 1].c;
+  const prev = path[path.length - 2].c;
+  const tx = last[0] - prev[0], ty = last[1] - prev[1], tz = last[2] - prev[2];
+  const tl = Math.hypot(tx, ty, tz) || 1;
+  const tip = mb.vert(last[0] + (tx / tl) * 0.02, last[1] + (ty / tl) * 0.02, last[2] + (tz / tl) * 0.02);
+  const ring = rings[rings.length - 1];
+  for (let i = 0; i < ring.idx.length; i++) {
+    const j = (i + 1) % ring.idx.length;
+    mb.tri(ring.idx[i], tip, ring.idx[j], side * 0.09, 0.05, 0.09);
+  }
+}
+
 function buildBody() {
   const mb = new MeshBuilder();
-
-  // Torso→cadera: una sola malla continua (sin costura cintura/cadera).
-  // Arriba queda ABIERTO en el cuello: el anillo coincide con el anillo 1 del
-  // cuello de nyx_face (soldadura por coincidencia); abajo cierra en el
-  // perineo, tapando el hueco entre los muslos.
-  loft(mb, {
-    segs: 20,
-    rings: TORSO_ROWS.map((row) => ({
-      c: [0, row.y, 0],
-      aF: row.rzF, aB: row.rzB, b: row.rx, p: row.p,
-      bumps: row.bust
-        ? [{ phi: 0.42, sig: 0.5, ampA: row.bust }, { phi: -0.42, sig: 0.5, ampA: row.bust }]
-        : row.glute
-          ? [{ phi: Math.PI, sig: 0.6, ampA: -row.glute }]
-          : undefined,
-      frame: FRAME_Z,
-    })),
-    capStart: { mode: 'none' },
-    capEnd: { mode: 'point', depth: 0.012 },
-  });
-
-  // Piernas: el domo de la raíz vive DENTRO de la pelvis (pivota con el
-  // muslo sin abrir huecos en la entrepierna) y la puntera cierra en punta.
-  for (const side of [1, -1]) {
-    const mp = LEG_PATH.map((p) => ({ ...p, c: [p.c[0] * side, p.c[1], p.c[2]] }));
-    const frames = pathFrames(mp, [1, 0, 0]);
-    loft(mb, {
-      segs: 16,
-      rings: mp.map((p, i) => ({
-        c: p.c, aF: p.aF, aB: p.aB, b: p.b, p: 2.0, frame: frames[i].frame,
-      })),
-      capStart: { mode: 'dome', depth: 0.038 },
-      capEnd: { mode: 'point', depth: 0.020 },
-    });
-  }
-
-  // Brazos: domo deltoideo encajado en el hombro (pivota con el upperArm sin
-  // desgarros) y mano estilizada con yema redondeada.
-  for (const side of [1, -1]) {
-    const mp = ARM_PATH.map((p) => ({ ...p, c: [p.c[0] * side, p.c[1], p.c[2]] }));
-    const frames = pathFrames(mp, [0, 1, 0]);
-    loft(mb, {
-      segs: 14,
-      rings: mp.map((p, i) => ({
-        c: p.c, aF: p.w, aB: p.w, b: p.t, p: 2.0, frame: frames[i].frame,
-        bumps: p.thumb ? [{ phi: 0, sig: 0.45, ampA: p.thumb }] : undefined,
-      })),
-      capStart: { mode: 'dome', depth: 0.052 },
-      capEnd: { mode: 'dome', depth: 0.020 },
-    });
-  }
-
+  const rings = TORSO_YS.map((y) => torsoRing(mb, torsoRow(y)));
+  loftRings(mb, rings);
+  const rim = rings[rings.length - 1];
+  const thighRims = buildPelvisJoin(mb, rim);
+  buildPerineum(mb, rim, thighRims);
+  buildLeg(mb, 1, thighRims[0]);
+  buildLeg(mb, -1, thighRims[1]);
   return finishPart(mb, 'nyx_body', bodyWeights);
 }
 
@@ -642,29 +896,28 @@ function buildBody() {
 function buildFace() {
   const mb = new MeshBuilder();
 
-  // Cabeza: casquete de coronilla arriba y barbilla puntiaguda abajo
-  // (el path final baja hacia +Z → mentón fino y adelantado).
+  // Cabeza: casquete de coronilla arriba y barbilla en V abajo (el path
+  // final baja hacia +Z → mentón fino y adelantado) + nariz sutil.
   loft(mb, {
     segs: 20,
     rings: HEAD_ROWS.map((row) => ({
       c: [0, row.y, row.z],
       aF: row.rzF, aB: row.rzB, b: row.rx, p: row.p,
+      bumps: row.nose ? [{ phi: 0, sig: 0.16, ampA: row.nose }] : undefined,
       frame: FRAME_Z,
     })),
     capStart: { mode: 'dome', depth: 0.014 },
     capEnd: { mode: 'point', depth: 0.016 },
   });
 
-  // Cuello: mismo nº de segmentos y fase que el torso → anillo 1 coincidente.
-  loft(mb, {
-    segs: 20,
-    rings: NECK_ROWS.map((row) => ({
-      c: row.c, aF: row.r, aB: row.r, b: row.r, p: 2.0,
-      frame: FRAME_Z,
-    })),
-    capStart: { mode: 'none' },
-    capEnd: { mode: 'none' },
-  });
+  // Cuello: anillos de torsoRing → el aro basal (Y 1.450) es IDÉNTICO al aro
+  // superior del torso (misma fórmula y parámetros) → soldadura perfecta;
+  // arriba queda oculto dentro de la mandíbula.
+  loftRings(mb, [
+    torsoRing(mb, { y: 1.450, rx: 0.052, rzF: 0.050, rzB: 0.052, p: 2.0, zOff: 0 }),
+    torsoRing(mb, { y: 1.480, rx: 0.050, rzF: 0.048, rzB: 0.050, p: 2.0, zOff: -0.006 }),
+    torsoRing(mb, { y: 1.505, rx: 0.048, rzF: 0.046, rzB: 0.048, p: 2.0, zOff: -0.010 }),
+  ]);
 
   return finishPart(mb, 'nyx_face', faceWeights);
 }
@@ -676,7 +929,7 @@ function buildEyes() {
   const mb = new MeshBuilder();
   const NU = 8, NV = 6;
   for (const side of [1, -1]) {
-    const cx = side * 0.040, cy = 1.528, hw = 0.028, hh = 0.0115;
+    const cx = side * 0.043, cy = 1.522, hw = 0.018, hh = 0.017;
     const grid = [];
     for (let i = 0; i <= NU; i++) {
       const u = (i / NU) * 2 - 1;

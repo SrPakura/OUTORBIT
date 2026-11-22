@@ -156,7 +156,7 @@ function pulse(t: number, a: number, b: number, c: number): number {
 }
 
 export class NyxAnimator {
-  private readonly bones: Bone[] = [];
+  private readonly bones: (Bone | null)[] = [];
   private readonly baseHips: Float32Array = new Float32Array(3);
 
   // Poses (3 floats por hueso) y offset de posición de hips
@@ -216,10 +216,10 @@ export class NyxAnimator {
     });
     for (let i = 0; i < BONE_COUNT; i++) {
       const b = found[i];
-      if (!b) throw new Error(`NyxAnimator: falta el hueso "${BONE_NAMES[i]}"`);
+      if (!b && i < 18) throw new Error(`NyxAnimator: falta el hueso "${BONE_NAMES[i]}"`);
       this.bones.push(b);
     }
-    const hp = this.bones[HIPS].position;
+    const hp = this.bones[HIPS]!.position;
     this.baseHips[0] = hp.x;
     this.baseHips[1] = hp.y;
     this.baseHips[2] = hp.z;
@@ -307,12 +307,12 @@ export class NyxAnimator {
     // Huesos de cuerpo (0..14 y 19..24); la cadena del pelo (15..18) la
     // escribe `updateHair` encima con la física de resorte.
     for (let i = 0; i < HAIR_1; i++) {
-      bones[i].rotation.set(cur[i * 3], cur[i * 3 + 1], cur[i * 3 + 2]);
+      bones[i]?.rotation.set(cur[i * 3], cur[i * 3 + 1], cur[i * 3 + 2]);
     }
     for (let i = HAIR_4 + 1; i < BONE_COUNT; i++) {
-      bones[i].rotation.set(cur[i * 3], cur[i * 3 + 1], cur[i * 3 + 2]);
+      bones[i]?.rotation.set(cur[i * 3], cur[i * 3 + 1], cur[i * 3 + 2]);
     }
-    bones[HIPS].position.set(
+    bones[HIPS]?.position.set(
       this.baseHips[0] + this.curPos[0],
       this.baseHips[1] + this.curPos[1],
       this.baseHips[2] + this.curPos[2],
@@ -329,7 +329,7 @@ export class NyxAnimator {
     const A = this.hairA, V = this.hairV;
     if (!this.hairEnabled) {
       for (let i = 0; i < 8; i++) { A[i] = 0; V[i] = 0; }
-      for (let s = 0; s < 4; s++) bones[HAIR_1 + s].rotation.set(0, 0, 0);
+      for (let s = 0; s < 4; s++) bones[HAIR_1 + s]?.rotation.set(0, 0, 0);
       return;
     }
     const g = params && params.hairGravityLocal ? params.hairGravityLocal : DEFAULT_GRAVITY;
@@ -356,7 +356,7 @@ export class NyxAnimator {
         A[iy] += V[iy] * h;
       }
       // pitch+ levanta la melena (-Z) · yaw+ la lleva hacia -X
-      bones[HAIR_1 + s].rotation.set(A[ip], A[iy], A[iy] * 0.3);
+      bones[HAIR_1 + s]?.rotation.set(A[ip], A[iy], A[iy] * 0.3);
     }
   }
 
