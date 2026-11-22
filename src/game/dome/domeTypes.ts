@@ -21,6 +21,10 @@ export interface SlabCollider {
   invQuaternion: THREE.Quaternion;
   phase: number;
   bobAmplitude: number;
+  /** Si es true, solo la cara +Y local es pisable (grounded); laterales/fondo rebotan */
+  oneSidedTop?: boolean;
+  /** Triángulo 2D en plano XZ local [ax, az, bx, bz, cx, cz] para colisión triangular exacta */
+  localTriangle2D?: readonly [number, number, number, number, number, number];
 }
 
 export interface SlabRaycastHit {
@@ -70,6 +74,9 @@ export interface DomeHudState {
   domeBounceFlash: number;
   /** Intensidad de mancha de tinta del Pulpo Espiral (0..1) */
   inkOverlayIntensity?: number;
+  /** Oleada actual (1..) y tipo ('BÁSICOS' | 'MINIBOSS' | 'BOSS') */
+  waveNumber?: number;
+  waveLabel?: string;
   /** Flash de impacto (0..1) al golpear un enemigo o estrellarse de lado (hit_stagger) */
   impactFlash: number;
   /** Ángulo de roll/inclinación lateral de la cámara en grados (-15..+15) para el giroscopio del visor */

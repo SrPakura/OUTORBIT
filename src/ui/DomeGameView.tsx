@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { createDomeArenaBackdrop } from '@/game/render/domeArenaScene';
 import { loadNyxRigged, type LoadedNyx } from '@/game/render/nyxModelLoader';
-import { createDomeSlabs } from '@/game/dome/DomeSlabs';
-import { createTestEnemySpheres } from '@/game/dome/TestEnemySpheres';
+import { DomeFloatingSlabManager } from '@/game/dome/DomeFloatingSlabs';
+import { DomeSphereTileManager } from '@/game/dome/DomeSphereTiles';
+import { DomeWaveManager, type ManagedWaveEnemy, type WaveFloorMode } from '@/game/dome/DomeWaveManager';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
 import {
@@ -13,13 +14,9 @@ import {
 } from '@/game/dome/DomeProgression';
 import { DomePickupManager } from '@/game/dome/DomePickups';
 import { DomeSkillExecutor, type SkillTargetEnemy } from '@/game/dome/DomeSkills';
-import {
-  createDomeEnemyEntity,
-  DomeCombatSystem,
-  type DomeEnemyEntity,
-} from '@/game/dome/DomeCombatSystem';
+import { DomeCombatSystem } from '@/game/dome/DomeCombatSystem';
 import { DomeRunTracker, submitDomeRunToLeaderboard } from '@/game/dome/DomeRunStats';
-import { DOME_PLAYER_BOUND_RADIUS, type DomeHudState, type TestEnemySphere } from '@/game/dome/domeTypes';
+import { DOME_PLAYER_BOUND_RADIUS, type DomeHudState, type SlabCollider } from '@/game/dome/domeTypes';
 import type { GameSettings } from '@/game/settings';
 import { SynthAudio } from '@/game/audio/SynthAudio';
 import DomeHudSketch from '@/ui/DomeHudSketch';
@@ -147,8 +144,9 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
     scene.add(new THREE.AmbientLight(0x818cf8, 0.65));
 
     const backdrop = createDomeArenaBackdrop(scene);
-    const slabRig = createDomeSlabs(scene);
-    const enemyMgr = createTestEnemySpheres(scene);
+    const floatingSlabs = new DomeFloatingSlabManager(scene);
+    const sphereTiles = new DomeSphereTileManager(scene);
+    const waveMgr = new DomeWaveManager(scene);
     const pickups = new DomePickupManager(scene);
     const skillExecutor = new DomeSkillExecutor(scene);
     const progression = new DomeProgressionManager();
@@ -161,13 +159,24 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
     audio.setVolumeMultiplier(settingsRef.current.masterVolume);
     audioRef.current = audio;
 
-    // Envoltorio de combate para las esferas de prueba (compatible con el futuro Bestiario)
-    const enemyEntities = new Map<string, DomeEnemyEntity>();
-    const respawnTimers = new Map<string, number>();
-    for (const s of enemyMgr.enemies) {
-      const archetype = s.evasive ? 'spiral_octopus' : 'abyssal_cell';
-      enemyEntities.set(s.id, createDomeEnemyEntity(s.id, archetype, s.mesh, s.position));
-    }
+    const applyFloorMode = (mode: WaveFloorMode) => {
+      if (mode === 'basic') {
+        floatingSlabs.setTargetCount(5 + Math.floor(Math.random() * 6));
+        sphereTiles.setMode('none');
+      } else if (mode === 'miniboss') {
+        floatingSlabs.setTargetCount(0);
+        sphereTiles.setMode('miniboss');
+      } else {
+        floatingSlabs.setTargetCount(0);
+        sphereTiles.setMode('boss');
+      }
+    };
+
+    waveMgr.startWave(1);
+    runTracker.recordWave(1);
+    applyFloorMode(waveMgr.getWaveInfo().floorMode);
+    let nextWaveDelay = 0;
+    let activeSlabs: SlabCollider[] = [];
 
     const openLevelUpModal = (forLevel: number) => {
       if (document.pointerLockElement === canvas) {
@@ -192,17 +201,15 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
     let controller: NyxDomeController | null = null;
     let disposed = false;
 
-    const killEnemyEntity = (sphere: TestEnemySphere, entity: DomeEnemyEntity, viaBarrier: boolean) => {
-      entity.alive = false;
-      entity.hp = 0;
-      sphere.mesh.visible = false;
-      respawnTimers.set(sphere.id, 2.5);
-      pickups.spawnFromEnemy(sphere.position, entity.expValue, 6);
+    const killWaveEnemy = (enemy: ManagedWaveEnemy, viaBarrier: boolean) => {
+      if (!enemy.entity.alive) return;
+      pickups.spawnFromEnemy(enemy.position, enemy.entity.expValue, 6);
       runTracker.recordKill({
-        isElite: entity.isElite,
-        isBoss: entity.isBoss,
+        isElite: enemy.entity.isElite,
+        isBoss: enemy.entity.isBoss,
       });
       if (viaBarrier) runTracker.recordBarrierKill();
+      waveMgr.killEnemy(enemy);
     };
 
     const handleSkillDamageEnemy = (
@@ -211,23 +218,22 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       impulse: THREE.Vector3,
       bypassFlesh = false,
     ) => {
-      const sphere = enemyMgr.enemies.find((e) => e.id === target.id);
-      const entity = enemyEntities.get(target.id);
-      if (!sphere || !entity || !entity.alive) return;
+      const enemy = waveMgr.getActiveEnemies().find((e) => e.id === target.id);
+      if (!enemy || !enemy.entity.alive) return;
 
-      entity.position.copy(sphere.position);
+      enemy.entity.position.copy(enemy.position);
       const res = combat.computeKineticImpact(
-        entity,
+        enemy.entity,
         Math.max(12, amount * 0.4),
         progression.getModifiers().forceMultiplier,
         false,
         bypassFlesh,
       );
-      sphere.velocity.add(impulse);
-      sphere.hitFlash = 1;
+      enemy.velocity.add(impulse);
+      enemy.hitFlash = 1;
       runTracker.recordDamage(Math.max(amount, res.damage));
-      if (entity.hp <= 0 || res.killed) {
-        killEnemyEntity(sphere, entity, false);
+      if (enemy.entity.hp <= 0 || res.killed) {
+        killWaveEnemy(enemy, false);
       }
     };
 
@@ -261,16 +267,16 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           const def = ACTIVE_SKILLS_CATALOG[slot.skillId];
           if (controller.getEden() < def.edenCost) return;
 
-          const activeTargets = enemyMgr.enemies.filter((e) => enemyEntities.get(e.id)?.alive);
+          const activeTargets = waveMgr.getActiveEnemies();
           const locked = controller.getLockedEnemy();
           const res = skillExecutor.triggerSkill(slot.skillId, slot.level, {
             playerPos: controller.getPosition(),
             forwardDir: controller.getAimForward(),
             isGrounded: controller.isPlayerGrounded(),
             isStill: controller.isPlayerStill(),
-            lockedEnemy: locked && enemyEntities.get(locked.id)?.alive ? locked : null,
+            lockedEnemy: locked && activeTargets.some((e) => e.id === locked.id) ? locked : null,
             enemies: activeTargets,
-            slabs: slabRig.slabs,
+            slabs: activeSlabs,
             onDamageEnemy: handleSkillDamageEnemy,
             onHealPlayer: (hp, eden) => controller?.restoreResources(hp, eden),
           });
@@ -375,50 +381,52 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           controller.applyDamage(playerStatus.inkDamageThisFrame);
         }
 
-        // Respawn temporal de esferas de prueba tras morir
-        for (const [id, t] of respawnTimers.entries()) {
-          const next = t - worldDt;
-          if (next <= 0) {
-            respawnTimers.delete(id);
-            const sphere = enemyMgr.enemies.find((e) => e.id === id);
-            const entity = enemyEntities.get(id);
-            if (sphere && entity) {
-              sphere.position.copy(sphere.homePos);
-              sphere.velocity.set(0, 0, 0);
-              sphere.mesh.visible = true;
-              const fresh = createDomeEnemyEntity(id, entity.archetype, sphere.mesh, sphere.position);
-              enemyEntities.set(id, fresh);
-            }
-          } else {
-            respawnTimers.set(id, next);
-          }
-        }
+        // Suelos activos según oleada (flotantes arrancados en básicas / triángulos de esfera en Miniboss y Boss)
+        floatingSlabs.update(worldDt, elapsed);
+        sphereTiles.update(worldDt, elapsed);
+        activeSlabs = [...floatingSlabs.getActiveColliders(), ...sphereTiles.getActiveColliders()];
 
-        const activeEnemies = enemyMgr.enemies.filter((e) => enemyEntities.get(e.id)?.alive);
-        const { didEnemyEvadeDash } = enemyMgr.update(
+        const { didEnemyEvadeDash } = waveMgr.update(
           worldDt,
           elapsed,
           controller.getPosition(),
           controller.getLockedEnemy(),
           controller.getAttackAccelTime(),
+          (dmg) => controller?.applyDamage(dmg),
+          () => combat.applyOctopusInkAttack(),
         );
         if (didEnemyEvadeDash) {
           controller.notifyEnemyEvaded();
         }
 
+        const activeEnemies = waveMgr.getActiveEnemies();
+
         // Regla de Barrera Blanca para enemigos
-        for (const sphere of activeEnemies) {
-          const entity = enemyEntities.get(sphere.id);
-          if (!entity || !entity.alive) continue;
-          entity.position.copy(sphere.position);
-          entity.velocity.copy(sphere.velocity);
-          if (combat.checkDomeBarrierKill(entity, DOME_PLAYER_BOUND_RADIUS)) {
-            killEnemyEntity(sphere, entity, true);
+        for (const enemy of activeEnemies) {
+          if (!enemy.entity.alive) continue;
+          if (combat.checkDomeBarrierKill(enemy.entity, DOME_PLAYER_BOUND_RADIUS)) {
+            killWaveEnemy(enemy, true);
           }
         }
 
+        // Avance automático al completar oleada
+        if (waveMgr.getActiveEnemies().length === 0) {
+          if (nextWaveDelay <= 0) nextWaveDelay = 1.6;
+          else {
+            nextWaveDelay -= worldDt;
+            if (nextWaveDelay <= 0) {
+              const nextWave = waveMgr.getWaveInfo().wave + 1;
+              waveMgr.startWave(nextWave);
+              runTracker.recordWave(nextWave);
+              applyFloorMode(waveMgr.getWaveInfo().floorMode);
+            }
+          }
+        } else {
+          nextWaveDelay = 0;
+        }
+
         // Actualizar habilidades activas (agujero negro, ondas, pozo de atracción)
-        skillExecutor.update(worldDt, activeEnemies, handleSkillDamageEnemy);
+        skillExecutor.update(worldDt, waveMgr.getActiveEnemies(), handleSkillDamageEnemy);
 
         // Actualizar partículas de EXP / Edén con magnetismo por nivel
         const pickupGains = pickups.update(
@@ -438,6 +446,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           }
         }
 
+        const waveInfo = waveMgr.getWaveInfo();
         // Sincronizar estadísticas/slots con NyxDomeController
         controller.syncProgression({
           level: progression.level,
@@ -449,6 +458,8 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           edenRegenFrac: mods.edenRegenPctPerSec,
           hpRegenFrac: mods.hpRegenPctPerSec,
           inkOverlayIntensity: playerStatus.inkIntensity,
+          waveNumber: waveInfo.wave,
+          waveLabel: waveInfo.label,
           slots: [
             {
               name: progression.slots[0].skillId ? ACTIVE_SKILLS_CATALOG[progression.slots[0].skillId].name : null,
@@ -473,22 +484,22 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
 
         controller.update(
           effRawDt,
-          slabRig.slabs,
+          activeSlabs,
           camera,
-          activeEnemies,
+          waveMgr.getActiveEnemies(),
           (enemy, hitDir, isDrill, impactSpeed) => {
-            enemyMgr.onHitEnemy(enemy, hitDir, isDrill, impactSpeed);
-            const entity = enemyEntities.get(enemy.id);
-            if (entity && entity.alive) {
+            waveMgr.onHitEnemy(enemy, hitDir, isDrill, impactSpeed);
+            const managed = waveMgr.getActiveEnemies().find((e) => e.id === enemy.id);
+            if (managed && managed.entity.alive) {
               const res = combat.computeKineticImpact(
-                entity,
+                managed.entity,
                 impactSpeed ?? 14,
                 mods.forceMultiplier,
                 isDrill,
               );
               runTracker.recordDamage(res.damage);
-              if (entity.hp <= 0 || res.killed) {
-                killEnemyEntity(enemy, entity, false);
+              if (managed.entity.hp <= 0 || res.killed) {
+                killWaveEnemy(managed, false);
               }
             }
           },
@@ -559,9 +570,10 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       loadedNyx?.dispose();
       pickups.dispose();
       skillExecutor.dispose();
-      enemyMgr.dispose();
+      waveMgr.dispose();
+      sphereTiles.dispose();
+      floatingSlabs.dispose();
       vfx.dispose();
-      slabRig.dispose();
       backdrop.dispose();
       renderer.dispose();
     };

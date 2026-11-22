@@ -162,6 +162,29 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
         />
       )}
 
+      {/* 4b. Indicador de oleada arriba al centro */}
+      {hud.waveNumber !== undefined && (
+        <div className="absolute left-1/2 top-4 -translate-x-1/2">
+          <div className="-skew-x-12 border border-white/25 bg-[#090314]/70 px-4 py-1 backdrop-blur-sm">
+            <div className="flex skew-x-12 items-center gap-2.5 text-[10px] font-black tracking-[0.26em]">
+              <span className="text-cyan-300">OLEADA {hud.waveNumber}</span>
+              <span className="text-white/30">·</span>
+              <span
+                className={
+                  hud.waveLabel === 'BOSS'
+                    ? 'text-rose-400'
+                    : hud.waveLabel === 'MINIBOSS'
+                      ? 'text-amber-300'
+                      : 'text-white/80'
+                }
+              >
+                {hud.waveLabel ?? 'BÁSICOS'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 5. Visor central (visor.svg) */}
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
         <svg

@@ -243,6 +243,8 @@ export class NyxDomeController {
   private edenRegenFrac = EDEN_IDLE_REGEN_FRAC;
   private hpRegenFrac = 0;
   private inkOverlayIntensity = 0;
+  private waveNumber = 1;
+  private waveLabel = 'BÁSICOS';
   private slotHudInfo: [
     { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
     { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
@@ -501,6 +503,8 @@ export class NyxDomeController {
     edenRegenFrac: number;
     hpRegenFrac: number;
     inkOverlayIntensity: number;
+    waveNumber?: number;
+    waveLabel?: string;
     slots: [
       { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
       { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
@@ -522,6 +526,8 @@ export class NyxDomeController {
     this.edenRegenFrac = params.edenRegenFrac;
     this.hpRegenFrac = params.hpRegenFrac;
     this.inkOverlayIntensity = params.inkOverlayIntensity;
+    if (params.waveNumber !== undefined) this.waveNumber = params.waveNumber;
+    if (params.waveLabel !== undefined) this.waveLabel = params.waveLabel;
     this.slotHudInfo = params.slots;
   }
 
@@ -554,6 +560,8 @@ export class NyxDomeController {
       ],
       domeBounceFlash: this.domeBounceFlash,
       inkOverlayIntensity: this.inkOverlayIntensity,
+      waveNumber: this.waveNumber,
+      waveLabel: this.waveLabel,
       impactFlash: this.impactFlash,
       cameraRollDeg: this.cameraRollRad * (180 / Math.PI),
       gyroSpinRad: this.gyroSpinRad,
@@ -1311,13 +1319,21 @@ export class NyxDomeController {
       const approach = this.velocity.dot(n); // < 0 = entrando en la superficie
 
       if (this.mode !== 'grounded') {
+        // Suelos oneSidedTop: solo la cara superior (+Y del slab) es pisable;
+        // laterales y parte inferior de roca siempre rebotan.
+        let isTopFace = true;
+        if (this.contact.slab?.oneSidedTop) {
+          const topDir = this.tmpA.set(0, 1, 0).applyQuaternion(this.contact.slab.quaternion);
+          isTopFace = n.dot(topDir) > 0.65;
+        }
         // Aterrizaje real vs choque lateral según el alineamiento de los pies.
         const footAlign = this.up.dot(n);
         const canLand =
-          (this.mode === 'floating' &&
+          isTopFace &&
+          ((this.mode === 'floating' &&
             this.velocity.length() < FLOAT_LAND_MAX_SPEED &&
             footAlign > FLOAT_LAND_MIN_ALIGN) ||
-          footAlign > LAND_ALIGN_MIN;
+            footAlign > LAND_ALIGN_MIN);
 
         if (canLand) {
           // Aterriza: esfera apoyada sobre la superficie, nunca al centro del slab.

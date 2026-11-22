@@ -26,6 +26,88 @@ const _bestPoint = new THREE.Vector3();
 const _bobAxis = new THREE.Vector3();
 const _rayOrigin = new THREE.Vector3();
 const _rayDir = new THREE.Vector3();
+const _triOut = { x: 0, z: 0, inside: false };
+
+/** Punto más cercano en un triángulo 2D (plano XZ local) sin allocations. */
+function closestPointOnTriangle2D(
+  px: number,
+  pz: number,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  cx: number,
+  cz: number,
+): void {
+  const abx = bx - ax;
+  const abz = bz - az;
+  const acx = cx - ax;
+  const acz = cz - az;
+  const apx = px - ax;
+  const apz = pz - az;
+
+  const d1 = abx * apx + abz * apz;
+  const d2 = acx * apx + acz * apz;
+  if (d1 <= 0 && d2 <= 0) {
+    _triOut.x = ax;
+    _triOut.z = az;
+    _triOut.inside = false;
+    return;
+  }
+
+  const bpx = px - bx;
+  const bpz = pz - bz;
+  const d3 = abx * bpx + abz * bpz;
+  const d4 = acx * bpx + acz * bpz;
+  if (d3 >= 0 && d4 <= d3) {
+    _triOut.x = bx;
+    _triOut.z = bz;
+    _triOut.inside = false;
+    return;
+  }
+
+  const vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+    const v = d1 / (d1 - d3);
+    _triOut.x = ax + v * abx;
+    _triOut.z = az + v * abz;
+    _triOut.inside = false;
+    return;
+  }
+
+  const cpx = px - cx;
+  const cpz = pz - cz;
+  const d5 = abx * cpx + abz * cpz;
+  const d6 = acx * cpx + acz * cpz;
+  if (d6 >= 0 && d5 <= d6) {
+    _triOut.x = cx;
+    _triOut.z = cz;
+    _triOut.inside = false;
+    return;
+  }
+
+  const vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+    const w = d2 / (d2 - d6);
+    _triOut.x = ax + w * acx;
+    _triOut.z = az + w * acz;
+    _triOut.inside = false;
+    return;
+  }
+
+  const va = d3 * d6 - d5 * d4;
+  if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) {
+    const w = (d4 - d3) / (d4 - d3 + (d5 - d6));
+    _triOut.x = bx + w * (cx - bx);
+    _triOut.z = bz + w * (cz - bz);
+    _triOut.inside = false;
+    return;
+  }
+
+  _triOut.x = px;
+  _triOut.z = pz;
+  _triOut.inside = true;
+}
 
 /**
  * Anima el "bob" senoidal de cada slab a lo largo de su eje local +Y y
@@ -62,11 +144,21 @@ export function resolveSphereSlabCollision(
   for (const slab of slabs) {
     _local.copy(position).sub(slab.center).applyQuaternion(slab.invQuaternion);
     const he = slab.halfExtents;
-    _closest.set(
-      Math.min(he.x, Math.max(-he.x, _local.x)),
-      Math.min(he.y, Math.max(-he.y, _local.y)),
-      Math.min(he.z, Math.max(-he.z, _local.z)),
-    );
+    if (slab.localTriangle2D) {
+      const t = slab.localTriangle2D;
+      closestPointOnTriangle2D(_local.x, _local.z, t[0], t[1], t[2], t[3], t[4], t[5]);
+      _closest.set(
+        _triOut.x,
+        Math.min(he.y, Math.max(-he.y, _local.y)),
+        _triOut.z,
+      );
+    } else {
+      _closest.set(
+        Math.min(he.x, Math.max(-he.x, _local.x)),
+        Math.min(he.y, Math.max(-he.y, _local.y)),
+        Math.min(he.z, Math.max(-he.z, _local.z)),
+      );
+    }
     _delta.copy(_local).sub(_closest);
     const distSq = _delta.lengthSq();
 
@@ -181,6 +273,15 @@ export function raycastSlabs(
     }
 
     if (miss || axis === -1 || tmin <= 0 || tmin >= bestT) continue;
+    if (slab.localTriangle2D) {
+      const t = slab.localTriangle2D;
+      const hx = _rayOrigin.x + _rayDir.x * tmin;
+      const hz = _rayOrigin.z + _rayDir.z * tmin;
+      closestPointOnTriangle2D(hx, hz, t[0], t[1], t[2], t[3], t[4], t[5]);
+      if (!_triOut.inside && Math.hypot(hx - _triOut.x, hz - _triOut.z) > 0.35) {
+        continue;
+      }
+    }
     bestT = tmin;
     if (!best) {
       best = {
