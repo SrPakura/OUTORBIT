@@ -294,8 +294,8 @@ function buildContour(
  *   triangulado en abanico, 100% plano y liso, con UVs planas
  *   `(x * 0.35, z * 0.35)` para el damero P3R y atributo `aIsTop = 1`.
  * - Raíz inferior: el contorno se estrecha en `ICEBERG_RINGS` (5) anillos
- *   colgantes hasta un ápice a `(radiusX + radiusZ) * 0.55..0.85` bajo la
- *   tapa. El ápice está desplazado en XZ con ruido según `seed` (masa
+ *   colgantes hasta un ápice a `(radiusX + radiusZ) * 0.26..0.42` bajo la
+ *   tapa (bloque arrancado proporcionado, no una torre larga). El ápice está desplazado en XZ con ruido según `seed` (masa
  *   asimétrica, nunca un cono centrado) y los anillos intermedios llevan FBM
  *   radial y vertical fuerte: crestas, entrantes y espolones rocosos.
  * - La roca usa triángulos con vértices NO compartidos y normal por cara
@@ -320,8 +320,9 @@ export function createTornSlabGeometry(
 
   // PRNG propio de la raíz (no altera el contorno de la tapa).
   const rand = mulberry32((seed * 0x85ebca6b + 0x9e3779b9) >>> 0);
-  // Profundidad de la raíz colgante: 55%..85% de (radiusX + radiusZ).
-  const depth = (radiusX + radiusZ) * (0.55 + rand() * 0.3);
+  // Profundidad de la raíz colgante: 26%..42% de (radiusX + radiusZ)
+  // (bloque arrancado proporcionado de ~4-7.5 m de fondo, no una torre).
+  const depth = (radiusX + radiusZ) * (0.26 + rand() * 0.16);
   // Centro del ápice desplazado en XZ: estrechamiento asimétrico.
   const apexOffX = (rand() * 2 - 1) * radiusX * 0.38;
   const apexOffZ = (rand() * 2 - 1) * radiusZ * 0.38;

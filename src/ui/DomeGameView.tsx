@@ -381,8 +381,10 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           controller.applyDamage(playerStatus.inkDamageThisFrame);
         }
 
-        // Suelos activos según oleada (flotantes arrancados en básicas / triángulos de esfera en Miniboss y Boss)
-        floatingSlabs.update(worldDt, elapsed);
+        // Suelos activos según oleada (flotantes arrancados en básicas / triángulos de esfera en Miniboss y Boss).
+        // Se pasa la posición y dirección de la cámara para que los suelos
+        // reciclados re-entren desde fuera del campo de visión del jugador.
+        floatingSlabs.update(worldDt, elapsed, camera.position, controller.getAimForward());
         sphereTiles.update(worldDt, elapsed);
         activeSlabs = [...floatingSlabs.getActiveColliders(), ...sphereTiles.getActiveColliders()];
 

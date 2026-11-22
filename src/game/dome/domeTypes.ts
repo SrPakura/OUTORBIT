@@ -23,6 +23,8 @@ export interface SlabCollider {
   bobAmplitude: number;
   /** Si es true, solo la cara +Y local es pisable (grounded); laterales/fondo rebotan */
   oneSidedTop?: boolean;
+  /** Profundidad de la raíz tipo iceberg bajo -halfExtents.y para colisión cónica */
+  icebergDepth?: number;
   /** Triángulo 2D en plano XZ local [ax, az, bx, bz, cx, cz] para colisión triangular exacta */
   localTriangle2D?: readonly [number, number, number, number, number, number];
 }

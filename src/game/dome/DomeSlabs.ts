@@ -152,6 +152,19 @@ export function resolveSphereSlabCollision(
         Math.min(he.y, Math.max(-he.y, _local.y)),
         _triOut.z,
       );
+    } else if (slab.icebergDepth && slab.icebergDepth > 0 && _local.y < -he.y) {
+      // Colisión cónica contra la raíz del iceberg que cuelga bajo -he.y
+      const clampedY = Math.max(-he.y - slab.icebergDepth, _local.y);
+      const t = Math.min(1, Math.max(0, (-he.y - clampedY) / slab.icebergDepth));
+      const topR = (he.x + he.z) * 0.44;
+      const rAtY = topR * (1 - t) + 0.5 * t;
+      const radial = Math.hypot(_local.x, _local.z);
+      if (radial > rAtY && radial > 1e-6) {
+        const s = rAtY / radial;
+        _closest.set(_local.x * s, clampedY, _local.z * s);
+      } else {
+        _closest.set(_local.x, clampedY, _local.z);
+      }
     } else {
       _closest.set(
         Math.min(he.x, Math.max(-he.x, _local.x)),
