@@ -3,7 +3,9 @@ import {
   COUNTER_PARRY_DURATION,
   SPIRAL_DRILL_KICK_DURATION,
   poseCounterParry,
+  poseGravityKick,
   poseGravitySlide,
+  poseKickFlip,
   poseSpiralDrillKick,
   type PoseWriter,
 } from './nyxAnimsCombat';
@@ -11,9 +13,24 @@ import {
   DOME_BOUNCE_DURATION,
   WALL_SHIFT_FLIP_DURATION,
   poseDomeBounce,
+  poseGravityFall,
   poseVictoryFloat,
   poseWallShiftFlip,
+  poseZeroGFloat,
 } from './nyxAnimsTraversal';
+import {
+  poseAirDash,
+  poseIdle,
+  poseJumpLand,
+  poseLandRecover,
+  poseRun,
+} from './nyxAnimsGrounded';
+import {
+  poseEdenAbsorb,
+  poseHitStagger,
+  poseStasisCast,
+  poseStasisThrow,
+} from './nyxAnimsSkills';
 
 // ============================================================================
 // NYX — Animador procedural del esqueleto `nyx_rigged.glb` (25 huesos).
@@ -484,25 +501,31 @@ export class NyxAnimator {
 
   private pose(st: NyxAnimState, t: number, g: number): void {
     switch (st) {
-      case 'idle': this.poseIdle(g); break;
-      case 'run': this.poseRun(); break;
-      case 'jump_land': this.poseJumpLand(t); break;
-      case 'land_recover': this.poseLandRecover(t); break;
-      case 'zero_g_float': this.poseFloat(g); break;
-      case 'gravity_fall': this.poseFall(g); break;
-      case 'air_dash': this.poseDash(t, g); break;
-      case 'gravity_kick': this.poseKick(t, g); break;
-      case 'kick_flip': this.poseKickFlip(t, g); break;
+      case 'idle': poseIdle(this.writer, g); break;
+      case 'run': poseRun(this.writer, g, this.runPhase, this.speed, this.turn); break;
+      case 'jump_land': poseJumpLand(this.writer, t); break;
+      case 'land_recover': poseLandRecover(this.writer, t); break;
+      case 'zero_g_float': poseZeroGFloat(this.writer, g); break;
+      case 'gravity_fall': poseGravityFall(this.writer, g, this.vVel, this.hasVVel); break;
+      case 'air_dash': poseAirDash(this.writer, t, g, this.dashDir); break;
+      case 'gravity_kick': poseGravityKick(this.writer, t, g); break;
+      case 'kick_flip': {
+        const flip = poseKickFlip(this.writer, t, g);
+        const o = HIPS * 3;
+        while (this.cur[o] - flip > Math.PI) this.cur[o] -= 2 * Math.PI;
+        while (this.cur[o] - flip < -Math.PI) this.cur[o] += 2 * Math.PI;
+        break;
+      }
       case 'spiral_drill_kick': poseSpiralDrillKick(this.writer, t, g); break;
       case 'gravity_slide': poseGravitySlide(this.writer, g, this.speed, this.turn); break;
       case 'counter_parry': poseCounterParry(this.writer, t); break;
       case 'wall_shift_flip': poseWallShiftFlip(this.writer, t); break;
       case 'dome_bounce': poseDomeBounce(this.writer, t); break;
       case 'victory_float': poseVictoryFloat(this.writer, g); break;
-      case 'stasis_cast': this.poseCast(t, g); break;
-      case 'stasis_throw': this.poseThrow(t, g); break;
-      case 'hit_stagger': this.poseHit(t); break;
-      case 'eden_absorb': this.poseAbsorb(t, g); break;
+      case 'stasis_cast': poseStasisCast(this.writer, t, g); break;
+      case 'stasis_throw': poseStasisThrow(this.writer, t, g); break;
+      case 'hit_stagger': poseHitStagger(this.writer, t); break;
+      case 'eden_absorb': poseEdenAbsorb(this.writer, t, g); break;
     }
   }
 

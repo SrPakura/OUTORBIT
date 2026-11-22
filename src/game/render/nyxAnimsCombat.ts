@@ -273,4 +273,75 @@ export function poseCounterParry(w: PoseWriter, t: number): void {
   w.legR(seq4(0.03, 0.12, 0.3, 0.06, wind, snap, rec), 0,
     seq4(0.03, 0.07, 0.07, 0.04, wind, snap, rec),
     seq4(0.06, 0.35, 0.55, 0.12, wind, snap, rec));
+  w.clavL(0.02 * wind, -0.12 * push, 0.1 * wind + 0.06 * sweep);
+  w.clavR(0.02 * wind, 0.12 * push, 0.1 * wind + 0.06 * sweep);
+  w.footL(seq4(0.02, 0.08, 0.12, 0.04, wind, snap, rec), 0, 0.03, 0);
+  w.footR(seq4(0.02, -0.05, -0.1, 0.02, wind, snap, rec), 0, 0.03, 0);
+}
+
+// ============================================================================
+// poseGravityKick — misil gravitatorio: cuerpo entero en la trayectoria (1.15 s)
+// ============================================================================
+export function poseGravityKick(w: PoseWriter, t: number, g: number): void {
+  const coil = smooth(0, 0.12, t) * (1 - smooth(0.13, 0.24, t));
+  const fly = smooth(0.15, 0.32, t) * (1 - smooth(0.95, 1.15, t));
+  const vib = Math.sin(g * 27) * 0.05 * fly;
+  const vib2 = Math.cos(g * 21) * 0.03 * fly;
+
+  w.pos(0, 0.08 * fly - 0.02 * coil, 0.18 * fly - 0.05 * coil);
+  w.p(HIPS, -0.18 * coil + 1.15 * fly, vib2, 0);
+  w.p(SPINE, 0.1 * coil + 0.06 * fly, 0, 0);
+  w.p(CHEST, 0.12 * coil, -0.55 * fly, 0);
+  w.p(NECK, -0.08 * fly, 0, 0);
+  w.p(HEAD, 0.25 * coil - 0.65 * fly, 0.12 * fly, 0);
+
+  // Clavículas echadas atrás para despejar la línea de vuelo
+  w.clavL(0.08 * fly, 0.22 * fly, -0.08 * fly);
+  w.clavR(0.08 * fly, 0.22 * fly, -0.08 * fly);
+
+  // Brazos extendidos hacia atrás cortando el aire
+  w.armL(0.3 * coil + (1.05 + vib) * fly, 0.3 * fly, mix(-1.1, -0.45, fly),
+    0, -0.35 * coil - 0.12 * fly, -0.05);
+  w.armR(0.3 * coil + (1.0 - vib) * fly, 0.25 * fly, mix(-1.1, -0.5, fly),
+    0, -0.3 * coil - 0.1 * fly, -0.05);
+
+  // Pierna derecha: punta de lanza (bota + puntera totalmente extendidas)
+  w.legR(-1.3 * coil - 0.65 * fly, 0, 0.03, 1.6 * coil + 0.04);
+  w.legL(-1.3 * coil + 0.45 * fly, 0, 0.1, 1.6 * coil + 1.45 * fly);
+  w.footR(0.28 * coil - 0.85 * fly, 0, 0, -0.45 * fly);
+  w.footL(0.35 * coil + 0.22 * fly, 0, 0.04, 0.1 * fly);
+}
+
+// ============================================================================
+// poseKickFlip — voltereta mortal trasera tras la patada (0.85 s)
+// ============================================================================
+// Devuelve el ángulo `flip` envuelto a (-π, π] para que el animador envuelva
+// `cur[HIPS * 3]` por el camino corto.
+export function poseKickFlip(w: PoseWriter, t: number, g: number): number {
+  const p = clamp(t / 0.85, 0, 1);
+  const arc = Math.sin(p * Math.PI);
+  const tuck = smooth(0.02, 0.16, t) * (1 - smooth(0.6, 0.85, t));
+  const wob = Math.sin(g * 5.2) * 0.04 * arc;
+
+  let flip = -2 * Math.PI * smooth(0.02, 0.78, t);
+  while (flip <= -Math.PI) flip += 2 * Math.PI;
+
+  w.pos(0, 0.22 * arc, -0.14 * arc);
+  w.p(HIPS, flip, wob, 0);
+  w.p(SPINE, 0.2 * tuck, 0, 0);
+  w.p(CHEST, 0.16 * tuck, -0.15 * tuck, 0);
+  w.p(HEAD, 0.34 * tuck, 0, 0);
+
+  w.clavL(0, -0.12 * tuck, 0.18 * tuck);
+  w.clavR(0, -0.12 * tuck, 0.18 * tuck);
+  w.armL(0.12 + 0.22 * tuck, -0.3 * tuck, -0.82, 0.08, -0.45 * tuck, -0.1);
+  w.armR(0.12 + 0.22 * tuck, -0.25 * tuck, -0.82, 0.08, -0.4 * tuck, -0.1);
+
+  w.legL(-1.15, 0.05, 0.08, 1.55);
+  w.legR(-1.15, 0, 0.08, 1.55);
+  // Empeines recogidos con gracia durante el giro
+  w.footL(-0.35 * tuck, 0, 0.03, -0.2 * tuck);
+  w.footR(-0.35 * tuck, 0, 0.03, -0.2 * tuck);
+
+  return flip;
 }
