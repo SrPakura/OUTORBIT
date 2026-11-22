@@ -229,6 +229,9 @@ export class NyxDomeController {
   private redirectWindowTimer = 0; // segundos REALES de ventana restantes
   private redirectReArm = 0; // antirrebote tras cerrarse la ventana
   private reticleLockState: ReticleLockState = 'none';
+  // Enemigo lockeado proyectado a <= RETICLE_LOCK_RADIUS_PX del centro del
+  // visor este frame (se recalcula en updateReticle, antes de la física).
+  private lockedEnemyInReticle = false;
   private readonly lockedScreenPos = { x: 0, y: 0 };
   private lockedEnemyScreenPos: { x: number; y: number } | null = null;
 
@@ -757,6 +760,7 @@ export class NyxDomeController {
     enemies: TestEnemySphere[] | undefined,
   ): void {
     this.lockedEnemyScreenPos = null;
+    this.lockedEnemyInReticle = false;
     if (this.redirectTargetEnemy && (!enemies || enemies.indexOf(this.redirectTargetEnemy) < 0)) {
       this.redirectTargetEnemy = null;
     }
@@ -781,6 +785,7 @@ export class NyxDomeController {
         ? Math.hypot(this.screenPos.x - cx, this.screenPos.y - cy)
         : Number.POSITIVE_INFINITY;
       if (onScreen && distPx <= RETICLE_BREAK_RADIUS_PX) {
+        this.lockedEnemyInReticle = distPx <= RETICLE_LOCK_RADIUS_PX;
         this.lockedScreenPos.x = this.screenPos.x;
         this.lockedScreenPos.y = this.screenPos.y;
         this.lockedEnemyScreenPos = this.lockedScreenPos;
@@ -879,19 +884,20 @@ export class NyxDomeController {
   private handleDash(f: number, r: number): void {
     if (this.mode === 'speed_attack') {
       if (this.eden < EDEN_DASH_COST) return;
-      // Dash de redirección: en cámara lenta o apuntando al enemigo (lockeado,
-      // guardado por la ventana de redirección o recapturado con el visor)
-      // re-lockea y curva el golpe hacia él SIN cortar la patada/taladro.
+      // Dash de redirección: SOLO si el jugador apunta. En cámara lenta hace
+      // falta haber vuelto a meter al enemigo dentro del visor (estrella roja
+      // suave, can_lock); con lockeo activo, el dash W/A/D debe ir hacia él
+      // (isRedirectDashDir). NUNCA auto-aim mágico con redirectTargetEnemy:
+      // sin enemigo a la vista, el Clic Derecho es un dash normal de WASD.
       const inSlowMo = this.redirectWindowTimer > 0 || this.bulletTimeTimer > 0;
-      const target =
-        (this.reticleLockState === 'can_lock' ? this.candidateEnemy : null) ??
-        this.lockedEnemy ??
-        this.redirectTargetEnemy;
+      const candidate = this.reticleLockState === 'can_lock' ? this.candidateEnemy : null;
+      const target = candidate ?? this.lockedEnemy;
       const isBrakeBack = f < 0 && r === 0;
       if (
         target &&
         !isBrakeBack &&
-        (inSlowMo || ((f > 0 || r !== 0) && this.isRedirectDashDir(f, r, target)))
+        ((inSlowMo && candidate !== null) ||
+          ((f > 0 || r !== 0) && this.isRedirectDashDir(f, r, target)))
       ) {
         this.redirectDash(target);
         return;
@@ -940,9 +946,9 @@ export class NyxDomeController {
       this.audio?.playGravityShift();
     } else if (this.mode === 'dashing' && (this.redirectWindowTimer > 0 || this.bulletTimeTimer > 0)) {
       if (this.eden < EDEN_DASH_COST) return;
-      const target =
-        (this.reticleLockState === 'can_lock' ? this.candidateEnemy : null) ??
-        this.redirectTargetEnemy;
+      // Re-captura SOLO con el enemigo de vuelta dentro del visor: sin
+      // candidato no hay auto-aim con redirectTargetEnemy.
+      const target = this.reticleLockState === 'can_lock' ? this.candidateEnemy : null;
       if (target) {
         this.redirectDash(target);
         return;
@@ -1269,6 +1275,11 @@ export class NyxDomeController {
       // Dash de redirección: si el giro que pide el enemigo supera lo que la
       // fuerza centrípeta del auto-aim permite, abre una ventana de cámara
       // lenta real (timeScale 0.20) para curvar el golpe con un Dash W/A/D.
+      // SOLO cuando el impacto es físicamente imposible sin re-apuntar: a
+      // corta distancia timeToImpact se hunde y dispara requiredTurnRate
+      // aunque el enemigo esté enfrente (missAngle mínimo, < 4 m con desvío
+      // moderado, o todavía dentro del radio de lock del visor), la física
+      // centrípeta conecta el golpe sí o sí y NO se toca la cámara lenta.
       if (
         this.redirectWindowTimer <= 0 &&
         this.redirectReArm <= 0 &&
@@ -1280,7 +1291,12 @@ export class NyxDomeController {
         const timeToImpact = Math.max(dist / Math.max(speed, 12), 1e-3);
         const requiredTurnRate = missAngle / timeToImpact;
         const maxCentripetalTurnRate = VEL_ALIGN_RATE / (1 + speed * CENTRIPETAL_SPEED_K);
-        if (missAngle > 0.12 && requiredTurnRate > maxCentripetalTurnRate) {
+        if (
+          dist >= 4.0 &&
+          missAngle >= 0.42 &&
+          !this.lockedEnemyInReticle &&
+          requiredTurnRate > maxCentripetalTurnRate
+        ) {
           this.redirectTargetEnemy = this.lockedEnemy;
           this.redirectWindowTimer = this.computeRedirectWindowSec(this.lockedEnemy);
         }
