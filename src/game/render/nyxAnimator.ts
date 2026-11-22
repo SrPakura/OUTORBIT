@@ -80,13 +80,15 @@ export interface NyxAnimParams {
 }
 
 // --- Índices de hueso (orden fijo; 3 floats por hueso en las poses) ---------
-// 0..14: cuerpo · 15..18: cadena del pelo (hair_1..hair_4) · 19..24: nuevos.
+// 0..14: cuerpo · 15..18: cadena del pelo (hair_1..hair_4) · 19..24: nuevos ·
+// 25..26: mangas (sleeve_L/R, opcionales, física de resorte).
 const HIPS = 0, SPINE = 1, CHEST = 2, NECK = 3, HEAD = 4;
 const UA_L = 5, FA_L = 6, HAND_L = 7, UA_R = 8, FA_R = 9, HAND_R = 10;
 const TH_L = 11, SH_L = 12, TH_R = 13, SH_R = 14;
 const HAIR_1 = 15, HAIR_2 = 16, HAIR_3 = 17, HAIR_4 = 18;
 const CLAV_L = 19, CLAV_R = 20, FOOT_L = 21, TOE_L = 22, FOOT_R = 23, TOE_R = 24;
-const BONE_COUNT = 25;
+const SLEEVE_L = 25, SLEEVE_R = 26;
+const BONE_COUNT = 27;
 
 const BONE_NAMES: readonly string[] = [
   'hips', 'spine', 'chest', 'neck', 'head',
@@ -94,6 +96,7 @@ const BONE_NAMES: readonly string[] = [
   'thigh_L', 'shin_L', 'thigh_R', 'shin_R',
   'hair_1', 'hair_2', 'hair_3', 'hair_4',
   'clavicle_L', 'clavicle_R', 'foot_L', 'toe_L', 'foot_R', 'toe_R',
+  'sleeve_L', 'sleeve_R',
 ];
 
 const INF = Number.POSITIVE_INFINITY;
@@ -137,6 +140,12 @@ const HAIR_C: readonly number[] = [
   2 * HAIR_ZETA[2] * Math.sqrt(HAIR_K[2]),
   2 * HAIR_ZETA[3] * Math.sqrt(HAIR_K[3]),
 ];
+// --- Mangas: sleeve_L / sleeve_R, 2 ejes (pitch=eje Y local ~ delante/atrás,
+// roll=eje Z local ~ arriba/abajo). Hueso opcional: si el GLB no lo trae, se omite.
+const SLEEVE_W = 0.55;      // cuánto responde a gravedad/inercia (rad)
+const SLEEVE_K = 85;        // rigidez ω²
+const SLEEVE_ZETA = 0.26;   // < 1 → subamortiguado
+const SLEEVE_C = 2 * SLEEVE_ZETA * Math.sqrt(SLEEVE_K);
 const DEFAULT_GRAVITY: [number, number, number] = [0, -1, 0];
 
 // --- Helpers numéricos puros -------------------------------------------------
@@ -168,6 +177,9 @@ export class NyxAnimator {
   // Pelo (4 segmentos × 2 ejes)
   private readonly hairA = new Float32Array(8);
   private readonly hairV = new Float32Array(8);
+  // Mangas ([L.roll, L.pitch, R.roll, R.pitch])
+  private readonly sleeveA = new Float32Array(4);
+  private readonly sleeveV = new Float32Array(4);
 
   private state: NyxAnimState = 'idle';
   private stateTime = 0;
@@ -309,7 +321,7 @@ export class NyxAnimator {
     for (let i = 0; i < HAIR_1; i++) {
       bones[i]?.rotation.set(cur[i * 3], cur[i * 3 + 1], cur[i * 3 + 2]);
     }
-    for (let i = HAIR_4 + 1; i < BONE_COUNT; i++) {
+    for (let i = HAIR_4 + 1; i < SLEEVE_L; i++) {
       bones[i]?.rotation.set(cur[i * 3], cur[i * 3 + 1], cur[i * 3 + 2]);
     }
     bones[HIPS]?.position.set(
@@ -319,6 +331,7 @@ export class NyxAnimator {
     );
 
     this.updateHair(dt, params, st);
+    this.updateSleeves(dt, params, st);
   }
 
   // ==========================================================================
@@ -357,6 +370,40 @@ export class NyxAnimator {
       }
       // pitch+ levanta la melena (-Z) · yaw+ la lleva hacia -X
       bones[HAIR_1 + s]?.rotation.set(A[ip], A[iy], A[iy] * 0.3);
+    }
+  }
+
+  // ==========================================================================
+  // Mangas: resorte-amortiguador subamortiguado (gravedad + inercia + giro)
+  // ==========================================================================
+  private updateSleeves(dt: number, params: NyxAnimParams | undefined, st: NyxAnimState): void {
+    const bL = this.bones[SLEEVE_L], bR = this.bones[SLEEVE_R];
+    if (!bL && !bR) return;
+    const A = this.sleeveA, V = this.sleeveV;
+    const g = params && params.hairGravityLocal ? params.hairGravityLocal : DEFAULT_GRAVITY;
+    const gs = HAIR_GRAVITY_SCALE[st];
+    const gy = g[1] * gs, gz = g[2] * gs;
+    const t = this.time;
+    const calm = gs < 0.3 ? 2 : 1; // en 0G la tela ondula más
+    const lag = clamp(this.speedAcc * 0.08, -0.6, 0.6) + clamp(this.vAcc * 0.015, -0.5, 0.5);
+    const turn = clamp(this.turn * 0.25, -0.8, 0.8);
+    const sub = 2, h = dt / sub;
+    for (let s = 0; s < 2; s++) {
+      const side = s === 0 ? 1 : -1; // +X (L) / -X (R): el brazo apunta a ±X
+      // roll: la manga cae con la gravedad (L: z<0 baja; R: z>0 baja)
+      const rollT = SLEEVE_W * (gy * side * 1.0 + lag * 0.5) + Math.sin(t * 2.6 + s * 1.7) * 0.05 * calm;
+      // pitch: arrastre hacia atrás con la velocidad, giro y gravedad en Z
+      const pitchT = SLEEVE_W * (gz * 0.6 + 0.35 * this.speed * (st === 'run' ? 1 : 0.2) + turn * side)
+        + Math.cos(t * 2.1 + s * 1.3) * 0.045 * calm;
+      const ir = s * 2, ip = ir + 1;
+      for (let n = 0; n < sub; n++) {
+        V[ir] += (-SLEEVE_K * (A[ir] - rollT) - SLEEVE_C * V[ir]) * h;
+        A[ir] += V[ir] * h;
+        V[ip] += (-SLEEVE_K * (A[ip] - pitchT) - SLEEVE_C * V[ip]) * h;
+        A[ip] += V[ip] * h;
+      }
+      const b = s === 0 ? bL : bR;
+      if (b) b.rotation.set(0, A[ip], A[ir]);
     }
   }
 
