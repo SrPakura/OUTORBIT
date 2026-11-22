@@ -46,6 +46,10 @@ import type { SynthAudio } from '@/game/audio/SynthAudio';
 //                   velocidad instantánea >= 14.5 m/s) o Caída al Vacío
 //                   (void_fall) sin enemigo. Dash lateral/trasero para cortar
 //                   vector y Espacio para frenar del todo en 1-3 kick_flip.
+//                   Si el enemigo se esquiva de cerca (giro imposible para el
+//                   auto-aim o dash evasivo), Cámara Lenta de Redirección
+//                   (0.20): un Dash W/A/D apuntando a él re-lockea, curva el
+//                   vector de golpe +4 m/s SIN cortar la patada.
 //  - 'kick_recover' Frenado suave hasta casi 0 encadenando kick_flip.
 //
 // Economía de Edén (base 100): +1%/s de regeneración en suelo o flotación sin
@@ -114,6 +118,14 @@ const EDEN_IDLE_REGEN_FRAC = 0.01; // 1% de maxEden por segundo
 const BULLET_TIME_SCALE = 0.22;
 const BULLET_TIME_DURATION = 1.25;
 
+// --- Cámara Lenta de Redirección (Dash durante speed_attack)
+const REDIRECT_TIME_SCALE = 0.20;
+const REDIRECT_WINDOW_K = 0.95;
+const REDIRECT_WINDOW_MIN = 0.45;
+const REDIRECT_WINDOW_MAX = 0.90;
+const REDIRECT_REARM_COOLDOWN = 1.1;
+const REDIRECT_DASH_SPEED_BONUS = 4.0;
+
 // --- Cámara
 const CAM_PITCH_LIMIT = 1.15;
 const AIM_PITCH_MAX_DOT = 0.985;
@@ -138,6 +150,7 @@ const HIT_STOP_KICK = 0.042;
 const HIT_STOP_DRILL = 0.068;
 const FOV_PUNCH_KICK = -7;
 const FOV_PUNCH_DRILL = -11;
+const FOV_PUNCH_CAP = -30; // tope de zoom puntual por energía cinética
 
 const DOME_BOUNCE_DAMAGE = 10;
 
@@ -145,6 +158,7 @@ type HitEnemyCallback = (
   enemy: TestEnemySphere,
   hitDir: THREE.Vector3,
   isDrill: boolean,
+  impactSpeed?: number,
 ) => void;
 
 function clamp01(x: number): number {
@@ -210,6 +224,10 @@ export class NyxDomeController {
   private speedAttackKind: SpeedAttackKind | null = null;
   private lockedEnemy: TestEnemySphere | null = null;
   private candidateEnemy: TestEnemySphere | null = null;
+  // --- Dash de redirección en cámara lenta
+  private redirectTargetEnemy: TestEnemySphere | null = null;
+  private redirectWindowTimer = 0; // segundos REALES de ventana restantes
+  private redirectReArm = 0; // antirrebote tras cerrarse la ventana
   private reticleLockState: ReticleLockState = 'none';
   private readonly lockedScreenPos = { x: 0, y: 0 };
   private lockedEnemyScreenPos: { x: number; y: number } | null = null;
@@ -236,6 +254,11 @@ export class NyxDomeController {
   private fovPunch = 0; // grados de zoom puntual en el impacto
   private impactFlash = 0; // 0..1 para el HUD
   private gyroSpinRad = 0; // ángulo acumulado de los arcos giroscópicos del visor
+
+  // --- Tambaleo orgánico de cámara (camWobble)
+  private wobbleTime = 0; // reloj procedural del tambaleo
+  private dashWobbleImpulse = 0; // latigazo elástico del dash (decae exp(-7*dt))
+  private impactWobbleImpulse = 0; // tambaleo contundente del impacto
 
   // --- Scratch (ninguno vive más allá de un helper o de un tramo de update)
   private readonly camFwd = new THREE.Vector3();
@@ -281,18 +304,34 @@ export class NyxDomeController {
     }
   }
 
-  /** Escala de tiempo del mundo: 0.22 en cámara lenta, 1.0 normalmente. */
+  /** Escala de tiempo del mundo: 0.20 en redirección, 0.22 en cámara lenta. */
   getTimeScale(): number {
+    if (this.redirectWindowTimer > 0) return REDIRECT_TIME_SCALE;
     return this.bulletTimeTimer > 0 ? BULLET_TIME_SCALE : 1.0;
   }
 
   /**
    * El motor de enemigos llama aquí cuando el enemigo lockeado hace un dash
-   * evasivo: rompe el lock-in y activa la cámara lenta (1.25 s reales).
+   * evasivo: guarda el objetivo, rompe el lock y abre la ventana de Cámara
+   * Lenta de Redirección (timeScale 0.20) durante el tiempo físico en el que
+   * un Dash todavía puede curvar el golpe para alcanzarlo.
    */
   notifyEnemyEvaded(): void {
-    this.bulletTimeTimer = BULLET_TIME_DURATION;
-    if (this.lockedEnemy) this.breakLock(true);
+    const target = this.lockedEnemy ?? this.redirectTargetEnemy;
+    if (target) {
+      this.redirectTargetEnemy = target;
+      const dist = this.nyxRoot.position.distanceTo(target.position);
+      const speed = this.velocity.length();
+      this.redirectWindowTimer = THREE.MathUtils.clamp(
+        (dist / Math.max(speed, 12)) * REDIRECT_WINDOW_K,
+        REDIRECT_WINDOW_MIN,
+        REDIRECT_WINDOW_MAX,
+      );
+    }
+    if (this.lockedEnemy) {
+      this.lockedEnemy = null;
+      this.reticleLockState = 'none';
+    }
   }
 
   onMouseMove(dx: number, dy: number): void {
@@ -398,8 +437,8 @@ export class NyxDomeController {
       pointerLocked: this.pointerLocked,
       reticleLockState: this.reticleLockState,
       lockedEnemyScreenPos: this.lockedEnemyScreenPos,
-      bulletTimeActive: this.bulletTimeTimer > 0,
-      bulletTimeRemaining: this.bulletTimeTimer,
+      bulletTimeActive: this.bulletTimeTimer > 0 || this.redirectWindowTimer > 0,
+      bulletTimeRemaining: Math.max(this.bulletTimeTimer, this.redirectWindowTimer),
       activeSlot: this.activeSlot,
       slots: [
         { keyLabel: formatKeyCode(this.settings.bindings.slot1), name: null, level: 0 },
@@ -430,6 +469,17 @@ export class NyxDomeController {
     const sdt = rawDt * this.getTimeScale();
     if (this.bulletTimeTimer > 0) {
       this.bulletTimeTimer = Math.max(0, this.bulletTimeTimer - rawDt);
+    }
+    // Ventana de redirección: también descuenta TIEMPO REAL. Al cerrarse,
+    // re-arma con un antirrebote para no re-abrirla en el mismo acercamiento.
+    if (this.redirectWindowTimer > 0) {
+      this.redirectWindowTimer = Math.max(0, this.redirectWindowTimer - rawDt);
+      if (this.redirectWindowTimer === 0) {
+        this.redirectReArm = REDIRECT_REARM_COOLDOWN;
+        if (!this.lockedEnemy) this.redirectTargetEnemy = null;
+      }
+    } else if (this.redirectReArm > 0) {
+      this.redirectReArm = Math.max(0, this.redirectReArm - rawDt);
     }
     // Hit-Stop: tras conectar una patada/taladro (o un choque lateral fuerte)
     // se congela la simulación de Nyx unos ms de reloj mientras la cámara
@@ -582,6 +632,9 @@ export class NyxDomeController {
     enemies: TestEnemySphere[] | undefined,
   ): void {
     this.lockedEnemyScreenPos = null;
+    if (this.redirectTargetEnemy && (!enemies || enemies.indexOf(this.redirectTargetEnemy) < 0)) {
+      this.redirectTargetEnemy = null;
+    }
     if (this.lockedEnemy && (!enemies || enemies.indexOf(this.lockedEnemy) < 0)) {
       this.breakLock(this.mode === 'speed_attack' && this.lockedEnemy !== null);
     }
@@ -685,8 +738,18 @@ export class NyxDomeController {
   /** Clic Derecho: dash (3.0 Edén). En speed_attack solo lateral/trasero. */
   private handleDash(f: number, r: number): void {
     if (this.mode === 'speed_attack') {
-      // Solo A/D (lateral) o S (trasero); W no sirve (ya vas hacia delante).
       if (this.eden < EDEN_DASH_COST) return;
+      // Dash de redirección: W/A/D apuntando al enemigo (lockeado, guardado
+      // por la cámara lenta o recapturado con el visor) curva el vector de
+      // golpe hacia él SIN cortar la patada/taladro.
+      const target =
+        this.lockedEnemy ??
+        this.redirectTargetEnemy ??
+        (this.reticleLockState === 'can_lock' ? this.candidateEnemy : null);
+      if (target && (f > 0 || r !== 0) && this.isRedirectDashDir(f, r, target)) {
+        this.redirectDash(target);
+        return;
+      }
       if (r !== 0) {
         // Amortigua la velocidad frontal restante y suma el vector lateral.
         this.velocity.multiplyScalar(0.35);
@@ -701,19 +764,29 @@ export class NyxDomeController {
       this.eden -= EDEN_DASH_COST;
       const hadLockedEnemy = this.lockedEnemy !== null;
       this.lockedEnemy = null;
+      this.redirectTargetEnemy = null;
+      this.redirectWindowTimer = 0;
       this.speedAttackKind = null;
-      this.dashDir.copy(this.velocity).normalize();
-      this.dashSpeed = this.velocity.length();
-      this.mode = 'dashing';
-      this.dashTimer = DASH_DURATION;
-      // Tirachinas de cámara: tira +1.25 m y luego recoge con la velocidad.
+      if (f < 0) {
+        // Frenazo evasivo: sale a flotación 0G, no mantiene el dash.
+        this.mode = 'floating';
+        this.dashSideRoll = 0;
+        this.animLock = null;
+        this.playOneShot('air_dash');
+      } else {
+        this.dashDir.copy(this.velocity).normalize();
+        this.dashSpeed = this.velocity.length();
+        this.mode = 'dashing';
+        this.dashTimer = DASH_DURATION;
+        // Dutch roll sostenido hacia el lado del dash lateral.
+        this.dashSideRoll = -Math.sign(r) * CAM_ROLL_DASH_SIDE;
+        // Libera el lock de jump_land/land_recover para que el dash anime ya.
+        this.animLock = null;
+        this.animator.setState('air_dash', { dashDir: r > 0 ? -1 : 1 });
+      }
+      // Latigazo elástico de cámara + tirachinas de distancia.
+      this.dashWobbleImpulse = 1.0;
       this.camDist = Math.min(this.camDist + CAM_TUG_DISTANCE, CAM_DISTANCE + CAM_TUG_DISTANCE);
-      // Dutch roll sostenido hacia el lado del dash lateral.
-      this.dashSideRoll = -Math.sign(r) * CAM_ROLL_DASH_SIDE;
-      // Libera el lock de jump_land/land_recover para que el dash anime ya.
-      this.animLock = null;
-      if (r !== 0) this.animator.setState('air_dash', { dashDir: r > 0 ? -1 : 1 });
-      else this.animator.setState('air_dash');
       // Cámara lenta SOLO si había enemigo marcado (para re-lockear). En una
       // Caída al Vacío sin enemigo, el dash solo corta el vector: NUNCA la toca.
       if (hadLockedEnemy) this.bulletTimeTimer = BULLET_TIME_DURATION;
@@ -735,12 +808,59 @@ export class NyxDomeController {
       // Tirachinas de cámara + roll hacia el lado del dash lateral.
       this.camDist = Math.min(this.camDist + CAM_TUG_DISTANCE, CAM_DISTANCE + CAM_TUG_DISTANCE);
       this.dashSideRoll = -r * CAM_ROLL_DASH_SIDE;
+      // Latigazo elástico de cámara del dash.
+      this.dashWobbleImpulse = 1.0;
       // Libera el lock de jump_land/land_recover para que el dash anime ya.
       this.animLock = null;
       if (r !== 0) this.animator.setState('air_dash', { dashDir: r > 0 ? -1 : 1 });
       else this.animator.setState('air_dash');
       this.audio?.playGravityShift();
     }
+  }
+
+  /**
+   * ¿Apunta el Dash W/A/D hacia el enemigo (frente) o hacia el lado por el que
+   * el cuerpo debe girar respecto a su vector de velocidad para alcanzarlo?
+   */
+  private isRedirectDashDir(f: number, r: number, target: TestEnemySphere): boolean {
+    const toEnemy = this.tmpB.copy(target.position).sub(this.nyxRoot.position);
+    if (toEnemy.lengthSq() < 1e-6) return false;
+    toEnemy.normalize();
+    if (f > 0 && toEnemy.dot(this.camFwd) > 0.15) return true;
+    const side = toEnemy.dot(this.camRight);
+    return r !== 0 && Math.sign(r) === Math.sign(side) && Math.abs(side) > 0.15;
+  }
+
+  /**
+   * Dash de redirección durante speed_attack: NO termina el ataque (el modo y
+   * la animación de patada/taladro siguen igual). Gira de golpe mira, cuerpo y
+   * vector de velocidad hacia el enemigo (re-lockeo), ignorando la inercia
+   * centrípeta acumulada, con +4 m/s de impulso. Apaga la cámara lenta y mete
+   * un latigazo de cámara para sentir cómo se rompe la inercia en el aire.
+   */
+  private redirectDash(target: TestEnemySphere): void {
+    this.eden -= EDEN_DASH_COST;
+    const toEnemy = this.tmpA.copy(target.position).sub(this.nyxRoot.position);
+    if (toEnemy.lengthSq() > 1e-6) toEnemy.normalize();
+    else toEnemy.copy(this.aimForward);
+    // Re-lockeo: la mira, el cuerpo y el golpe se estampan hacia el enemigo.
+    this.lockedEnemy = target;
+    this.redirectTargetEnemy = null;
+    this.reticleLockState = 'locked';
+    this.aimForward.copy(toEnemy);
+    this.prevAimFwd.copy(this.aimForward);
+    this.facing.copy(toEnemy);
+    const newSpeed = this.velocity.length() + REDIRECT_DASH_SPEED_BONUS;
+    this.velocity.copy(toEnemy).multiplyScalar(newSpeed);
+    this.attackElapsed = 0;
+    // El dash de redirección corta TODA cámara lenta.
+    this.bulletTimeTimer = 0;
+    this.redirectWindowTimer = 0;
+    // Latigazo potente: tirachinas + tambaleo elástico + micro shake.
+    this.camDist = Math.min(this.camDist + CAM_TUG_DISTANCE, CAM_DISTANCE + CAM_TUG_DISTANCE);
+    this.dashWobbleImpulse = 1.3;
+    this.shake = Math.max(this.shake, 0.2);
+    this.audio?.playGravityShift();
   }
 
   /** Clic Izquierdo: Ataque de Velocidad (patada con lock-in o void_fall). */
@@ -798,6 +918,8 @@ export class NyxDomeController {
     this.recoverElapsed = 0;
     this.wantAttack = false;
     this.lockedEnemy = null;
+    this.redirectTargetEnemy = null;
+    this.redirectWindowTimer = 0;
     this.speedAttackKind = null;
     this.mode = 'kick_recover';
     this.animator.setState('kick_flip');
@@ -807,16 +929,31 @@ export class NyxDomeController {
     const enemy = this.lockedEnemy;
     if (!enemy) return;
     const isDrill = this.speedAttackKind === 'spiral_drill_kick';
-    onHitEnemy?.(enemy, this.tmpE.copy(this.facing), isDrill);
+    // Energía cinética del golpe: a más velocidad en el instante del impacto,
+    // más fuerza tienen el knockback, el hit-stop, el shake y el FOV punch.
+    const impactSpeed = this.velocity.length();
+    const kineticMult = Math.max(0.6, Math.pow(impactSpeed / 14, 1.35));
+    onHitEnemy?.(enemy, this.tmpE.copy(this.facing), isDrill, impactSpeed);
     this.vfx.spawnBurst(enemy.position, this.facing, 0xffc24d, 30);
-    this.shake = Math.max(this.shake, 0.28);
+    this.shake = Math.max(this.shake, 0.28 * kineticMult);
     // Hit-Stop + FOV Punch + flash de impacto: el taladro pega más fuerte.
-    this.hitStopTimer = Math.max(this.hitStopTimer, isDrill ? HIT_STOP_DRILL : HIT_STOP_KICK);
-    this.fovPunch = Math.min(this.fovPunch, isDrill ? FOV_PUNCH_DRILL : FOV_PUNCH_KICK);
-    this.impactFlash = Math.max(this.impactFlash, isDrill ? 1.0 : 0.75);
+    this.hitStopTimer = Math.max(
+      this.hitStopTimer,
+      (isDrill ? HIT_STOP_DRILL : HIT_STOP_KICK) * kineticMult,
+    );
+    this.fovPunch = Math.min(
+      this.fovPunch,
+      Math.max(FOV_PUNCH_CAP, (isDrill ? FOV_PUNCH_DRILL : FOV_PUNCH_KICK) * kineticMult),
+    );
+    this.impactFlash = Math.max(
+      this.impactFlash,
+      Math.min(1, (isDrill ? 1.0 : 0.75) * kineticMult),
+    );
+    // Tambaleo contundente de cámara escalado por la velocidad del impacto.
+    this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, Math.min(1.3, kineticMult));
     this.lockedEnemy = null;
     this.speedAttackKind = null;
-    this.startKickRecover(this.velocity.length());
+    this.startKickRecover(impactSpeed);
     // Rebote corto tras conectar: la voltereta frena la inercia.
     this.velocity.multiplyScalar(-0.3);
     this.audio?.playMelee();
@@ -926,6 +1063,29 @@ export class NyxDomeController {
         this.impactEnemy(onHitEnemy);
         return;
       }
+      // Dash de redirección: si el giro que pide el enemigo supera lo que la
+      // fuerza centrípeta del auto-aim permite, abre una ventana de cámara
+      // lenta real (timeScale 0.20) para curvar el golpe con un Dash W/A/D.
+      if (
+        this.redirectWindowTimer <= 0 &&
+        this.redirectReArm <= 0 &&
+        this.bulletTimeTimer <= 0 &&
+        speed > 1e-3
+      ) {
+        const velDir = this.tmpB.copy(this.velocity).normalize();
+        const missAngle = velDir.angleTo(toEnemy);
+        const timeToImpact = Math.max(dist / Math.max(speed, 12), 1e-3);
+        const requiredTurnRate = missAngle / timeToImpact;
+        const maxCentripetalTurnRate = VEL_ALIGN_RATE / (1 + speed * CENTRIPETAL_SPEED_K);
+        if (missAngle > 0.12 && requiredTurnRate > maxCentripetalTurnRate) {
+          this.redirectTargetEnemy = this.lockedEnemy;
+          this.redirectWindowTimer = THREE.MathUtils.clamp(
+            timeToImpact * REDIRECT_WINDOW_K,
+            REDIRECT_WINDOW_MIN,
+            REDIRECT_WINDOW_MAX,
+          );
+        }
+      }
     }
 
     // Acelera hacia el tope del tipo de ataque (18/26/25 m/s) curvando el
@@ -1017,6 +1177,8 @@ export class NyxDomeController {
           this.velocity.multiplyScalar(WALL_BOUNCE_KEEP);
           if (this.mode === 'speed_attack') {
             this.lockedEnemy = null;
+            this.redirectTargetEnemy = null;
+            this.redirectWindowTimer = 0;
             this.speedAttackKind = null;
           }
           this.mode = 'floating';
@@ -1080,6 +1242,8 @@ export class NyxDomeController {
 
     if (prevMode === 'speed_attack') {
       this.lockedEnemy = null;
+      this.redirectTargetEnemy = null;
+      this.redirectWindowTimer = 0;
       this.speedAttackKind = null;
     }
 
@@ -1138,6 +1302,8 @@ export class NyxDomeController {
 
     if (this.mode === 'speed_attack') {
       this.lockedEnemy = null;
+      this.redirectTargetEnemy = null;
+      this.redirectWindowTimer = 0;
       this.speedAttackKind = null;
     }
     if (this.mode !== 'grounded') this.mode = 'floating';
@@ -1331,10 +1497,33 @@ export class NyxDomeController {
     this.rollImpulse *= Math.exp(-5 * dt);
     this.dashSideRoll *= Math.exp(-2.5 * dt);
 
+    // --- Tambaleo orgánico de cámara (camWobble): turbulencia continua por
+    // velocidad (fuerza G) + latigazo elástico amortiguado del dash + tambaleo
+    // contundente del impacto, escalado por la energía cinética del golpe.
+    this.wobbleTime += dt;
+    const wt = this.wobbleTime;
+    const g = clamp01((speed - 10) / 14);
+    const dashOsc = Math.sin(wt * 34) * this.dashWobbleImpulse;
+    const impactOsc = Math.sin(wt * 26 + 0.6) * this.impactWobbleImpulse;
+    this.dashWobbleImpulse *= Math.exp(-7 * dt);
+    this.impactWobbleImpulse *= Math.exp(-6 * dt);
+    const wobblePitch =
+      g * 0.026 * (Math.sin(wt * 6.7) * 0.6 + Math.sin(wt * 12.9 + 1.3) * 0.4) +
+      dashOsc * 0.05 +
+      impactOsc * 0.055;
+    const wobbleYaw =
+      g * 0.034 * (Math.sin(wt * 5.1 + 2.1) * 0.6 + Math.sin(wt * 10.7 + 0.4) * 0.4) +
+      dashOsc * 0.04 +
+      impactOsc * 0.045;
+    const wobbleRoll =
+      g * 0.042 * Math.sin(wt * 4.3 + 0.9) + dashOsc * 0.085 + impactOsc * 0.07;
+
     const look = this.tmpA
       .copy(this.nyxRoot.position)
       .addScaledVector(this.up, CAM_LOOK_HEIGHT + this.landingDip)
-      .addScaledVector(camUp, this.lookLift);
+      .addScaledVector(camUp, this.lookLift)
+      .addScaledVector(this.camRight, wobbleYaw * this.camDist)
+      .addScaledVector(camUp, wobblePitch * this.camDist);
     const back = this.tmpB.copy(this.camFwd).multiplyScalar(-1);
 
     // Evita atravesar slabs con la cámara.
@@ -1352,8 +1541,9 @@ export class NyxDomeController {
     }
     camera.position.copy(camPos);
     camera.up.copy(camUp);
-    if (Math.abs(this.cameraRollRad) > 1e-4) {
-      this.quat.setFromAxisAngle(this.camFwd, this.cameraRollRad);
+    const totalRoll = this.cameraRollRad + wobbleRoll;
+    if (Math.abs(totalRoll) > 1e-4) {
+      this.quat.setFromAxisAngle(this.camFwd, totalRoll);
       camera.up.applyQuaternion(this.quat);
     }
     camera.lookAt(look);

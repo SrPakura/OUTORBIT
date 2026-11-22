@@ -211,7 +211,8 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           slabRig.slabs,
           camera,
           enemyMgr.enemies,
-          (enemy, hitDir, isDrill) => enemyMgr.onHitEnemy(enemy, hitDir, isDrill),
+          (enemy, hitDir, isDrill, impactSpeed) =>
+            enemyMgr.onHitEnemy(enemy, hitDir, isDrill, impactSpeed),
         );
         hudTimer += rawDt;
         if (hudTimer >= 1 / 30) {

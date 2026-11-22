@@ -16,7 +16,7 @@ import {
 } from './nyxAnimsTraversal';
 
 // ============================================================================
-// NYX — Animador procedural del esqueleto `nyx_rigged.glb` (18 huesos).
+// NYX — Animador procedural del esqueleto `nyx_rigged.glb` (25 huesos).
 //
 // - Sin imports en runtime de three (solo tipos): funciona igual con el three
 //   del bundle de Vite y con el three por importmap de `character-sheet.html`.
@@ -25,15 +25,19 @@ import {
 // - Cada frame: (1) se calcula la pose OBJETIVO del estado activo, (2) la pose
 //   actual la persigue con lerp exponencial `1 - exp(-lambda*dt)` (de modo que
 //   cualquier cambio de estado se funde sin cortes), (3) se escribe en los
-//   huesos y (4) se suma encima la física de resorte subamortiguado del pelo.
+//   huesos y (4) se suma encima la física de resorte subamortiguado del pelo
+//   de 4 eslabones (hair_1 → hair_4).
 //
 // Convención (bind pose = T-Pose, +Z frente, +Y arriba, +X brazo izquierdo):
 //   brazos      : z<0 (L) baja el brazo; x<0 lo lleva al frente (colgando)
 //   codos       : forearm_L.y<0 / forearm_R.y>0 doblan al frente
+//   clavículas  : z>0 encoge el hombro hacia arriba; y<0 lo proyecta al frente
 //   muslos      : x<0 adelante, x>0 atrás;  rodillas: shin.x>=0 SIEMPRE
+//   tobillos    : x<0 extiende la puntera (flexión plantar, bota-lanza);
+//                 x>0 encoge el pie hacia la espinilla (talón al impacto)
 //   torso/cabeza: x>0 inclina al frente, y twist, z lean lateral
 // Las poses se escriben en "convención L" y el brazo/pierna R se espeja
-// (y,z invertidos) con los helpers `armR`/`legR`.
+// (y,z invertidos) con los helpers `armR`/`legR`/`footR`/`clavR`.
 // ============================================================================
 
 export type NyxAnimState =
@@ -76,17 +80,20 @@ export interface NyxAnimParams {
 }
 
 // --- Índices de hueso (orden fijo; 3 floats por hueso en las poses) ---------
+// 0..14: cuerpo · 15..18: cadena del pelo (hair_1..hair_4) · 19..24: nuevos.
 const HIPS = 0, SPINE = 1, CHEST = 2, NECK = 3, HEAD = 4;
 const UA_L = 5, FA_L = 6, HAND_L = 7, UA_R = 8, FA_R = 9, HAND_R = 10;
 const TH_L = 11, SH_L = 12, TH_R = 13, SH_R = 14;
-const HAIR_1 = 15, HAIR_2 = 16, HAIR_3 = 17;
-const BONE_COUNT = 18;
+const HAIR_1 = 15, HAIR_2 = 16, HAIR_3 = 17, HAIR_4 = 18;
+const CLAV_L = 19, CLAV_R = 20, FOOT_L = 21, TOE_L = 22, FOOT_R = 23, TOE_R = 24;
+const BONE_COUNT = 25;
 
 const BONE_NAMES: readonly string[] = [
   'hips', 'spine', 'chest', 'neck', 'head',
   'upperArm_L', 'forearm_L', 'hand_L', 'upperArm_R', 'forearm_R', 'hand_R',
   'thigh_L', 'shin_L', 'thigh_R', 'shin_R',
-  'hair_1', 'hair_2', 'hair_3',
+  'hair_1', 'hair_2', 'hair_3', 'hair_4',
+  'clavicle_L', 'clavicle_R', 'foot_L', 'toe_L', 'foot_R', 'toe_R',
 ];
 
 const INF = Number.POSITIVE_INFINITY;
@@ -118,14 +125,17 @@ const HAIR_GRAVITY_SCALE: Record<NyxAnimState, number> = {
   stasis_cast: 0.8, stasis_throw: 0.8, hit_stagger: 0.9, eden_absorb: -0.25,
 };
 
-// --- Pelo: 3 segmentos, 2 ejes (pitch, yaw) ----------------------------------
-const HAIR_W: readonly number[] = [0.28, 0.34, 0.40];
-const HAIR_K: readonly number[] = [140, 100, 75];       // rigidez ω²
-const HAIR_ZETA: readonly number[] = [0.32, 0.28, 0.25]; // < 1 → subamortiguado
+// --- Pelo: 4 segmentos (hair_1..hair_4), 2 ejes (pitch, yaw) ------------------
+// El 4º eslabón es la punta del látigo: más largo, más blando y menos
+// amortiguado → onda de melena más fluida en 0G, giros y frenadas.
+const HAIR_W: readonly number[] = [0.28, 0.34, 0.40, 0.44];
+const HAIR_K: readonly number[] = [140, 100, 75, 58];       // rigidez ω²
+const HAIR_ZETA: readonly number[] = [0.32, 0.28, 0.25, 0.22]; // < 1 → subamortiguado
 const HAIR_C: readonly number[] = [
   2 * HAIR_ZETA[0] * Math.sqrt(HAIR_K[0]),
   2 * HAIR_ZETA[1] * Math.sqrt(HAIR_K[1]),
   2 * HAIR_ZETA[2] * Math.sqrt(HAIR_K[2]),
+  2 * HAIR_ZETA[3] * Math.sqrt(HAIR_K[3]),
 ];
 const DEFAULT_GRAVITY: [number, number, number] = [0, -1, 0];
 
@@ -155,9 +165,9 @@ export class NyxAnimator {
   private readonly tgtPos = new Float32Array(3);
   private readonly curPos = new Float32Array(3);
 
-  // Pelo
-  private readonly hairA = new Float32Array(6);
-  private readonly hairV = new Float32Array(6);
+  // Pelo (4 segmentos × 2 ejes)
+  private readonly hairA = new Float32Array(8);
+  private readonly hairV = new Float32Array(8);
 
   private state: NyxAnimState = 'idle';
   private stateTime = 0;
@@ -178,7 +188,7 @@ export class NyxAnimator {
   private vAcc = 0;
   private speedAcc = 0;
 
-  /** Desactiva la simulación del pelo (deja los 3 huesos a 0). */
+  /** Desactiva la simulación del pelo (deja los 4 huesos a 0). */
   hairEnabled = true;
 
   private readonly writer: PoseWriter;
@@ -191,6 +201,10 @@ export class NyxAnimator {
       armR: (ux, uy, uz, fx, fy, fz) => this.armR(ux, uy, uz, fx, fy, fz),
       legL: (tx, ty, tz, sx) => this.legL(tx, ty, tz, sx),
       legR: (tx, ty, tz, sx) => this.legR(tx, ty, tz, sx),
+      footL: (fx, fy, fz, tx) => this.footL(fx, fy, fz, tx),
+      footR: (fx, fy, fz, tx) => this.footR(fx, fy, fz, tx),
+      clavL: (x, y, z) => this.clavL(x, y, z),
+      clavR: (x, y, z) => this.clavR(x, y, z),
     };
     const found: (Bone | null)[] = [];
     for (let i = 0; i < BONE_COUNT; i++) found.push(null);
@@ -290,7 +304,12 @@ export class NyxAnimator {
     for (let i = 0; i < 3; i++) this.curPos[i] += (this.tgtPos[i] - this.curPos[i]) * a;
 
     const bones = this.bones;
+    // Huesos de cuerpo (0..14 y 19..24); la cadena del pelo (15..18) la
+    // escribe `updateHair` encima con la física de resorte.
     for (let i = 0; i < HAIR_1; i++) {
+      bones[i].rotation.set(cur[i * 3], cur[i * 3 + 1], cur[i * 3 + 2]);
+    }
+    for (let i = HAIR_4 + 1; i < BONE_COUNT; i++) {
       bones[i].rotation.set(cur[i * 3], cur[i * 3 + 1], cur[i * 3 + 2]);
     }
     bones[HIPS].position.set(
@@ -303,14 +322,14 @@ export class NyxAnimator {
   }
 
   // ==========================================================================
-  // Pelo: resorte-amortiguador subamortiguado por segmento y eje
+  // Pelo: resorte-amortiguador subamortiguado por segmento y eje (4 eslabones)
   // ==========================================================================
   private updateHair(dt: number, params: NyxAnimParams | undefined, st: NyxAnimState): void {
     const bones = this.bones;
     const A = this.hairA, V = this.hairV;
     if (!this.hairEnabled) {
-      for (let i = 0; i < 6; i++) { A[i] = 0; V[i] = 0; }
-      for (let s = 0; s < 3; s++) bones[HAIR_1 + s].rotation.set(0, 0, 0);
+      for (let i = 0; i < 8; i++) { A[i] = 0; V[i] = 0; }
+      for (let s = 0; s < 4; s++) bones[HAIR_1 + s].rotation.set(0, 0, 0);
       return;
     }
     const g = params && params.hairGravityLocal ? params.hairGravityLocal : DEFAULT_GRAVITY;
@@ -322,7 +341,7 @@ export class NyxAnimator {
     const calm = gs < 0.3 ? 2.2 : 1; // en 0G el pelo ondula más
     const sub = 2, h = dt / sub;
 
-    for (let s = 0; s < 3; s++) {
+    for (let s = 0; s < 4; s++) {
       const w = HAIR_W[s];
       const pitchT = w * (gy + 0.9 * sp + 0.3 * clamp(this.speedAcc * 0.1, -1, 1) + lift)
         + Math.sin(t * 2.1 + s * 0.9) * 0.06 * calm;
@@ -365,6 +384,22 @@ export class NyxAnimator {
   private legR(tx: number, ty: number, tz: number, sx: number): void {
     this.p(TH_R, tx, -ty, -tz); this.p(SH_R, sx < 0 ? 0 : sx, 0, 0);
   }
+  /** Tobillo + puntera izquierdos. fx<0 extiende la bota (plantar). */
+  private footL(fx: number, fy: number, fz: number, tx?: number): void {
+    this.p(FOOT_L, fx, fy, fz); this.p(TOE_L, tx ?? 0, 0, 0);
+  }
+  /** Tobillo + puntera derechos: valores en convención L; se espeja (y, z). */
+  private footR(fx: number, fy: number, fz: number, tx?: number): void {
+    this.p(FOOT_R, fx, -fy, -fz); this.p(TOE_R, tx ?? 0, 0, 0);
+  }
+  /** Clavícula izquierda: z>0 encoge el hombro, y<0 lo proyecta al frente. */
+  private clavL(x: number, y: number, z: number): void {
+    this.p(CLAV_L, x, y, z);
+  }
+  /** Clavícula derecha: valores en convención L; el helper espeja (y, z). */
+  private clavR(x: number, y: number, z: number): void {
+    this.p(CLAV_R, x, -y, -z);
+  }
 
   private neutral(): void {
     this.p(HIPS, 0, 0, 0); this.p(SPINE, 0, 0, 0); this.p(CHEST, 0, 0, 0);
@@ -374,6 +409,10 @@ export class NyxAnimator {
     this.p(HAND_L, 0, 0, 0); this.p(HAND_R, 0, 0, 0);
     this.legL(0, 0, 0.03, 0.04);
     this.legR(0, 0, 0.03, 0.04);
+    // Huesos nuevos a 0 por defecto: cualquier pose que no los articule
+    // queda en reposo y el lerp los funde suavemente.
+    this.clavL(0, 0, 0); this.clavR(0, 0, 0);
+    this.footL(0, 0, 0, 0); this.footR(0, 0, 0, 0);
     this.pos(0, 0, 0);
   }
 
@@ -414,6 +453,11 @@ export class NyxAnimator {
     this.armR(0.05 + Math.sin(g * 1.2 + 0.8) * 0.03, 0, -1.1 - b * 2, 0, -0.2, -0.08);
     this.legL(-0.04, 0, 0.03, 0.1);
     this.legR(0.02, 0, 0.03, 0.04);
+    // Respiración en los hombros + contrapposto de pies (peso en la izquierda)
+    this.clavL(0.015 + b * 0.4, 0, 0.02 + sh * 0.015);
+    this.clavR(0.015 + b * 0.4, 0, 0.02 - sh * 0.015);
+    this.footL(0.04, 0, 0.02, 0);
+    this.footR(-0.05 + sh * 0.02, 0, 0.02, 0);
   }
 
   // --- run: ciclo con fase acumulada, inclinación según speed01 --------------
@@ -437,10 +481,20 @@ export class NyxAnimator {
     this.legR(s * 0.85 * amp - 0.12 * amp, 0, 0.03,
       0.12 + 1.2 * amp * Math.max(0, -c * 0.9 + 0.35));
 
+    // Tobillos/punteras: talón dorsiflexionado al impacto (pierna adelante),
+    // latigazo de puntera al impulso (pierna atrás)
+    this.footL(s * 0.45 * amp + 0.05, 0, 0.03, -Math.max(0, -s) * 0.5 * amp);
+    this.footR(-s * 0.45 * amp + 0.05, 0, 0.03, -Math.max(0, s) * 0.5 * amp);
+
     // Brazos en contrafase con su pierna, codos a ~90°
     const bend = 0.85 + 0.35 * amp;
     this.armL(s * 0.9 * amp, 0, -1.2, 0, -(bend - s * 0.25), -0.05);
     this.armR(-s * 0.9 * amp, 0, -1.2, 0, -(bend + s * 0.25), -0.05);
+
+    // Clavículas: contrarrota con el brazo y encoge al sprint (misma entrada
+    // en convención L → el espejo de clavR produce el contrafaseo físico)
+    this.clavL(0.03 + 0.05 * sp, s * 0.09 * amp, -0.05 * sp);
+    this.clavR(0.03 + 0.05 * sp, s * 0.09 * amp, -0.05 * sp);
   }
 
   // --- jump_land: anticipación → impulso → tuck → aterrizaje → recuperación --
@@ -467,6 +521,13 @@ export class NyxAnimator {
     // Piernas: flexión (th, 2·th) y tuck en el aire
     this.legL(-th - 0.6 * air, 0, 0.03 + 0.05 * air, 2 * th + 1.1 * air);
     this.legR(-th - 0.25 * air, 0, 0.03, 2 * th + 0.5 * air);
+
+    // Tobillos: talones abajo al agachar, puntera al impulso, flexión al caer
+    this.footL(0.32 * c1 + 0.22 * c2 - 0.35 * air, 0, 0.02, -0.3 * c1 - 0.15 * air);
+    this.footR(0.32 * c1 + 0.22 * c2 - 0.35 * air, 0, 0.02, -0.3 * c1 - 0.15 * air);
+    // Hombros: encogidos al volar, caídos al amortiguar
+    this.clavL(0.05 * air - 0.04 * c2, 0, 0.14 * air - 0.06 * c1);
+    this.clavR(0.05 * air - 0.04 * c2, 0, 0.14 * air - 0.06 * c1);
   }
 
   // --- zero_g_float: flotación asimétrica ------------------------------------
@@ -485,6 +546,11 @@ export class NyxAnimator {
     // Una rodilla flexionada (L), la otra casi estirada (R)
     this.legL(-0.75 + Math.sin(g * 1.3) * 0.05, 0.05, 0.1, 1.1);
     this.legR(0.1, 0, 0.1, 0.12 + Math.sin(g * 1.3 + 1) * 0.04);
+    // 0G: pies en punta de ballet con onda lenta + hombros flotando arriba
+    this.footL(-0.38 + Math.sin(g * 1.3) * 0.05, 0.04, 0.05, -0.22);
+    this.footR(-0.3 + Math.sin(g * 1.3 + 1) * 0.05, 0, 0.05, -0.16);
+    this.clavL(0.04, -0.05, 0.06 + Math.sin(g * 1.1) * 0.02);
+    this.clavR(0.04, -0.05, 0.06 + Math.sin(g * 1.4 + 1) * 0.02);
   }
 
   // --- gravity_fall: caída orgánica, espalda arqueada, extremidades al viento -
@@ -504,6 +570,11 @@ export class NyxAnimator {
     // Piernas colgando atrás con ondulación (nunca rodilla hacia delante)
     this.legL(0.25 + w1 * 0.1, 0, 0.12, 0.5 + 0.3 * (0.5 + 0.5 * w2));
     this.legR(0.18 + w3 * 0.1, 0, 0.12, 0.35 + 0.3 * (0.5 + 0.5 * w1));
+    // Pies dorsiflexionados al viento con aleteo; hombros abiertos atrás
+    this.footL(0.28 + 0.2 * f + w1 * 0.12, 0, 0.06, 0.12);
+    this.footR(0.2 + 0.15 * f + w3 * 0.12, 0, 0.06, 0.08);
+    this.clavL(0.04 * f, 0.14 * f, 0.05 * f);
+    this.clavR(0.04 * f, 0.14 * f, 0.05 * f);
   }
 
   // --- air_dash: sprint lateral con inclinación hacia dashDir -----------------
@@ -511,11 +582,11 @@ export class NyxAnimator {
   private poseDash(t: number, g: number): void {
     const d = this.dashDir;
     const e = smooth(0, 0.08, t) * (1 - smooth(0.25, 0.6, t));
-    const lean = -d * (0.3 + 0.5 * e);
+    const lean = -d * (0.3 + 0.55 * e);
     this.pos(d * 0.05 * e, 0, 0);
     this.p(HIPS, 0.35 * e, d * 0.3 * e, lean);
-    this.p(SPINE, 0.1 * e, d * 0.1 * e, lean * 0.4);
-    this.p(CHEST, 0.1 * e, -d * 0.15 * e, 0);
+    this.p(SPINE, 0.12 * e, d * 0.12 * e, lean * 0.5);
+    this.p(CHEST, 0.14 * e, -d * 0.18 * e, lean * 0.3);
     this.p(HEAD, -0.2 * e, 0, -lean * 0.7); // la cabeza mantiene la mirada
     const flutter = Math.sin(g * 14) * 0.05 * e;
     // Brazo guía (lado de d) extendido, el otro recogido atrás
@@ -536,6 +607,24 @@ export class NyxAnimator {
     } else {
       this.legR(-0.6 * e, 0, 0.03, 1.1 * e);
       this.legL(0.35 * e, 0, 0.03 - 0.1 * e, 0.2 * e);
+    }
+    // Clavículas: el hombro guía se proyecta al frente y cae hacia el dash,
+    // el de atrás se retrae y encoge → silueta de flecha asimétrica
+    if (leadL) {
+      this.clavL(0.06 * e, -0.24 * e, -0.1 * e);
+      this.clavR(0.06 * e, 0.14 * e, 0.05 * e);
+    } else {
+      this.clavR(0.06 * e, -0.24 * e, -0.1 * e);
+      this.clavL(0.06 * e, 0.14 * e, 0.05 * e);
+    }
+    // Pies en punta aerodinámica: la pierna estirada atrás extiende la bota
+    // al máximo, la recogida apunta como balancín
+    if (leadL) {
+      this.footL(-0.38 * e, 0, 0.04, -0.28 * e);
+      this.footR(-0.55 * e, 0, 0.04, -0.42 * e);
+    } else {
+      this.footR(-0.38 * e, 0, 0.04, -0.28 * e);
+      this.footL(-0.55 * e, 0, 0.04, -0.42 * e);
     }
   }
 
@@ -565,6 +654,13 @@ export class NyxAnimator {
     // Pierna derecha extendida en la línea de vuelo; izquierda recogida atrás
     this.legR(-1.3 * coil - 0.65 * fly, 0, 0.03, 1.6 * coil + 0.04);
     this.legL(-1.3 * coil + 0.45 * fly, 0, 0.1, 1.6 * coil + 1.45 * fly);
+    // Bota derecha = LANZA: tobillo y puntera extendidos sobre la trayectoria;
+    // pie izquierdo encogido (dorsal) pegado al cuerpo
+    this.footR(-(0.28 + 0.55 * fly), 0.03 * fly, 0.02, -(0.18 + 0.5 * fly));
+    this.footL(0.5 * fly, 0, 0.05, 0.22 * fly);
+    // Clavículas retraídas: los hombros se alejan del objetivo (perfil de misil)
+    this.clavL(0.06 * fly, 0.16 * fly, -0.04 * fly);
+    this.clavR(0.06 * fly, 0.16 * fly, -0.04 * fly);
   }
 
   // --- kick_flip: voltereta mortal completa tras la patada -------------------
@@ -596,6 +692,11 @@ export class NyxAnimator {
     // Rodillas al pecho
     this.legL(-1.15, 0.05, 0.08, 1.55);
     this.legR(-1.15, 0, 0.08, 1.55);
+    // Punteras estiradas en el tuck: la voltereta se lee más rápida y limpia
+    this.footL(-0.55 * tuck, 0, 0.04, -0.4 * tuck);
+    this.footR(-0.55 * tuck, 0, 0.04, -0.4 * tuck);
+    this.clavL(0.05 * tuck, -0.1 * tuck, 0.08 * tuck);
+    this.clavR(0.05 * tuck, -0.1 * tuck, 0.08 * tuck);
   }
 
   // --- land_recover: impacto amortiguado → incorporarse hasta idle ----------
@@ -615,6 +716,12 @@ export class NyxAnimator {
     this.armL(0.65 * c, -0.25 * c, mix(-1.1, -0.55, c), 0, -0.5 * c, -0.1);
     this.legL(-1.15 * c, 0.05 * c, 0.06, 1.85 * c + 0.04);
     this.legR(-0.85 * c, 0, 0.06, 1.65 * c + 0.04);
+    // Sentadilla profunda: tobillos dorsiflexionados (talones plantados);
+    // el hombro derecho cae con la mano al suelo, el izquierdo abre arriba
+    this.footL(0.5 * c, 0, 0.02, 0.1 * c);
+    this.footR(0.5 * c, 0, 0.02, 0.1 * c);
+    this.clavL(0.06 * c, 0.12 * c, 0.1 * c);
+    this.clavR(0.08 * c, -0.18 * c, -0.12 * c);
   }
 
   // --- stasis_cast: mano derecha proyecta el campo, izquierda recogida -------
@@ -634,6 +741,11 @@ export class NyxAnimator {
     // Postura base ancha
     this.legL(-0.25 * a, 0, 0.15 * a + 0.03, 0.45 * a + 0.04);
     this.legR(0.15 * a, 0, 0.15 * a + 0.03, 0.2 * a + 0.04);
+    // El hombro derecho proyecta la mano; pies plantados y estables
+    this.clavR(0.05 * a, -0.2 * a, 0.04 * a);
+    this.clavL(0.04 * a, 0.1 * a, 0.02 * a);
+    this.footL(0.12 * a, 0, 0.03, 0);
+    this.footR(-0.08 * a, 0, 0.03, 0);
   }
 
   // --- stasis_throw: estilo Genkidama / Spirit Bomb (arriba -> lanzamiento en "C") ---
@@ -665,6 +777,11 @@ export class NyxAnimator {
     // Piernas: sueltas atrás en carga -> lanzadas exageradamente hacia delante (+Z) en "C"
     this.legL(0.12 * ch - 1.18 * th, 0, 0.05, 0.28 * ch + 0.22 * th + 0.04);
     this.legR(0.16 * ch - 1.18 * th, 0, 0.05, 0.34 * ch + 0.22 * th + 0.04);
+    // Punteras lanzadas en la "C" + hombros arriba en la carga, proyectados al soltar
+    this.footL(-0.42 * th, 0, 0.04, -0.28 * th);
+    this.footR(-0.42 * th, 0, 0.04, -0.28 * th);
+    this.clavL(0.05 * ch, -0.1 * ch, 0.1 * ch + 0.06 * th);
+    this.clavR(0.05 * ch, -0.1 * ch, 0.1 * ch + 0.06 * th);
   }
 
   // --- hit_stagger: impacto hacia atrás, rodilla vencida y recuperación ------
@@ -682,6 +799,11 @@ export class NyxAnimator {
     this.armR(0.5 * i, 0.4 * i, -1.1 + 0.6 * i, 0, -0.4 * i, -0.1);
     this.legL(-0.3 * i - 0.4 * buckle, 0, 0.03, 0.6 * i + 0.8 * buckle);
     this.legR(0.3 * i - 0.2 * buckle, 0, 0.03, 0.2 * i + 0.6 * buckle);
+    // Impacto: pies que agarran el suelo y hombros golpeados hacia atrás
+    this.footL(0.2 * i - 0.15 * buckle, 0, 0.03, 0.05 * i);
+    this.footR(-0.1 * i - 0.2 * buckle, 0, 0.03, 0.05 * i);
+    this.clavL(0.05 * i, 0.15 * i, 0.05 * i);
+    this.clavR(0.05 * i, 0.15 * i, 0.05 * i);
   }
 
   // --- eden_absorb: flotando, brazos arriba, cabeza atrás, pulso de energía --
@@ -702,5 +824,10 @@ export class NyxAnimator {
     // Piernas sueltas, ligeramente atrás
     this.legL(0.08 * a + Math.sin(g * 1.4) * 0.05 * a, 0.03, 0.06 * a + 0.03, 0.25 * a + 0.04);
     this.legR(0.15 * a + Math.sin(g * 1.4 + 1) * 0.05 * a, 0, 0.06 * a + 0.03, 0.35 * a + 0.04);
+    // Flotación de energía: puntas estiradas y hombros elevados hacia el cosmos
+    this.footL(-0.3 * a, 0.02, 0.04, -0.2 * a);
+    this.footR(-0.35 * a, 0, 0.04, -0.22 * a);
+    this.clavL(0.03 * a, -0.08 * a, 0.1 * a);
+    this.clavR(0.03 * a, -0.08 * a, 0.1 * a);
   }
 }

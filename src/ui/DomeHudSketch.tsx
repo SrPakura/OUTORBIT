@@ -9,67 +9,44 @@ interface DomeHudSketchProps {
 
 const RETICLE_SIZE = RETICLE_SIZE_PX; // 180px en pantalla para enmarcar sin tapar a Nyx
 
-function modeLabel(hud: DomeHudState): string {
-  switch (hud.mode) {
-    case 'grounded':
-      return 'SUELO';
-    case 'floating':
-      return 'FLOTACIÓN 0G';
-    case 'dashing':
-      return 'DASH';
-    case 'speed_attack':
-      switch (hud.speedAttackKind) {
-        case 'gravity_kick':
-          return 'PATADA GRAVITATORIA';
-        case 'spiral_drill_kick':
-          return 'TALADRO ESPIRAL';
-        case 'void_fall':
-          return 'CAÍDA AL VACÍO';
-        default:
-          return 'ATAQUE VELOCIDAD';
-      }
-    case 'kick_recover':
-      return 'FRENADO FLIP';
-    default:
-      return '—';
-  }
-}
+const HALFTONE_MASK =
+  'radial-gradient(circle at 50% 50%, transparent 48%, rgba(0,0,0,0.45) 72%, black 96%)';
 
-function modeChipClass(hud: DomeHudState): string {
-  switch (hud.mode) {
-    case 'grounded':
-      return 'bg-white/90 text-[#090314]';
-    case 'floating':
-      return 'bg-cyan-400 text-[#090314]';
-    case 'dashing':
-      return 'bg-fuchsia-500 text-[#090314]';
-    case 'speed_attack':
-      return 'bg-rose-500 text-white';
-    case 'kick_recover':
-      return 'bg-violet-500 text-[#090314]';
-    default:
-      return 'bg-white/90 text-[#090314]';
-  }
-}
+const CORNER_MASK = [
+  'radial-gradient(circle at 0% 0%, black 0%, transparent 44%)',
+  'radial-gradient(circle at 100% 0%, black 0%, transparent 44%)',
+  'radial-gradient(circle at 0% 100%, black 0%, transparent 44%)',
+  'radial-gradient(circle at 100% 100%, black 0%, transparent 44%)',
+].join(', ');
 
-function Bar({
+function Meter({
+  label,
   value,
   max,
-  className,
-  trackClass = 'bg-white/10',
+  barClass,
+  glow,
 }: {
+  label: string;
   value: number;
   max: number;
-  className: string;
-  trackClass?: string;
+  barClass: string;
+  glow: string;
 }) {
   const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
   return (
-    <div className={`h-1.5 w-full overflow-hidden ${trackClass}`}>
-      <div
-        className={`h-full transition-[width] duration-150 ${className}`}
-        style={{ width: `${pct}%` }}
-      />
+    <div className="mt-2">
+      <div className="flex items-baseline justify-between text-[9px] font-bold tracking-[0.28em]">
+        <span className="text-white/55">{label}</span>
+        <span className="tabular-nums text-white/40">
+          {Math.max(0, Math.ceil(value))}
+        </span>
+      </div>
+      <div className="mt-1 h-[3px] w-full -skew-x-12 overflow-hidden bg-white/12">
+        <div
+          className={`h-full transition-[width] duration-150 ${barClass}`}
+          style={{ width: `${pct}%`, boxShadow: glow }}
+        />
+      </div>
     </div>
   );
 }
@@ -77,108 +54,104 @@ function Bar({
 function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
   const lock = hud.reticleLockState;
   const isLocked = lock === 'locked';
+
+  // --- Estrella central: blanca → roja (lockeable) → roja incandescente (lock)
   const starStroke = lock === 'none' ? '#ffffff' : lock === 'can_lock' ? '#ff2a55' : '#ff1e42';
-  const starFill = isLocked ? 'rgba(255, 30, 66, 0.28)' : 'none';
+  const starFill = isLocked ? 'rgba(255, 30, 66, 0.22)' : 'none';
   const starStyle =
     lock === 'locked'
-      ? { filter: 'drop-shadow(0 0 12px #ff1e42) drop-shadow(0 0 24px #ff0033)' }
-      : undefined;
-  const innerOctStroke = isLocked ? '#ff4d68' : '#ffffff';
+      ? { filter: 'drop-shadow(0 0 10px #ff1e42)' }
+      : lock === 'can_lock'
+        ? { filter: 'drop-shadow(0 0 4px rgba(255,42,85,0.55))' }
+        : undefined;
+  const dotFill = lock === 'none' ? '#ffffff' : lock === 'can_lock' ? '#ff2a55' : '#ff1e42';
+
   const enemyPos =
     hud.lockedEnemyScreenPos != null && (lock === 'locked' || lock === 'can_lock')
       ? hud.lockedEnemyScreenPos
       : null;
 
-  // --- Efectos dinámicos del visor (Gravity Rush × Persona 5) ---
+  // --- Screentones halftone: ganan densidad con la velocidad y el impacto
+  const halftoneOpacity = Math.min(
+    0.88,
+    Math.max(0, (hud.speed - 7) / 14) + hud.impactFlash * 0.45,
+  );
+  const pressureActive = hud.mode === 'speed_attack' || hud.mode === 'dashing';
+  const pressureOpacity = Math.min(0.72, 0.24 + halftoneOpacity * 0.55);
+
   const isVoidFall = hud.mode === 'speed_attack' && hud.speedAttackKind === 'void_fall';
-  const octaVibrate = isVoidFall || hud.isDrillReady;
-  const impactShake = hud.impactFlash > 0.05;
-  const gyroArcsStroke = hud.isDrillReady ? '#22d3ee' : '#ffffff';
-  const gyroArcsOpacity = hud.isDrillReady ? 0.9 : 0.45;
   const bulletRingRatio = Math.max(0, Math.min(1, hud.bulletTimeRemaining / 1.25));
+  const expPct =
+    hud.expToNext > 0 ? Math.max(0, Math.min(100, (hud.exp / hud.expToNext) * 100)) : 0;
 
   return (
     <div className="pointer-events-none absolute inset-0 z-20 select-none overflow-hidden font-mono text-white">
-      {/* 1. Líneas de velocidad cómic */}
-      {hud.speedLinesIntensity > 0.05 && (
+      {/* 1. Screentones halftone manga en los bordes — densidad por velocidad */}
+      {halftoneOpacity > 0.01 && (
         <div
-          className="absolute inset-0 mix-blend-screen"
+          className="pointer-events-none absolute inset-0"
           style={{
-            opacity: Math.min(1, hud.speedLinesIntensity),
-            background:
-              'repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0.55) 0deg 0.35deg, transparent 0.35deg 3.2deg)',
-            maskImage:
-              'radial-gradient(circle at 50% 50%, transparent 34%, black 78%)',
-            WebkitMaskImage:
-              'radial-gradient(circle at 50% 50%, transparent 34%, black 78%)',
+            opacity: halftoneOpacity,
+            backgroundImage:
+              'radial-gradient(rgba(34, 211, 238, 0.85) 2.2px, transparent 2.4px), radial-gradient(rgba(168, 85, 247, 0.75) 1.8px, transparent 2.0px)',
+            backgroundSize: '12px 12px, 12px 12px',
+            backgroundPosition: '0 0, 6px 6px',
+            maskImage: HALFTONE_MASK,
+            WebkitMaskImage: HALFTONE_MASK,
           }}
         />
       )}
 
-      {/* 2. Flash de rebote de cúpula */}
+      {/* 1b. Corona de presión G en las esquinas — dash / ataque de velocidad */}
+      {pressureActive && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            opacity: pressureOpacity,
+            backgroundImage:
+              'radial-gradient(rgba(244, 63, 94, 0.55) 2.6px, transparent 2.8px), radial-gradient(rgba(9, 3, 20, 0.85) 3.4px, transparent 3.6px)',
+            backgroundSize: '16px 16px, 16px 16px',
+            backgroundPosition: '0 0, 8px 8px',
+            maskImage: CORNER_MASK,
+            WebkitMaskImage: CORNER_MASK,
+          }}
+        />
+      )}
+
+      {/* 2. Flash de rebote contra la cúpula */}
       {hud.domeBounceFlash > 0.01 && (
         <div
           className="absolute inset-0"
           style={{
             opacity: Math.min(1, hud.domeBounceFlash),
-            boxShadow: 'inset 0 0 120px 30px rgba(244,63,94,0.55)',
-            border: '3px solid rgba(244,63,94,0.6)',
+            boxShadow: 'inset 0 0 120px 30px rgba(244,63,94,0.45)',
           }}
         />
       )}
 
-      {/* 2b. Destello de impacto cómic — Hit-Stop cuando la bota revienta a un enemigo */}
-      {impactShake && (
-        <div
-          className="absolute inset-0 mix-blend-screen"
-          style={{
-            opacity: Math.min(1, hud.impactFlash * 0.65),
-            background:
-              'radial-gradient(circle at 50% 50%, rgba(255,255,255,0.20) 0%, rgba(34,211,238,0.32) 45%, rgba(244,63,94,0.60) 100%)',
-            maskImage: 'radial-gradient(circle at 50% 50%, transparent 40%, black 82%)',
-            WebkitMaskImage:
-              'radial-gradient(circle at 50% 50%, transparent 40%, black 82%)',
-          }}
-        />
-      )}
-
-      {/* 2c. Viñeta abisal de Caída al Vacío — índigo/violeta + líneas de velocidad densas */}
+      {/* 3. Viñeta abisal de Caída al Vacío */}
       {isVoidFall && (
-        <>
-          <div
-            className="absolute inset-0"
-            style={{
-              boxShadow:
-                'inset 0 0 220px 70px rgba(109,40,217,0.45), inset 0 0 130px 36px rgba(79,70,229,0.35)',
-            }}
-          />
-          <div
-            className="absolute inset-0 mix-blend-screen"
-            style={{
-              opacity: 0.85,
-              background:
-                'repeating-conic-gradient(from 0deg at 50% 50%, rgba(34,211,238,0.50) 0deg 0.5deg, rgba(167,139,250,0.45) 0.5deg 1deg, transparent 1deg 2.1deg)',
-              maskImage: 'radial-gradient(circle at 50% 50%, transparent 26%, black 70%)',
-              WebkitMaskImage:
-                'radial-gradient(circle at 50% 50%, transparent 26%, black 70%)',
-            }}
-          />
-        </>
+        <div
+          className="absolute inset-0"
+          style={{
+            boxShadow:
+              'inset 0 0 220px 70px rgba(109,40,217,0.40), inset 0 0 130px 36px rgba(79,70,229,0.30)',
+          }}
+        />
       )}
 
-      {/* 3. Tinte de Cámara Lenta (Bullet-Time) en los bordes */}
+      {/* 4. Tinte de cámara lenta en los bordes */}
       {hud.bulletTimeActive && (
         <div
           className="absolute inset-0"
           style={{
             boxShadow:
-              'inset 0 0 180px 40px rgba(34,211,238,0.30), inset 0 0 90px 24px rgba(168,85,247,0.24)',
-            border: '2px solid rgba(34,211,238,0.45)',
+              'inset 0 0 180px 40px rgba(34,211,238,0.22), inset 0 0 90px 24px rgba(168,85,247,0.18)',
           }}
         />
       )}
 
-      {/* 4. Mira oficial (visor.svg) centrada en pantalla */}
+      {/* 5. Visor central (visor.svg) */}
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
         <svg
           width={RETICLE_SIZE}
@@ -186,12 +159,8 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
           viewBox="0 0 512 512"
           className="overflow-visible"
           style={
-            impactShake
-              ? {
-                  filter:
-                    'drop-shadow(-3px 0 0 #22d3ee) drop-shadow(3px 0 0 #f43f5e)',
-                  transform: `scale(${1 + hud.impactFlash * 0.16})`,
-                }
+            hud.impactFlash > 0.05
+              ? { transform: `scale(${1 + hud.impactFlash * 0.1})` }
               : undefined
           }
         >
@@ -208,45 +177,34 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
           </defs>
 
           <g id="visor-gravity" fill="none" stroke="#ffffff" filter="url(#hud-contrast)">
-            {/* Doble anillo octogonal — diafragma que se contrae con la velocidad */}
-            <g
-              style={
-                octaVibrate
-                  ? {
-                      animation: 'domeHudOctaVibrate 0.18s ease-in-out infinite',
-                      transformOrigin: '256px 256px',
-                    }
-                  : undefined
-              }
-            >
-              <polygon
-                id="octagon-outer"
-                stroke="#ffffff"
-                strokeWidth="2"
-                strokeLinejoin="round"
-                strokeOpacity="0.85"
-                points="256,40 331.01,74.92 408.74,103.26 437.08,180.99 472,256 437.08,331.01 408.74,408.74 331.01,437.08 256,472 180.99,437.08 103.26,408.74 74.92,331.01 40,256 74.92,180.99 103.26,103.26 180.99,74.92"
-                style={{
-                  transform: `scale(${1 - Math.min(0.1, hud.speed * 0.004)})`,
-                  transformOrigin: '256px 256px',
-                }}
-              />
-            </g>
+            {/* Octógono exterior — diafragma que se cierra con la velocidad */}
+            <polygon
+              id="octagon-outer"
+              stroke="#ffffff"
+              strokeWidth="2"
+              strokeLinejoin="round"
+              strokeOpacity="0.8"
+              points="256,40 331.01,74.92 408.74,103.26 437.08,180.99 472,256 437.08,331.01 408.74,408.74 331.01,437.08 256,472 180.99,437.08 103.26,408.74 74.92,331.01 40,256 74.92,180.99 103.26,103.26 180.99,74.92"
+              style={{
+                transform: `scale(${1 - Math.min(0.08, hud.speed * 0.003)})`,
+                transformOrigin: '256px 256px',
+              }}
+            />
             <polygon
               id="octagon-inner"
-              stroke={innerOctStroke}
-              strokeWidth="6"
+              stroke="#ffffff"
+              strokeWidth="5"
               strokeLinejoin="round"
               points="256,54 325.65,87.85 398.84,113.16 424.15,186.35 458,256 424.15,325.65 398.84,398.84 325.65,424.15 256,458 186.35,424.15 113.16,398.84 87.85,325.65 54,256 87.85,186.35 113.16,113.16 186.35,87.85"
             />
 
-            {/* Arcos giroscópicos — giran con el spin; cian brillante con Taladro listo */}
+            {/* Arcos giroscópicos — giran con el spin del cuerpo */}
             <g
               id="gyro-arcs"
-              stroke={gyroArcsStroke}
+              stroke="#ffffff"
               strokeWidth="1.75"
               strokeLinecap="round"
-              strokeOpacity={gyroArcsOpacity}
+              strokeOpacity="0.5"
               style={{
                 transform: `rotate(${(hud.gyroSpinRad * 57.2958) % 360}deg)`,
                 transformOrigin: '256px 256px',
@@ -261,9 +219,10 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
             {/* Ticks cardinales — horizonte artificial, contra-roll de cámara */}
             <g
               id="cardinal-ticks"
+              stroke="#ffffff"
               strokeWidth="2.5"
               strokeLinecap="round"
-              strokeOpacity="0.75"
+              strokeOpacity="0.7"
               style={{
                 transform: `rotate(${-hud.cameraRollDeg}deg)`,
                 transformOrigin: '256px 256px',
@@ -275,7 +234,7 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
               <line x1="434" y1="256" x2="444" y2="256" />
             </g>
 
-            {/* Anillo de cuenta atrás de Cámara Lenta — cuánto queda para el Dash */}
+            {/* Anillo fino de cuenta atrás de cámara lenta */}
             {hud.bulletTimeActive && (
               <circle
                 id="bullet-time-ring"
@@ -284,16 +243,16 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
                 r="150"
                 fill="none"
                 stroke="#22d3ee"
-                strokeWidth="3"
+                strokeWidth="2"
                 strokeLinecap="round"
-                strokeOpacity="0.9"
+                strokeOpacity="0.85"
                 strokeDasharray={`${2 * Math.PI * 150 * bulletRingRatio} ${2 * Math.PI * 150}`}
                 transform="rotate(-90 256 256)"
                 style={{ filter: 'drop-shadow(0 0 6px #22d3ee)' }}
               />
             )}
 
-            {/* Estrella central de 4 puntas — color según estado de lock */}
+            {/* Estrella central de 4 puntas */}
             <path
               id="center-star"
               stroke={starStroke}
@@ -305,34 +264,24 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
             />
 
             {/* Punto de mira exacto */}
-            <circle
-              id="center-dot"
-              cx="256"
-              cy="256"
-              r="3"
-              fill={lock === 'none' ? '#ffffff' : '#ff2a55'}
-              stroke="none"
-            />
+            <circle id="center-dot" cx="256" cy="256" r="3" fill={dotFill} stroke="none" />
           </g>
         </svg>
 
-        {/* Banner táctico de Cámara Lenta, debajo de la mira */}
+        {/* Etiqueta compacta de cámara lenta, bajo el visor */}
         {hud.bulletTimeActive && (
           <div
-            className="absolute left-1/2 top-full mt-3 -translate-x-1/2"
-            style={{ animation: 'domeHudBulletPulse 0.7s ease-in-out infinite' }}
+            className="absolute left-1/2 top-full mt-4 -translate-x-1/2"
+            style={{ animation: 'domeHudBulletPulse 0.9s ease-in-out infinite' }}
           >
-            <div className="-skew-x-12 border-2 border-cyan-300 bg-gradient-to-r from-cyan-500/90 via-violet-500/90 to-cyan-500/90 px-4 py-1.5 shadow-[0_0_24px_rgba(34,211,238,0.85)]">
-              <span className="block skew-x-12 whitespace-nowrap text-[11px] font-black tracking-widest text-white">
-                ⚡ CÁMARA LENTA · ¡ESQUIVA ENEMIGA! PULSA [CLIC DER + A / D / S] PARA CORTAR
-                INERCIA Y RE-LOCKEAR
-              </span>
-            </div>
+            <span className="whitespace-nowrap text-[10px] font-bold tracking-[0.32em] text-cyan-200/90 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]">
+              ⚡ DASH [CLIC DER] PARA REDIRIGIR PATADA
+            </span>
           </div>
         )}
       </div>
 
-      {/* 5. Marcador romboidal sobre el enemigo lockeado / lockeable */}
+      {/* 6. Marcador romboidal sobre el enemigo lockeado / lockeable */}
       {enemyPos && (
         <svg
           className="absolute"
@@ -345,99 +294,67 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
             animation: 'domeHudPulse 0.9s ease-in-out infinite',
           }}
         >
-          <polygon
-            points="11,1 20,11 11,21 2,11"
-            fill="none"
-            stroke="#ff2a55"
-            strokeWidth="2"
-          />
+          <polygon points="11,1 20,11 11,21 2,11" fill="none" stroke="#ff2a55" strokeWidth="2" />
           <polygon points="11,6 15.5,11 11,16 6.5,11" fill="#ff2a55" />
         </svg>
       )}
 
-      {/* 6. Panel superior izquierdo — medidores y estado */}
-      <div className="absolute left-4 top-4 w-64 -skew-x-12 border-2 border-white/80 bg-[#090314]/80 p-3 shadow-[6px_6px_0_rgba(168,85,247,0.5)] [transform-origin:top_left]">
-        <div className="skew-x-12">
-          <div className="flex items-baseline justify-between">
-            <span className="-skew-x-12 bg-violet-500 px-2 py-0.5 text-sm font-black tracking-widest text-[#090314]">
-              NV. {hud.level}
-            </span>
-            <span className="text-[10px] tracking-widest text-white/60">
-              EXP {hud.exp}/{hud.expToNext}
-            </span>
-          </div>
-          <div className="mt-1">
-            <Bar value={hud.exp} max={hud.expToNext} className="bg-violet-400" />
-          </div>
-
-          <div className="mt-3 flex items-baseline justify-between text-[10px] tracking-widest">
-            <span className="text-rose-300">HP</span>
-            <span className="text-white/70">
-              {Math.max(0, Math.ceil(hud.hp))}/{hud.maxHp}
-            </span>
-          </div>
-          <div className="mt-0.5">
-            <Bar
-              value={hud.hp}
-              max={hud.maxHp}
-              className="bg-gradient-to-r from-rose-500 to-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.8)]"
-            />
-          </div>
-
-          <div className="mt-2 flex items-baseline justify-between text-[10px] tracking-widest">
-            <span className="text-cyan-300">EDÉN</span>
-            <span className="text-white/70">
-              {Math.max(0, Math.ceil(hud.eden))}/{hud.maxEden}
-            </span>
-          </div>
-          <div className="mt-0.5">
-            <Bar
-              value={hud.eden}
-              max={hud.maxEden}
-              className="bg-gradient-to-r from-cyan-400 to-violet-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]"
-            />
-          </div>
-
-          {/* Modo de movimiento + velocidad */}
-          <div className="mt-3 flex items-center justify-between border-t border-white/20 pt-2">
-            <span
-              className={`-skew-x-12 px-2 py-0.5 text-[11px] font-bold tracking-widest ${modeChipClass(hud)}`}
-            >
-              {modeLabel(hud)}
-            </span>
-            <span className="text-sm font-bold tabular-nums text-white">
-              {Math.round(hud.speed)}
-              <span className="ml-1 text-[10px] text-white/60">m/s</span>
-            </span>
-          </div>
+      {/* 7. Panel superior izquierdo — nivel, EXP, HP y EDÉN */}
+      <div className="absolute left-5 top-5 w-52">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[10px] font-black tracking-[0.4em] text-white/45">NV.</span>
+          <span className="text-2xl font-black italic leading-none tracking-tight text-white">
+            {hud.level}
+          </span>
         </div>
+        <div className="mt-1.5 h-px w-full -skew-x-12 overflow-hidden bg-white/15">
+          <div
+            className="h-full bg-violet-300/90 transition-[width] duration-150"
+            style={{ width: `${expPct}%` }}
+          />
+        </div>
+
+        <Meter
+          label="HP"
+          value={hud.hp}
+          max={hud.maxHp}
+          barClass="bg-gradient-to-r from-[#ff6b5e] to-[#ff8f7a]"
+          glow="0 0 8px rgba(255,107,94,0.75)"
+        />
+        <Meter
+          label="EDÉN"
+          value={hud.eden}
+          max={hud.maxEden}
+          barClass="bg-gradient-to-r from-cyan-300 to-violet-400"
+          glow="0 0 8px rgba(34,211,238,0.7)"
+        />
       </div>
 
-      {/* 7. Panel inferior central — selector de habilidades */}
-      <div className="absolute bottom-5 left-1/2 flex -translate-x-1/2 gap-3">
+      {/* 8. Selector inferior de 3 habilidades */}
+      <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 gap-2.5">
         {hud.slots.map((slot, i) => {
           const slotNum = (i + 1) as 1 | 2 | 3;
           const active = hud.activeSlot === slotNum;
           return (
             <div
               key={slotNum}
-              className={`-skew-x-12 border-2 px-4 py-1.5 backdrop-blur-sm transition-colors ${
+              className={`-skew-x-12 border px-3.5 py-1.5 backdrop-blur-sm transition-colors ${
                 active
-                  ? 'border-cyan-300 bg-cyan-400/20 shadow-[0_0_14px_rgba(34,211,238,0.7)]'
-                  : 'border-white/50 bg-[#090314]/70'
+                  ? 'border-cyan-300/90 bg-cyan-400/15 shadow-[0_0_16px_rgba(34,211,238,0.45)]'
+                  : 'border-white/25 bg-[#090314]/55'
               }`}
             >
               <div className="flex skew-x-12 items-center gap-2">
                 <span
-                  className={`-skew-x-12 px-1.5 py-0.5 text-xs font-black ${
-                    active ? 'bg-cyan-300 text-[#090314]' : 'bg-white/85 text-[#090314]'
+                  className={`text-[10px] font-black tracking-widest ${
+                    active ? 'text-cyan-200' : 'text-white/45'
                   }`}
                 >
                   {slot.keyLabel}
                 </span>
                 <span
-                  className={`text-[11px] font-bold tracking-widest ${
-                    slot.name ? 'text-white' : 'text-white/40'
+                  className={`text-[10px] font-bold tracking-[0.22em] ${
+                    slot.name ? 'text-white/90' : 'text-white/30'
                   }`}
                 >
                   {slot.name ?? 'VACÍO'}
@@ -448,28 +365,15 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
         })}
       </div>
 
-      {/* 8. Guía de controles — tira discreta abajo */}
-      <div className="absolute bottom-16 left-1/2 w-full max-w-3xl -translate-x-1/2 px-4 text-center text-[9px] leading-relaxed tracking-widest text-white/35">
-        <p>EN SUELO: WASD ANDAR · RATÓN CÁMARA LIBRE · ESPACIO ENTRAR A FLOTACIÓN 0G</p>
-        <p>
-          EN FLOTACIÓN 0G: RATÓN GIRAR CUERPO · WASD PROPULSIÓN (1 EDÉN/S, INERCIA 0G) · CLIC DER +
-          WASD DASH (3 EDÉN)
-        </p>
-        <p>
-          ATAQUE VELOCIDAD (2 EDÉN/S): CLIC IZQ (CON ENEMIGO EN MIRA = PATADA/TALADRO · SIN ENEMIGO
-          = CAÍDA AL VACÍO) · ESPACIO CANCELAR CON FLIP
-        </p>
-      </div>
-
-      {/* 9. Aviso de pointer lock */}
+      {/* 9. Overlay de captura de ratón — única superficie con la guía de controles */}
       {!hud.pointerLocked && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[#090314]/40">
-          <div className="-skew-x-12 border-2 border-white bg-[#090314]/90 px-6 py-2 shadow-[6px_6px_0_rgba(34,211,238,0.6)]">
-            <span className="block skew-x-12 text-xs font-bold tracking-[0.2em] text-white">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-[#090314]/45">
+          <div className="-skew-x-12 border border-white/80 bg-[#090314]/90 px-6 py-2 shadow-[6px_6px_0_rgba(34,211,238,0.45)]">
+            <span className="block skew-x-12 text-[11px] font-bold tracking-[0.24em] text-white">
               HAZ CLIC EN LA ARENA PARA CAPTURAR EL RATÓN · ESC PARA SOLTAR
             </span>
           </div>
-          <div className="max-w-2xl text-center text-[10px] leading-relaxed tracking-widest text-white/60">
+          <div className="max-w-2xl text-center text-[9px] leading-relaxed tracking-[0.18em] text-white/55">
             EN SUELO: WASD ANDAR · RATÓN CÁMARA LIBRE · ESPACIO ENTRAR A FLOTACIÓN 0G
             <br />
             EN FLOTACIÓN 0G: RATÓN GIRAR CUERPO · WASD PROPULSIÓN (1 EDÉN/S, INERCIA 0G) · CLIC DER +
@@ -485,7 +389,7 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
       <button
         type="button"
         onClick={onExit}
-        className="pointer-events-auto absolute right-4 top-4 -skew-x-12 border-2 border-white/80 bg-[#090314]/80 px-4 py-1.5 text-xs font-bold tracking-widest text-white transition-colors hover:border-cyan-300 hover:bg-cyan-400/20 hover:text-cyan-200"
+        className="pointer-events-auto absolute right-4 top-4 -skew-x-12 border border-white/40 bg-[#090314]/60 px-4 py-1.5 text-[10px] font-bold tracking-[0.28em] text-white/80 transition-colors hover:border-cyan-300 hover:text-cyan-200"
       >
         <span className="block skew-x-12">← MENÚ</span>
       </button>
@@ -496,14 +400,8 @@ function DomeHudSketchInner({ hud, onExit }: DomeHudSketchProps) {
           50% { transform: scale(1.25); opacity: 0.55; }
         }
         @keyframes domeHudBulletPulse {
-          0%, 100% { opacity: 1; transform: translateX(-50%) scale(1); }
-          50% { opacity: 0.7; transform: translateX(-50%) scale(1.04); }
-        }
-        @keyframes domeHudOctaVibrate {
-          0%, 100% { transform: scale(1); }
-          25% { transform: scale(1.012) translate(0.8px, -0.6px); }
-          50% { transform: scale(0.994); }
-          75% { transform: scale(1.008) translate(-0.8px, 0.6px); }
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
         }
       `}</style>
     </div>

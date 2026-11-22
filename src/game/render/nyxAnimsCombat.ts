@@ -9,8 +9,12 @@
 // Convención (bind pose = T-Pose, +Z frente, +Y arriba, +X brazo izquierdo):
 //   brazos      : uz<0 baja el brazo (-1.1 = costado); ux<0 lo lleva al frente;
 //                 uy<0 lo abre/gira hacia +Z; codo fy<0 dobla el antebrazo al frente
+//   clavículas  : z>0 encoge el hombro hacia arriba; y<0 lo proyecta al frente
 //   piernas     : tx<0 muslo adelante (+Z), tx>0 atrás (-Z); tz>0 abre la pierna;
 //                 rodilla sx>=0 SIEMPRE (sx>0 dobla el gemelo hacia atrás)
+//   tobillos    : fx<0 extiende la puntera (flexión plantar, bota-lanza);
+//                 fx>0 encoge el pie hacia la espinilla (talón al impacto);
+//                 tx (opcional) añade el látigo de la puntera
 //   torso/cabeza: x>0 inclina al frente (+Z), x<0 arquea atrás (-Z); y twist;
 //                 z lateral (z<0 inclina hacia +X / izquierda, z>0 hacia -X)
 // Los valores del lado R se escriben en convención L y los helpers espejan.
@@ -36,6 +40,14 @@ export interface PoseWriter {
   legL(tx: number, ty: number, tz: number, sx: number): void;
   /** Pierna derecha: valores en convención L; el helper espeja (y, z). */
   legR(tx: number, ty: number, tz: number, sx: number): void;
+  /** Tobillo + puntera izquierdos. fx<0 extiende la bota (plantar). */
+  footL(fx: number, fy: number, fz: number, tx?: number): void;
+  /** Tobillo + puntera derechos: valores en convención L; espeja (y, z). */
+  footR(fx: number, fy: number, fz: number, tx?: number): void;
+  /** Clavícula izquierda: z>0 encoge el hombro, y<0 lo proyecta al frente. */
+  clavL(x: number, y: number, z: number): void;
+  /** Clavícula derecha: valores en convención L; el helper espeja (y, z). */
+  clavR(x: number, y: number, z: number): void;
 }
 
 // --- Índices de hueso (orden fijo del rig; ver nyxAnimator.ts) ----------------
@@ -124,6 +136,16 @@ export function poseGravitySlide(w: PoseWriter, g: number, speed01: number, turn
   w.p(HAND_L, -0.3, 0, 0.15);
   w.armR(-0.12 + flutter * 0.3, -0.38 + flutter, 0.18 + drift, 0, -0.28, -0.1);
   w.p(HAND_R, -0.35, 0, 0);
+
+  // Botas de patinadora: la guía (derecha) desliza con la puntera extendida,
+  // la izquierda apunta atrás flexionada como contrapeso elegante
+  w.footR(-(0.32 + 0.18 * sp), 0, 0.04, -(0.18 + 0.12 * sp));
+  w.footL(-(0.5 + 0.12 * sp), 0.03, 0.05, -0.32);
+
+  // Hombros: el izquierdo cae hacia el suelo con la mano que arrastra,
+  // el derecho abre el equilibrio hacia el interior de la curva
+  w.clavL(0.05, 0.08, -0.1 + lean * 0.15);
+  w.clavR(0.05, -0.06, 0.05 - lean * 0.1);
 }
 
 // ============================================================================

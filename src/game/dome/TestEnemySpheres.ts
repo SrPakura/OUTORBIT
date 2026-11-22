@@ -30,8 +30,17 @@ export interface TestEnemyManager {
     lockedEnemy: TestEnemySphere | null,
     playerAttackTime: number
   ) => { didEnemyEvadeDash: boolean };
-  /** Aplica un impacto de patada a la esfera (impulso de retroceso + flash). */
-  onHitEnemy: (enemy: TestEnemySphere, hitDir: THREE.Vector3, isDrill: boolean) => void;
+  /**
+   * Aplica un impacto de patada a la esfera (impulso de retroceso + flash).
+   * `impactSpeed` (m/s en el instante del impacto) escala el knockback y el
+   * flash por energía cinética: a más velocidad, golpe más fuerte.
+   */
+  onHitEnemy: (
+    enemy: TestEnemySphere,
+    hitDir: THREE.Vector3,
+    isDrill: boolean,
+    impactSpeed?: number
+  ) => void;
   dispose: () => void;
 }
 
@@ -228,9 +237,18 @@ export function createTestEnemySpheres(scene: THREE.Scene): TestEnemyManager {
     return { didEnemyEvadeDash };
   }
 
-  function onHitEnemy(enemy: TestEnemySphere, hitDir: THREE.Vector3, isDrill: boolean): void {
-    enemy.velocity.addScaledVector(hitDir, isDrill ? HIT_KNOCKBACK_DRILL : HIT_KNOCKBACK);
-    enemy.hitFlash = 1;
+  function onHitEnemy(
+    enemy: TestEnemySphere,
+    hitDir: THREE.Vector3,
+    isDrill: boolean,
+    impactSpeed?: number
+  ): void {
+    // Energía cinética: a más velocidad de impacto, más knockback y un flash
+    // más intenso (y por tanto más largo, al decaer a tasa fija).
+    const kineticMult = Math.max(0.6, Math.pow((impactSpeed ?? 16) / 14, 1.35));
+    const baseKnockback = isDrill ? HIT_KNOCKBACK_DRILL : HIT_KNOCKBACK;
+    enemy.velocity.addScaledVector(hitDir, baseKnockback * kineticMult);
+    enemy.hitFlash = Math.min(1.8, kineticMult);
   }
 
   function dispose(): void {
