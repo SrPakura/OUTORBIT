@@ -211,6 +211,7 @@ export class NyxDomeController {
   private time = 0;
   private dashTimer = 0;
   private dashSpeed = DASH_SPEED;
+  private dashIsForward = true;
   private flipsTotal = 0;
   private flipsPlayed = 0;
   private bounceCooldown = 0;
@@ -853,10 +854,19 @@ export class NyxDomeController {
       this.animator.setState('zero_g_float');
       this.audio?.playAnchor();
     } else if (this.mode === 'speed_attack') {
-      // Espacio frena del todo: 1 flip tras patada simple, 2 tras taladro.
+      // Espacio frena: 1 flip tras patada simple/caída, 2 tras taladro.
+      this.velocity.multiplyScalar(0.30);
       this.startKickRecover(this.speedAttackKind === 'spiral_drill_kick' ? 2 : 1);
+    } else if (
+      (this.mode === 'floating' || this.mode === 'dashing') &&
+      this.velocity.length() >= 12.0
+    ) {
+      // Freno físico aéreo (sin gastar Edén): quita 70% de velocidad y hace 1 flip.
+      this.velocity.multiplyScalar(0.30);
+      this.dashTimer = 0;
+      this.startKickRecover(1);
     }
-    // En 'floating'/'dashing'/'kick_recover': Espacio NO hace nada.
+    // En 'kick_recover' o vuelo lento (< 12 m/s): Espacio NO hace nada.
   }
 
   /** Clic Derecho: dash (3.0 Edén). En speed_attack solo lateral/trasero. */
@@ -906,6 +916,7 @@ export class NyxDomeController {
       } else {
         this.dashDir.copy(this.velocity).normalize();
         this.dashSpeed = this.velocity.length();
+        this.dashIsForward = false;
         this.mode = 'dashing';
         this.dashTimer = DASH_DURATION;
         // Dutch roll sostenido hacia el lado del dash lateral.
@@ -932,6 +943,18 @@ export class NyxDomeController {
       }
     } else if (this.mode === 'floating') {
       if (this.eden < EDEN_DASH_COST) return;
+      if (f < 0 && r === 0) {
+        // Dash hacia atrás en libre: frena muy rápido y da impulso hacia atrás.
+        this.eden -= EDEN_DASH_COST;
+        this.velocity.multiplyScalar(0.18);
+        this.velocity.addScaledVector(this.camFwd, -DASH_BACK_IMPULSE);
+        this.dashSideRoll = 0;
+        this.dashWobbleImpulse = 1.0;
+        this.animLock = null;
+        this.playOneShot('air_dash');
+        this.audio?.playGravityShift();
+        return;
+      }
       const dir = this.tmpA.set(0, 0, 0);
       if (f !== 0 || r !== 0) {
         dir.addScaledVector(this.camFwd, f).addScaledVector(this.camRight, r).normalize();
@@ -943,6 +966,7 @@ export class NyxDomeController {
       this.velocity.copy(dir).multiplyScalar(dashSpd);
       this.dashDir.copy(dir);
       this.dashSpeed = dashSpd;
+      this.dashIsForward = r === 0 && f >= 0;
       this.mode = 'dashing';
       this.dashTimer = DASH_DURATION;
       // Tirachinas de cámara + roll hacia el lado del dash lateral.
@@ -1197,8 +1221,11 @@ export class NyxDomeController {
 
   private updateDashing(dt: number): void {
     this.dashTimer -= dt;
-    // Redirección en vivo: el rumbo del dash sigue a la cámara.
-    this.rotateToward(this.dashDir, this.aimForward, DASH_TURN_RATE * dt);
+    // Solo el dash frontal sigue a la cámara en vivo; los laterales/esquivas
+    // conservan su vector lateral para poder esquivar golpes limpiamente.
+    if (this.dashIsForward) {
+      this.rotateToward(this.dashDir, this.aimForward, DASH_TURN_RATE * dt);
+    }
     this.velocity.copy(this.dashDir).multiplyScalar(this.dashSpeed);
     if (this.dashTimer <= 0) this.mode = 'floating';
   }
