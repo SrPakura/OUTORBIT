@@ -210,11 +210,11 @@ export function createEnemyNebulaMaterial(
       uColorB: { value: colorB },
       uRimColor: { value: new THREE.Color(rimColor) },
       uTime: { value: 0 },
-      uOpacity: { value: archetype === 'abyssal_cell' ? 0.56 : 0.78 },
+      uOpacity: { value: archetype === 'abyssal_cell' ? 0.62 : 0.76 },
       uEmissiveBoost: { value: 0 },
     },
     transparent: true,
-    depthWrite: false,
+    depthWrite: true,
   });
 }
 
@@ -405,10 +405,11 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
     } else if (names.includes('flesh')) {
       mesh.renderOrder = 1;
       // Carne nebulosa estilo NYX: universo rojo/morado con estrellas y
-      // vibración de energía; translúcida para ver el star_core dorado.
+      // vibración de energía; depthWrite: true oculta el interior del BackSide blanco.
       const fleshMaterial = createEnemyNebulaMaterial(archetype, rimColor);
       mesh.material = fleshMaterial;
       const outline = addVibratingInkOutline(mesh, FLESH_OUTLINE_THICKNESS, FLESH_INK_WHITE);
+      outline.renderOrder = 2;
       outline.name = OUTLINE_MARKER;
       animatedMaterials.push(fleshMaterial, outline.material as THREE.ShaderMaterial);
     } else {
