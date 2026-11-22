@@ -141,32 +141,33 @@ const enemyNebulaFrag = /* glsl */ `
     vec2 gv = fract( uv * scale ) - 0.5;
     vec2 id = floor( uv * scale );
     float h = hash21( id );
-    if ( h < 0.82 ) return 0.0;
+    if ( h < 0.70 ) return 0.0;
     vec2 offset = vec2( hash21( id + 7.1 ), hash21( id + 13.7 ) ) - 0.5;
     float d = length( gv - offset * 0.65 );
-    float tw = 0.55 + 0.45 * sin( uTime * speed + h * 40.0 );
-    return smoothstep( mix( 0.04, 0.14, fract( h * 19.3 ) ), 0.0, d ) * tw;
+    float tw = 0.6 + 0.4 * sin( uTime * speed + h * 40.0 );
+    return smoothstep( mix( 0.05, 0.16, fract( h * 19.3 ) ), 0.0, d ) * tw;
   }
   void main() {
     vec3 N = normalize( vNormalWorld );
     vec3 V = normalize( vViewDir );
-    // Nebulosa en espacio de pantalla (mismo truco que el cuerpo de NYX).
-    vec2 uv = gl_FragCoord.xy * 0.0042;
+    // Nebulosa en espacio de pantalla (fondo oscuro abisal como NYX).
+    vec2 uv = gl_FragCoord.xy * 0.0048;
     vec2 drift = vec2( uTime * 0.045, -uTime * 0.03 );
-    float n1 = fbm( uv * 1.4 + drift );
-    float n2 = fbm( uv * 2.2 - drift * 1.3 + n1 * 0.85 );
-    vec3 col = mix( uColorA * 0.35, uColorA, smoothstep( 0.34, 0.78, n1 ) * 0.85 );
-    col = mix( col, uColorB, smoothstep( 0.44, 0.86, n2 ) * 0.75 );
-    // Vetas de energía: estrellas titilando dentro de la carne.
-    float stars = starLayer( uv + drift * 0.35, 16.0, 2.4 ) * 0.9
-                + starLayer( uv - drift * 0.20, 28.0, 3.6 ) * 1.25;
-    col += mix( vec3( 1.0 ), uRimColor, 0.35 ) * stars;
-    // Borde Fresnel fucsia/azul oscuro: recorta la silueta contra el fondo.
-    float fresnel = pow( 1.0 - max( dot( N, V ), 0.0 ), 2.6 );
+    float n1 = fbm( uv * 1.6 + drift );
+    float n2 = fbm( uv * 2.5 - drift * 1.3 + n1 * 0.9 );
+    vec3 col = vec3( 0.02, 0.008, 0.035 );
+    col = mix( col, uColorA * 0.48, smoothstep( 0.36, 0.80, n1 ) );
+    col = mix( col, uColorB * 0.62, smoothstep( 0.48, 0.88, n2 ) );
+    // Estrellas brillantes dentro de la carne oscura.
+    float stars = starLayer( uv + drift * 0.35, 14.0, 2.6 ) * 1.3
+                + starLayer( uv - drift * 0.22, 24.0, 3.8 ) * 1.6;
+    col += mix( vec3( 1.0 ), uRimColor, 0.3 ) * stars;
+    // Borde Fresnel + centro más transparente para ver nítida la estrella dorada.
+    float fresnel = pow( 1.0 - max( dot( N, V ), 0.0 ), 2.2 );
     col += uRimColor * smoothstep( 0.25, 0.9, fresnel ) * 0.65;
-    // Flash de impacto (lo alimenta DomeWaveManager).
     col += mix( uColorA, uColorB, 0.5 ) * uEmissiveBoost;
-    gl_FragColor = vec4( col, uOpacity );
+    float alpha = mix( uOpacity * 0.45, min( 0.92, uOpacity * 1.15 ), fresnel );
+    gl_FragColor = vec4( col, alpha );
   }
 `;
 
