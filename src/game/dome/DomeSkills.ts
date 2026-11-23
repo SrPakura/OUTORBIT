@@ -62,6 +62,16 @@ const BLACK_HOLE_TICK = 0.5;
 const ATTRACTION_DURATION = 1.8;
 const CRUSH_CONTACT_DISTANCE = 2.4;
 
+// --- Escombros de suelos rotos (Gólem Rompesuelos): agarrables por el
+//     Campo Gravitacional, que los absorbe y los convierte en rocas orbitantes.
+const MAX_LOOSE_DEBRIS = 12;
+/** Radio de succión del Campo Gravitacional activo sobre los escombros (m). */
+const DEBRIS_ABSORB_RADIUS = 9;
+/** Distancia a la que el escombro se convierte en fragmento orbitante (m). */
+const DEBRIS_ABSORB_DISTANCE = 0.7;
+/** Fricción del vuelo a la deriva de los escombros (1/s). */
+const DEBRIS_DRIFT_DAMPING = 0.8;
+
 // --- Scratch a nivel de módulo: sin allocations por frame ---
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -108,6 +118,20 @@ interface GravityFieldState {
   forwardDir: THREE.Vector3;
   fragments: OrbitFragment[];
   level: number;
+}
+
+/**
+ * Escombro suelto de un suelo roto (Gólem Rompesuelos): flota a la deriva en
+ * la escena hasta que el Campo Gravitacional lo absorbe y lo convierte en un
+ * `OrbitFragment` lanzable.
+ */
+interface LooseDebris {
+  mesh: THREE.Mesh;
+  sizeKind: GravityRockSize;
+  damage: number;
+  hitRadius: number;
+  velocity: THREE.Vector3;
+  spinAxis: THREE.Vector3;
 }
 
 interface ProjectileState {
@@ -190,6 +214,8 @@ export class DomeSkillExecutor {
   private readonly implosions: FadingVfx[] = [];
   private readonly halos: FadingVfx[] = [];
   private gravityField: GravityFieldState | null = null;
+  /** Escombros de suelos rotos esperando a ser agarrados por el campo. */
+  private readonly looseDebris: LooseDebris[] = [];
 
   // --- Geometrías compartidas ---
   private readonly fragGeometry = new THREE.DodecahedronGeometry(0.34, 0);
@@ -347,6 +373,9 @@ export class DomeSkillExecutor {
    * - Nv1: 2 pequeñas
    * - Nv2: aleatorio [3 pequeñas | 2 medianas | 1 mediana + 2 pequeñas]
    * - Nv3+: aleatorio [1 grande | 3 medianas | 4 pequeñas]
+   *
+   * Los escombros sueltos cercanos (suelos rotos por el Gólem) se convierten
+   * en las primeras rocas del campo; el resto se genera nuevo.
    */
   private triggerGravityField(level: number, ctx: SkillTriggerContext): SkillTriggerResult {
     if (this.gravityField !== null) {
@@ -374,25 +403,101 @@ export class DomeSkillExecutor {
     }
 
     const anchor = ctx.playerPos.clone().addScaledVector(ctx.forwardDir, 2.3);
-    const fragments: OrbitFragment[] = [];
-    const count = plan.length;
-    for (let i = 0; i < count; i++) {
-      const sizeKind = plan[i];
-      const scale = sizeKind === 'large' ? 2.85 : sizeKind === 'medium' ? 1.7 : 0.95;
-      const damage = sizeKind === 'large' ? 58 : sizeKind === 'medium' ? 28 : 15;
-      const hitRadius = sizeKind === 'large' ? 1.85 : sizeKind === 'medium' ? 1.25 : 0.85;
+    this.gravityField = {
+      anchor,
+      forwardDir: ctx.forwardDir.clone().normalize(),
+      fragments: [],
+      level,
+    };
+
+    // Escombros agarrables: los más cercanos a Nyx se convierten en rocas
+    // orbitantes antes de generar rocas nuevas.
+    while (this.gravityField.fragments.length < plan.length && this.looseDebris.length > 0) {
+      let nearestIdx = 0;
+      let nearestDist = Infinity;
+      for (let i = 0; i < this.looseDebris.length; i++) {
+        const d = this.looseDebris[i].mesh.position.distanceTo(anchor);
+        if (d < nearestDist) {
+          nearestDist = d;
+          nearestIdx = i;
+        }
+      }
+      this.absorbDebrisIntoField(this.looseDebris.splice(nearestIdx, 1)[0]);
+    }
+
+    const fragments = this.gravityField.fragments;
+    while (fragments.length < plan.length) {
+      const sizeKind = plan[fragments.length];
+      const stats = this.rockStats(sizeKind);
       const mesh = new THREE.Mesh(this.fragGeometry, this.rockMaterial);
-      mesh.scale.setScalar(scale);
+      mesh.scale.setScalar(stats.scale);
       this.scene.add(mesh);
-      fragments.push({
+      fragments.push(this.makeOrbitFragment(mesh, sizeKind, stats, fragments.length, plan.length));
+    }
+    return { triggered: true, animOverride: 'stasis_cast' };
+  }
+
+  /** Stats de roca por tamaño (daño, radio de impacto y escala visual). */
+  private rockStats(sizeKind: GravityRockSize): { scale: number; damage: number; hitRadius: number } {
+    if (sizeKind === 'large') return { scale: 2.85, damage: 58, hitRadius: 1.85 };
+    if (sizeKind === 'medium') return { scale: 1.7, damage: 28, hitRadius: 1.25 };
+    return { scale: 0.95, damage: 15, hitRadius: 0.85 };
+  }
+
+  /** Fragmento orbitante a partir de una malla ya creada (roca o escombro). */
+  private makeOrbitFragment(
+    mesh: THREE.Mesh,
+    sizeKind: GravityRockSize,
+    stats: { damage: number; hitRadius: number },
+    index: number,
+    count: number,
+  ): OrbitFragment {
+    return {
+      mesh,
+      sizeKind,
+      damage: stats.damage,
+      hitRadius: stats.hitRadius,
+      angle: (index / count) * Math.PI * 2,
+      angularSpeed: 2.1 + Math.random() * 0.7,
+      dist: sizeKind === 'large' ? 2.1 : 1.55 + Math.random() * 0.55,
+      height: (Math.random() - 0.5) * 0.9,
+      spinAxis: new THREE.Vector3(
+        Math.random() - 0.5,
+        Math.random() - 0.5,
+        Math.random() - 0.5
+      ).normalize(),
+    };
+  }
+
+  /**
+   * Genera escombros agarrables de un suelo roto (Gólem Rompesuelos): rocas
+   * pequeñas/medianas que quedan a la deriva hasta que el Campo Gravitacional
+   * las absorbe (al lanzarlo o si ya está activo).
+   */
+  spawnSlabDebris(origin: THREE.Vector3, count: number): void {
+    for (let i = 0; i < count; i++) {
+      if (this.looseDebris.length >= MAX_LOOSE_DEBRIS) {
+        const oldest = this.looseDebris.shift()!;
+        this.scene.remove(oldest.mesh);
+      }
+      const sizeKind: GravityRockSize = i % 3 === 0 ? 'medium' : 'small';
+      const stats = this.rockStats(sizeKind);
+      const mesh = new THREE.Mesh(this.fragGeometry, this.rockMaterial);
+      mesh.scale.setScalar(stats.scale);
+      mesh.position.copy(origin);
+      this.scene.add(mesh);
+      this.looseDebris.push({
         mesh,
         sizeKind,
-        damage,
-        hitRadius,
-        angle: (i / count) * Math.PI * 2,
-        angularSpeed: 2.1 + Math.random() * 0.7,
-        dist: sizeKind === 'large' ? 2.1 : 1.55 + Math.random() * 0.55,
-        height: (Math.random() - 0.5) * 0.9,
+        damage: stats.damage,
+        hitRadius: stats.hitRadius,
+        velocity: new THREE.Vector3(
+          Math.random() - 0.5,
+          Math.random() * 0.6,
+          Math.random() - 0.5
+        )
+          .normalize()
+          .multiplyScalar(2.5 + Math.random() * 3.5),
         spinAxis: new THREE.Vector3(
           Math.random() - 0.5,
           Math.random() - 0.5,
@@ -400,13 +505,45 @@ export class DomeSkillExecutor {
         ).normalize(),
       });
     }
-    this.gravityField = {
-      anchor,
-      forwardDir: ctx.forwardDir.clone().normalize(),
-      fragments,
-      level,
-    };
-    return { triggered: true, animOverride: 'stasis_cast' };
+  }
+
+  /** Convierte un escombro suelto en fragmento orbitante del campo activo. */
+  private absorbDebrisIntoField(debris: LooseDebris): void {
+    const gf = this.gravityField;
+    if (gf === null) {
+      return;
+    }
+    gf.fragments.push(
+      this.makeOrbitFragment(debris.mesh, debris.sizeKind, debris, gf.fragments.length, gf.fragments.length + 1)
+    );
+  }
+
+  /** Deriva de los escombros + succión del Campo Gravitacional activo. */
+  private updateLooseDebris(dt: number): void {
+    const gf = this.gravityField;
+    for (let i = this.looseDebris.length - 1; i >= 0; i--) {
+      const debris = this.looseDebris[i];
+      debris.mesh.position.addScaledVector(debris.velocity, dt);
+      debris.velocity.multiplyScalar(Math.exp(-DEBRIS_DRIFT_DAMPING * dt));
+      debris.mesh.rotateOnAxis(debris.spinAxis, dt * 2);
+
+      if (gf !== null) {
+        _v1.subVectors(gf.anchor, debris.mesh.position);
+        const dist = _v1.length();
+        if (dist < DEBRIS_ABSORB_RADIUS) {
+          if (dist < DEBRIS_ABSORB_DISTANCE) {
+            this.looseDebris.splice(i, 1);
+            this.absorbDebrisIntoField(debris);
+            continue;
+          }
+          // Succión proporcional a la cercanía del ancla del campo.
+          debris.velocity.addScaledVector(
+            _v1.normalize(),
+            (12 + (DEBRIS_ABSORB_RADIUS - dist) * 2.2) * dt
+          );
+        }
+      }
+    }
   }
 
   /** Lanza todos los fragmentos restantes contra `targetPos` (helper legacy). */
@@ -598,6 +735,7 @@ export class DomeSkillExecutor {
     forwardDir?: THREE.Vector3,
   ): void {
     this.updateGravityField(dt, playerPos, forwardDir);
+    this.updateLooseDebris(dt);
     this.updateProjectiles(dt, enemies, onDamageEnemy);
     this.updateWaves(dt);
     this.updateWells(dt, enemies, onDamageEnemy);
@@ -969,6 +1107,8 @@ export class DomeSkillExecutor {
       for (const fragment of this.gravityField.fragments) this.scene.remove(fragment.mesh);
       this.gravityField = null;
     }
+    for (const debris of this.looseDebris) this.scene.remove(debris.mesh);
+    this.looseDebris.length = 0;
     for (const p of this.projectiles) {
       this.scene.remove(p.mesh);
       if (p.material !== null) p.material.dispose();

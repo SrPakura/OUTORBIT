@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { DomeHudState } from '@/game/dome/domeTypes';
 import { RETICLE_SIZE_PX } from '@/game/dome/domeTypes';
+import { useI18n, waveLabelKey } from '@/i18n';
 
 interface DomeHudSketchProps {
   hud: DomeHudState;
@@ -53,6 +54,7 @@ function Meter({
 }
 
 function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketchProps) {
+  const { t } = useI18n();
   const lock = hud.reticleLockState;
   const isLocked = lock === 'locked';
 
@@ -167,7 +169,7 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
         <div className="absolute left-1/2 top-4 -translate-x-1/2">
           <div className="-skew-x-12 border border-white/25 bg-[#090314]/70 px-4 py-1 backdrop-blur-sm">
             <div className="flex skew-x-12 items-center gap-2.5 text-[10px] font-black tracking-[0.26em]">
-              <span className="text-cyan-300">OLEADA {hud.waveNumber}</span>
+              <span className="text-cyan-300">{t('hud.wave', { n: hud.waveNumber })}</span>
               <span className="text-white/30">·</span>
               <span
                 className={
@@ -178,7 +180,11 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
                       : 'text-white/80'
                 }
               >
-                {hud.waveLabel ?? 'BÁSICOS'}
+                {(() => {
+                  const key = hud.waveLabel ? waveLabelKey(hud.waveLabel) : null;
+                  if (key) return t(key);
+                  return hud.waveLabel ?? t('enemies.waveBasic');
+                })()}
               </span>
             </div>
           </div>
@@ -309,7 +315,7 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
             style={{ animation: 'domeHudBulletPulse 0.9s ease-in-out infinite' }}
           >
             <span className="whitespace-nowrap text-[10px] font-bold tracking-[0.32em] text-cyan-200/90 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]">
-              ⚡ DASH [CLIC DER] PARA REDIRIGIR PATADA
+              {t('hud.bulletTimeHint')}
             </span>
           </div>
         )}
@@ -336,7 +342,9 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
       {/* 7. Panel superior izquierdo — nivel, EXP, HP y EDÉN */}
       <div className="absolute left-5 top-5 w-52">
         <div className="flex items-baseline gap-2">
-          <span className="text-[10px] font-black tracking-[0.4em] text-white/45">NV.</span>
+          <span className="text-[10px] font-black tracking-[0.4em] text-white/45">
+            {t('hud.levelPrefix')}
+          </span>
           <span className="text-2xl font-black italic leading-none tracking-tight text-white">
             {hud.level}
           </span>
@@ -349,14 +357,14 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
         </div>
 
         <Meter
-          label="HP"
+          label={t('hud.hp')}
           value={hud.hp}
           max={hud.maxHp}
           barClass="bg-gradient-to-r from-[#ff6b5e] to-[#ff8f7a]"
           glow="0 0 8px rgba(255,107,94,0.75)"
         />
         <Meter
-          label="EDÉN"
+          label={t('hud.eden')}
           value={hud.eden}
           max={hud.maxEden}
           barClass="bg-gradient-to-r from-cyan-300 to-violet-400"
@@ -391,8 +399,8 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
                     slot.name ? 'text-white/90' : 'text-white/30'
                   }`}
                 >
-                  {slot.name ?? 'VACÍO'}
-                  {slot.name && slot.level > 0 ? ` Nv.${slot.level}` : ''}
+                  {slot.name ?? t('hud.emptySlot')}
+                  {slot.name && slot.level > 0 ? ` ${t('hud.levelShort')}${slot.level}` : ''}
                 </span>
                 {slot.cooldownRemaining !== undefined && slot.cooldownRemaining > 0.05 && (
                   <span className="ml-1 text-[9px] font-bold tabular-nums text-amber-300">
@@ -410,18 +418,25 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-[#090314]/45">
           <div className="-skew-x-12 border border-white/80 bg-[#090314]/90 px-6 py-2 shadow-[6px_6px_0_rgba(34,211,238,0.45)]">
             <span className="block skew-x-12 text-[11px] font-bold tracking-[0.24em] text-white">
-              HAZ CLIC EN LA ARENA PARA CAPTURAR EL RATÓN · ESC PARA SOLTAR
+              {t('hud.clickToCapture')}
             </span>
           </div>
           <div className="max-w-2xl text-center text-[9px] leading-relaxed tracking-[0.18em] text-white/55">
-            EN SUELO: WASD ANDAR · RATÓN CÁMARA LIBRE · ESPACIO ENTRAR A FLOTACIÓN 0G
+            {t('hud.groundControls')}
             <br />
-            EN FLOTACIÓN 0G: RATÓN GIRAR CUERPO · WASD PROPULSIÓN (1 EDÉN/S, INERCIA 0G) · CLIC DER +
-            WASD DASH (3 EDÉN)
+            {t('hud.floatControls')}
             <br />
-            ATAQUE VELOCIDAD (2 EDÉN/S): CLIC IZQ (CON ENEMIGO EN MIRA = PATADA/TALADRO · SIN ENEMIGO
-            = CAÍDA AL VACÍO) · ESPACIO CANCELAR CON FLIP
+            {t('hud.speedAttackControls')}
           </div>
+        </div>
+      )}
+
+      {/* Aviso de mando conectado (Gamepad API: PS4 / genérico) */}
+      {hud.gamepadConnected && (
+        <div className="pointer-events-none absolute right-4 top-14 -skew-x-12 border border-cyan-300/50 bg-[#090314]/70 px-3 py-1">
+          <span className="block skew-x-12 text-[9px] font-bold tracking-[0.22em] text-cyan-200">
+            {t('hud.gamepadConnected')}
+          </span>
         </div>
       )}
 
@@ -431,7 +446,7 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
         onClick={onExit}
         className="pointer-events-auto absolute right-4 top-4 -skew-x-12 border border-white/40 bg-[#090314]/60 px-4 py-1.5 text-[10px] font-bold tracking-[0.28em] text-white/80 transition-colors hover:border-cyan-300 hover:text-cyan-200"
       >
-        <span className="block skew-x-12">← MENÚ</span>
+        <span className="block skew-x-12">{t('hud.menuButton')}</span>
       </button>
 
       <style>{`

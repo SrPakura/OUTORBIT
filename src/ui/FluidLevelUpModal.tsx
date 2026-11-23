@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useI18n } from '@/i18n';
 
 // ============================================================================
 // Sección 4.3 del diseño — Subida de Nivel "En Caliente" (UI de 2 Cartas de
@@ -32,18 +33,12 @@ export interface FluidLevelUpModalProps {
 
 const RARITY_STYLES: Record<
   FluidCardOption['rarity'],
-  { label: string; color: string; glow: string }
+  { color: string; glow: string }
 > = {
-  base: { label: 'BASE', color: '#34d399', glow: 'rgba(52,211,153,0.55)' },
-  common: { label: 'COMÚN', color: '#22d3ee', glow: 'rgba(34,211,238,0.55)' },
-  epic: { label: 'ÉPICA', color: '#a855f7', glow: 'rgba(168,85,247,0.6)' },
-  legendary: { label: 'LEGENDARIA', color: '#fbbf24', glow: 'rgba(251,191,36,0.65)' },
-};
-
-const KIND_LABELS: Record<FluidCardOption['kind'], string> = {
-  active_new: 'HABILIDAD NUEVA',
-  active_upgrade: 'MEJORA +1 NV.',
-  passive: 'PASIVA',
+  base: { color: '#34d399', glow: 'rgba(52,211,153,0.55)' },
+  common: { color: '#22d3ee', glow: 'rgba(34,211,238,0.55)' },
+  epic: { color: '#a855f7', glow: 'rgba(168,85,247,0.6)' },
+  legendary: { color: '#fbbf24', glow: 'rgba(251,191,36,0.65)' },
 };
 
 /** Fluido líquido cósmico: capas de ondas violeta/cian/carmesí + halftone. */
@@ -137,6 +132,7 @@ function FluidCard({
   disabled: boolean;
   onChoose: () => void;
 }) {
+  const { t } = useI18n();
   const rarity = RARITY_STYLES[option.rarity];
   const isUpgrade = option.nextLevel > option.currentLevel;
 
@@ -166,7 +162,7 @@ function FluidCard({
                 textShadow: `0 0 8px ${rarity.glow}`,
               }}
             >
-              {rarity.label}
+              {t(`levelUp.rarity.${option.rarity}`)}
             </span>
           </div>
 
@@ -182,23 +178,27 @@ function FluidCard({
 
           <div className="mt-3 flex items-center justify-between border-t border-white/15 pt-2.5">
             <span className="text-[10px] font-black tracking-[0.18em] text-white/45">
-              {KIND_LABELS[option.kind]}
+              {t(`levelUp.kind.${option.kind}`)}
             </span>
             <span className="text-[11px] font-black tabular-nums text-white/90">
               {isUpgrade ? (
                 <>
-                  Nv. {option.currentLevel}{' '}
-                  <span className="text-cyan-300">→ Nv. {option.nextLevel}</span>
+                  {t('levelUp.levelShort')} {option.currentLevel}{' '}
+                  <span className="text-cyan-300">
+                    → {t('levelUp.levelShort')} {option.nextLevel}
+                  </span>
                 </>
               ) : (
-                <>Nv. {option.currentLevel}</>
+                <>
+                  {t('levelUp.levelShort')} {option.currentLevel}
+                </>
               )}
             </span>
           </div>
 
           {option.edenCost != null && (
             <p className="mt-2 text-[10px] font-black tracking-[0.22em] text-cyan-200/90">
-              COSTE: {option.edenCost} EDÉN
+              {t('levelUp.edenCost', { n: option.edenCost })}
             </p>
           )}
 
@@ -221,6 +221,7 @@ export function FluidLevelUpModal({
 }: FluidLevelUpModalProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [pendingOption, setPendingOption] = useState<FluidCardOption | null>(null);
+  const { t } = useI18n();
 
   // Reinicia el flujo de reemplazo de hueco al reabrir el modal
   useEffect(() => {
@@ -312,13 +313,13 @@ export function FluidLevelUpModal({
       />
 
       <p className="relative text-[10px] font-black tracking-[0.5em] text-cyan-300/80">
-        FLUIDO EN CALIENTE · JUEGO EN PAUSA
+        {t('levelUp.subtitle')}
       </p>
       <h2 className="relative mt-1.5 text-3xl font-black italic tracking-tight text-white drop-shadow-[3px_3px_0_rgba(4,5,16,0.9)]">
-        NIVEL {newLevel}
+        {t('levelUp.title', { n: newLevel })}
       </h2>
       <p className="relative mt-1 text-[10px] font-bold tracking-[0.3em] text-white/50">
-        ELIGE 1 DE 2 CARTAS · [1] IZQUIERDA · [2] DERECHA
+        {t('levelUp.chooseHint')}
       </p>
 
       {/* Cartas envueltas en el fluido que se disuelve */}
@@ -351,7 +352,7 @@ export function FluidLevelUpModal({
           style={{ animation: 'fluidCardReveal 220ms ease-out' }}
         >
           <p className="text-[10px] font-black tracking-[0.3em] text-cyan-200">
-            HUECOS LLENOS · ELIGE CUÁL REEMPLAZAR · [1]/[2]/[3] · ESC PARA VOLVER
+            {t('levelUp.slotReplacement')}
           </p>
           <div className="mt-3 flex gap-3">
             {equippedSlots.map((slot, i) => {
@@ -365,7 +366,7 @@ export function FluidLevelUpModal({
                 >
                   <span className="block skew-x-12 text-[10px] font-bold tracking-[0.2em] text-white/85">
                     <span className="font-black text-cyan-300">[{index + 1}]</span>{' '}
-                    {slot.name ?? 'VACÍO'} · Nv. {slot.level}
+                    {slot.name ?? t('levelUp.emptySlot')} · {t('levelUp.levelShort')} {slot.level}
                   </span>
                 </button>
               );
@@ -383,8 +384,8 @@ export function FluidLevelUpModal({
           >
             <span className="block skew-x-12 text-[10px] font-bold tracking-[0.22em] text-white/60">
               <span className="font-black text-white/40">{i + 1}</span>{' '}
-              {slot.name ?? 'VACÍO'}
-              {slot.name != null ? ` · Nv. ${slot.level}` : ''}
+              {slot.name ?? t('levelUp.emptySlot')}
+              {slot.name != null ? ` · ${t('levelUp.levelShort')} ${slot.level}` : ''}
             </span>
           </div>
         ))}

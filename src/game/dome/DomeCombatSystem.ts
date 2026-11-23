@@ -51,6 +51,11 @@ export interface DomeEnemyEntity {
   spikesActive?: boolean;
   /** Boca abierta (Gorrión): habilita golpear el cristal interior. */
   mouthOpen?: boolean;
+  /**
+   * Segundos restantes de ventana vulnerable (Prisma Necrozma tras su dash
+   * evasivo o su ráfaga): los golpes penetran directo al star_core.
+   */
+  vulnerableTimer?: number;
   alive: boolean;
 }
 
@@ -109,6 +114,11 @@ const INK_BLIND_DURATION = 5.0;
 const INK_DAMAGE_TOTAL = 12;
 const INK_DAMAGE_DURATION = 4.0;
 const INK_DAMAGE_PER_SEC = INK_DAMAGE_TOTAL / INK_DAMAGE_DURATION;
+/**
+ * Daño que recibe Nyx al golpear cuerpo a cuerpo al Prisma Necrozma con los
+ * pinchos sacados (además de la repulsión del `thorns_repel`).
+ */
+export const THORNS_DAMAGE_TO_NYX = 8;
 
 // ---------------------------------------------------------------------------
 // Stats por arquetipo (secciones 6.2–6.4 del diseño)
@@ -176,6 +186,7 @@ export function createDomeEnemyEntity(
     stunTimer: 0,
     spikesActive: false,
     mouthOpen: false,
+    vulnerableTimer: 0,
     alive: true,
   };
 }
@@ -226,6 +237,8 @@ export class DomeCombatSystem {
    * cinético contra la carne/estrella de un enemigo.
    *
    * - Pinchos activos (Necrozma de frente): repelen sin daño (`thorns_repel`).
+   * - Boca abierta del Gorrión o ventana vulnerable del Necrozma: el golpe
+   *   penetra directo a la estrella (daño pleno) sin importar la fuerza.
    * - Si `bypassFlesh` (habilidad) o la fuerza supera `fleshThickness`, el
    *   golpe penetra hasta la estrella: destruye 1 punto débil y hace daño
    *   masivo.
@@ -269,7 +282,13 @@ export class DomeCombatSystem {
     let penetratedStar = false;
     let reason: KineticImpactResult['reason'] = isDrill ? 'drill' : 'normal';
 
-    if (bypassFlesh || kineticForce >= enemy.fleshThickness) {
+    // Boca abierta del Gorrión (star_core_mouth expuesto) o ventana vulnerable
+    // del Necrozma (pinchos retraídos): la carne se ignora y el golpe alcanza
+    // la estrella con daño pleno.
+    const mouthExposed = enemy.archetype === 'giant_sparrow' && enemy.mouthOpen === true;
+    const vulnerable = (enemy.vulnerableTimer ?? 0) > 0;
+
+    if (bypassFlesh || mouthExposed || vulnerable || kineticForce >= enemy.fleshThickness) {
       // Penetración directa a la estrella 3D de 6 puntas.
       penetratedStar = true;
       if (bypassFlesh) {

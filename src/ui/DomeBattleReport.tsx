@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useI18n } from '@/i18n';
 
 // ============================================================================
 // Game Over / Battle Report de la Cúpula: informe arcade cómic-nebulana con
@@ -62,11 +63,12 @@ function StatBox({
   );
 }
 
-const SAVE_LABELS: Record<SaveState, string> = {
-  idle: 'GUARDAR EN LEADERBOARD',
-  saving: 'GUARDANDO...',
-  saved: 'GUARDADO',
-  error: 'ERROR · REINTENTAR',
+/** Clave de diccionario del texto de cada estado del botón de guardado. */
+const SAVE_LABEL_KEYS: Record<SaveState, string> = {
+  idle: 'battleReport.saveIdle',
+  saving: 'battleReport.saveSaving',
+  saved: 'battleReport.saveSaved',
+  error: 'battleReport.saveError',
 };
 
 export function DomeBattleReport({
@@ -77,12 +79,13 @@ export function DomeBattleReport({
 }: DomeBattleReportProps) {
   const [playerName, setPlayerName] = useState('');
   const [saveState, setSaveState] = useState<SaveState>('idle');
+  const { t } = useI18n();
 
   const handleSave = async () => {
     if (!onSubmitScore || saveState === 'saving' || saveState === 'saved') return;
     setSaveState('saving');
     try {
-      const ok = await onSubmitScore(playerName.trim() || 'PILOTO');
+      const ok = await onSubmitScore(playerName.trim() || t('battleReport.defaultPilotName'));
       setSaveState(ok ? 'saved' : 'error');
     } catch {
       setSaveState('error');
@@ -116,16 +119,16 @@ export function DomeBattleReport({
 
       <div className="relative w-full max-w-3xl">
         <p className="text-center text-[10px] font-black tracking-[0.5em] text-[#ff2a55]">
-          CÚPULA PERDIDA · INFORME DE COMBATE
+          {t('battleReport.subtitle')}
         </p>
         <h2 className="mt-1.5 text-center text-4xl font-black italic tracking-tight text-white drop-shadow-[3px_3px_0_rgba(4,5,16,0.95)]">
-          GAME OVER
+          {t('battleReport.title')}
         </h2>
 
         {/* Puntuación gigante */}
         <div className="mt-6 flex flex-col items-center">
           <p className="text-[10px] font-black tracking-[0.4em] text-cyan-300/80">
-            PUNTUACIÓN FINAL
+            {t('battleReport.finalScore')}
           </p>
           <p
             className="mt-1 text-6xl font-black italic tabular-nums leading-none text-white"
@@ -141,21 +144,21 @@ export function DomeBattleReport({
 
         {/* Rejilla de estadísticas */}
         <div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <StatBox label="OLEADA" value={String(data.wave)} accent="#22d3ee" />
-          <StatBox label="NIVEL" value={String(data.level)} accent="#a855f7" />
-          <StatBox label="KILLS" value={String(data.kills)} accent="#ffffff" />
+          <StatBox label={t('battleReport.statWave')} value={String(data.wave)} accent="#22d3ee" />
+          <StatBox label={t('battleReport.statLevel')} value={String(data.level)} accent="#a855f7" />
+          <StatBox label={t('battleReport.statKills')} value={String(data.kills)} accent="#ffffff" />
           <StatBox
-            label="MUERTES POR BARRERA"
+            label={t('battleReport.statBarrierKills')}
             value={String(data.barrierKills)}
             accent="#ff2a55"
           />
           <StatBox
-            label="VELOCIDAD MÁX."
+            label={t('battleReport.statMaxSpeed')}
             value={`${data.maxSpeed.toFixed(1)} m/s`}
             accent="#22d3ee"
           />
           <StatBox
-            label="TIEMPO SOBREVIVIDO"
+            label={t('battleReport.statTime')}
             value={formatTime(data.survivalTimeSec)}
             accent="#a855f7"
           />
@@ -164,12 +167,12 @@ export function DomeBattleReport({
         {/* Redirecciones perfectas + habilidades finales */}
         <div className="mt-5 flex flex-col items-center gap-3">
           <p className="text-[10px] font-black tracking-[0.3em] text-[#fbbf24]">
-            REDIRECCIONES PERFECTAS: {data.perfectRedirections}
+            {t('battleReport.perfectRedirections', { n: data.perfectRedirections })}
           </p>
           <div className="flex flex-wrap justify-center gap-2.5">
             {data.equippedSkills.length === 0 ? (
               <span className="text-[10px] font-bold tracking-[0.22em] text-white/35">
-                SIN HABILIDADES EQUIPADAS
+                {t('battleReport.noSkills')}
               </span>
             ) : (
               data.equippedSkills.map((skill) => (
@@ -178,7 +181,7 @@ export function DomeBattleReport({
                   className="-skew-x-12 border border-cyan-300/50 bg-[#090314]/70 px-3.5 py-1.5 shadow-[0_0_14px_rgba(34,211,238,0.25)]"
                 >
                   <span className="block skew-x-12 text-[10px] font-bold tracking-[0.22em] text-white/85">
-                    {skill.name} · Nv. {skill.level}
+                    {skill.name} · {t('battleReport.levelShort')} {skill.level}
                   </span>
                 </div>
               ))
@@ -195,7 +198,7 @@ export function DomeBattleReport({
                 value={playerName}
                 maxLength={18}
                 onChange={(e) => setPlayerName(e.target.value)}
-                placeholder="NOMBRE DE PILOTO"
+                placeholder={t('battleReport.namePlaceholder')}
                 disabled={saveState === 'saving' || saveState === 'saved'}
                 className="-skew-x-12 flex-1 border-2 border-white/30 bg-[#090314]/85 px-4 py-2.5 text-[11px] font-bold tracking-[0.2em] text-white placeholder:text-white/30 focus:border-cyan-300 focus:outline-none disabled:opacity-50"
               />
@@ -212,13 +215,13 @@ export function DomeBattleReport({
                 }`}
                 style={{ boxShadow: '5px 5px 0 rgba(4,5,16,0.9)' }}
               >
-                <span className="block skew-x-12">{SAVE_LABELS[saveState]}</span>
+                <span className="block skew-x-12">{t(SAVE_LABEL_KEYS[saveState])}</span>
               </button>
             </div>
             <p className="text-[9px] tracking-[0.2em] text-white/35">
               {saveState === 'error'
-                ? 'NO SE PUDO CONTACTAR CON EL LEADERBOARD · REINTENTA'
-                : 'SIN LOGIN OBLIGATORIO · RANKING GLOBAL'}
+                ? t('battleReport.saveErrorHint')
+                : t('battleReport.saveHint')}
             </p>
           </div>
         )}
@@ -231,7 +234,7 @@ export function DomeBattleReport({
             className="-skew-x-12 cursor-pointer border-2 border-cyan-300 bg-cyan-400/15 px-8 py-3 text-sm font-black tracking-[0.28em] text-cyan-200 transition-transform hover:-translate-y-0.5 hover:bg-cyan-400/25"
             style={{ boxShadow: '6px 6px 0 rgba(4,5,16,0.95)' }}
           >
-            <span className="block skew-x-12">JUGAR DE NUEVO</span>
+            <span className="block skew-x-12">{t('battleReport.playAgain')}</span>
           </button>
           <button
             type="button"
@@ -239,7 +242,7 @@ export function DomeBattleReport({
             className="-skew-x-12 cursor-pointer border-2 border-white/40 bg-[#090314]/70 px-8 py-3 text-sm font-black tracking-[0.28em] text-white/80 transition-transform hover:-translate-y-0.5 hover:border-white/70"
             style={{ boxShadow: '6px 6px 0 rgba(4,5,16,0.95)' }}
           >
-            <span className="block skew-x-12">MENÚ PRINCIPAL</span>
+            <span className="block skew-x-12">{t('battleReport.mainMenu')}</span>
           </button>
         </div>
       </div>

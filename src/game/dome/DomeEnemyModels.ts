@@ -40,7 +40,7 @@ export const ENEMY_MODEL_COLORS: Record<EnemyArchetype, EnemyModelPalette> = {
 // --- Núcleos star_core: dorado con brillo intenso y borde dorado cálido ---
 const STAR_CORE_COLOR = 0xffcc33;
 const STAR_CORE_RIM = 0xfff3b0;
-const STAR_CORE_EMISSIVE = 1.45;
+export const STAR_CORE_EMISSIVE = 1.45;
 const STAR_CORE_OUTLINE_THICKNESS = 0.035;
 const STAR_CORE_INK = 0xffe58f;
 
@@ -458,4 +458,193 @@ export function disposeEnemyModelCache(): void {
   }
   modelCache.clear();
   pendingLoads.clear();
+}
+
+// ============================================================================
+// Rigs de los GLB riggeados: localización de huesos y mallas `detail_*` para
+// que `DomeWaveManager` componga las animaciones procedurales encima de la
+// pose de reposo (sin romper el bind del skin).
+// ============================================================================
+
+/** Hueso con su pose de reposo: la animación se compone encima. */
+export interface EnemyBone {
+  bone: THREE.Object3D;
+  rest: THREE.Quaternion;
+}
+
+/** Malla secundaria (`detail_spikes`, `detail_fist`...) con su material cel. */
+export interface EnemyDetailMesh {
+  mesh: THREE.Mesh;
+  /** Material cel con `uEmissiveBoost`/`uRimColor` (null si no es shader). */
+  material: THREE.ShaderMaterial | null;
+  /** Escala de reposo de la malla (la animación escala relativo a ella). */
+  restScale: number;
+}
+
+function findBone(root: THREE.Object3D, name: string): EnemyBone | null {
+  const bone = root.getObjectByName(name);
+  if (!bone) {
+    return null;
+  }
+  return { bone, rest: bone.quaternion.clone() };
+}
+
+function findDetailMesh(root: THREE.Object3D, name: string): EnemyDetailMesh | null {
+  const mesh = root.getObjectByName(name) as THREE.Mesh | undefined;
+  if (!mesh || !mesh.isMesh) {
+    return null;
+  }
+  const material = mesh.material;
+  return {
+    mesh,
+    material: material instanceof THREE.ShaderMaterial ? material : null,
+    restScale: mesh.scale.x,
+  };
+}
+
+// --- Ave Legendaria Cristalizada (giant_sparrow.glb, 12 joints) ---
+
+export interface SparrowRig {
+  wingTopLInner: EnemyBone | null;
+  wingTopLOuter: EnemyBone | null;
+  wingTopRInner: EnemyBone | null;
+  wingTopROuter: EnemyBone | null;
+  wingBotL: EnemyBone | null;
+  wingBotR: EnemyBone | null;
+  tail: EnemyBone | null;
+  neck: EnemyBone | null;
+  head: EnemyBone | null;
+  jaw: EnemyBone | null;
+  /** Estrella interior de la boca (`star_core_mouth`): brilla al abrirla. */
+  mouthStar: THREE.Object3D | null;
+  mouthStarMaterial: THREE.ShaderMaterial | null;
+}
+
+/** Huesos del Ave Legendaria Cristalizada para aleteo, cuello/cabeza y jaw. */
+export function collectSparrowRig(root: THREE.Object3D): SparrowRig {
+  const mouthStar = root.getObjectByName('star_core_mouth');
+  const mouthStarMesh = mouthStar as THREE.Mesh | undefined;
+  return {
+    wingTopLInner: findBone(root, 'wing_top_L_inner'),
+    wingTopLOuter: findBone(root, 'wing_top_L_outer'),
+    wingTopRInner: findBone(root, 'wing_top_R_inner'),
+    wingTopROuter: findBone(root, 'wing_top_R_outer'),
+    wingBotL: findBone(root, 'wing_bot_L'),
+    wingBotR: findBone(root, 'wing_bot_R'),
+    tail: findBone(root, 'tail'),
+    neck: findBone(root, 'neck'),
+    head: findBone(root, 'head'),
+    jaw: findBone(root, 'jaw'),
+    mouthStar: mouthStar ?? null,
+    mouthStarMaterial:
+      mouthStarMesh?.isMesh && mouthStarMesh.material instanceof THREE.ShaderMaterial
+        ? mouthStarMesh.material
+        : null,
+  };
+}
+
+// --- Prisma Necrozma (prisma_necrozma.glb, 11 joints + detail_spikes) ---
+
+export interface NecrozmaRig {
+  torso: EnemyBone | null;
+  head: EnemyBone | null;
+  tail: EnemyBone | null;
+  shoulderL: EnemyBone | null;
+  shoulderR: EnemyBone | null;
+  armL: EnemyBone | null;
+  armR: EnemyBone | null;
+  clawL: EnemyBone | null;
+  clawR: EnemyBone | null;
+  /** Pinchos defensivos: se escalan hacia fuera (~1.35) o se retraen (~0.15). */
+  spikes: EnemyDetailMesh | null;
+}
+
+/** Huesos del Prisma Necrozma + malla `detail_spikes`. */
+export function collectNecrozmaRig(root: THREE.Object3D): NecrozmaRig {
+  return {
+    torso: findBone(root, 'torso'),
+    head: findBone(root, 'head'),
+    tail: findBone(root, 'tail'),
+    shoulderL: findBone(root, 'shoulder_L'),
+    shoulderR: findBone(root, 'shoulder_R'),
+    armL: findBone(root, 'arm_L'),
+    armR: findBone(root, 'arm_R'),
+    clawL: findBone(root, 'claw_L'),
+    clawR: findBone(root, 'claw_R'),
+    spikes: findDetailMesh(root, 'detail_spikes'),
+  };
+}
+
+// --- Gólem Rompesuelos (ground_golem.glb, 9 joints + detail_fist) ---
+
+export interface GolemRig {
+  spine: EnemyBone | null;
+  chest: EnemyBone | null;
+  head: EnemyBone | null;
+  giantShoulderR: EnemyBone | null;
+  giantArmR: EnemyBone | null;
+  giantFistR: EnemyBone | null;
+  armLUpper: EnemyBone | null;
+  armLLower: EnemyBone | null;
+  /** Puño gigante: brilla/pulsa neón durante el telegraph del manotazo. */
+  fist: EnemyDetailMesh | null;
+}
+
+/** Huesos del Gólem Rompesuelos + malla `detail_fist`. */
+export function collectGolemRig(root: THREE.Object3D): GolemRig {
+  return {
+    spine: findBone(root, 'spine'),
+    chest: findBone(root, 'chest'),
+    head: findBone(root, 'head'),
+    giantShoulderR: findBone(root, 'giant_shoulder_R'),
+    giantArmR: findBone(root, 'giant_arm_R'),
+    giantFistR: findBone(root, 'giant_fist_R'),
+    armLUpper: findBone(root, 'arm_L_upper'),
+    armLLower: findBone(root, 'arm_L_lower'),
+    fist: findDetailMesh(root, 'detail_fist'),
+  };
+}
+
+// --- Leviatán KRONOS (kronos_leviathan.glb, 20 joints + star_core_1..4) ---
+
+export interface KronosRig {
+  head: EnemyBone | null;
+  jaw: EnemyBone | null;
+  /** Aletas pectorales (si existen): aleteo procedural. */
+  finL: EnemyBone | null;
+  finR: EnemyBone | null;
+  /** Cadena `seg_01..seg_12` ordenada de cabeza a cola (ondulación serpentina). */
+  segments: EnemyBone[];
+  /** Materiales cel de las 4 Estrellas Vitales (`star_core_1..4`): respuesta al daño. */
+  starCoreMaterials: THREE.ShaderMaterial[];
+}
+
+/**
+ * Huesos del Leviatán KRONOS: cadena `seg_01..seg_12` para la onda serpentina
+ * progresiva, `head`/`jaw` (fauces de los Anillos de Contención) y las aletas
+ * `fin_L`/`fin_R`. Las Estrellas Vitales rotan vía `starCores` del visual.
+ */
+export function collectKronosRig(root: THREE.Object3D): KronosRig {
+  const segments: EnemyBone[] = [];
+  for (let i = 1; i <= 12; i++) {
+    const segment = findBone(root, `seg_${String(i).padStart(2, '0')}`);
+    if (segment) {
+      segments.push(segment);
+    }
+  }
+  const starCoreMaterials: THREE.ShaderMaterial[] = [];
+  for (let i = 1; i <= 4; i++) {
+    const star = root.getObjectByName(`star_core_${i}`) as THREE.Mesh | undefined;
+    if (star?.isMesh && star.material instanceof THREE.ShaderMaterial) {
+      starCoreMaterials.push(star.material);
+    }
+  }
+  return {
+    head: findBone(root, 'head'),
+    jaw: findBone(root, 'jaw'),
+    finL: findBone(root, 'fin_L'),
+    finR: findBone(root, 'fin_R'),
+    segments,
+    starCoreMaterials,
+  };
 }

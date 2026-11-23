@@ -19,6 +19,8 @@ const POOL_SIZE = 10;
 const ENTER_SPEED = 1.5;
 /** Salida algo más rápida (0 -> 1 en ~0.45 s). */
 const EXIT_SPEED = 2.2;
+/** Rotura por el Gólem Rompesuelos: desvanecido casi instantáneo (0 -> 1 en ~0.17 s). */
+const SHATTER_SPEED = 6.0;
 /** Transición a partir de la cual el collider participa en el gameplay. */
 const ACTIVE_THRESHOLD = 0.5;
 
@@ -63,6 +65,8 @@ interface FloatingSlab {
   enteredInside: boolean;
   /** True mientras se desvanece tras salir de la cúpula. */
   exiting: boolean;
+  /** True mientras se desvanece por una rotura (Gólem/KRONOS): fade más brusco. */
+  shattered: boolean;
   /** True cuando el suelo tiene una cuerda válida asignada. */
   hasChord: boolean;
   active: boolean;
@@ -148,6 +152,7 @@ export class DomeFloatingSlabManager {
         spinSpeed: (rand() * 2 - 1) * 0.12,
         enteredInside: false,
         exiting: false,
+        shattered: false,
         hasChord: false,
         active: false,
         transition: 0,
@@ -260,6 +265,24 @@ export class DomeFloatingSlabManager {
   }
 
   /**
+   * Rompe/agrieta un suelo flotante (manotazo del Gólem Rompesuelos o KRONOS):
+   * desvanecido brusco (`SHATTER_SPEED`) que lo saca de colisión enseguida y
+   * re-entrada posterior con una cuerda fresca. Devuelve el collider roto
+   * (para que el caller genere escombros en su posición) o null si el id no
+   * pertenece a un suelo flotante activo (p.ej. un triángulo de la esfera).
+   */
+  shatterSlab(slabId: string): SlabCollider | null {
+    for (const slab of this.slabs) {
+      if (slab.collider.id === slabId && slab.active && !slab.exiting) {
+        slab.exiting = true;
+        slab.shattered = true;
+        return slab.collider;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Avanza las cuerdas de los suelos activos (cruzan la esfera de parte a
    * parte a 2.2..4.2 m/s con bob sobre su eje local +Y y una rotación suave),
    * recicla los que salen (R > 93 m) re-entrando desde R = 98 m fuera de la
@@ -291,11 +314,12 @@ export class DomeFloatingSlabManager {
       }
 
       const target = slab.active && !slab.exiting ? 1 : 0;
-      const speed = target === 1 ? ENTER_SPEED : EXIT_SPEED;
+      const speed = target === 1 ? ENTER_SPEED : slab.shattered ? SHATTER_SPEED : EXIT_SPEED;
       slab.transition = moveTowards(slab.transition, target, speed * dt);
 
       // Re-entrada: al completar el desvanecimiento, cuerda nueva desde R = 98 m.
       if (slab.exiting && slab.transition <= 0) {
+        slab.shattered = false;
         this.assignChord(slab, cameraPos, cameraFwd, REENTRY_SPAWN_R, REENTRY_SPAWN_R);
       }
       // Suelo inactivo totalmente desvanecido: la próxima activación lo

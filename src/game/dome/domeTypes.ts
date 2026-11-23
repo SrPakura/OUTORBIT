@@ -63,6 +63,8 @@ export interface DomeHudState {
   mode: NyxMovementMode;
   speedAttackKind: SpeedAttackKind | null;
   pointerLocked: boolean;
+  /** Hay un mando (Gamepad API) conectado: el HUD muestra el aviso. */
+  gamepadConnected?: boolean;
   reticleLockState: ReticleLockState;
   lockedEnemyScreenPos: { x: number; y: number } | null;
   bulletTimeActive: boolean;

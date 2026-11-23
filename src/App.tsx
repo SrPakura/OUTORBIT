@@ -3,6 +3,7 @@ import { GameEngine } from '@/game/GameEngine';
 import type { HudSnapshot } from '@/game/types';
 import { TUTORIAL_SPECS, type TutorialId } from '@/game/levels/tutorialDefinitions';
 import { loadGameSettings, saveGameSettings, type GameSettings } from '@/game/settings';
+import { useI18n } from '@/i18n';
 import MobileBlocker from '@/ui/MobileBlocker';
 import TitleScreen from '@/ui/TitleScreen';
 import GameHUD from '@/ui/GameHUD';
@@ -28,6 +29,8 @@ type Screen = 'title' | 'game';
 export default function App() {
   const [screen, setScreen] = useState<Screen>('title');
   const [activeTutorialId, setActiveTutorialId] = useState<TutorialId | null>(null);
+  /** Modo Entrenamiento / Debug de la Cúpula (panel con F2 / Tab). */
+  const [trainingMode, setTrainingMode] = useState(false);
   const [runKey, setRunKey] = useState(0);
   const [hud, setHud] = useState<HudSnapshot | null>(null);
   const [settings, setSettings] = useState<GameSettings>(() => loadGameSettings());
@@ -35,6 +38,7 @@ export default function App() {
   const engineRef = useRef<GameEngine | null>(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const { language } = useI18n();
 
   useEffect(() => {
     if (screen !== 'game' || !activeTutorialId) return;
@@ -57,11 +61,15 @@ export default function App() {
     engineRef.current?.applySettings(settings);
   }, [settings]);
 
-  /** Guarda en localStorage y propaga a la portada y al engine. */
-  const handleUpdateSettings = useCallback((next: GameSettings) => {
-    saveGameSettings(next);
-    setSettings(next);
-  }, []);
+  /** Guarda en localStorage y propaga a la portada y al engine. Conserva el
+   * idioma activo del LanguageProvider (fuente de verdad del idioma). */
+  const handleUpdateSettings = useCallback(
+    (next: GameSettings) => {
+      saveGameSettings({ ...next, language });
+      setSettings(next);
+    },
+    [language],
+  );
 
   const handleResume = useCallback(() => {
     engineRef.current?.resume();
@@ -80,6 +88,17 @@ export default function App() {
   const handlePlay = useCallback(() => {
     setHud(null);
     setActiveTutorialId(null);
+    setTrainingMode(false);
+    setScreen('game');
+    setRunKey((key) => key + 1);
+  }, []);
+
+  /** ENTRENAMIENTO [DEBUG]: cúpula con Nyx inmortal, Edén +25/s, un único
+   * enemigo intercambiable y panel debug de habilidades (F2 / Tab). */
+  const handlePlayTraining = useCallback(() => {
+    setHud(null);
+    setActiveTutorialId(null);
+    setTrainingMode(true);
     setScreen('game');
     setRunKey((key) => key + 1);
   }, []);
@@ -122,6 +141,7 @@ export default function App() {
         <TitleScreen
           onPlay={handlePlay}
           onPlayTutorial={handlePlayTutorial}
+          onPlayTraining={handlePlayTraining}
           settings={settings}
           onUpdateSettings={handleUpdateSettings}
         />
@@ -147,7 +167,7 @@ export default function App() {
           )}
         </div>
       ) : (
-        <DomeGameView settings={settings} onExit={handleExitToTitle} />
+        <DomeGameView settings={settings} onExit={handleExitToTitle} trainingMode={trainingMode} />
       )}
     </div>
   );

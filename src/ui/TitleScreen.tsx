@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameSettings } from '@/game/settings';
 import type { TutorialId } from '@/game/levels/tutorialDefinitions';
+import { useI18n } from '@/i18n';
 import { TitleDioramaSandbox } from '@/ui/TitleDioramaSandbox';
 import ControlsModal from '@/ui/ControlsModal';
 import LeaderboardModal from '@/ui/LeaderboardModal';
@@ -11,6 +12,8 @@ interface TitleScreenProps {
   onPlay: () => void;
   /** PASO B: lanza un mini-tutorial jugable desde la portada. */
   onPlayTutorial?: (id: TutorialId) => void;
+  /** Modo Entrenamiento / Debug: cúpula con panel de pruebas (F2 / Tab). */
+  onPlayTraining?: () => void;
   /** Ajustes persistentes (Controles) compartidos con el GameEngine. */
   settings: GameSettings;
   onUpdateSettings: (settings: GameSettings) => void;
@@ -23,6 +26,7 @@ interface TitleScreenProps {
  */
 export default function TitleScreen({
   onPlay,
+  onPlayTraining,
   settings,
   onUpdateSettings,
 }: TitleScreenProps) {
@@ -30,6 +34,7 @@ export default function TitleScreen({
   const sandboxRef = useRef<TitleDioramaSandbox | null>(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const { language, toggleLanguage, t } = useI18n();
 
   const [modal, setModal] = useState<MenuModal>(null);
   const [nyxVariant, setNyxVariant] = useState<'new' | 'legacy'>('new');
@@ -76,7 +81,7 @@ export default function TitleScreen({
         <header className="select-none">
           <div className="mb-1.5 flex items-center gap-2">
             <span className="-skew-x-12 bg-white px-2 py-0.5 text-[10px] font-black tracking-[0.2em] text-[#090314]">
-              ZERO-G ROGUELITE
+              {t('menu.tagline')}
             </span>
             <span className="h-[2px] flex-1 bg-gradient-to-r from-cyan-400/80 to-transparent" />
           </div>
@@ -95,9 +100,22 @@ export default function TitleScreen({
             }}
           >
             <span className="block skew-x-12 text-2xl font-black italic tracking-[0.18em] text-white">
-              JUGAR
+              {t('menu.play')}
             </span>
           </button>
+
+          {onPlayTraining && (
+            <button
+              type="button"
+              onClick={onPlayTraining}
+              className="-skew-x-12 cursor-pointer border-2 border-cyan-300/40 bg-[#090314]/70 px-4 py-2 text-left text-white/75 shadow-[4px_4px_0_#000000] backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:text-white active:translate-y-0"
+            >
+              <span className="block skew-x-12 text-xs font-black italic uppercase tracking-[0.14em]">
+                {t('menu.training')}{' '}
+                <span className="text-amber-300/90">{t('menu.trainingDebug')}</span>
+              </span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -105,7 +123,7 @@ export default function TitleScreen({
             className="-skew-x-12 cursor-pointer border-2 border-white/80 bg-white/10 px-4 py-2.5 text-left text-white shadow-[5px_5px_0_#000000] backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:bg-white/20 active:translate-y-0"
           >
             <span className="block skew-x-12 text-sm font-black italic uppercase tracking-[0.1em]">
-              Modificar controles
+              {t('menu.controls')}
             </span>
           </button>
 
@@ -115,16 +133,40 @@ export default function TitleScreen({
             className="-skew-x-12 cursor-pointer border-2 border-white/80 bg-white/10 px-4 py-2.5 text-left text-white shadow-[5px_5px_0_#000000] backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:bg-white/20 active:translate-y-0"
           >
             <span className="block skew-x-12 text-sm font-black italic uppercase tracking-[0.1em]">
-              Leaderboard
+              {t('menu.leaderboard')}
             </span>
           </button>
         </nav>
       </div>
 
-      {/* --- Crédito discreto abajo a la izquierda --- */}
-      <p className="absolute bottom-4 left-4 z-10 text-[11px] font-semibold tracking-[0.08em] text-white/70">
-        hecho por srpakura
-      </p>
+      {/* --- Selector de idioma + crédito discreto abajo a la izquierda --- */}
+      <div className="absolute bottom-4 left-4 z-10 flex flex-col items-start gap-1.5">
+        <button
+          type="button"
+          onClick={toggleLanguage}
+          aria-label="Toggle language / Cambiar idioma"
+          className="-skew-x-12 cursor-pointer border-2 border-white/80 bg-[#090314]/80 px-1 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-white shadow-[4px_4px_0_#000000] backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 active:translate-y-0"
+        >
+          <span
+            className={`skew-x-12 px-2 py-0.5 transition-colors ${
+              language === 'es' ? 'text-cyan-300' : 'text-white/40 hover:text-white/70'
+            }`}
+          >
+            {t('menu.languageEs')}
+          </span>
+          <span className="skew-x-12 text-white/30">/</span>
+          <span
+            className={`skew-x-12 px-2 py-0.5 transition-colors ${
+              language === 'en' ? 'text-cyan-300' : 'text-white/40 hover:text-white/70'
+            }`}
+          >
+            {t('menu.languageEn')}
+          </span>
+        </button>
+        <p className="text-[11px] font-semibold tracking-[0.08em] text-white/70">
+          {t('menu.credit')}
+        </p>
+      </div>
 
       {/* --- Etiqueta minimalista + comparador de modelo Nyx (Nuevo vs Anterior) --- */}
       <div className="absolute bottom-14 right-4 z-10 flex flex-col items-end gap-2">
@@ -134,15 +176,15 @@ export default function TitleScreen({
           className="-skew-x-12 cursor-pointer border-2 border-white/80 bg-[#090314]/80 px-3.5 py-1.5 text-white shadow-[4px_4px_0_#000000] backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300"
         >
           <span className="block skew-x-12 text-[11px] font-black uppercase tracking-[0.14em]">
-            Nyx:{' '}
+            {t('menu.nyxLabel')}{' '}
             <span className={nyxVariant === 'new' ? 'text-cyan-300' : 'text-amber-300'}>
-              {nyxVariant === 'new' ? 'Nuevo (25 huesos)' : 'Anterior (18 huesos)'}
+              {nyxVariant === 'new' ? t('menu.nyxNew') : t('menu.nyxLegacy')}
             </span>
-            {' · Cambiar'}
+            {` · ${t('menu.nyxToggle')}`}
           </span>
         </button>
         <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-200/70">
-          NYX // ZERO-G GRAVITY ROGUELITE
+          {t('menu.nyxTagline')}
         </p>
       </div>
 

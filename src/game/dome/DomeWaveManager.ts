@@ -9,9 +9,19 @@ import {
   type EnemyArchetype,
 } from './DomeCombatSystem';
 import {
+  collectGolemRig,
+  collectKronosRig,
+  collectNecrozmaRig,
+  collectSparrowRig,
   instantiateEnemyVisual,
   onEnemyModelLoaded,
   preloadEnemyModels,
+  STAR_CORE_EMISSIVE,
+  type EnemyBone,
+  type GolemRig,
+  type KronosRig,
+  type NecrozmaRig,
+  type SparrowRig,
 } from './DomeEnemyModels';
 
 // ============================================================================
@@ -98,11 +108,85 @@ const BASIC_ARCHETYPES: readonly EnemyArchetype[] = [
 
 const CYCLE_LENGTH = 15;
 
-// Pinchos del Prisma Necrozma: ciclos on/off visibles en emissive/rim.
-const NECROZMA_SPIKES_ON_SEC = 3.4;
-const NECROZMA_SPIKES_OFF_SEC = 2.6;
+// Pinchos del Prisma Necrozma: salen cuando Nyx se acerca de frente (< 10 m) y
+// se retraen en la ventana vulnerable tras su dash evasivo o su ráfaga.
+const NECROZMA_SPIKES_RANGE = 10.0;
+const NECROZMA_VULN_SEC = 1.8;
+const NECROZMA_SPIKES_OUT_SCALE = 1.35;
+const NECROZMA_SPIKES_IN_SCALE = 0.15;
 const NECROZMA_SPIKES_RIM = 0xff3b3b;
 const NECROZMA_BASE_RIM = 0xd9baff;
+/** Rim de reposo de las mallas detail (DETAIL_RIM de DomeEnemyModels). */
+const NECROZMA_DETAIL_RIM = 0x6b5f8a;
+
+// --- Ave Legendaria Cristalizada: ráfaga de 3 esferas con la boca abierta ---
+const SPARROW_BURST_WINDOW_SEC = 1.8;
+/** Momentos de disparo dentro de la ventana (telegraph ~0.75 s + 3 esferas). */
+const SPARROW_BURST_FIRE_AT = [1.05, 0.75, 0.45];
+const SPARROW_BURST_DAMAGE = 12;
+const SPARROW_CHARGE_DAMAGE = 12;
+const SPARROW_FLAP_SPEED_BASE = 6.2;
+const SPARROW_FLAP_SPEED_BURST = 9.5;
+const SPARROW_FLAP_SPEED_DIVE = 15.0;
+const SPARROW_JAW_OPEN_RAD = 0.55;
+const SPARROW_TURN_RATE = 2.4;
+
+// --- Gólem Rompesuelos: manotazo brutal con telegraph de 0.75 s ---
+const GOLEM_SMASH_TRIGGER_DISTANCE = 13.0;
+const GOLEM_SMASH_WINDUP_SEC = 0.75;
+const GOLEM_SMASH_SWING_SEC = 0.22;
+const GOLEM_SMASH_RECOVER_SEC = 0.9;
+const GOLEM_SMASH_REACH = 4.2;
+const GOLEM_SMASH_HIT_RADIUS = 4.6;
+const GOLEM_SMASH_DAMAGE = 14;
+const GOLEM_SLAB_BREAK_RADIUS = 8.0;
+const GOLEM_FIST_NEON_RIM = 0x39ffb0;
+const GOLEM_TURN_RATE = 1.8;
+const NECROZMA_TURN_RATE = 2.6;
+
+// --- Leviatán KRONOS (Boss): serpenteo con huesos + 3 patrones de ataque ---
+// Ondulación serpentina progresiva de la cadena seg_01..seg_12.
+const KRONOS_TURN_RATE = 1.7; // Giro suave del cuerpo hacia la dirección de avance.
+const KRONOS_TURN_RATE_CHARGE = 4.0; // La embestida endereza el cuerpo rápido.
+const KRONOS_SEG_WAVE_SPEED = 3.2; // Frecuencia base de la onda (rad/s).
+const KRONOS_SEG_PHASE_STEP = 0.55; // Desfase progresivo entre segmentos (rad).
+const KRONOS_SEG_YAW_AMP = 0.085; // Amplitud de guiñada por segmento (rad).
+const KRONOS_SEG_PITCH_AMP = 0.045; // Amplitud de cabeceo por segmento (rad).
+const KRONOS_FIN_FLAP_SPEED = 3.1; // Aleteo de las aletas pectorales (rad/s).
+const KRONOS_FIN_FLAP_AMP = 0.3; // Amplitud del aleteo (rad).
+const KRONOS_JAW_OPEN_RAD = 0.5; // Apertura del hueso jaw (Anillos de Contención).
+// Ataque 1 — Tramo Devorasuelos: embestida que atraviesa la arena rompiendo suelos.
+const KRONOS_CHARGE_SPEED = 26.0; // m/s de la embestida.
+const KRONOS_CHARGE_SEC = 2.3; // Duración del cruze de la arena (s).
+const KRONOS_CHARGE_DAMAGE = 16;
+const KRONOS_CHARGE_RECONTACT_SEC = 0.8; // Daño de contacto con cooldown (atraviesa).
+const KRONOS_SLAB_BREAK_RADIUS = 9.0; // Alcance de la rotura de suelos flotantes (m).
+const KRONOS_CHARGE_END_RADIUS = 76.0; // Fin anticipado al acercarse a la Barrera.
+// Ataque 2 — Anillos de Contención: jaw abierta + ondas circulares expansivas.
+const KRONOS_RING_TELEGRAPH_SEC = 0.8; // Apertura de fauces antes del disparo.
+const KRONOS_RING_COUNT = [3, 2, 1]; // Anillos por ataque (rotado).
+const KRONOS_RING_INTERVAL_SEC = 0.45; // Separación entre anillos emitidos.
+const KRONOS_RING_RECOVER_SEC = 0.5; // Cierre de fauces tras el último anillo.
+const KRONOS_RING_TRAVEL_SPEED = 9.0; // Avance del centro del anillo (m/s).
+const KRONOS_RING_EXPAND_SPEED = 16.0; // Crecimiento del radio (m/s).
+const KRONOS_RING_MAX_RADIUS = 55.0; // Radio al que se disipa el anillo (m).
+const KRONOS_RING_HIT_BAND = 1.7; // Grosor de la banda de empuje (m).
+const KRONOS_RING_PUSH_SPEED = 30.0; // Empuje radial hacia la Barrera Blanca (m/s).
+const KRONOS_RING_POOL_SIZE = 8;
+// Ataque 3 — Enrosco Gravitatorio (Fase < 50% HP).
+const KRONOS_COIL_HP_FRACTION = 0.5; // Umbral de vida que habilita el enrosco.
+const KRONOS_COIL_SEC = 7.0; // Duración del enrosco (s).
+const KRONOS_COIL_COOLDOWN_SEC = 11.0; // Segundos entre enroscos.
+const KRONOS_COIL_ORBIT_R = 34.0; // Radio de la órbita alrededor del centro (m).
+const KRONOS_COIL_ANG_SPEED = 0.85; // Velocidad angular de la órbita (rad/s).
+const KRONOS_COIL_HEIGHT = 12.0; // Altura de la órbita sobre el centro (m).
+const KRONOS_COIL_CURL = 0.14; // Encorvadura extra de los segmentos al enroscarse.
+const KRONOS_COIL_SHOT_INTERVAL = 0.13; // Cadencia de la espiral de esferas (s).
+const KRONOS_COIL_SHOT_DAMAGE = 9;
+const KRONOS_COIL_SHOT_SPEED = 13.0;
+const KRONOS_COIL_SPIRAL_STEP = 0.55; // Giro del abanico espiral entre esferas (rad).
+const KRONOS_COIL_FLESH = 100; // Carne de los segmentos mientras se enrosca.
+const KRONOS_ATTACK_COOLDOWN_SEC = 3.4; // Descanso entre ataques del boss (s).
 
 // Proyectiles oscuros lentos (pool fijo, sin allocations por frame).
 const PROJECTILE_POOL_SIZE = 32;
@@ -110,8 +194,7 @@ const PROJECTILE_LIFE_SEC = 9.0;
 const PROJECTILE_PLAYER_RADIUS = 1.6;
 const PROJECTILE_BOUND_RADIUS = 88.0;
 
-// Embestidas (gólem, gorrión): carga directa contra Nyx.
-const CHARGE_TRIGGER_DISTANCE = 26.0;
+// Embestidas (ave legendaria): carga directa contra Nyx.
 const CHARGE_CONTACT_PADDING = 1.9;
 
 // --- Pulpo Espiral: orientación procedural + tentáculos sin clips ---
@@ -174,6 +257,10 @@ const _muzzlePos = new THREE.Vector3();
 const _muzzleDir = new THREE.Vector3();
 const _legWaveQuat = new THREE.Quaternion();
 const _legWaveAxis = new THREE.Vector3(1, 0, 0);
+const _boneQuat = new THREE.Quaternion();
+const _boneEuler = new THREE.Euler();
+const _spiralDir = new THREE.Vector3();
+const _ringForward = new THREE.Vector3(0, 0, 1);
 const _origin = new THREE.Vector3();
 const _slabContact: SlabContact = {
   slab: null,
@@ -618,13 +705,6 @@ interface EnemyInternal {
   starCores: THREE.Object3D[];
   mixer?: THREE.AnimationMixer;
   isGlb?: boolean;
-  /** Timer del ciclo de pinchos (Necrozma). */
-  spikeTimer: number;
-  /** Segundos restantes de embestida en curso (0 = libre). */
-  chargeTimer: number;
-  chargeSpeed: number;
-  chargeDamage: number;
-  chargeDir: THREE.Vector3;
   /** Pulpo: huesos `tentacle_*` para la oscilación procedural. */
   tentacles: TentacleBone[];
   /** Cangrejo: huesos `leg_*` para el aleteo procedural en el aire. */
@@ -643,6 +723,63 @@ interface EnemyInternal {
   attachFrom: THREE.Vector3;
   /** Cangrejo: salto en curso entre suelos (null = pegado o flotando). */
   jump: CrabJump | null;
+  /** Ave: huesos del GLB para aleteo, cuello/cabeza, cola y jaw. */
+  sparrowRig: SparrowRig | null;
+  /** Ave: fase integrada del aleteo (la velocidad cambia sin saltos). */
+  flapPhase: number;
+  /** Ave: apertura suavizada del jaw (0 = cerrado, 1 = abierto). */
+  jawOpen: number;
+  /** Ave: segundos restantes de la ráfaga (telegraph + 3 esferas). */
+  burstTimer: number;
+  /** Ave: esferas pendientes de la ráfaga en curso. */
+  burstShotsLeft: number;
+  /** Ave: próximo ataque alternado (embestida <-> ráfaga). */
+  nextAttack: 'charge' | 'burst';
+  /** Necrozma: huesos del GLB + malla `detail_spikes`. */
+  necrozmaRig: NecrozmaRig | null;
+  /** Necrozma: escala actual de `detail_spikes` (suavizada). */
+  spikeScale: number;
+  /** Gólem: huesos del GLB + malla `detail_fist`. */
+  golemRig: GolemRig | null;
+  /** Gólem: fase del manotazo brutal (telegraph -> golpe -> recuperación). */
+  golemPhase: 'idle' | 'windup' | 'smash' | 'recover';
+  /** Gólem: segundos restantes de la fase actual. */
+  golemTimer: number;
+  /** Gólem: ángulo del brazo gigante (negativo = alzado, positivo = descargado). */
+  golemArmAngle: number;
+  /** Gólem: torsión acumulada de spine/chest durante el manotazo. */
+  golemTwist: number;
+  /** Gólem: punto de impacto del manotazo en espacio mundo. */
+  golemImpact: THREE.Vector3;
+  /** KRONOS: huesos del GLB (cadena seg_01..12, head/jaw, aletas, estrellas). */
+  kronosRig: KronosRig | null;
+  /** KRONOS: fase actual de su máquina de ataques. */
+  kronosState: 'roam' | 'charge' | 'rings' | 'coil';
+  /** KRONOS: segundos restantes del sub-estado actual. */
+  kronosTimer: number;
+  /** KRONOS: contador de ataques (alterna Devorasuelos <-> Anillos). */
+  kronosAttackIndex: number;
+  /** KRONOS: anillos pendientes de emitir en el ataque en curso. */
+  kronosRingsLeft: number;
+  /** KRONOS: apertura suavizada del hueso jaw (0 = cerrado, 1 = abierto). */
+  kronosJawOpen: number;
+  /** KRONOS: cooldown de daño por contacto durante la embestida. */
+  kronosContactCd: number;
+  /** KRONOS: cooldown del Enrosco Gravitatorio (solo bajo el 50% de HP). */
+  kronosCoilCooldown: number;
+  /** KRONOS: ángulo actual de la órbita del enrosco (rad). */
+  kronosOrbitAngle: number;
+  /** KRONOS: ángulo del abanico espiral de esferas oscuras (rad). */
+  kronosSpiralAngle: number;
+  /** KRONOS: cuenta atrás del próximo disparo de la espiral (s). */
+  kronosSpiralTimer: number;
+  /** KRONOS: carne de los segmentos antes del enrosco (se restaura al salir). */
+  kronosFleshRestore: number;
+  /** Segundos restantes de embestida en curso (0 = libre). */
+  chargeTimer: number;
+  chargeSpeed: number;
+  chargeDamage: number;
+  chargeDir: THREE.Vector3;
 }
 
 /**
@@ -680,6 +817,23 @@ interface WaveProjectile {
   life: number;
 }
 
+/** Anillo de Contención de KRONOS: onda circular expansiva visible que empuja
+ * radialmente a Nyx hacia la Barrera Blanca al cruzarla. */
+interface KronosRing {
+  mesh: THREE.Mesh;
+  active: boolean;
+  /** Centro de emisión (espacio mundo); el anillo avanza desde ahí. */
+  origin: THREE.Vector3;
+  /** Dirección de avance de la onda (hacia Nyx en el momento del disparo). */
+  dir: THREE.Vector3;
+  /** Distancia recorrida por el centro desde `origin` (m). */
+  travel: number;
+  /** Radio actual del anillo (m). */
+  radius: number;
+  /** true cuando ya empujó a Nyx (cada anillo empuja una sola vez). */
+  pushed: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // DomeWaveManager
 // ---------------------------------------------------------------------------
@@ -696,10 +850,15 @@ export class DomeWaveManager {
   private readonly projectileGeometry = new THREE.SphereGeometry(0.55, 12, 10);
   private readonly darkProjectileMaterial: THREE.ShaderMaterial;
   private readonly inkProjectileMaterial: THREE.ShaderMaterial;
+  private readonly kronosRings: KronosRing[] = [];
+  private readonly kronosRingGeometry = new THREE.TorusGeometry(1, 0.07, 8, 48);
+  private readonly kronosRingMaterial: THREE.ShaderMaterial;
 
   private currentWave = 0;
   private waveTime = 0;
   private speedMult = 1;
+  /** Modo Entrenamiento: los enemigos no atacan ni esquivan (sacos de boxeo). */
+  private enemiesPassive = false;
 
   private readonly unsubModelLoaded: () => void;
 
@@ -722,6 +881,13 @@ export class DomeWaveManager {
       emissiveBoost: 0.2,
     });
 
+    // Anillos de Contención de KRONOS: ondas expansivas azul eléctrico brillante.
+    this.kronosRingMaterial = createComicCelMaterial(0x9fd8ff, {
+      rimColor: 0x66e0ff,
+      rimStrength: 1.0,
+      emissiveBoost: 0.9,
+    });
+
     for (let i = 0; i < PROJECTILE_POOL_SIZE; i++) {
       const mesh = new THREE.Mesh(this.projectileGeometry, this.darkProjectileMaterial);
       addComicOutline(mesh, 0.05);
@@ -734,6 +900,22 @@ export class DomeWaveManager {
         damage: 0,
         velocity: new THREE.Vector3(),
         life: 0,
+      });
+    }
+
+    for (let i = 0; i < KRONOS_RING_POOL_SIZE; i++) {
+      const mesh = new THREE.Mesh(this.kronosRingGeometry, this.kronosRingMaterial);
+      addComicOutline(mesh, 0.05);
+      mesh.visible = false;
+      this.scene.add(mesh);
+      this.kronosRings.push({
+        mesh,
+        active: false,
+        origin: new THREE.Vector3(),
+        dir: new THREE.Vector3(0, 0, 1),
+        travel: 0,
+        radius: 1,
+        pushed: false,
       });
     }
   }
@@ -750,6 +932,7 @@ export class DomeWaveManager {
   startWave(waveNumber: number, activeSlabs?: SlabCollider[]): void {
     this.clearEnemies();
     this.deactivateAllProjectiles();
+    this.deactivateKronosRings();
 
     this.currentWave = waveNumber;
     this.waveTime = 0;
@@ -807,6 +990,16 @@ export class DomeWaveManager {
       if (turretRig) {
         internal.turretForward.copy(turretRig.forward);
       }
+      // Rigs de los élites y el gólem: huesos y mallas detail del GLB real.
+      if (enemy.entity.archetype === 'giant_sparrow') {
+        internal.sparrowRig = collectSparrowRig(glbVisual.root);
+      } else if (enemy.entity.archetype === 'prisma_necrozma') {
+        internal.necrozmaRig = collectNecrozmaRig(glbVisual.root);
+      } else if (enemy.entity.archetype === 'ground_golem') {
+        internal.golemRig = collectGolemRig(glbVisual.root);
+      } else if (enemy.entity.archetype === 'kronos_leviathan') {
+        internal.kronosRig = collectKronosRig(glbVisual.root);
+      }
     }
   }
 
@@ -815,6 +1008,7 @@ export class DomeWaveManager {
     index: number,
     rng: () => number,
     activeSlabs?: SlabCollider[],
+    homePosOverride?: THREE.Vector3,
   ): void {
     const stats = DOME_ENEMY_ARCHETYPES[archetype];
     const visual = this.visuals[archetype];
@@ -858,20 +1052,23 @@ export class DomeWaveManager {
       mesh = fallbackMesh;
     }
 
-    // Posición de aparición: anillo distribuido + jitter determinista.
+    // Posición de aparición: anillo distribuido + jitter determinista, o la
+    // posición explícita del Modo Entrenamiento (delante de Nyx).
     const angle = (index / Math.max(1, this.enemies.length + 6)) * Math.PI * 2 + rng() * 1.2;
     const dist = 26 + rng() * 30;
-    const homePos = new THREE.Vector3(
-      Math.cos(angle) * dist,
-      6 + rng() * 30,
-      Math.sin(angle) * dist,
-    );
+    const homePos = homePosOverride
+      ? homePosOverride.clone()
+      : new THREE.Vector3(
+          Math.cos(angle) * dist,
+          6 + rng() * 30,
+          Math.sin(angle) * dist,
+        );
 
     // Cangrejo Artillero: aparece directamente encima de un suelo flotante
     // dentro de la cúpula (preferiblemente center < 70 m).
     let attachedSlabId: string | null = null;
     const slabLocalOffset = new THREE.Vector2();
-    if (archetype === 'crab_gunner' && activeSlabs && activeSlabs.length > 0) {
+    if (!homePosOverride && archetype === 'crab_gunner' && activeSlabs && activeSlabs.length > 0) {
       const slab = pickCrabSpawnSlab(activeSlabs, rng);
       if (slab) {
         pickSlabLocalPoint(slab, rng, slabLocalOffset);
@@ -914,11 +1111,6 @@ export class DomeWaveManager {
       starCores,
       mixer,
       isGlb: glbVisual !== null,
-      spikeTimer: NECROZMA_SPIKES_OFF_SEC,
-      chargeTimer: 0,
-      chargeSpeed: 0,
-      chargeDamage: 0,
-      chargeDir: new THREE.Vector3(),
       tentacles: collectTentacleBones(mesh),
       legs: collectLegBones(mesh),
       turretNode: turretRig?.node ?? null,
@@ -928,6 +1120,36 @@ export class DomeWaveManager {
       attachBlend: attachedSlabId ? 1 : 0,
       attachFrom: homePos.clone(),
       jump: null,
+      sparrowRig: archetype === 'giant_sparrow' ? collectSparrowRig(mesh) : null,
+      flapPhase: enemy.phase,
+      jawOpen: 0,
+      burstTimer: 0,
+      burstShotsLeft: 0,
+      nextAttack: 'charge',
+      necrozmaRig: archetype === 'prisma_necrozma' ? collectNecrozmaRig(mesh) : null,
+      spikeScale: 1,
+      golemRig: archetype === 'ground_golem' ? collectGolemRig(mesh) : null,
+      golemPhase: 'idle',
+      golemTimer: 0,
+      golemArmAngle: 0,
+      golemTwist: 0,
+      golemImpact: new THREE.Vector3(),
+      kronosRig: archetype === 'kronos_leviathan' ? collectKronosRig(mesh) : null,
+      kronosState: 'roam',
+      kronosTimer: 0,
+      kronosAttackIndex: 0,
+      kronosRingsLeft: 0,
+      kronosJawOpen: 0,
+      kronosContactCd: 0,
+      kronosCoilCooldown: 0,
+      kronosOrbitAngle: enemy.phase,
+      kronosSpiralAngle: 0,
+      kronosSpiralTimer: 0,
+      kronosFleshRestore: 0,
+      chargeTimer: 0,
+      chargeSpeed: 0,
+      chargeDamage: 0,
+      chargeDir: new THREE.Vector3(),
     });
   }
 
@@ -947,6 +1169,70 @@ export class DomeWaveManager {
 
   getActiveEnemies(): ManagedWaveEnemy[] {
     return this.enemies.filter((e) => e.entity.alive);
+  }
+
+  // -------------------------------------------------------------------------
+  // Modo Entrenamiento / Debug
+  // -------------------------------------------------------------------------
+
+  /**
+   * Modo Entrenamiento: spawnea un único enemigo en `homePos` (p. ej. delante
+   * de Nyx), borrando cualquier enemigo anterior y los proyectiles en vuelo.
+   */
+  spawnSingleEnemy(
+    archetype: EnemyArchetype,
+    homePos: THREE.Vector3,
+    activeSlabs?: SlabCollider[],
+  ): ManagedWaveEnemy | null {
+    this.clearEnemies();
+    this.deactivateAllProjectiles();
+    this.deactivateKronosRings();
+    const rng = makeRng(Math.floor(Math.random() * 0x7fffffff) || 1);
+    this.spawnEnemy(archetype, 0, rng, activeSlabs, homePos);
+    return this.enemies[this.enemies.length - 1] ?? null;
+  }
+
+  /**
+   * Modo Entrenamiento: alterna el comportamiento ofensivo de todos los
+   * enemigos vivos. Con `passive` son sacos de boxeo: no atacan, no disparan
+   * ni ejecutan dashes evasivos (siguen siendo golpeables y noqueables).
+   */
+  setEnemiesPassive(passive: boolean): void {
+    if (this.enemiesPassive === passive) {
+      return;
+    }
+    this.enemiesPassive = passive;
+    if (passive) {
+      this.deactivateAllProjectiles();
+      this.deactivateKronosRings();
+      for (const internal of this.internals.values()) {
+        this.resetEnemyOffense(internal);
+      }
+    }
+  }
+
+  getEnemiesPassive(): boolean {
+    return this.enemiesPassive;
+  }
+
+  /** Cancela todo ataque/telegraph en curso y devuelve al enemigo a reposo. */
+  private resetEnemyOffense(internal: EnemyInternal): void {
+    internal.enemy.attackTimer = 1.5;
+    internal.enemy.entity.mouthOpen = false;
+    internal.enemy.entity.spikesActive = false;
+    internal.chargeTimer = 0;
+    internal.burstTimer = 0;
+    internal.burstShotsLeft = 0;
+    internal.golemPhase = 'idle';
+    internal.golemTimer = 0;
+    if (internal.kronosState === 'coil' && internal.kronosFleshRestore > 0) {
+      internal.enemy.entity.fleshThickness = internal.kronosFleshRestore;
+      internal.kronosFleshRestore = 0;
+    }
+    internal.kronosState = 'roam';
+    internal.kronosTimer = 0;
+    internal.kronosRingsLeft = 0;
+    internal.kronosJawOpen = 0;
   }
 
   /**
@@ -1006,9 +1292,16 @@ export class DomeWaveManager {
 
   /**
    * Update por frame: flotación, dashes evasivos, ataques (proyectiles
-   * oscuros / tinta / embestidas), pinchos de Necrozma, cangrejo pegado a
+   * oscuros / tinta / embestidas / ráfaga del Ave con boca abierta / manotazo
+   * del Gólem), pinchos y ventana vulnerable de Necrozma, cangrejo pegado a
    * `activeSlabs` (con saltos entre ellos), colisión de voladores contra los
    * icebergs y proyectiles en vuelo.
+   *
+   * `onGolemSmash` se dispara cuando el manotazo brutal del Gólem alcanza a
+   * Nyx (daño + dirección de empuje para el `hit_stagger`) y `onSlabSmash`
+   * cuando el manotazo rompe un suelo flotante cercano. Los Anillos de
+   * Contención de KRONOS reutilizan `onGolemSmash` con daño 0 y un empuje
+   * radial más fuerte (`pushSpeed`).
    */
   update(
     dt: number,
@@ -1019,6 +1312,8 @@ export class DomeWaveManager {
     activeSlabs: SlabCollider[] | undefined,
     onPlayerHit: (damage: number) => void,
     onOctopusInk: () => void,
+    onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
+    onSlabSmash?: (slab: SlabCollider) => void,
   ): { didEnemyEvadeDash: boolean } {
     let didEnemyEvadeDash = false;
     this.waveTime += dt;
@@ -1043,7 +1338,15 @@ export class DomeWaveManager {
         enemy.entity.hitFlash = enemy.hitFlash;
       }
       enemy.dashTimer = Math.max(0, enemy.dashTimer - dt);
-      enemy.attackTimer -= dt;
+      // Modo pasivo: la cuenta atrás de ataque queda congelada para que al
+      // reactivar la IA el enemigo no descargue un ataque instantáneo.
+      if (!this.enemiesPassive) {
+        enemy.attackTimer -= dt;
+      }
+      // Ventana vulnerable del Necrozma (tras dash evasivo o ráfaga).
+      if ((enemy.entity.vulnerableTimer ?? 0) > 0) {
+        enemy.entity.vulnerableTimer = Math.max(0, (enemy.entity.vulnerableTimer ?? 0) - dt);
+      }
 
       // Reloj de los shaders animados: carne nebulosa y contorno vibrante.
       for (const animatedMaterial of internal.animatedMaterials) {
@@ -1064,6 +1367,7 @@ export class DomeWaveManager {
 
       // --- Dash evasivo: rompe el lock-in de los arquetipos escurridizos ---
       if (
+        !this.enemiesPassive &&
         enemy.evasive &&
         enemy.id === lockedId &&
         enemy.evadeCooldown <= 0 &&
@@ -1091,25 +1395,51 @@ export class DomeWaveManager {
           enemy.evadeCooldown = EVASIVE_COOLDOWN;
           enemy.hitFlash = Math.max(enemy.hitFlash, 0.35);
           didEnemyEvadeDash = true;
+          // Prisma Necrozma: tras el dash evasivo abre su ventana vulnerable
+          // (pinchos retraídos, star_core al alcance).
+          if (enemy.entity.archetype === 'prisma_necrozma') {
+            enemy.entity.vulnerableTimer = Math.max(
+              enemy.entity.vulnerableTimer ?? 0,
+              NECROZMA_VULN_SEC,
+            );
+          }
         }
       }
 
-      // --- Comportamiento ofensivo por arquetipo ---
-      this.updateEnemyBehavior(enemy, internal, dt, playerPos, onPlayerHit, onOctopusInk);
+      // --- Comportamiento ofensivo por arquetipo (desactivado en modo pasivo) ---
+      if (!this.enemiesPassive) {
+        this.updateEnemyBehavior(
+          enemy,
+          internal,
+          dt,
+          playerPos,
+          activeSlabs,
+          onPlayerHit,
+          onOctopusInk,
+          onGolemSmash,
+          onSlabSmash,
+        );
+      }
 
-      // --- Movimiento: cangrejo pegado a suelos / flotación del resto ---
+      // --- Movimiento: cangrejo pegado a suelos / KRONOS / flotación del resto ---
       const isCrab = enemy.entity.archetype === 'crab_gunner';
       if (isCrab) {
         this.updateCrabEnemy(enemy, internal, dt, elapsed, playerPos, activeSlabs);
+      } else if (enemy.entity.archetype === 'kronos_leviathan') {
+        this.updateKronosMovement(enemy, internal, dt, elapsed);
       } else {
         this.applyFloatMovement(enemy, internal, dt, elapsed);
       }
 
       // --- Voladores contra los icebergs: nunca atraviesan los suelos ---
+      // (KRONOS en plena embestida los devora: los rompe en su lugar.)
+      const kronosCharging =
+        enemy.entity.archetype === 'kronos_leviathan' && internal.kronosState === 'charge';
       const crabOnSlab = isCrab && (internal.jump !== null || internal.attachedSlabId !== null);
       if (
         activeSlabs &&
         !crabOnSlab &&
+        !kronosCharging &&
         resolveSphereSlabCollision(activeSlabs, enemy.position, enemy.radius, _slabContact)
       ) {
         enemy.position.addScaledVector(_slabContact.normal, _slabContact.depth);
@@ -1126,6 +1456,14 @@ export class DomeWaveManager {
       // --- Pose procedural: el pulpo encara a Nyx y ondea sus tentáculos ---
       if (enemy.entity.archetype === 'spiral_octopus') {
         this.updateOctopusPose(enemy, internal, dt, elapsed, playerPos);
+      } else if (enemy.entity.archetype === 'giant_sparrow') {
+        this.updateSparrowPose(enemy, internal, dt, elapsed, playerPos);
+      } else if (enemy.entity.archetype === 'prisma_necrozma') {
+        this.updateNecrozmaPose(enemy, internal, dt, elapsed, playerPos);
+      } else if (enemy.entity.archetype === 'ground_golem') {
+        this.updateGolemPose(enemy, internal, dt, elapsed, playerPos);
+      } else if (enemy.entity.archetype === 'kronos_leviathan') {
+        this.updateKronosPose(enemy, internal, dt, elapsed, playerPos);
       }
 
       enemy.entity.position.copy(enemy.position);
@@ -1152,6 +1490,7 @@ export class DomeWaveManager {
     }
 
     this.updateProjectiles(dt, playerPos, onPlayerHit, onOctopusInk);
+    this.updateKronosRings(dt, playerPos, onGolemSmash);
 
     return { didEnemyEvadeDash };
   }
@@ -1166,6 +1505,12 @@ export class DomeWaveManager {
     this.projectileGeometry.dispose();
     this.darkProjectileMaterial.dispose();
     this.inkProjectileMaterial.dispose();
+    for (const ring of this.kronosRings) {
+      this.scene.remove(ring.mesh);
+    }
+    this.kronosRings.length = 0;
+    this.kronosRingGeometry.dispose();
+    this.kronosRingMaterial.dispose();
     for (const visual of Object.values(this.visuals)) {
       visual.geometry.dispose();
     }
@@ -1182,19 +1527,49 @@ export class DomeWaveManager {
     internal: EnemyInternal,
     dt: number,
     playerPos: THREE.Vector3,
+    activeSlabs: SlabCollider[] | undefined,
     onPlayerHit: (damage: number) => void,
     onOctopusInk: () => void,
+    onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
+    onSlabSmash?: (slab: SlabCollider) => void,
   ): void {
     const archetype = enemy.entity.archetype;
 
-    // Prisma Necrozma: alterna pinchos periódicamente (repelen cuerpo a cuerpo).
-    if (archetype === 'prisma_necrozma') {
-      internal.spikeTimer -= dt;
-      if (internal.spikeTimer <= 0) {
-        const nextActive = !enemy.entity.spikesActive;
-        enemy.entity.spikesActive = nextActive;
-        internal.spikeTimer = nextActive ? NECROZMA_SPIKES_ON_SEC : NECROZMA_SPIKES_OFF_SEC;
+    // Ave Legendaria: ráfaga en curso (telegraph + 3 esferas, boca abierta).
+    if (archetype === 'giant_sparrow') {
+      if (this.updateSparrowBurst(enemy, internal, dt, playerPos)) {
+        return;
       }
+      enemy.entity.mouthOpen = false;
+    }
+
+    // Prisma Necrozma: saca los pinchos cuando Nyx se acerca de frente
+    // (< 10 m); en su ventana vulnerable (tras dash o ráfaga) los retrae.
+    if (archetype === 'prisma_necrozma') {
+      const vulnerable = (enemy.entity.vulnerableTimer ?? 0) > 0;
+      const near = enemy.position.distanceTo(playerPos) < NECROZMA_SPIKES_RANGE;
+      enemy.entity.spikesActive = near && !vulnerable;
+    }
+
+    // Gólem Rompesuelos: máquina de estados del manotazo brutal.
+    if (archetype === 'ground_golem') {
+      this.updateGolemAttack(enemy, internal, dt, playerPos, activeSlabs, onGolemSmash, onSlabSmash);
+      return;
+    }
+
+    // Leviatán KRONOS: máquina de estados de sus 3 patrones de ataque.
+    if (archetype === 'kronos_leviathan') {
+      this.updateKronosAttack(
+        enemy,
+        internal,
+        dt,
+        playerPos,
+        activeSlabs,
+        onPlayerHit,
+        onGolemSmash,
+        onSlabSmash,
+      );
+      return;
     }
 
     // Contacto de embestida en curso: daño a Nyx y fin de la carga.
@@ -1214,7 +1589,6 @@ export class DomeWaveManager {
       return;
     }
 
-    const distToPlayer = enemy.position.distanceTo(playerPos);
     const mult = this.speedMult;
 
     switch (archetype) {
@@ -1250,46 +1624,566 @@ export class DomeWaveManager {
         break;
       }
 
-      case 'ground_golem':
-        // Rompesuelos: embiste si Nyx se acerca.
-        if (distToPlayer < CHARGE_TRIGGER_DISTANCE) {
-          this.startCharge(enemy, internal, playerPos, 17 * mult, 14);
-          enemy.attackTimer = 3.5 / mult;
-        } else {
-          enemy.attackTimer = 0.5;
-        }
-        break;
-
       case 'giant_sparrow':
-        // Élite: alterna picado (cerca) y esferas oscuras (lejos).
-        if (distToPlayer < 20) {
-          this.startCharge(enemy, internal, playerPos, 21 * mult, 12);
+        // Élite: alterna embestida aérea (picado) y ráfaga de 3 esferas oscuras
+        // por la boca (que abre durante el telegraph + disparo).
+        if (internal.nextAttack === 'charge') {
+          this.startCharge(enemy, internal, playerPos, 21 * mult, SPARROW_CHARGE_DAMAGE);
+          internal.nextAttack = 'burst';
+          enemy.attackTimer = 3.2 / mult;
         } else {
-          this.fireProjectile(enemy, playerPos, 'dark', 12, 12 * mult);
+          internal.burstTimer = SPARROW_BURST_WINDOW_SEC;
+          internal.burstShotsLeft = SPARROW_BURST_FIRE_AT.length;
+          enemy.entity.mouthOpen = true;
+          internal.nextAttack = 'charge';
+          enemy.attackTimer = SPARROW_BURST_WINDOW_SEC + 3.2 / mult;
         }
-        enemy.attackTimer = 3.2 / mult;
         break;
 
-      case 'prisma_necrozma':
-        // Élite: bombardeo prismático constante.
-        this.fireProjectile(enemy, playerPos, 'dark', 10, 11 * mult);
+      case 'prisma_necrozma': {
+        // Élite: ráfaga prismática de 2 esferas; tras disparar abre su
+        // ventana vulnerable (pinchos retraídos, star_core rematable).
+        this.fireProjectile(enemy, playerPos, 'dark', 10, 11 * mult, -0.14);
+        this.fireProjectile(enemy, playerPos, 'dark', 10, 11 * mult, 0.14);
+        enemy.entity.vulnerableTimer = Math.max(
+          enemy.entity.vulnerableTimer ?? 0,
+          NECROZMA_VULN_SEC,
+        );
         enemy.attackTimer = 2.4 / mult;
         break;
-
-      case 'kronos_leviathan':
-        // Boss: abanico de 3 esferas oscuras.
-        this.fireProjectile(enemy, playerPos, 'dark', 9, 12 * mult, -0.22);
-        this.fireProjectile(enemy, playerPos, 'dark', 9, 12 * mult);
-        this.fireProjectile(enemy, playerPos, 'dark', 9, 12 * mult, 0.22);
-        enemy.attackTimer = 2.0 / mult;
-        break;
+      }
 
       case 'lightning_butterfly':
       case 'abyssal_cell':
       default:
-        // Pasivos/escurridizos: sin ataque ofensivo propio.
+        // Pasivos/escurridizos: sin ataque ofensivo propio (el gólem se
+        // gestiona en updateGolemAttack).
         enemy.attackTimer = 1.0;
         break;
+    }
+  }
+
+  /**
+   * Progresa la ráfaga del Ave Legendaria: boca abierta (mouthOpen), frenado
+   * suave en el aire y 3 esferas oscuras desde el hueso `jaw`. Devuelve true
+   * mientras la ráfaga siga en curso.
+   */
+  private updateSparrowBurst(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    playerPos: THREE.Vector3,
+  ): boolean {
+    if (internal.burstTimer <= 0) {
+      return false;
+    }
+    internal.burstTimer -= dt;
+    enemy.entity.mouthOpen = true;
+    // Se frena en el aire mientras telegrafiza y dispara.
+    enemy.velocity.multiplyScalar(Math.exp(-2.5 * dt));
+
+    const shotIndex = SPARROW_BURST_FIRE_AT.length - internal.burstShotsLeft;
+    if (
+      internal.burstShotsLeft > 0 &&
+      shotIndex < SPARROW_BURST_FIRE_AT.length &&
+      internal.burstTimer <= SPARROW_BURST_FIRE_AT[shotIndex]
+    ) {
+      this.fireSparrowShot(enemy, internal, playerPos, (shotIndex - 1) * 0.12);
+      internal.burstShotsLeft--;
+    }
+    if (internal.burstTimer <= 0) {
+      enemy.entity.mouthOpen = false;
+    }
+    return true;
+  }
+
+  /** Esfera oscura del Ave naciendo en la boca (hueso `jaw`). */
+  private fireSparrowShot(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    playerPos: THREE.Vector3,
+    spreadRad: number,
+  ): void {
+    const jaw = internal.sparrowRig?.jaw;
+    if (jaw) {
+      jaw.bone.updateWorldMatrix(true, false);
+      jaw.bone.getWorldPosition(_muzzlePos);
+    } else {
+      _muzzlePos.copy(enemy.position);
+    }
+    this.fireProjectile(
+      enemy,
+      playerPos,
+      'dark',
+      SPARROW_BURST_DAMAGE,
+      13 * this.speedMult,
+      spreadRad,
+      _muzzlePos,
+    );
+  }
+
+  /**
+   * Gólem Rompesuelos: manotazo brutal con telegraph de 0.75 s (torsión de
+   * spine/chest + brazo gigante alzado + detail_fist pulsando neón), golpe
+   * rápido contra el punto de impacto y recuperación. Si alcanza a Nyx la
+   * empuja con hit_stagger (vía `onGolemSmash`) y si rompe un suelo flotante
+   * cercano lo destroza (vía `onSlabSmash`).
+   */
+  private updateGolemAttack(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    playerPos: THREE.Vector3,
+    activeSlabs: SlabCollider[] | undefined,
+    onGolemSmash?: (damage: number, pushDir: THREE.Vector3) => void,
+    onSlabSmash?: (slab: SlabCollider) => void,
+  ): void {
+    switch (internal.golemPhase) {
+      case 'windup':
+        internal.golemTimer -= dt;
+        if (internal.golemTimer <= 0) {
+          // Fija el punto de impacto: delante del golem hacia Nyx.
+          _aimDir.subVectors(playerPos, enemy.position);
+          if (_aimDir.lengthSq() < 1e-4) {
+            _aimDir.set(0, 0, 1);
+          } else {
+            _aimDir.normalize();
+          }
+          internal.golemImpact
+            .copy(enemy.position)
+            .addScaledVector(_aimDir, enemy.radius + GOLEM_SMASH_REACH);
+          internal.golemPhase = 'smash';
+          internal.golemTimer = GOLEM_SMASH_SWING_SEC;
+        }
+        return;
+
+      case 'smash':
+        internal.golemTimer -= dt;
+        if (internal.golemTimer <= 0) {
+          // El manotazo alcanza a Nyx: empuje + breve aturdimiento.
+          if (playerPos.distanceTo(internal.golemImpact) < GOLEM_SMASH_HIT_RADIUS) {
+            _aimDir.subVectors(playerPos, internal.golemImpact);
+            if (_aimDir.lengthSq() < 1e-4) {
+              _aimDir.set(0, 1, 0);
+            } else {
+              _aimDir.normalize();
+            }
+            onGolemSmash?.(GOLEM_SMASH_DAMAGE, _aimDir);
+          }
+          // Rompe el suelo flotante más cercano al punto de impacto.
+          if (activeSlabs && onSlabSmash) {
+            let best: SlabCollider | null = null;
+            let bestDist = GOLEM_SLAB_BREAK_RADIUS;
+            for (const slab of activeSlabs) {
+              const d = slab.center.distanceTo(internal.golemImpact);
+              if (d < bestDist) {
+                best = slab;
+                bestDist = d;
+              }
+            }
+            if (best) {
+              onSlabSmash(best);
+            }
+          }
+          internal.golemPhase = 'recover';
+          internal.golemTimer = GOLEM_SMASH_RECOVER_SEC;
+          enemy.attackTimer = 3.4 / this.speedMult;
+        }
+        return;
+
+      case 'recover':
+        internal.golemTimer -= dt;
+        if (internal.golemTimer <= 0) {
+          internal.golemPhase = 'idle';
+        }
+        return;
+
+      case 'idle':
+      default:
+        if (
+          enemy.attackTimer <= 0 &&
+          enemy.position.distanceTo(playerPos) < GOLEM_SMASH_TRIGGER_DISTANCE
+        ) {
+          internal.golemPhase = 'windup';
+          internal.golemTimer = GOLEM_SMASH_WINDUP_SEC;
+          enemy.hitFlash = Math.max(enemy.hitFlash, 0.2);
+        } else if (enemy.attackTimer <= 0) {
+          enemy.attackTimer = 0.4;
+        }
+        return;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Leviatán KRONOS: serpenteo con huesos + 3 patrones de ataque (sección 6.4)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Máquina de estados de los 3 ataques de KRONOS:
+   * 1. Tramo Devorasuelos — embiste en línea atravesando la arena; los suelos
+   *    flotantes que cruza cerca se rompen en escombros agarrables (onSlabSmash).
+   * 2. Anillos de Contención — abre el hueso `jaw` (~0.8 s de telegraph) y emite
+   *    1–3 ondas circulares expansivas que empujan a Nyx hacia la Barrera.
+   * 3. Enrosco Gravitatorio — bajo el 50% de vida orbita el centro de la cúpula
+   *    disparando una espiral continua de esferas oscuras mientras protege sus
+   *    segmentos internos (carne al máximo).
+   */
+  private updateKronosAttack(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    playerPos: THREE.Vector3,
+    activeSlabs: SlabCollider[] | undefined,
+    onPlayerHit: (damage: number) => void,
+    onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
+    onSlabSmash?: (slab: SlabCollider) => void,
+  ): void {
+    internal.kronosContactCd = Math.max(0, internal.kronosContactCd - dt);
+
+    switch (internal.kronosState) {
+      case 'charge': {
+        internal.kronosTimer -= dt;
+        // Atraviesa a Nyx: daño por contacto con cooldown (no frena el cruze).
+        if (
+          internal.kronosContactCd <= 0 &&
+          enemy.position.distanceTo(playerPos) < enemy.radius + CHARGE_CONTACT_PADDING
+        ) {
+          onPlayerHit(KRONOS_CHARGE_DAMAGE);
+          internal.kronosContactCd = KRONOS_CHARGE_RECONTACT_SEC;
+        }
+        // Tramo Devorasuelos: todo suelo flotante cercano se rompe en escombros
+        // reales agarrables por el Campo Gravitacional (vía onSlabSmash).
+        if (activeSlabs && onSlabSmash) {
+          for (const slab of activeSlabs) {
+            if (slab.center.distanceTo(enemy.position) < KRONOS_SLAB_BREAK_RADIUS) {
+              onSlabSmash(slab);
+            }
+          }
+        }
+        if (internal.kronosTimer <= 0 || enemy.position.length() > KRONOS_CHARGE_END_RADIUS) {
+          internal.kronosState = 'roam';
+          enemy.attackTimer = KRONOS_ATTACK_COOLDOWN_SEC / this.speedMult;
+          enemy.homePos.copy(enemy.position);
+        }
+        return;
+      }
+
+      case 'rings': {
+        internal.kronosTimer -= dt;
+        enemy.entity.mouthOpen = true;
+        if (internal.kronosTimer <= 0) {
+          if (internal.kronosRingsLeft > 0) {
+            this.emitKronosRing(enemy, internal, playerPos);
+            internal.kronosRingsLeft--;
+            internal.kronosTimer =
+              internal.kronosRingsLeft > 0 ? KRONOS_RING_INTERVAL_SEC : KRONOS_RING_RECOVER_SEC;
+          } else {
+            internal.kronosState = 'roam';
+            enemy.entity.mouthOpen = false;
+            enemy.attackTimer = KRONOS_ATTACK_COOLDOWN_SEC / this.speedMult;
+            enemy.homePos.copy(enemy.position);
+          }
+        }
+        return;
+      }
+
+      case 'coil': {
+        internal.kronosTimer -= dt;
+        internal.kronosSpiralTimer -= dt;
+        if (internal.kronosSpiralTimer <= 0) {
+          this.fireKronosSpiralShot(enemy, internal, playerPos);
+          internal.kronosSpiralTimer = KRONOS_COIL_SHOT_INTERVAL;
+        }
+        if (internal.kronosTimer <= 0) {
+          // Fin del enrosco: los segmentos recuperan su carne habitual.
+          enemy.entity.fleshThickness = internal.kronosFleshRestore;
+          internal.kronosState = 'roam';
+          internal.kronosCoilCooldown = KRONOS_COIL_COOLDOWN_SEC;
+          enemy.attackTimer = KRONOS_ATTACK_COOLDOWN_SEC / this.speedMult;
+          enemy.homePos.copy(enemy.position);
+        }
+        return;
+      }
+
+      case 'roam':
+      default: {
+        internal.kronosCoilCooldown = Math.max(0, internal.kronosCoilCooldown - dt);
+        if (enemy.attackTimer > 0) {
+          return;
+        }
+        const mult = this.speedMult;
+        const belowHalf = enemy.entity.hp <= enemy.entity.maxHp * KRONOS_COIL_HP_FRACTION;
+        if (belowHalf && internal.kronosCoilCooldown <= 0) {
+          // Ataque 3 — Enrosco Gravitatorio: órbita + espiral + segmentos protegidos.
+          internal.kronosState = 'coil';
+          internal.kronosTimer = KRONOS_COIL_SEC;
+          internal.kronosSpiralTimer = 0.35;
+          internal.kronosFleshRestore = enemy.entity.fleshThickness;
+          enemy.entity.fleshThickness = KRONOS_COIL_FLESH;
+          enemy.hitFlash = Math.max(enemy.hitFlash, 0.3);
+        } else if (internal.kronosAttackIndex % 2 === 0) {
+          // Ataque 1 — Tramo Devorasuelos: línea directa a través de la arena.
+          internal.chargeDir.subVectors(playerPos, enemy.position);
+          if (internal.chargeDir.lengthSq() < 1e-4) {
+            internal.chargeDir.set(0, 0, 1);
+          } else {
+            internal.chargeDir.normalize();
+          }
+          internal.chargeSpeed = KRONOS_CHARGE_SPEED * mult;
+          internal.kronosState = 'charge';
+          internal.kronosTimer = KRONOS_CHARGE_SEC;
+          internal.kronosContactCd = 0;
+          enemy.hitFlash = Math.max(enemy.hitFlash, 0.25);
+        } else {
+          // Ataque 2 — Anillos de Contención: fauces abiertas + ondas expansivas.
+          internal.kronosState = 'rings';
+          internal.kronosRingsLeft =
+            KRONOS_RING_COUNT[internal.kronosAttackIndex % KRONOS_RING_COUNT.length];
+          internal.kronosTimer = KRONOS_RING_TELEGRAPH_SEC;
+          enemy.entity.mouthOpen = true;
+          enemy.hitFlash = Math.max(enemy.hitFlash, 0.2);
+        }
+        internal.kronosAttackIndex++;
+        return;
+      }
+    }
+  }
+
+  /** Emite un Anillo de Contención desde las fauces abiertas (hueso `jaw`). */
+  private emitKronosRing(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    playerPos: THREE.Vector3,
+  ): void {
+    const ring = this.kronosRings.find((r) => !r.active);
+    if (!ring) {
+      return;
+    }
+    const jaw = internal.kronosRig?.jaw;
+    if (jaw) {
+      jaw.bone.updateWorldMatrix(true, false);
+      jaw.bone.getWorldPosition(_muzzlePos);
+    } else {
+      _muzzlePos.copy(enemy.position);
+    }
+    _shotDir.subVectors(playerPos, _muzzlePos);
+    if (_shotDir.lengthSq() < 1e-4) {
+      _shotDir.set(0, 0, 1);
+    } else {
+      _shotDir.normalize();
+    }
+    ring.active = true;
+    ring.origin.copy(_muzzlePos);
+    ring.dir.copy(_shotDir);
+    ring.travel = 0;
+    ring.radius = 1.5;
+    ring.pushed = false;
+    ring.mesh.position.copy(_muzzlePos);
+    ring.mesh.quaternion.setFromUnitVectors(_ringForward, _shotDir);
+    ring.mesh.scale.setScalar(ring.radius);
+    ring.mesh.visible = true;
+  }
+
+  /**
+   * Avanza los Anillos de Contención activos: el centro viaja hacia Nyx
+   * mientras el radio crece; cuando la banda de la onda cruza a Nyx recibe un
+   * fuerte empuje radial (único por anillo) hacia la Barrera Blanca — el
+   * `-10 HP` lo aplica la propia Barrera al tocarla.
+   */
+  private updateKronosRings(
+    dt: number,
+    playerPos: THREE.Vector3,
+    onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
+  ): void {
+    for (const ring of this.kronosRings) {
+      if (!ring.active) {
+        continue;
+      }
+      ring.travel += KRONOS_RING_TRAVEL_SPEED * dt;
+      ring.radius += KRONOS_RING_EXPAND_SPEED * dt;
+      ring.mesh.position.copy(ring.origin).addScaledVector(ring.dir, ring.travel);
+      ring.mesh.scale.setScalar(ring.radius);
+
+      if (!ring.pushed) {
+        _toEnemy.subVectors(playerPos, ring.mesh.position);
+        const dist = _toEnemy.length();
+        if (Math.abs(dist - ring.radius) < KRONOS_RING_HIT_BAND) {
+          ring.pushed = true;
+          if (dist > 1e-4) {
+            _toEnemy.divideScalar(dist);
+          } else {
+            _toEnemy.copy(ring.dir);
+          }
+          onGolemSmash?.(0, _toEnemy, KRONOS_RING_PUSH_SPEED);
+        }
+      }
+
+      if (ring.radius >= KRONOS_RING_MAX_RADIUS) {
+        ring.active = false;
+        ring.mesh.visible = false;
+      }
+    }
+  }
+
+  /** Desactiva todos los Anillos de Contención en vuelo. */
+  private deactivateKronosRings(): void {
+    for (const ring of this.kronosRings) {
+      ring.active = false;
+      ring.mesh.visible = false;
+    }
+  }
+
+  /**
+   * Esfera oscura de la espiral del Enrosco: abanico que gira alrededor del
+   * eje vertical de la órbita, ligeramente homing hacia Nyx para cubrir toda
+   * la cúpula mientras KRONOS se enrosca.
+   */
+  private fireKronosSpiralShot(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    playerPos: THREE.Vector3,
+  ): void {
+    internal.kronosSpiralAngle += KRONOS_COIL_SPIRAL_STEP;
+    const head = internal.kronosRig?.head;
+    if (head) {
+      head.bone.updateWorldMatrix(true, false);
+      head.bone.getWorldPosition(_muzzlePos);
+    } else {
+      _muzzlePos.copy(enemy.position);
+    }
+    _spiralDir.set(
+      Math.cos(internal.kronosSpiralAngle),
+      0,
+      Math.sin(internal.kronosSpiralAngle),
+    );
+    _toEnemy.subVectors(playerPos, _muzzlePos);
+    if (_toEnemy.lengthSq() > 1e-6) {
+      _toEnemy.normalize();
+      _spiralDir.multiplyScalar(0.8).addScaledVector(_toEnemy, 0.35).normalize();
+    }
+    this.fireProjectile(
+      enemy,
+      _muzzlePos,
+      'dark',
+      KRONOS_COIL_SHOT_DAMAGE,
+      KRONOS_COIL_SHOT_SPEED * this.speedMult,
+      0,
+      _muzzlePos,
+      _spiralDir,
+    );
+  }
+
+  /**
+   * Movimiento de KRONOS: embestida en línea recta (Tramo Devorasuelos),
+   * órbita alrededor del centro de la cúpula (Enrosco Gravitatorio) y la
+   * flotación con muelle hacia homePos del resto del tiempo.
+   */
+  private updateKronosMovement(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    elapsed: number,
+  ): void {
+    switch (internal.kronosState) {
+      case 'charge':
+        // Embestida: velocidad constante en línea, sin freno ni muelle.
+        enemy.velocity.copy(internal.chargeDir).multiplyScalar(internal.chargeSpeed);
+        enemy.position.addScaledVector(enemy.velocity, dt);
+        return;
+      case 'coil': {
+        // Enrosco: órbita alrededor del centro de la cúpula con bob vertical.
+        internal.kronosOrbitAngle += KRONOS_COIL_ANG_SPEED * this.speedMult * dt;
+        _targetPos.set(
+          Math.cos(internal.kronosOrbitAngle) * KRONOS_COIL_ORBIT_R,
+          KRONOS_COIL_HEIGHT + Math.sin(elapsed * 0.9 + enemy.phase) * 3,
+          Math.sin(internal.kronosOrbitAngle) * KRONOS_COIL_ORBIT_R,
+        );
+        _toHome.subVectors(_targetPos, enemy.position);
+        const blend = 1 - Math.exp(-2.6 * dt);
+        enemy.position.addScaledVector(_toHome, blend);
+        enemy.velocity.copy(_toHome).multiplyScalar(2.6);
+        return;
+      }
+      default:
+        this.applyFloatMovement(enemy, internal, dt, elapsed);
+        return;
+    }
+  }
+
+  /**
+   * Leviatán KRONOS: ondulación serpentina progresiva de la cadena
+   * `seg_01..seg_12` (yaw/pitch proporcionales a la velocidad de desplazamiento
+   * para serpentear orgánicamente por la cúpula), aleteo de las aletas
+   * pectorales, cabeza escrutando a Nyx y jaw que abre clarísimo durante los
+   * Anillos de Contención. Las 4 Estrellas Vitales rotan vía `starCores` y
+   * aquí responden al daño pulsando su brillo.
+   */
+  private updateKronosPose(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    elapsed: number,
+    playerPos: THREE.Vector3,
+  ): void {
+    const speed = enemy.velocity.length();
+    const charging = internal.kronosState === 'charge';
+    const coiling = internal.kronosState === 'coil';
+
+    // Orientación: el cuerpo avanza hacia su velocidad (rígido en la embestida).
+    if (speed > 2.5) {
+      _lookDir.copy(enemy.velocity).divideScalar(speed);
+    } else {
+      _lookDir.subVectors(playerPos, enemy.position);
+      if (_lookDir.lengthSq() < 1e-6) {
+        _lookDir.set(0, 0, 1);
+      } else {
+        _lookDir.normalize();
+      }
+    }
+    lookAtQuat(_lookDir, _up, _targetQuat);
+    const turnRate = charging ? KRONOS_TURN_RATE_CHARGE : KRONOS_TURN_RATE;
+    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-turnRate * dt));
+
+    const rig = internal.kronosRig;
+    if (!rig) {
+      return;
+    }
+
+    // Onda senoidal progresiva: fase integrada (acelera sin saltos) y
+    // amplitud/frecuencia proporcionales a la velocidad de desplazamiento.
+    const speedFactor = THREE.MathUtils.clamp(speed / 12, 0.35, 1.6);
+    const waveSpeed = KRONOS_SEG_WAVE_SPEED * (0.7 + speedFactor * 0.5) * (coiling ? 1.5 : 1);
+    internal.flapPhase += waveSpeed * dt;
+    const segments = rig.segments;
+    for (let i = 0; i < segments.length; i++) {
+      const t = internal.flapPhase + i * KRONOS_SEG_PHASE_STEP;
+      const yaw = Math.sin(t) * KRONOS_SEG_YAW_AMP * speedFactor;
+      const pitch = Math.cos(t * 0.8 + enemy.phase) * KRONOS_SEG_PITCH_AMP * speedFactor;
+      // Enrosco: encorvadura creciente hacia la cola para enroscarse en espiral.
+      const curl = coiling ? KRONOS_COIL_CURL * (i / Math.max(1, segments.length)) : 0;
+      this.poseBone(segments[i], pitch, yaw + curl, 0);
+    }
+
+    // Aletas pectorales: aleteo orgánico independiente de la onda del cuerpo.
+    const finFlap = Math.sin(elapsed * KRONOS_FIN_FLAP_SPEED + enemy.phase);
+    this.poseBone(rig.finL, 0, 0, finFlap * KRONOS_FIN_FLAP_AMP);
+    this.poseBone(rig.finR, 0, 0, -finFlap * KRONOS_FIN_FLAP_AMP);
+
+    // Cabeza: vaivén escrutando a Nyx; jaw abre claro en los Anillos.
+    this.poseBone(
+      rig.head,
+      Math.sin(elapsed * 1.1 + enemy.phase) * 0.05,
+      Math.sin(elapsed * 0.9) * 0.07,
+      0,
+    );
+    const jawTarget = internal.kronosState === 'rings' ? 1 : 0;
+    internal.kronosJawOpen += (jawTarget - internal.kronosJawOpen) * Math.min(1, dt * 10);
+    this.poseBone(rig.jaw, -KRONOS_JAW_OPEN_RAD * internal.kronosJawOpen, 0, 0);
+
+    // Estrellas Vitales: pulso de brillo con el daño recibido (y al enroscarse).
+    const starBoost = enemy.hitFlash * 1.5 + (coiling ? 0.7 + Math.sin(elapsed * 9) * 0.3 : 0);
+    for (const material of rig.starCoreMaterials) {
+      material.uniforms.uEmissiveBoost.value = STAR_CORE_EMISSIVE + starBoost;
     }
   }
 
@@ -1315,7 +2209,8 @@ export class DomeWaveManager {
   /**
    * Dispara un proyectil del pool hacia Nyx. Con `origin` (boca del cañón o
    * frente del manto) nace allí y sale rugiendo hacia el jugador; sin él,
-   * nace en el borde de la esfera del enemigo.
+   * nace en el borde de la esfera del enemigo. Con `dirOverride` (espiral del
+   * Enrosco de KRONOS) sale en esa dirección exacta en vez de apuntar a Nyx.
    */
   private fireProjectile(
     enemy: ManagedWaveEnemy,
@@ -1325,17 +2220,22 @@ export class DomeWaveManager {
     speed: number,
     spreadRad = 0,
     origin?: THREE.Vector3,
+    dirOverride?: THREE.Vector3,
   ): void {
     const projectile = this.projectiles.find((p) => !p.active);
     if (!projectile) {
       return;
     }
     const from = origin ?? enemy.position;
-    _shotDir.subVectors(playerPos, from);
-    if (_shotDir.lengthSq() < 1e-4) {
-      _shotDir.set(0, 0, 1);
+    if (dirOverride) {
+      _shotDir.copy(dirOverride);
     } else {
-      _shotDir.normalize();
+      _shotDir.subVectors(playerPos, from);
+      if (_shotDir.lengthSq() < 1e-4) {
+        _shotDir.set(0, 0, 1);
+      } else {
+        _shotDir.normalize();
+      }
     }
     if (spreadRad !== 0) {
       _perp.crossVectors(_shotDir, _up);
@@ -1417,6 +2317,13 @@ export class DomeWaveManager {
     dt: number,
     elapsed: number,
   ): void {
+    // Modo Entrenamiento (saco de boxeo): sin muelle ni bob; el knockback se
+    // frena solo y el enemigo queda donde lo dejes para probar física/patadas.
+    if (this.enemiesPassive) {
+      enemy.velocity.multiplyScalar(Math.exp(-3.5 * dt));
+      enemy.position.addScaledVector(enemy.velocity, dt);
+      return;
+    }
     const bob = Math.sin(elapsed * FLOAT_BOB_SPEED + enemy.phase) * FLOAT_BOB_AMPLITUDE;
     _toHome.subVectors(enemy.homePos, enemy.position);
     const homeDist = _toHome.length();
@@ -1727,6 +2634,229 @@ export class DomeWaveManager {
         Math.sin(elapsed * TENTACLE_WAVE_SPEED + enemy.phase + i) * tentacle.amplitude,
       );
       tentacle.bone.quaternion.copy(tentacle.rest).multiply(_legWaveQuat);
+    }
+  }
+
+  /** Compone una rotación euleriana sobre la pose de reposo de un hueso. */
+  private poseBone(bone: EnemyBone | null, rotX: number, rotY: number, rotZ: number): void {
+    if (!bone) {
+      return;
+    }
+    _boneEuler.set(rotX, rotY, rotZ);
+    _boneQuat.setFromEuler(_boneEuler);
+    bone.bone.quaternion.copy(bone.rest).multiply(_boneQuat);
+  }
+
+  /**
+   * Ave Legendaria Cristalizada: encara a Nyx, aleteo potente y coordinado de
+   * las 4 alas (acelera antes del picado/embestida), movimiento orgánico de
+   * cuello/cabeza/cola y apertura del hueso `jaw` durante la ráfaga, con el
+   * star_core_mouth brillando al quedar expuesto.
+   */
+  private updateSparrowPose(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    elapsed: number,
+    playerPos: THREE.Vector3,
+  ): void {
+    // Encara a Nyx con giro suave (también con la forma provisional).
+    _lookDir.subVectors(playerPos, enemy.position);
+    if (_lookDir.lengthSq() < 1e-6) {
+      _lookDir.set(0, 0, 1);
+    } else {
+      _lookDir.normalize();
+    }
+    lookAtQuat(_lookDir, _up, _targetQuat);
+    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-SPARROW_TURN_RATE * dt));
+
+    const rig = internal.sparrowRig;
+    if (!rig) {
+      return;
+    }
+
+    // Aleteo coordinado: fase integrada para acelerar sin saltos bruscos.
+    const preDive =
+      internal.nextAttack === 'charge' && enemy.attackTimer > 0 && enemy.attackTimer < 0.7;
+    const flapSpeed =
+      internal.chargeTimer > 0 || preDive
+        ? SPARROW_FLAP_SPEED_DIVE
+        : internal.burstTimer > 0
+          ? SPARROW_FLAP_SPEED_BURST
+          : SPARROW_FLAP_SPEED_BASE;
+    internal.flapPhase += flapSpeed * dt;
+    const flap = Math.sin(internal.flapPhase);
+    const flapLag = Math.sin(internal.flapPhase + 0.7);
+    const flapQuad = Math.sin(internal.flapPhase + Math.PI * 0.5);
+    this.poseBone(rig.wingTopLInner, flap * 0.5, 0, flap * 0.1);
+    this.poseBone(rig.wingTopLOuter, flapLag * 0.75, 0, flapLag * 0.14);
+    this.poseBone(rig.wingTopRInner, flap * 0.5, 0, -flap * 0.1);
+    this.poseBone(rig.wingTopROuter, flapLag * 0.75, 0, -flapLag * 0.14);
+    this.poseBone(rig.wingBotL, -flap * 0.45, 0, flapQuad * 0.08);
+    this.poseBone(rig.wingBotR, -flap * 0.45, 0, -flapQuad * 0.08);
+
+    // Cuello, cabeza y cola con vaivén orgánico independiente del aleteo.
+    this.poseBone(
+      rig.neck,
+      Math.sin(elapsed * 0.8 + enemy.phase) * 0.09,
+      Math.sin(elapsed * 1.2 + enemy.phase) * 0.14,
+      0,
+    );
+    this.poseBone(rig.head, Math.sin(elapsed * 1.6 + enemy.phase * 1.3) * 0.2, 0, 0);
+    this.poseBone(rig.tail, Math.sin(elapsed * 1.1) * 0.12, Math.sin(elapsed * 1.9 + enemy.phase) * 0.24, 0);
+
+    // jaw: abre claramente durante la ráfaga (mouthOpen) y permanece cerrada
+    // fuera de esa ventana.
+    const targetOpen = enemy.entity.mouthOpen === true ? 1 : 0;
+    internal.jawOpen += (targetOpen - internal.jawOpen) * Math.min(1, dt * 12);
+    this.poseBone(rig.jaw, -SPARROW_JAW_OPEN_RAD * internal.jawOpen, 0, 0);
+
+    // star_core_mouth: brilla intensamente mientras la boca está abierta.
+    if (rig.mouthStarMaterial) {
+      rig.mouthStarMaterial.uniforms.uEmissiveBoost.value =
+        enemy.entity.mouthOpen === true
+          ? 2.3 + Math.sin(elapsed * 14) * 0.3
+          : STAR_CORE_EMISSIVE;
+    }
+  }
+
+  /**
+   * Prisma Necrozma: flotación amenazante encarando a Nyx, balanceo de brazos
+   * y garras prismáticas, giro de cabeza y pinchos (`detail_spikes`) que se
+   * escalan hacia fuera con brillo intenso al acercarse Nyx de frente y se
+   * retraen (apagados) en la ventana vulnerable.
+   */
+  private updateNecrozmaPose(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    elapsed: number,
+    playerPos: THREE.Vector3,
+  ): void {
+    _lookDir.subVectors(playerPos, enemy.position);
+    if (_lookDir.lengthSq() < 1e-6) {
+      _lookDir.set(0, 0, 1);
+    } else {
+      _lookDir.normalize();
+    }
+    lookAtQuat(_lookDir, _up, _targetQuat);
+    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-NECROZMA_TURN_RATE * dt));
+
+    const rig = internal.necrozmaRig;
+    if (!rig) {
+      return;
+    }
+
+    // Brazos/garras prismáticas ondeando; la cabeza gira escrutando a Nyx.
+    this.poseBone(rig.shoulderL, 0, 0, Math.sin(elapsed * 1.8 + enemy.phase) * 0.15);
+    this.poseBone(rig.armL, Math.sin(elapsed * 1.8 + 0.5 + enemy.phase) * 0.3, 0, 0);
+    this.poseBone(rig.clawL, 0, Math.sin(elapsed * 2.2 + enemy.phase) * 0.35, 0);
+    this.poseBone(rig.shoulderR, 0, 0, -Math.sin(elapsed * 1.8 + 0.9 + enemy.phase) * 0.15);
+    this.poseBone(rig.armR, Math.sin(elapsed * 1.8 + 1.4 + enemy.phase) * 0.3, 0, 0);
+    this.poseBone(rig.clawR, 0, Math.sin(elapsed * 2.2 + 1.1 + enemy.phase) * 0.35, 0);
+    this.poseBone(rig.head, Math.sin(elapsed * 0.9) * 0.06, Math.sin(elapsed * 1.1 + enemy.phase) * 0.3, 0);
+    this.poseBone(rig.tail, 0, Math.sin(elapsed * 1.4 + enemy.phase) * 0.28, 0);
+    this.poseBone(rig.torso, Math.sin(elapsed * 1.3) * 0.04, 0, 0);
+
+    // Pinchos defensivos: escalan hacia fuera (~1.35) con brillo intenso si
+    // Nyx se acerca de frente; retraídos (~0.15) en la ventana vulnerable.
+    const spikes = rig.spikes;
+    if (spikes) {
+      const vulnerable = (enemy.entity.vulnerableTimer ?? 0) > 0;
+      const target = vulnerable
+        ? NECROZMA_SPIKES_IN_SCALE
+        : enemy.entity.spikesActive
+          ? NECROZMA_SPIKES_OUT_SCALE
+          : 1;
+      internal.spikeScale += (target - internal.spikeScale) * Math.min(1, dt * 6);
+      spikes.mesh.scale.setScalar(spikes.restScale * internal.spikeScale);
+      if (spikes.material) {
+        if (enemy.entity.spikesActive) {
+          spikes.material.uniforms.uRimColor.value.setHex(NECROZMA_SPIKES_RIM);
+          spikes.material.uniforms.uEmissiveBoost.value = 0.85 + Math.sin(elapsed * 11) * 0.4;
+        } else {
+          spikes.material.uniforms.uRimColor.value.setHex(NECROZMA_DETAIL_RIM);
+          spikes.material.uniforms.uEmissiveBoost.value = 0.05;
+        }
+      }
+    }
+  }
+
+  /**
+   * Gólem Rompesuelos: gira lento hacia Nyx; durante el telegraph del manotazo
+   * torsiona spine/chest, alza el brazo gigante y hace brillar/pulsar
+   * `detail_fist` con intensidad neón; el swing descarga el golpe y la
+   * recuperación devuelve los huesos a su pose de reposo.
+   */
+  private updateGolemPose(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    elapsed: number,
+    playerPos: THREE.Vector3,
+  ): void {
+    _lookDir.subVectors(playerPos, enemy.position);
+    if (_lookDir.lengthSq() < 1e-6) {
+      _lookDir.set(0, 0, 1);
+    } else {
+      _lookDir.normalize();
+    }
+    lookAtQuat(_lookDir, _up, _targetQuat);
+    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-GOLEM_TURN_RATE * dt));
+
+    const rig = internal.golemRig;
+    if (!rig) {
+      return;
+    }
+
+    // Objetivos de pose por fase: ángulo del brazo gigante (negativo = alzado)
+    // y torsión de spine/chest. El swing es mucho más rápido que el telegraph.
+    let armTarget = 0;
+    let twistTarget = 0;
+    let lambda = 3;
+    if (internal.golemPhase === 'windup') {
+      armTarget = -1.15;
+      twistTarget = -0.55;
+      lambda = 5.5;
+    } else if (internal.golemPhase === 'smash') {
+      armTarget = 0.62;
+      twistTarget = 0.28;
+      lambda = 26;
+    } else if (internal.golemPhase === 'recover') {
+      lambda = 3.5;
+    }
+    const blend = 1 - Math.exp(-lambda * dt);
+    internal.golemArmAngle += (armTarget - internal.golemArmAngle) * blend;
+    internal.golemTwist += (twistTarget - internal.golemTwist) * blend;
+
+    const arm = internal.golemArmAngle;
+    const twist = internal.golemTwist;
+    this.poseBone(rig.spine, Math.abs(twist) * 0.25, twist, 0);
+    this.poseBone(rig.chest, 0, twist * 0.55, 0);
+    this.poseBone(rig.head, Math.sin(elapsed * 0.7 + enemy.phase) * 0.08, -twist * 0.45, 0);
+    this.poseBone(rig.giantShoulderR, arm, 0, 0);
+    this.poseBone(rig.giantArmR, arm * 0.5, 0, 0);
+    this.poseBone(rig.giantFistR, arm * 0.3, 0, 0);
+    this.poseBone(rig.armLUpper, 0, 0, Math.sin(elapsed * 0.9 + enemy.phase) * 0.05);
+    this.poseBone(rig.armLLower, Math.sin(elapsed * 1.2 + enemy.phase) * 0.06, 0, 0);
+
+    // detail_fist: pulso neón creciente durante el telegraph y flash al descargar.
+    const fist = rig.fist;
+    if (fist) {
+      let boost = 0.05;
+      let pulse = 1;
+      if (internal.golemPhase === 'windup') {
+        const w = 1 - internal.golemTimer / GOLEM_SMASH_WINDUP_SEC;
+        boost = 0.35 + w * (1.15 + Math.sin(elapsed * 20) * 0.45);
+        pulse = 1 + w * 0.15;
+      } else if (internal.golemPhase === 'smash') {
+        boost = 1.6;
+      }
+      fist.mesh.scale.setScalar(fist.restScale * pulse);
+      if (fist.material) {
+        fist.material.uniforms.uEmissiveBoost.value = boost;
+        fist.material.uniforms.uRimColor.value.setHex(GOLEM_FIST_NEON_RIM);
+      }
     }
   }
 

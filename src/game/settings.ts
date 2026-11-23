@@ -41,7 +41,35 @@ export const CONTROL_ACTIONS: ControlAction[] = [
   'slot3',
 ];
 
+/**
+ * Acciones rebindables del mando dentro de la Cúpula (Gamepad API estándar).
+ * Compatible con DualShock 4 (PS4) y mandos genéricos vía mapeo W3C.
+ */
+export type GamepadAction = 'attack' | 'dash' | 'jump' | 'skill' | 'cycleSlot' | 'pause';
+
+/** Orden estable de las acciones de mando (validación, saneado y menú). */
+export const GAMEPAD_ACTIONS: GamepadAction[] = [
+  'attack',
+  'dash',
+  'jump',
+  'skill',
+  'cycleSlot',
+  'pause',
+];
+
+/**
+ * Índice de botón estándar W3C (0..17):
+ * 0=Cruz/A, 1=Círculo/B, 2=Cuadrado/X, 3=Triángulo/Y, 4=L1, 5=R1, 6=L2, 7=R2,
+ * 8=Share/Select, 9=Options/Start, 10=L3, 11=R3, 12..15=D-Pad, 16=PS, 17=Touchpad.
+ */
+export type GamepadButtonIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17;
+
+/** Idioma de la interfaz (español base, inglés como plantilla). */
+export type Language = 'es' | 'en';
+
 export interface GameSettings {
+  /** Idioma de la UI ('es' por defecto, persistido en localStorage). */
+  language: Language;
   /** Multiplicador de sensibilidad del ratón (0.25 .. 2.5). */
   mouseSensitivity: number;
   /** Invierte el eje vertical de la cámara. */
@@ -54,6 +82,12 @@ export interface GameSettings {
   halftonesEnabled: boolean;
   /** Tecla primaria de cada acción (valores de `KeyboardEvent.code`). */
   bindings: Record<ControlAction, string>;
+  /** Multiplicador de sensibilidad del stick derecho del mando (0.5 .. 3.0). */
+  gamepadSensitivity: number;
+  /** Zona muerta radial de los sticks analógicos del mando (0.05 .. 0.35). */
+  gamepadDeadzone: number;
+  /** Botón del mando (índice W3C 0..17) de cada acción de la Cúpula. */
+  gamepadBindings: Record<GamepadAction, GamepadButtonIndex>;
 }
 
 /** Rangos válidos de los ajustes numéricos (los usa el menú de Controles). */
@@ -61,6 +95,8 @@ export const SETTINGS_LIMITS = {
   mouseSensitivity: { min: 0.25, max: 2.5 },
   baseFov: { min: 55, max: 85 },
   masterVolume: { min: 0, max: 1.5 },
+  gamepadSensitivity: { min: 0.5, max: 3.0 },
+  gamepadDeadzone: { min: 0.05, max: 0.35 },
 } as const;
 
 /** Keybindings por defecto (WASD + Espacio + Shift + E/F/R/Q + 1/2/3). */
@@ -80,13 +116,32 @@ export const DEFAULT_BINDINGS: Record<ControlAction, string> = {
   slot3: 'Digit3',
 };
 
+/**
+ * Bindings de mando por defecto (mapeo W3C estándar, DualShock 4 / genérico):
+ * R2 (7) ataca, R1 (5) dashea, Cruz (0) salta/despega, Triángulo (3) usa la
+ * habilidad de la ranura activa, D-Pad Abajo (13) cambia de ranura y
+ * Options (9) pausa.
+ */
+export const DEFAULT_GAMEPAD_BINDINGS: Record<GamepadAction, GamepadButtonIndex> = {
+  attack: 7,
+  dash: 5,
+  jump: 0,
+  skill: 3,
+  cycleSlot: 13,
+  pause: 9,
+};
+
 export const DEFAULT_SETTINGS: GameSettings = {
+  language: 'es',
   mouseSensitivity: 1.0,
   invertY: false,
   baseFov: 70,
   masterVolume: 1.0,
   halftonesEnabled: true,
   bindings: { ...DEFAULT_BINDINGS },
+  gamepadSensitivity: 1.4,
+  gamepadDeadzone: 0.14,
+  gamepadBindings: { ...DEFAULT_GAMEPAD_BINDINGS },
 };
 
 const STORAGE_KEY = 'outorbit.settings.v1';
@@ -115,9 +170,20 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   return Math.min(Math.max(value, min), max);
 }
 
-/** Copia profunda de los ajustes (los bindings son un objeto anidado). */
+/** Sanea un índice de botón de mando (entero 0..17) con reserva W3C. */
+function clampButtonIndex(value: unknown, fallback: GamepadButtonIndex): GamepadButtonIndex {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return fallback;
+  if (value < 0 || value > 17) return fallback;
+  return value as GamepadButtonIndex;
+}
+
+/** Copia profunda de los ajustes (bindings y gamepadBindings son anidados). */
 export function cloneGameSettings(settings: GameSettings): GameSettings {
-  return { ...settings, bindings: { ...settings.bindings } };
+  return {
+    ...settings,
+    bindings: { ...settings.bindings },
+    gamepadBindings: { ...settings.gamepadBindings },
+  };
 }
 
 /**
@@ -163,7 +229,20 @@ function sanitizeSettings(raw: unknown): GameSettings {
     bindings[action] =
       typeof code === 'string' && code.length > 0 ? code : DEFAULT_BINDINGS[action];
   }
+  // Los ajustes de mando llegaron después: un JSON viejo sin estos campos cae
+  // a los valores por defecto sin romper la partida guardada.
+  const rawGamepadBindings = (source.gamepadBindings ?? {}) as Partial<
+    Record<GamepadAction, GamepadButtonIndex>
+  >;
+  const gamepadBindings = {} as Record<GamepadAction, GamepadButtonIndex>;
+  for (const action of GAMEPAD_ACTIONS) {
+    gamepadBindings[action] = clampButtonIndex(
+      rawGamepadBindings[action],
+      DEFAULT_GAMEPAD_BINDINGS[action],
+    );
+  }
   return {
+    language: source.language === 'en' ? 'en' : 'es',
     mouseSensitivity: clampNumber(
       source.mouseSensitivity,
       SETTINGS_LIMITS.mouseSensitivity.min,
@@ -188,6 +267,19 @@ function sanitizeSettings(raw: unknown): GameSettings {
         ? source.halftonesEnabled
         : DEFAULT_SETTINGS.halftonesEnabled,
     bindings,
+    gamepadSensitivity: clampNumber(
+      source.gamepadSensitivity,
+      SETTINGS_LIMITS.gamepadSensitivity.min,
+      SETTINGS_LIMITS.gamepadSensitivity.max,
+      DEFAULT_SETTINGS.gamepadSensitivity
+    ),
+    gamepadDeadzone: clampNumber(
+      source.gamepadDeadzone,
+      SETTINGS_LIMITS.gamepadDeadzone.min,
+      SETTINGS_LIMITS.gamepadDeadzone.max,
+      DEFAULT_SETTINGS.gamepadDeadzone
+    ),
+    gamepadBindings,
   };
 }
 
@@ -270,4 +362,35 @@ export function formatKeyCode(code: string): string {
   if (code.startsWith('Digit') && code.length === 6) return code.slice(5);
   if (code.startsWith('Numpad') && code.length === 7) return `NUM ${code.slice(6)}`;
   return code.toUpperCase();
+}
+
+/**
+ * Etiquetas legibles (en español) de los botones estándar W3C 0..17, con el
+ * nombre DualShock 4 primero y el genérico Xbox/PC entre paréntesis:
+ * `0 -> Cruz (A)`, `1 -> Círculo (B)`, `4 -> L1`, `9 -> Options (Start)`.
+ */
+export const GAMEPAD_BUTTON_LABELS: Record<GamepadButtonIndex, string> = {
+  0: 'Cruz (A)',
+  1: 'Círculo (B)',
+  2: 'Cuadrado (X)',
+  3: 'Triángulo (Y)',
+  4: 'L1',
+  5: 'R1',
+  6: 'L2',
+  7: 'R2',
+  8: 'Share (Select)',
+  9: 'Options (Start)',
+  10: 'L3',
+  11: 'R3',
+  12: 'D-Pad Arriba',
+  13: 'D-Pad Abajo',
+  14: 'D-Pad Izquierda',
+  15: 'D-Pad Derecha',
+  16: 'PS',
+  17: 'Touchpad',
+};
+
+/** Etiqueta legible de un índice de botón de mando (reserva para índices raros). */
+export function formatGamepadButton(index: GamepadButtonIndex): string {
+  return GAMEPAD_BUTTON_LABELS[index] ?? `Botón ${index}`;
 }

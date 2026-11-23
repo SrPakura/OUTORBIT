@@ -24,6 +24,7 @@ import {
   type ControlAction,
   type GameSettings,
 } from '@/game/settings';
+import { GamepadInput } from '@/game/input/GamepadInput';
 import type { SynthAudio } from '@/game/audio/SynthAudio';
 
 // ============================================================================
@@ -153,6 +154,10 @@ const FOV_PUNCH_CAP = -30; // tope de zoom puntual por energía cinética
 
 const DOME_BOUNCE_DAMAGE = 10;
 
+// --- Mando (Gamepad API): rad/s de giro de cámara a stick derecho a tope,
+// escalado por gamepadSensitivity (el ratón usa 0.0023 rad/px).
+const GAMEPAD_LOOK_RATE = 2.6;
+
 type HitEnemyCallback = (
   enemy: TestEnemySphere,
   hitDir: THREE.Vector3,
@@ -170,6 +175,7 @@ export class NyxDomeController {
   private readonly animator: NyxAnimator;
   private readonly vfx: MotionVfxSystem;
   private readonly audio: SynthAudio | undefined;
+  private readonly gamepad: GamepadInput | undefined;
   private settings!: GameSettings;
 
   // --- Entrada
@@ -183,6 +189,12 @@ export class NyxDomeController {
   private dashHeld = false; // Clic Derecho mantenida
   private wantSlot: 1 | 2 | 3 | null = null;
   private activeSlot: 1 | 2 | 3 = 1;
+  // Stick izquierdo del mando del frame (zona muerta aplicada, -1..1).
+  private gpLeftX = 0;
+  private gpLeftY = 0;
+  // Botones de mando mantenidos este frame (ataque/dash continuos).
+  private gpAttackHeld = false;
+  private gpDashHeld = false;
 
   // --- Física / estado
   private readonly velocity = new THREE.Vector3();
@@ -310,11 +322,13 @@ export class NyxDomeController {
     vfx: MotionVfxSystem,
     settings: GameSettings,
     audio?: SynthAudio,
+    gamepad?: GamepadInput,
   ) {
     this.nyxRoot = nyxRoot;
     this.animator = animator;
     this.vfx = vfx;
     this.audio = audio;
+    this.gamepad = gamepad;
     this.applySettings(settings);
     // Estado inicial: flotando en 0G donde la escena haya colocado a Nyx.
     this.animator.setState('zero_g_float');
@@ -331,6 +345,7 @@ export class NyxDomeController {
     for (const action of Object.keys(resolved) as ControlAction[]) {
       for (const code of resolved[action]) this.actionByCode.set(code, action);
     }
+    this.gamepad?.applySettings(settings);
   }
 
   /** Escala de tiempo del mundo: 0.20 en redirección, 0.22 en cámara lenta. */
@@ -373,20 +388,29 @@ export class NyxDomeController {
   onMouseMove(dx: number, dy: number): void {
     if (!this.pointerLocked) return;
     const sens = 0.0023 * this.settings.mouseSensitivity;
-    const pitch = -dy * sens * (this.settings.invertY ? -1 : 1);
+    this.rotateLook(dx * sens, dy * sens);
+  }
+
+  /**
+   * Gira la mira/cámara con un delta YA escalado en radianes (lo comparten el
+   * ratón y el stick derecho del mando). En suelo mueve los ángulos escalares
+   * camYaw/camPitch; en vuelo rota aimForward con transporte paralelo.
+   */
+  private rotateLook(dx: number, dy: number): void {
+    const pitch = -dy * (this.settings.invertY ? -1 : 1);
 
     if (this.mode === 'grounded') {
       // Cámara libre 360°: dos ángulos escalares sobre el marco del suelo.
       // dx > 0 (derecha) gira la vista a la derecha alrededor de this.up.
-      this.camYaw -= dx * sens;
+      this.camYaw -= dx;
       // dy < 0 (arriba) mira hacia arriba; dy > 0 (abajo) mira hacia abajo.
       this.camPitch = THREE.MathUtils.clamp(this.camPitch + pitch, -CAM_PITCH_LIMIT, CAM_PITCH_LIMIT);
       return;
     }
 
-    // En vuelo la cámara va pegada a la espalda: el ratón gira la mira objetivo
+    // En vuelo la cámara va pegada a la espalda: el giro rota la mira objetivo
     // (aimForward) y el cuerpo se alinea detrás con desfase elástico.
-    this.quat.setFromAxisAngle(this.aimUp, -dx * sens);
+    this.quat.setFromAxisAngle(this.aimUp, -dx);
     this.aimForward.applyQuaternion(this.quat);
     this.tmpAxis.crossVectors(this.aimForward, this.aimUp);
     if (this.tmpAxis.lengthSq() > 1e-6) {
@@ -441,6 +465,53 @@ export class NyxDomeController {
     }
   }
 
+  /**
+   * Entrada del mando (Gamepad API estándar, DualShock 4 / genérico). NO
+   * depende del pointer lock: se puede jugar solo con mando y dejar el ratón
+   * libre. El stick derecho rota la cámara (gamepadSensitivity + invertY),
+   * el izquierdo se fusiona con WASD en update(), y los botones configurados
+   * encolan las mismas acciones que el ratón/teclado con flanco (justPressed)
+   * y mantenimiento (held).
+   */
+  private applyGamepadInput(rawDt: number): void {
+    this.gpLeftX = 0;
+    this.gpLeftY = 0;
+    this.gpAttackHeld = false;
+    this.gpDashHeld = false;
+    const gp = this.gamepad;
+    if (!gp || !gp.isConnected()) return;
+
+    // Stick derecho: rotación fluida de cámara proporcional al frame.
+    const rs = gp.getRightStick();
+    if (rs.x !== 0 || rs.y !== 0) {
+      const rate = GAMEPAD_LOOK_RATE * this.settings.gamepadSensitivity;
+      this.rotateLook(rs.x * rate * rawDt, rs.y * rate * rawDt);
+    }
+
+    // Stick izquierdo: movimiento WASD analógico (Y negativa = adelante).
+    const ls = gp.getLeftStick();
+    this.gpLeftX = ls.x;
+    this.gpLeftY = ls.y;
+
+    // Botones configurados: flanco = one-shot, held = continuo.
+    if (gp.justPressedAction('attack')) this.wantAttack = true;
+    this.gpAttackHeld = gp.heldAction('attack');
+    if (gp.justPressedAction('dash')) this.wantDash = true;
+    this.gpDashHeld = gp.heldAction('dash');
+    if (gp.justPressedAction('jump')) this.wantJump = true;
+    // Habilidad: dispara la ranura activa (equivalente a pulsar 1/2/3).
+    if (gp.justPressedAction('skill')) this.wantSlot = this.activeSlot;
+    // Cambiar ranura: cicla 1 -> 2 -> 3 -> 1 sin disparar la habilidad.
+    if (gp.justPressedAction('cycleSlot')) {
+      this.activeSlot = ((this.activeSlot % 3) + 1) as 1 | 2 | 3;
+    }
+  }
+
+  /** ¿Hay un mando conectado y activo? (para el aviso del HUD) */
+  isGamepadConnected(): boolean {
+    return this.gamepad?.isConnected() ?? false;
+  }
+
   getPosition(): THREE.Vector3 {
     return this.nyxRoot.position;
   }
@@ -483,7 +554,9 @@ export class NyxDomeController {
       (this.mode === 'grounded' || this.mode === 'floating') &&
       this.velocity.length() < 1.25 &&
       !this.attackHeld &&
-      !this.dashHeld
+      !this.dashHeld &&
+      !this.gpAttackHeld &&
+      !this.gpDashHeld
     );
   }
 
@@ -503,6 +576,17 @@ export class NyxDomeController {
     this.hp = Math.max(0, this.hp - amount);
     this.impactFlash = Math.max(this.impactFlash, 0.85);
     this.shake = Math.max(this.shake, 0.25);
+  }
+
+  /**
+   * Empujón externo con aturdimiento breve (manotazo brutal del Gólem
+   * Rompesuelos): suma impulso a la velocidad de Nyx y reproduce `hit_stagger`.
+   */
+  applySmashKnockback(pushDir: THREE.Vector3, speed: number): void {
+    this.velocity.addScaledVector(pushDir, speed);
+    this.playOneShot('hit_stagger');
+    this.shake = Math.max(this.shake, 0.32);
+    this.impactFlash = Math.max(this.impactFlash, 0.85);
   }
 
   triggerSkillAnim(anim: NyxAnimState): void {
@@ -564,6 +648,7 @@ export class NyxDomeController {
       mode: this.mode,
       speedAttackKind: this.mode === 'speed_attack' ? this.speedAttackKind : null,
       pointerLocked: this.pointerLocked,
+      gamepadConnected: this.isGamepadConnected(),
       reticleLockState: this.reticleLockState,
       lockedEnemyScreenPos: this.lockedEnemyScreenPos,
       bulletTimeActive: this.bulletTimeTimer > 0 || this.redirectWindowTimer > 0,
@@ -670,12 +755,19 @@ export class NyxDomeController {
     this.impactFlash = Math.max(0, this.impactFlash - rawDt * 3.8);
     this.fovPunch *= Math.exp(-14 * rawDt);
 
+    // --- Entrada de mando (Gamepad API): stick derecho = cámara, botones = acciones
+    this.applyGamepadInput(rawDt);
+
     // --- Base de cámara del frame (dirección de mira según el modo)
     this.computeCameraBasis();
 
-    // --- Entrada de movimiento
-    const f = (this.isDown('forward') ? 1 : 0) - (this.isDown('back') ? 1 : 0);
-    const r = (this.isDown('right') ? 1 : 0) - (this.isDown('left') ? 1 : 0);
+    // --- Entrada de movimiento (WASD + stick izquierdo analógico del mando)
+    let f = (this.isDown('forward') ? 1 : 0) - (this.isDown('back') ? 1 : 0);
+    let r = (this.isDown('right') ? 1 : 0) - (this.isDown('left') ? 1 : 0);
+    if (this.gpLeftX !== 0 || this.gpLeftY !== 0) {
+      f = THREE.MathUtils.clamp(f - this.gpLeftY, -1, 1);
+      r = THREE.MathUtils.clamp(r + this.gpLeftX, -1, 1);
+    }
     const hasMoveInput = f !== 0 || r !== 0;
     const sprintHeld = this.isDown('sprint');
 
@@ -1235,7 +1327,10 @@ export class NyxDomeController {
     this.isSliding = sprintHeld && hasMoveInput && speed > RUN_SPEED + 0.5;
     const targetSpeed = this.isSliding ? SLIDE_SPEED : sprintHeld ? RUN_SPEED : WALK_SPEED;
 
-    const target = this.tmpB.copy(move).multiplyScalar(targetSpeed);
+    // Magnitud analógica del input (1 con teclado): con el stick izquierdo a
+    // medio recorrido se camina/flota más despacio.
+    const inputMag = hasMoveInput ? Math.min(1, Math.hypot(f, r)) : 0;
+    const target = this.tmpB.copy(move).multiplyScalar(targetSpeed * inputMag);
     this.velocity.lerp(target, 1 - Math.exp(-GROUND_ACCEL_LAMBDA * dt));
 
     // Adherencia a paredes y techos.
@@ -1243,12 +1338,14 @@ export class NyxDomeController {
   }
 
   private updateFloating(dt: number, f: number, r: number): void {
-    // WASD acelera hacia la cámara (1.0 Edén/s mientras se pulsa).
+    // WASD / stick izquierdo acelera hacia la cámara (1.0 Edén/s mientras se
+    // pulsa), con la magnitud analógica del mando escalando el empuje.
     if ((f !== 0 || r !== 0) && this.eden > 0.01) {
       const dir = this.tmpA.set(0, 0, 0).addScaledVector(this.camFwd, f).addScaledVector(this.camRight, r);
       if (dir.lengthSq() > 1e-6) {
         dir.normalize();
-        this.velocity.addScaledVector(dir, FLOAT_ACCEL * this.speedMultiplier * dt);
+        const mag = Math.min(1, Math.hypot(f, r));
+        this.velocity.addScaledVector(dir, FLOAT_ACCEL * mag * this.speedMultiplier * dt);
         this.eden = Math.max(0, this.eden - EDEN_MOVE_DRAIN * dt);
       }
     }
@@ -1738,7 +1835,9 @@ export class NyxDomeController {
       (this.mode === 'grounded' || this.mode === 'floating') &&
       !hasMoveInput &&
       !this.attackHeld &&
-      !this.dashHeld;
+      !this.dashHeld &&
+      !this.gpAttackHeld &&
+      !this.gpDashHeld;
     if (idle) {
       this.eden += this.maxEden * this.edenRegenFrac * dt;
     }

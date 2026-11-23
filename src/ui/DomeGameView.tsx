@@ -7,14 +7,18 @@ import { DomeSphereTileManager } from '@/game/dome/DomeSphereTiles';
 import { DomeWaveManager, type ManagedWaveEnemy, type WaveFloorMode } from '@/game/dome/DomeWaveManager';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
+import { GamepadInput } from '@/game/input/GamepadInput';
 import {
   ACTIVE_SKILLS_CATALOG,
   DomeProgressionManager,
+  PASSIVES_CATALOG,
+  type ActiveSkillId,
   type LevelUpCardOption,
+  type PassiveId,
 } from '@/game/dome/DomeProgression';
 import { DomePickupManager } from '@/game/dome/DomePickups';
 import { DomeSkillExecutor, type SkillTargetEnemy } from '@/game/dome/DomeSkills';
-import { DomeCombatSystem } from '@/game/dome/DomeCombatSystem';
+import { DomeCombatSystem, THORNS_DAMAGE_TO_NYX, type EnemyArchetype } from '@/game/dome/DomeCombatSystem';
 import { DomeRunTracker, submitDomeRunToLeaderboard } from '@/game/dome/DomeRunStats';
 import { DOME_PLAYER_BOUND_RADIUS, type DomeHudState, type SlabCollider } from '@/game/dome/domeTypes';
 import type { GameSettings } from '@/game/settings';
@@ -22,10 +26,18 @@ import { SynthAudio } from '@/game/audio/SynthAudio';
 import DomeHudSketch from '@/ui/DomeHudSketch';
 import FluidLevelUpModal, { type FluidCardOption } from '@/ui/FluidLevelUpModal';
 import DomeBattleReport, { type DomeBattleReportData } from '@/ui/DomeBattleReport';
+import DomePauseModal from '@/ui/DomePauseModal';
+import DomeTrainingPanel, { type TrainingSlotInfo } from '@/ui/DomeTrainingPanel';
 
 interface DomeGameViewProps {
   settings: GameSettings;
   onExit: () => void;
+  /**
+   * Modo Entrenamiento / Debug: Nyx inmortal, Edén +25/s, sin oleadas
+   * automáticas y un único enemigo intercambiable gestionado desde el panel
+   * debug (F2 / Tab).
+   */
+  trainingMode?: boolean;
 }
 
 const INITIAL_HUD: DomeHudState = {
@@ -59,7 +71,8 @@ const INITIAL_HUD: DomeHudState = {
   gyroSpinRad: 0,
 };
 
-export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
+export default function DomeGameView({ settings, onExit, trainingMode }: DomeGameViewProps) {
+  const training = trainingMode ?? false;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const controllerRef = useRef<NyxDomeController | null>(null);
   const audioRef = useRef<SynthAudio | null>(null);
@@ -82,6 +95,41 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
   const battleReportOpenRef = useRef(false);
   battleReportOpenRef.current = battleReport !== null;
   const runTrackerRef = useRef<DomeRunTracker | null>(null);
+
+  const [isPauseOpen, setIsPauseOpen] = useState(false);
+  const pauseOpenRef = useRef(false);
+  pauseOpenRef.current = isPauseOpen;
+  // Recuerda si el jugador ya bloqueó el ratón en esta run: permite abrir la
+  // pausa desde pointerlockchange aunque el navegador consuma la tecla ESC.
+  const hadPointerLockRef = useRef(false);
+
+  // --- Modo Entrenamiento / Debug: panel flotante + puente hacia el loop ---
+  const [debugPanelOpen, setDebugPanelOpen] = useState(false);
+  const debugPanelOpenRef = useRef(false);
+  debugPanelOpenRef.current = debugPanelOpen;
+  const [trainingArchetype, setTrainingArchetype] = useState<EnemyArchetype>('abyssal_cell');
+  const [trainingPassive, setTrainingPassive] = useState(false);
+  const [trainingPassiveLevels, setTrainingPassiveLevels] = useState<Record<PassiveId, number>>({
+    speed_force: 0,
+    eden_regen: 0,
+    hp_regen: 0,
+  });
+  /** Espejo estable (sin re-render) de la selección actual del panel. */
+  const trainingUiRef = useRef<{ archetype: EnemyArchetype; passive: boolean }>({
+    archetype: 'abyssal_cell',
+    passive: false,
+  });
+  /** Callbacks vivos dentro del useEffect del juego (solo en entrenamiento). */
+  const trainingBridgeRef = useRef<{
+    setEnemyArchetype: (archetype: EnemyArchetype) => void;
+    respawnEnemy: () => void;
+    setEnemyPassive: (passive: boolean) => void;
+    equipSkill: (slot: 0 | 1 | 2, skillId: ActiveSkillId) => void;
+    clearSlot: (slot: 0 | 1 | 2) => void;
+    upgradeSlot: (slot: 0 | 1 | 2) => void;
+    setPassiveLevel: (id: PassiveId, level: number) => void;
+    refillResources: () => void;
+  } | null>(null);
 
   useEffect(() => {
     controllerRef.current?.applySettings(settings);
@@ -108,6 +156,55 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
     setBattleReport(null);
     setHud(INITIAL_HUD);
     setRunSeed((s) => s + 1);
+  }, []);
+
+  const handlePauseResume = useCallback(() => {
+    setIsPauseOpen(false);
+    canvasRef.current?.requestPointerLock?.();
+  }, []);
+
+  const handlePauseRestart = useCallback(() => {
+    setIsPauseOpen(false);
+    hadPointerLockRef.current = false;
+    setRunSeed((s) => s + 1);
+  }, []);
+
+  // --- Handlers del panel de entrenamiento (mutan el juego vía el puente) ---
+  const handleTrainingSetArchetype = useCallback((archetype: EnemyArchetype) => {
+    trainingUiRef.current.archetype = archetype;
+    setTrainingArchetype(archetype);
+    trainingBridgeRef.current?.setEnemyArchetype(archetype);
+  }, []);
+
+  const handleTrainingRespawn = useCallback(() => {
+    trainingBridgeRef.current?.respawnEnemy();
+  }, []);
+
+  const handleTrainingSetPassive = useCallback((passive: boolean) => {
+    trainingUiRef.current.passive = passive;
+    setTrainingPassive(passive);
+    trainingBridgeRef.current?.setEnemyPassive(passive);
+  }, []);
+
+  const handleTrainingEquipSkill = useCallback((slot: 0 | 1 | 2, skillId: ActiveSkillId) => {
+    trainingBridgeRef.current?.equipSkill(slot, skillId);
+  }, []);
+
+  const handleTrainingClearSlot = useCallback((slot: 0 | 1 | 2) => {
+    trainingBridgeRef.current?.clearSlot(slot);
+  }, []);
+
+  const handleTrainingUpgradeSlot = useCallback((slot: 0 | 1 | 2) => {
+    trainingBridgeRef.current?.upgradeSlot(slot);
+  }, []);
+
+  const handleTrainingSetPassiveLevel = useCallback((id: PassiveId, level: number) => {
+    setTrainingPassiveLevels((prev) => ({ ...prev, [id]: level }));
+    trainingBridgeRef.current?.setPassiveLevel(id, level);
+  }, []);
+
+  const handleTrainingRefill = useCallback(() => {
+    trainingBridgeRef.current?.refillResources();
   }, []);
 
   const handleSubmitScore = useCallback(async (playerName: string) => {
@@ -158,6 +255,9 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
     const audio = new SynthAudio();
     audio.setVolumeMultiplier(settingsRef.current.masterVolume);
     audioRef.current = audio;
+    // Lector de mando (Gamepad API): se actualiza cada frame en el loop, sin
+    // depender del pointer lock, para poder jugar con mando y ratón libre.
+    const gamepad = new GamepadInput(settingsRef.current);
 
     const applyFloorMode = (mode: WaveFloorMode) => {
       if (mode === 'basic') {
@@ -173,9 +273,17 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
     };
 
     let activeSlabs: SlabCollider[] = [];
-    waveMgr.startWave(1, activeSlabs);
-    runTracker.recordWave(1);
-    applyFloorMode(waveMgr.getWaveInfo().floorMode);
+    if (training) {
+      // Modo Entrenamiento: sin oleadas automáticas ni elección inicial de
+      // cartas; suelos básicos para el Cangrejo Artillero y los escombros del
+      // Campo Gravitacional. El enemigo único lo spawnea el puente de abajo.
+      progression.pendingInitialPick = false;
+      applyFloorMode('basic');
+    } else {
+      waveMgr.startWave(1, activeSlabs);
+      runTracker.recordWave(1);
+      applyFloorMode(waveMgr.getWaveInfo().floorMode);
+    }
     let nextWaveDelay = 0;
 
     const openLevelUpModal = (forLevel: number) => {
@@ -200,6 +308,83 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
     let loadedNyx: LoadedNyx | null = null;
     let controller: NyxDomeController | null = null;
     let disposed = false;
+
+    // --- Modo Entrenamiento: enemigo único delante de Nyx + puente del panel ---
+    const trainingState: { archetype: EnemyArchetype; passive: boolean } = {
+      archetype: trainingUiRef.current.archetype,
+      passive: trainingUiRef.current.passive,
+    };
+    const trainingSpawnPos = new THREE.Vector3();
+    const getTrainingSpawnPos = (): THREE.Vector3 => {
+      if (controller) {
+        trainingSpawnPos
+          .copy(controller.getPosition())
+          .addScaledVector(controller.getAimForward(), 18);
+        trainingSpawnPos.y = THREE.MathUtils.clamp(trainingSpawnPos.y, 2, 30);
+      } else {
+        trainingSpawnPos.set(0, 5, -18);
+      }
+      return trainingSpawnPos;
+    };
+    const spawnTrainingEnemy = () => {
+      waveMgr.spawnSingleEnemy(trainingState.archetype, getTrainingSpawnPos());
+    };
+    // Daño a Nyx con la regla de inmortalidad del entrenamiento: si un golpe
+    // la deja por debajo de 1 HP, se regenera al instante para poder seguir
+    // probando golpes enemigos y trampas sin morir.
+    const applyDamageToNyx = (amount: number) => {
+      if (!controller || amount <= 0) return;
+      controller.applyDamage(amount);
+      if (training && controller.getHp() < 1) {
+        controller.restoreResources(progression.maxHp, 0);
+      }
+    };
+    if (training) {
+      waveMgr.setEnemiesPassive(trainingState.passive);
+      trainingBridgeRef.current = {
+        setEnemyArchetype: (archetype) => {
+          trainingState.archetype = archetype;
+          spawnTrainingEnemy();
+        },
+        respawnEnemy: () => spawnTrainingEnemy(),
+        setEnemyPassive: (passive) => {
+          trainingState.passive = passive;
+          waveMgr.setEnemiesPassive(passive);
+        },
+        equipSkill: (slot, skillId) => {
+          const def = ACTIVE_SKILLS_CATALOG[skillId];
+          progression.slots[slot] = {
+            skillId,
+            level: 1,
+            cooldownRemaining: 0,
+            maxCooldown: def.cooldown,
+          };
+        },
+        clearSlot: (slot) => {
+          progression.slots[slot] = {
+            skillId: null,
+            level: 0,
+            cooldownRemaining: 0,
+            maxCooldown: 0,
+          };
+        },
+        upgradeSlot: (slot) => {
+          const slotState = progression.slots[slot];
+          if (!slotState.skillId) return;
+          slotState.level = Math.min(
+            ACTIVE_SKILLS_CATALOG[slotState.skillId].maxLevel,
+            slotState.level + 1,
+          );
+        },
+        setPassiveLevel: (id, level) => {
+          progression.passives[id] = Math.min(PASSIVES_CATALOG[id].maxLevel, Math.max(0, level));
+        },
+        refillResources: () => {
+          controller?.restoreResources(progression.maxHp, progression.maxEden);
+        },
+      };
+      spawnTrainingEnemy();
+    }
 
     const killWaveEnemy = (enemy: ManagedWaveEnemy, viaBarrier: boolean) => {
       if (!enemy.entity.alive) return;
@@ -253,6 +438,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           vfx,
           settingsRef.current,
           audio,
+          gamepad,
         );
         controller.onDomeBounceDamage = () => {
           combat.applyDomeBarrierDamageToNyx();
@@ -279,7 +465,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           return fired;
         };
         controller.onSlotTriggered = (slotIdx) => {
-          if (levelUpOpenRef.current || battleReportOpenRef.current || !controller) return;
+          if (levelUpOpenRef.current || battleReportOpenRef.current || pauseOpenRef.current || !controller) return;
           const slot = progression.slots[slotIdx];
           if (!slot.skillId) return;
           // Si pulsa el slot de Campo Gravitacional teniendo rocas activas -> cancela y las suelta
@@ -329,6 +515,24 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
 
     const onPointerLockChange = () => {
       const locked = document.pointerLockElement === canvas;
+      if (locked) {
+        hadPointerLockRef.current = true;
+        // Entrenamiento: al recapturar el ratón (clic en el lienzo) el panel
+        // debug se oculta solo para devolver el control completo del juego.
+        if (training && debugPanelOpenRef.current) {
+          debugPanelOpenRef.current = false;
+          setDebugPanelOpen(false);
+        }
+      } else if (
+        hadPointerLockRef.current &&
+        !levelUpOpenRef.current &&
+        !battleReportOpenRef.current &&
+        !pauseOpenRef.current &&
+        !debugPanelOpenRef.current
+      ) {
+        // El navegador consumió ESC para soltar el pointer lock: abre la pausa.
+        setIsPauseOpen(true);
+      }
       controller?.setPointerLocked(locked);
       if (controller) setHud(controller.getHudState());
     };
@@ -353,10 +557,49 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
+      // Entrenamiento: F2/Tab muestran u ocultan el panel debug; T recarga
+      // Vida + Edén al instante (tecla rápida de recarga).
+      if (training && (e.code === 'F2' || e.code === 'Tab')) {
+        e.preventDefault();
+        const next = !debugPanelOpenRef.current;
+        debugPanelOpenRef.current = next;
+        setDebugPanelOpen(next);
+        if (next) {
+          document.exitPointerLock?.();
+        } else {
+          const activeCanvas = canvasRef.current;
+          if (
+            activeCanvas &&
+            !levelUpOpenRef.current &&
+            !battleReportOpenRef.current &&
+            !pauseOpenRef.current
+          ) {
+            activeCanvas.requestPointerLock?.();
+          }
+        }
+        return;
+      }
+      if (training && e.code === 'KeyT') {
+        trainingBridgeRef.current?.refillResources();
+        return;
+      }
+      if (e.code === 'Escape' || e.code === 'KeyP') {
+        if (levelUpOpenRef.current || battleReportOpenRef.current) return;
+        if (pauseOpenRef.current) {
+          setIsPauseOpen(false);
+          canvas.requestPointerLock?.();
+        } else {
+          setIsPauseOpen(true);
+          document.exitPointerLock?.();
+        }
+        return;
+      }
+      if (pauseOpenRef.current) return;
       controller?.onKeyDown(e.code);
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
+      if (pauseOpenRef.current) return;
       controller?.onKeyUp(e.code);
     };
 
@@ -388,7 +631,28 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       const rawDt = Math.min((now - last) / 1000, 0.05);
       last = now;
 
-      const isPaused = levelUpOpenRef.current || battleReportOpenRef.current;
+      // --- Mando (Gamepad API): se lee SIEMPRE cada frame, incluso en pausa,
+      // para poder abrir/cerrar DomePauseModal con Options y cerrarla con
+      // Círculo (B). El resto de botones los consume el controlador al jugar.
+      gamepad.update();
+      if (gamepad.justPressedAction('pause')) {
+        if (!levelUpOpenRef.current && !battleReportOpenRef.current) {
+          if (pauseOpenRef.current) {
+            // Reanudar con mando NO captura el ratón: se puede seguir jugando
+            // solo con el mando y el puntero libre.
+            setIsPauseOpen(false);
+          } else {
+            setIsPauseOpen(true);
+            if (document.pointerLockElement === canvas) {
+              document.exitPointerLock?.();
+            }
+          }
+        }
+      } else if (pauseOpenRef.current && gamepad.justPressed(1)) {
+        setIsPauseOpen(false);
+      }
+
+      const isPaused = levelUpOpenRef.current || battleReportOpenRef.current || pauseOpenRef.current;
       const effRawDt = isPaused ? 0 : rawDt;
       const timeScale = controller ? controller.getTimeScale() : 1.0;
       const worldDt = effRawDt * timeScale;
@@ -402,10 +666,15 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
 
       if (controller && !isPaused) {
         progression.updateCooldowns(effRawDt);
+        // Entrenamiento: el Edén se regenerá rapidísimo (+25/s) para poder
+        // probar habilidades en cadena sin farmear.
+        if (training) {
+          controller.restoreResources(0, 25 * effRawDt);
+        }
         const mods = progression.getModifiers();
         const playerStatus = combat.updatePlayerStatus(effRawDt);
         if (playerStatus.inkDamageThisFrame > 0) {
-          controller.applyDamage(playerStatus.inkDamageThisFrame);
+          applyDamageToNyx(playerStatus.inkDamageThisFrame);
         }
 
         // Suelos activos según oleada (flotantes arrancados en básicas / triángulos de esfera en Miniboss y Boss).
@@ -422,8 +691,23 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           controller.getLockedEnemy(),
           controller.getAttackAccelTime(),
           activeSlabs,
-          (dmg) => controller?.applyDamage(dmg),
+          (dmg) => applyDamageToNyx(dmg),
           () => combat.applyOctopusInkAttack(),
+          // Manotazo brutal del Gólem: daño + empuje con hit_stagger.
+          // (Los Anillos de Contención de KRONOS lo reutilizan con daño 0 y
+          // un empuje radial más fuerte hacia la Barrera Blanca.)
+          (dmg, pushDir, pushSpeed) => {
+            applyDamageToNyx(dmg);
+            controller?.applySmashKnockback(pushDir, pushSpeed ?? 22);
+          },
+          // El manotazo rompe un suelo flotante: se destroza y suelta
+          // escombros agarrables por el Campo Gravitacional.
+          (slab) => {
+            const shattered = floatingSlabs.shatterSlab(slab.id);
+            if (shattered) {
+              skillExecutor.spawnSlabDebris(shattered.center, 4);
+            }
+          },
         );
         if (didEnemyEvadeDash) {
           controller.notifyEnemyEvaded();
@@ -441,8 +725,13 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           }
         }
 
-        // Avance automático al completar oleada
-        if (waveMgr.getActiveEnemies().length === 0) {
+        // Avance automático al completar oleada. En Entrenamiento no existen
+        // oleadas: el enemigo único reaparece al instante con la vida llena.
+        if (training) {
+          if (waveMgr.getActiveEnemies().length === 0) {
+            spawnTrainingEnemy();
+          }
+        } else if (waveMgr.getActiveEnemies().length === 0) {
           if (nextWaveDelay <= 0) nextWaveDelay = 1.6;
           else {
             nextWaveDelay -= worldDt;
@@ -496,8 +785,8 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
           edenRegenFrac: mods.edenRegenPctPerSec,
           hpRegenFrac: mods.hpRegenPctPerSec,
           inkOverlayIntensity: playerStatus.inkIntensity,
-          waveNumber: waveInfo.wave,
-          waveLabel: waveInfo.label,
+          waveNumber: training ? undefined : waveInfo.wave,
+          waveLabel: training ? undefined : waveInfo.label,
           slots: [
             {
               name: progression.slots[0].skillId ? ACTIVE_SKILLS_CATALOG[progression.slots[0].skillId].name : null,
@@ -535,6 +824,11 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
                 mods.forceMultiplier,
                 isDrill,
               );
+              // Pinchos del Necrozma: el golpe queda mitigado y Nyx recibe
+              // daño de represalia (la repulsión la da el recoilBounce).
+              if (res.reason === 'thorns_repel') {
+                applyDamageToNyx(THORNS_DAMAGE_TO_NYX);
+              }
               runTracker.recordDamage(res.damage);
               if (managed.entity.hp <= 0 || res.killed) {
                 killWaveEnemy(managed, false);
@@ -546,7 +840,8 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
         runTracker.tick(worldDt);
         runTracker.recordSpeed(controller.getCurrentSpeed());
 
-        if (controller.getHp() <= 0 && !gameOverTriggered) {
+        // Entrenamiento: Nyx es inmortal, nunca se muestra el Battle Report.
+        if (!training && controller.getHp() <= 0 && !gameOverTriggered) {
           gameOverTriggered = true;
           if (document.pointerLockElement === canvas) {
             document.exitPointerLock?.();
@@ -605,6 +900,7 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       controllerRef.current = null;
       audioRef.current = null;
       progressionRef.current = null;
+      trainingBridgeRef.current = null;
       loadedNyx?.dispose();
       pickups.dispose();
       skillExecutor.dispose();
@@ -615,7 +911,19 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       backdrop.dispose();
       renderer.dispose();
     };
-  }, [runSeed]);
+  }, [runSeed, training]);
+
+  // Ranuras en vivo para el panel de entrenamiento (se refresca con el HUD a ~30 Hz).
+  const trainingSlots: TrainingSlotInfo[] = [0, 1, 2].map((index) => {
+    const slot = progressionRef.current?.slots[index];
+    const skillId = slot?.skillId ?? null;
+    return {
+      keyLabel: String(index + 1),
+      skillId,
+      level: slot?.level ?? 0,
+      maxLevel: skillId ? ACTIVE_SKILLS_CATALOG[skillId].maxLevel : 0,
+    };
+  });
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[#040510]">
@@ -623,7 +931,32 @@ export default function DomeGameView({ settings, onExit }: DomeGameViewProps) {
       <DomeHudSketch
         hud={hud}
         onExit={onExit}
-        hidePointerLockPrompt={levelUpState.isOpen || battleReport !== null}
+        hidePointerLockPrompt={levelUpState.isOpen || battleReport !== null || isPauseOpen || (training && debugPanelOpen)}
+      />
+      {training && (debugPanelOpen || isPauseOpen) && (
+        <DomeTrainingPanel
+          archetype={trainingArchetype}
+          passive={trainingPassive}
+          slots={trainingSlots}
+          passiveLevels={trainingPassiveLevels}
+          onSetArchetype={handleTrainingSetArchetype}
+          onRespawn={handleTrainingRespawn}
+          onSetPassive={handleTrainingSetPassive}
+          onEquipSkill={handleTrainingEquipSkill}
+          onClearSlot={handleTrainingClearSlot}
+          onUpgradeSlot={handleTrainingUpgradeSlot}
+          onSetPassiveLevel={handleTrainingSetPassiveLevel}
+          onRefill={handleTrainingRefill}
+        />
+      )}
+      <DomePauseModal
+        isOpen={isPauseOpen}
+        waveNumber={hud.waveNumber}
+        waveLabel={hud.waveLabel}
+        level={hud.level}
+        onResume={handlePauseResume}
+        onRestart={handlePauseRestart}
+        onExitToMenu={onExit}
       />
       <FluidLevelUpModal
         isOpen={levelUpState.isOpen}
