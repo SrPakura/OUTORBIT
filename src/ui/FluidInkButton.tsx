@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react';
 
 // ============================================================================
-// FluidInkButton — botón orgánico de tinta viva, port del
-// "referencia_boton.html": cápsula (o rectángulo redondeado) cuyo borde se
-// deforma con ondas armónicas superpuestas, núcleo de papel difuminado hacia
-// los bordes, aura líquida exterior, atracción magnética hacia el cursor y
-// onda elástica al pulsar. Todo en un SVG animado a 60 FPS.
+// FluidInkButton — botón de tinta viva, port del "referencia_boton.html":
+// rectángulo sesgado (-12°) de esquinas casi rectas cuyo BORDE se anima con
+// ondas armónicas superpuestas, núcleo de papel sólido difuminado solo hacia
+// el borde, aura líquida exterior sutil, atracción magnética hacia el cursor
+// y onda elástica al pulsar. La silueta permanece rectangular: el efecto
+// líquido vive únicamente en el contorno. Todo en un SVG animado a 60 FPS.
 // ============================================================================
 
 export interface FluidInkButtonProps {
@@ -16,14 +17,16 @@ export interface FluidInkButtonProps {
   stops: string[];
   /** Altura del viewBox (la anchura es fija 340). Define lo mollar del botón. */
   vbHeight?: number;
-  /** Radio de esquina en unidades viewBox; por defecto cápsula completa. */
+  /** Radio de esquina en unidades viewBox; casi recto por defecto. */
   cornerRadius?: number;
   /** Relleno del núcleo (papel por defecto). */
   core?: string;
   /** Color del texto (tinta por defecto). */
   textColor?: string;
-  /** Amplitud de la ondulación (4.5 = media, como la referencia). */
+  /** Amplitud de la ondulación del borde (2.2 = sutil, sin deformar la silueta). */
   amplitude?: number;
+  /** Tamaño de la etiqueta (CSS font-size); jerarquía propia de cada botón. */
+  labelFontSize?: string;
   /** Resaltado de foco (navegación con mando / teclado). */
   focused?: boolean;
   ariaLabel?: string;
@@ -124,8 +127,8 @@ function buildRoundedRectPoints(vbH: number, cornerRadius: number | undefined, n
   return { points, halfH };
 }
 
-/** Curva cúbica Catmull-Rom cerrada ultra-suave (tension 0.21, como la ref). */
-function pointsToSmoothClosedPath(pts: Array<{ x: number; y: number }>, tension = 0.21): string {
+/** Curva cúbica Catmull-Rom cerrada (tensión baja: silueta rectangular nítida). */
+function pointsToSmoothClosedPath(pts: Array<{ x: number; y: number }>, tension = 0.12): string {
   const len = pts.length;
   if (len < 3) return '';
   let d = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)} `;
@@ -150,10 +153,11 @@ export default function FluidInkButton({
   hint,
   stops,
   vbHeight = 96,
-  cornerRadius,
+  cornerRadius = 2,
   core = '#f1f1ed',
   textColor = '#0b0d12',
-  amplitude = 4.5,
+  amplitude = 2.2,
+  labelFontSize,
   focused = false,
   ariaLabel,
   onClick,
@@ -179,7 +183,7 @@ export default function FluidInkButton({
   });
 
   useEffect(() => {
-    const NUM_POINTS = 32;
+    const NUM_POINTS = 64;
     const { points: basePoints } = buildRoundedRectPoints(vbHeight, cornerRadius, NUM_POINTS);
     const aura = auraRef.current;
     const base = baseRef.current;
@@ -235,18 +239,18 @@ export default function FluidInkButton({
         const w3 = Math.sin(bp.angle * 2 + t * 1.65) * 0.35;
         let offset = ((w1 + w2 + w3) / 1.9) * amplitude;
 
-        // Onda elástica al pulsar
+        // Onda elástica al pulsar (solo en el borde)
         if (state.pulse > 0.01) {
-          offset += Math.sin(bp.angle * 4 - t * 5) * state.pulse * 5.0;
+          offset += Math.sin(bp.angle * 4 - t * 5) * state.pulse * 3.2;
         }
 
-        // Atracción magnética hacia el cursor
+        // Atracción magnética hacia el cursor (sutil, sin ovalar la silueta)
         if (state.pointerActive) {
           const dx = state.pointerX - bp.x;
           const dy = state.pointerY - bp.y;
           const dist = Math.hypot(dx, dy);
           if (dist < 68) {
-            const pull = (1 - dist / 68) * 6.5;
+            const pull = (1 - dist / 68) * 3.2;
             const align = (dx * bp.nx + dy * bp.ny) / (dist || 1);
             offset += pull * Math.max(0.25, align);
           }
@@ -255,9 +259,9 @@ export default function FluidInkButton({
         return { x: bp.x + bp.nx * offset, y: bp.y + bp.ny * offset, nx: bp.nx, ny: bp.ny };
       });
 
-      const pillD = pointsToSmoothClosedPath(deformed, 0.21);
-      const inset = deformed.map((p) => ({ x: p.x - p.nx * 6.2, y: p.y - p.ny * 6.2 }));
-      const coreD = pointsToSmoothClosedPath(inset, 0.21);
+      const pillD = pointsToSmoothClosedPath(deformed, 0.12);
+      const inset = deformed.map((p) => ({ x: p.x - p.nx * 7.5, y: p.y - p.ny * 7.5 }));
+      const coreD = pointsToSmoothClosedPath(inset, 0.12);
 
       aura.setAttribute('d', pillD);
       base.setAttribute('d', pillD);
@@ -281,13 +285,13 @@ export default function FluidInkButton({
       <svg viewBox={`0 0 ${VB_W} ${vbHeight}`} className="fink-svg" aria-hidden="true">
         <defs>
           <filter id={`${uid}-aura`} x="-35%" y="-35%" width="170%" height="170%" colorInterpolationFilters="sRGB">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blurAura" />
+            <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blurAura" />
             <feComponentTransfer in="blurAura">
               <feFuncA type="linear" slope="1.05" />
             </feComponentTransfer>
           </filter>
           <filter id={`${uid}-feather`} x="-40%" y="-40%" width="180%" height="180%" colorInterpolationFilters="sRGB">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="9.5" />
+            <feGaussianBlur in="SourceGraphic" stdDeviation="6.5" />
           </filter>
           <linearGradient ref={gradRef} id={`${uid}-grad`} x1="10%" y1="0%" x2="90%" y2="100%">
             {stops.map((color, i) => (
@@ -303,7 +307,7 @@ export default function FluidInkButton({
           </clipPath>
         </defs>
 
-        <path ref={auraRef} d="" fill={`url(#${uid}-grad)`} filter={`url(#${uid}-aura)`} opacity="0.58" />
+        <path ref={auraRef} d="" fill={`url(#${uid}-grad)`} filter={`url(#${uid}-aura)`} opacity="0.32" />
         <path ref={baseRef} d="" fill={`url(#${uid}-grad)`} />
         <g clipPath={`url(#${uid}-clip)`}>
           <path ref={coreRef} d="" fill={core} filter={`url(#${uid}-feather)`} />
@@ -317,7 +321,7 @@ export default function FluidInkButton({
         onClick={onClick}
         className="fink-btn"
       >
-        <span className="fink-label" style={{ color: textColor }}>
+        <span className="fink-label" style={{ color: textColor, fontSize: labelFontSize }}>
           {label}
         </span>
         {hint && (
@@ -328,10 +332,10 @@ export default function FluidInkButton({
       </button>
 
       <style>{`
-        .fink-wrap { position: relative; width: 100%; transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), filter 0.16s ease; }
+        .fink-wrap { position: relative; width: 100%; transform: skewX(-12deg); transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), filter 0.16s ease; }
         .fink-wrap.is-focused {
-          transform: scale(1.035) translateX(6px);
-          filter: drop-shadow(0 0 16px rgba(225, 29, 72, 0.5));
+          transform: skewX(-12deg) scale(1.03) translateX(5px);
+          filter: drop-shadow(0 0 14px rgba(225, 29, 72, 0.45));
         }
         .fink-svg { display: block; width: 100%; height: auto; overflow: visible; }
         .fink-btn {
@@ -350,7 +354,7 @@ export default function FluidInkButton({
           transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
         }
         .fink-btn:active { transform: scale(0.965); }
-        .fink-btn:focus-visible { outline: 3px solid #e11d48; outline-offset: 4px; border-radius: 999px; }
+        .fink-btn:focus-visible { outline: 3px solid #e11d48; outline-offset: 4px; border-radius: 4px; }
         .fink-label {
           font-size: clamp(15px, 1.7vw, 21px);
           font-weight: 900;
@@ -358,6 +362,7 @@ export default function FluidInkButton({
           letter-spacing: 0.06em;
           text-transform: uppercase;
           white-space: nowrap;
+          transform: skewX(12deg);
         }
         .fink-hint {
           font: 800 10px/1 ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -365,7 +370,7 @@ export default function FluidInkButton({
           padding: 5px 8px 4px;
           border: 2px solid;
           background: rgba(255, 255, 255, 0.35);
-          transform: skewX(-8deg);
+          transform: skewX(12deg);
           white-space: nowrap;
         }
       `}</style>

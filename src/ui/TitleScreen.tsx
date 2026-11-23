@@ -10,6 +10,9 @@ import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
 
 type MenuModal = 'settings' | 'leaderboard' | null;
 
+/** Paleta unificada del menú: carmesí -> violeta -> cian. */
+const MENU_STOPS = ['#e11d48', '#7c3aed', '#22d3ee'];
+
 interface TitleScreenProps {
   onPlay: () => void;
   /** Modo Entrenamiento / Debug: cúpula con panel de pruebas (F2 / Tab). */
@@ -21,10 +24,10 @@ interface TitleScreenProps {
 
 /**
  * Portada de OUTORBIT: diorama de gravedad cero con Nyx flotando (float de
- * Blender) a la derecha y, a la izquierda, un panel de papel con el mismo ADN
- * visual que la pausa/ajustes/subida de nivel: rejilla, tinta, sombras duras
- * y chips sesgados. Los botones son FluidInkButton: cápsulas de tinta viva
- * con borde líquido que ondula, se imanta al cursor y vibra al pulsar.
+ * Blender) a la derecha y, a la izquierda, el blade de papel opaco que pinta
+ * el shader del divisor (menuShaders.ts), con el logo de tinta oscura y los
+ * botones FluidInkButton: rectángulos sesgados de núcleo papel cuyo borde
+ * líquido ondula con la paleta unificada carmesí/violeta/cian.
  */
 export default function TitleScreen({
   onPlay,
@@ -87,11 +90,8 @@ export default function TitleScreen({
         aria-hidden="true"
       />
 
-      {/* --- Panel de papel de la izquierda: logo + botones de tinta viva --- */}
-      <aside className="title-panel">
-        <div className="title-panel__grid" />
-        <div className="title-panel__burst" />
-
+      {/* --- Menú dentro del blade de papel del shader: logo + botones de tinta --- */}
+      <div className="absolute left-[3.5%] top-[14%] z-10 flex w-[25%] min-w-[230px] max-w-[380px] flex-col gap-7">
         <header className="select-none">
           <div className="mb-2 flex items-center gap-2">
             <span className="title-tag">{t('menu.tagline')}</span>
@@ -102,11 +102,12 @@ export default function TitleScreen({
           </h1>
         </header>
 
-        <nav className="mt-8 flex flex-col gap-4">
+        <nav className="flex flex-col gap-3">
           <FluidInkButton
             label={t('menu.play')}
-            stops={['#e11d48', '#f43f5e', '#fb923c', '#fbbf24']}
+            stops={MENU_STOPS}
             vbHeight={116}
+            labelFontSize="1.5rem"
             focused={padIndex === 0}
             onClick={onPlay}
           />
@@ -114,39 +115,59 @@ export default function TitleScreen({
             <FluidInkButton
               label={t('menu.training')}
               hint={t('menu.trainingDebug')}
-              stops={['#22d3ee', '#38bdf8', '#6366f1', '#4f46e5']}
+              stops={MENU_STOPS}
+              vbHeight={72}
+              labelFontSize="0.75rem"
               focused={padIndex === 1}
               onClick={onPlayTraining}
             />
           )}
           <FluidInkButton
             label={t('menu.controls')}
-            stops={['#a855f7', '#8b5cf6', '#6366f1', '#22d3ee']}
+            stops={MENU_STOPS}
+            vbHeight={84}
+            labelFontSize="0.875rem"
             focused={padIndex === (onPlayTraining ? 2 : 1)}
             onClick={() => setModal('settings')}
           />
           <FluidInkButton
             label={t('menu.leaderboard')}
-            stops={['#fbbf24', '#f59e0b', '#f43f5e', '#e11d48']}
+            stops={MENU_STOPS}
+            vbHeight={84}
+            labelFontSize="0.875rem"
             focused={padIndex === (onPlayTraining ? 3 : 2)}
             onClick={() => setModal('leaderboard')}
           />
         </nav>
+      </div>
 
-        <div className="mt-auto pt-8">
-          <FluidInkButton
-            label={language === 'es' ? 'ESPAÑOL' : 'ENGLISH'}
-            hint={language === 'es' ? 'EN' : 'ES'}
-            stops={['#0b0d12', '#1e293b', '#0e7490', '#22d3ee']}
-            vbHeight={72}
-            cornerRadius={20}
-            amplitude={3}
-            focused={padIndex === actions.length - 1}
-            ariaLabel="Toggle language / Cambiar idioma"
-            onClick={toggleLanguage}
-          />
-        </div>
-      </aside>
+      {/* --- Selector de idioma abajo a la izquierda --- */}
+      <div className="absolute bottom-4 left-4 z-10 flex flex-col items-start gap-1.5">
+        <button
+          type="button"
+          onClick={toggleLanguage}
+          aria-label="Toggle language / Cambiar idioma"
+          className={`-skew-x-12 cursor-pointer border-2 border-[#0b0d12] bg-white/70 px-1 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-[#0b0d12] shadow-[4px_4px_0_#0b0d12] transition-all hover:-translate-y-0.5 hover:border-[#e11d48] active:translate-y-0 ${
+            padIndex === actions.length - 1 ? '-translate-y-0.5 shadow-[4px_4px_0_#e11d48]' : ''
+          }`}
+        >
+          <span
+            className={`skew-x-12 px-2 py-0.5 transition-colors ${
+              language === 'es' ? 'text-[#0e7490]' : 'text-[#0b0d12]/40 hover:text-[#0b0d12]/70'
+            }`}
+          >
+            {t('menu.languageEs')}
+          </span>
+          <span className="skew-x-12 text-[#0b0d12]/30">/</span>
+          <span
+            className={`skew-x-12 px-2 py-0.5 transition-colors ${
+              language === 'en' ? 'text-[#0e7490]' : 'text-[#0b0d12]/40 hover:text-[#0b0d12]/70'
+            }`}
+          >
+            {t('menu.languageEn')}
+          </span>
+        </button>
+      </div>
 
       {modal === 'settings' && (
         <SettingsScreen
@@ -159,52 +180,14 @@ export default function TitleScreen({
       {modal === 'leaderboard' && <LeaderboardModal onClose={() => setModal(null)} />}
 
       <style>{`
-        .title-panel {
-          position: relative;
-          z-index: 10;
-          display: flex;
-          flex-direction: column;
-          height: 100vh;
-          width: clamp(320px, 30vw, 460px);
-          padding: 7vh 3.2vw 4.5vh max(3.2vw, 26px);
-          background-color: #f1f1ed;
-          border-right: 3px solid #0b0d12;
-          box-shadow: 10px 0 0 #e11d48;
-          color: #0b0d12;
-          font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-          -webkit-font-smoothing: antialiased;
-          overflow-y: auto;
-        }
-        .title-panel__grid {
-          position: absolute;
-          inset: 0;
-          pointer-events: none;
-          background-image:
-            linear-gradient(rgba(11,13,18,0.06) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(11,13,18,0.06) 1px, transparent 1px);
-          background-size: 96px 96px;
-        }
-        .title-panel__burst {
-          position: absolute;
-          left: 50%;
-          top: 12%;
-          width: 90vmin;
-          height: 90vmin;
-          transform: translate(-50%, -50%);
-          pointer-events: none;
-          background-image: radial-gradient(rgba(11,13,18,0.1) 2px, transparent 2.2px);
-          background-size: 14px 14px;
-          -webkit-mask-image: radial-gradient(circle, #000 0%, transparent 60%);
-          mask-image: radial-gradient(circle, #000 0%, transparent 60%);
-        }
-
         .title-tag {
-          background: #0b0d12;
-          color: #22d3ee;
+          background: #ffffff;
+          color: #0b0d12;
           font: 800 10px/1 ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
           letter-spacing: 0.2em;
           padding: 6px 10px 5px;
           transform: skewX(-8deg);
+          box-shadow: 3px 3px 0 #0b0d12;
         }
         .title-tag__line {
           height: 3px;

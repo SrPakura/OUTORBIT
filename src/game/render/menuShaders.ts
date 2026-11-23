@@ -5,12 +5,11 @@ import * as THREE from 'three';
 // ============================================================================
 //
 // Un quad a pantalla completa (cámara ortográfica) que pinta el "blade"
-// diagonal de la portada: panel de OBSIDIANA ASTRAL a la izquierda (#080414 ->
-// #120926) con trama estelar y líneas diagonales finas violeta/cian, borde de
-// tinta BLANCO puro brillante y una franja de nebulosa líquida (violeta ->
-// carmesí -> cian) con puntos halftone que se funde hacia el diorama cósmico
-// de la derecha. Sobre el panel oscuro, el logo 3D y los botones resaltan
-// con sus bordes blancos/cian/carmesí.
+// diagonal de la portada: panel de PAPEL opaco a la izquierda (#f1f1ed) con
+// una rejilla sutil muy tenue, filo de tinta oscura y una franja de nebulosa
+// líquida (carmesí -> violeta -> cian) con puntos halftone que se funde hacia
+// el diorama cósmico de la derecha. Sobre el panel de papel, el logo oscuro y
+// los botones resaltan con sus bordes de tinta viva.
 //
 // La silueta SIEMPRE es la misma diagonal (arriba ~42% del ancho, abajo ~25%):
 // el borde se desplaza con una onda líquida continua (senos + FBM que fluye
@@ -98,25 +97,31 @@ const dividerFragmentShader = /* glsl */ `
     float alpha;
 
     if ( d < 0.0 ) {
-      // --- Panel izquierdo: velo oscuro translúcido que deja pasar el fluido ---
-      vec3 topCol = vec3( 0.020, 0.022, 0.055 );
-      vec3 botCol = vec3( 0.040, 0.025, 0.075 );
-      col = mix( botCol, topCol, uv.y );
-      alpha = 0.72;
-    } else if ( d < 0.0028 ) {
-      // --- Borde fluido fino cian/blanco sutil (no compite con el contorno de Nyx) ---
-      col = mix( vec3( 0.133, 0.827, 0.933 ), vec3( 0.85, 0.96, 1.0 ), 0.35 );
-      alpha = 0.60;
+      // --- Panel izquierdo: papel opaco #f1f1ed con rejilla sutil muy tenue ---
+      vec3 paper = vec3( 0.945, 0.945, 0.929 );
+      vec2 gp = gl_FragCoord.xy / 96.0;
+      vec2 gf = abs( fract( gp ) - 0.5 );
+      float lineMask = smoothstep( 0.485, 0.5, max( gf.x, gf.y ) );
+      col = mix( paper, paper * 0.93, lineMask * 0.55 );
+      alpha = 1.0;
+    } else if ( d < 0.003 ) {
+      // --- Filo de tinta: corte limpio del papel hacia el cosmos ---
+      col = vec3( 0.043, 0.051, 0.071 );
+      alpha = 0.92;
     } else if ( d < 0.055 ) {
-      // --- Estela líquida translúcida con halftone sutil ---
-      float f = ( d - 0.0028 ) / 0.0522;
+      // --- Estela líquida: tinta -> carmesí/violeta -> cian, fundida al cosmos ---
+      float f = ( d - 0.003 ) / 0.052;
       float swirl = fbm( vec2( uv.y * 5.0 + t * 0.3, f * 3.5 - t * 0.45 ) );
-      vec3 cian = vec3( 0.08, 0.62, 0.82 );
-      vec3 plum = vec3( 0.48, 0.16, 0.62 );
-      col = mix( cian, plum, smoothstep( 0.2, 0.85, swirl ) );
+      vec3 ink = vec3( 0.043, 0.051, 0.071 );
+      vec3 crimson = vec3( 0.88, 0.11, 0.28 );
+      vec3 plum = vec3( 0.42, 0.19, 0.90 );
+      vec3 cian = vec3( 0.13, 0.83, 0.93 );
+      vec3 liquid = mix( crimson, plum, smoothstep( 0.2, 0.85, swirl ) );
+      liquid = mix( liquid, cian, smoothstep( 0.55, 1.0, swirl ) * 0.45 );
+      col = mix( ink, liquid, smoothstep( 0.0, 0.4, f ) );
       float dots = halftoneDots( gl_FragCoord.xy, 6.5 );
       float dotMask = smoothstep( 0.7, 0.1, f ) * 0.45;
-      float a = ( dots < dotMask ? 0.36 : 0.14 ) * ( 1.0 - smoothstep( 0.0, 1.0, f ) );
+      float a = ( dots < dotMask ? 0.42 : 0.2 ) * ( 1.0 - smoothstep( 0.0, 1.0, f ) );
       alpha = a;
     } else {
       col = vec3( 0.0 );
