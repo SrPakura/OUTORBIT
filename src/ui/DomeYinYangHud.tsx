@@ -360,6 +360,19 @@ function DomeYinYangHudInner({
       const live = liveRef.current;
       const audio = audioRef.current;
 
+      // Subida de nivel y cambio de oleada: one-shots que suenan siempre. La
+      // subida de nivel abre el modal de cartas en el mismo frame, así que
+      // `alerts` ya llega en false y el arpegio se quedaba sin tocar.
+      if (audio) {
+        if (live.level > lastLevel) {
+          audio.playLevelUp();
+          levelPulse = 1;
+        }
+        if (live.wave > lastWave) audio.playNewWave();
+      }
+      lastLevel = live.level;
+      lastWave = live.wave;
+
       if (live.alerts && audio) {
         // Latido de vida crítica: se acelera por debajo del 12%.
         if (live.hp > 0 && live.hp <= 0.25) {
@@ -383,18 +396,10 @@ function DomeYinYangHudInner({
         } else {
           nextEdenBeep = 0;
         }
-
-        if (live.level > lastLevel) {
-          audio.playLevelUp();
-          levelPulse = 1;
-        }
-        if (live.wave > lastWave) audio.playNewWave();
       } else {
         nextHpBeep = 0;
         nextEdenBeep = 0;
       }
-      lastLevel = live.level;
-      lastWave = live.wave;
 
       hpFlash = Math.max(0, hpFlash - dt * 2.4);
       edenFlash = Math.max(0, edenFlash - dt * 2.4);

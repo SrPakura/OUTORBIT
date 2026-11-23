@@ -20,8 +20,12 @@ const TRACK_SOURCES: Record<MusicTrackId, string> = {
   boss: '/audio/boss.mp3',
 };
 
-/** Volumen base de la música; el multiplicador de ajustes se aplica encima. */
-const BASE_VOLUME = 0.34;
+/**
+ * Volumen base de la música; el multiplicador de ajustes se aplica encima.
+ * Se queda por debajo de los efectos para que las alertas del HUD (vida,
+ * Edén, subida de nivel, oleada) se oigan siempre por encima del tema.
+ */
+const BASE_VOLUME = 0.2;
 /** Paso de la rampa por tick: 0.05 cada 50 ms -> ~1 s de crossfade completo. */
 const FADE_STEP = 0.05;
 const FADE_TICK_MS = 50;

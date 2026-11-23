@@ -25,6 +25,8 @@ interface PickupItem {
   velocity: THREE.Vector3;
   phase: number;
   life: number;
+  /** Tiempo desde que se soltó el orbe (s). */
+  age: number;
 }
 
 const MAX_PICKUPS = 160;
@@ -36,6 +38,16 @@ const FADE_TIME = 4;
 const MAGNET_LERP = 3.2;
 /** Fricción del flotador cuando está fuera del radio magnético (1/s). */
 const DRIFT_DAMPING = 0.8;
+/**
+ * Nyx vuela a 20-25 u/s: con un radio de imán corto los orbes se quedaban
+ * atrás y la EXP nunca se recogía. Pasado este margen el orbe persigue a Nyx
+ * desde cualquier distancia.
+ */
+const HOMING_DELAY = 0.35;
+/** Velocidad extra por unidad de distancia, para que alcance a Nyx. */
+const HOMING_CATCHUP = 6;
+/** Tope de velocidad del orbe (u/s). */
+const HOMING_MAX_SPEED = 60;
 
 const KIND_COLORS: Record<DomePickupKind, number> = {
   exp: 0x7ae8dc,  // aqua-menta
@@ -77,6 +89,7 @@ export class DomePickupManager {
         velocity: new THREE.Vector3(),
         phase: 0,
         life: 0,
+        age: 0,
       });
     }
   }
@@ -120,6 +133,7 @@ export class DomePickupManager {
       if (!item.active) continue;
 
       item.life -= dt;
+      item.age += dt;
       item.phase += dt * 3.0;
       if (item.life <= 0) {
         this.deactivate(item);
@@ -128,11 +142,17 @@ export class DomePickupManager {
 
       _toPlayer.subVectors(playerPos, item.mesh.position);
       const dist = _toPlayer.length();
-      if (dist > 1e-4 && dist < magnetRadius) {
-        // Atracción magnética: más fuerte cuanto más cerca está Nyx.
+      // Dentro del radio magnético va directo; fuera, persigue tras el margen
+      // inicial para que la EXP no se pierda cuando Nyx cruza la cúpula a toda
+      // velocidad.
+      if (dist > 1e-4 && (dist < magnetRadius || item.age >= HOMING_DELAY)) {
         _toPlayer.divideScalar(dist);
-        const proximity = 1 - dist / magnetRadius;
-        _magnetTarget.copy(_toPlayer).multiplyScalar(magnetSpeed * (0.6 + 0.9 * proximity));
+        const proximity = 1 - Math.min(1, dist / magnetRadius);
+        const speed = Math.min(
+          HOMING_MAX_SPEED,
+          magnetSpeed * (0.6 + 0.9 * proximity) + dist * HOMING_CATCHUP,
+        );
+        _magnetTarget.copy(_toPlayer).multiplyScalar(speed);
         item.velocity.lerp(_magnetTarget, 1 - Math.exp(-MAGNET_LERP * dt));
       } else {
         item.velocity.multiplyScalar(Math.exp(-DRIFT_DAMPING * dt));
@@ -149,7 +169,10 @@ export class DomePickupManager {
       const fade = Math.min(1, item.life / FADE_TIME);
       item.mesh.scale.setScalar(pulse * (0.35 + 0.65 * fade));
 
-      if (dist <= COLLECT_DISTANCE) {
+      // La distancia se recalcula tras mover el orbe: a 60 u/s el hueco de un
+      // frame es mayor que el radio de recogida.
+      _toPlayer.subVectors(playerPos, item.mesh.position);
+      if (_toPlayer.lengthSq() <= COLLECT_DISTANCE * COLLECT_DISTANCE) {
         if (item.kind === 'exp') gains.expGained += item.value;
         else if (item.kind === 'eden') gains.edenGained += item.value;
         else gains.hpGained += item.value;
@@ -187,6 +210,7 @@ export class DomePickupManager {
     item.value = value;
     item.active = true;
     item.life = BASE_LIFETIME;
+    item.age = 0;
     item.phase = Math.random() * Math.PI * 2;
     item.mesh.material = this.materials[kind];
     item.mesh.position.set(

@@ -422,9 +422,11 @@ export class SynthAudio {
    */
   playLowHpPulse(urgent = false): void {
     if (!this.audible) return;
-    this.tone('sine', 125, 48, 0.14, 0.7);
-    this.tone('sine', 105, 42, 0.14, 0.45, urgent ? 0.14 : 0.18);
-    this.tone('triangle', urgent ? 1040 : 880, urgent ? 1040 : 880, 0.09, 0.18);
+    this.tone('sine', 125, 48, 0.14, 0.9);
+    this.tone('sine', 105, 42, 0.14, 0.6, urgent ? 0.14 : 0.18);
+    // El pulso grave apenas se oye en altavoces de portátil: el chasquido
+    // agudo es el que hace audible la alerta por encima de la música.
+    this.tone('triangle', urgent ? 1040 : 880, urgent ? 1040 : 880, 0.09, 0.5);
   }
 
   /**
@@ -450,7 +452,7 @@ export class SynthAudio {
       filter.frequency.setValueAtTime(900, t0);
       filter.Q.setValueAtTime(3, t0);
       gain.gain.setValueAtTime(0.0001, t0);
-      gain.gain.linearRampToValueAtTime(0.2, t0 + 0.015);
+      gain.gain.linearRampToValueAtTime(0.45, t0 + 0.015);
       gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.19);
       osc.connect(filter).connect(gain).connect(master);
       osc.start(t0);
@@ -465,7 +467,7 @@ export class SynthAudio {
     highpass.type = 'highpass';
     highpass.frequency.setValueAtTime(3200, t0);
     const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.12, t0);
+    noiseGain.gain.setValueAtTime(0.28, t0);
     noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.04);
     noise.connect(highpass).connect(noiseGain).connect(master);
     noise.start(t0);
@@ -489,7 +491,7 @@ export class SynthAudio {
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(freq, start);
       gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.linearRampToValueAtTime(0.3, start + 0.01);
+      gain.gain.linearRampToValueAtTime(0.6, start + 0.01);
       gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.35);
       osc.connect(gain).connect(master);
       if (echo) gain.connect(echo);
@@ -511,14 +513,14 @@ export class SynthAudio {
     sub.type = 'sine';
     sub.frequency.setValueAtTime(140, t0);
     sub.frequency.exponentialRampToValueAtTime(42, t0 + 0.24);
-    subGain.gain.setValueAtTime(0.6, t0);
+    subGain.gain.setValueAtTime(0.9, t0);
     subGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.26);
     sub.connect(subGain).connect(master);
     sub.start(t0);
     sub.stop(t0 + 0.28);
 
-    this.tone('square', 1800, 1800, 0.02, 0.12);
-    this.tone('square', 2400, 2400, 0.02, 0.12, 0.06);
+    this.tone('square', 1800, 1800, 0.02, 0.35);
+    this.tone('square', 2400, 2400, 0.02, 0.35, 0.06);
   }
 
   /** Eco del arpegio de nivel: delay con realimentación creado una sola vez. */

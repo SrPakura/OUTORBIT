@@ -57,9 +57,9 @@ import type { SynthAudio } from '@/game/audio/SynthAudio';
 //                   vector de golpe +4 m/s SIN cortar la patada.
 //  - 'kick_recover' Frenado suave hasta casi 0 encadenando kick_flip.
 //
-// Economía de Edén (base 100): +1%/s de regeneración en suelo o flotación sin
-// WASD ni clics (aunque te deslices por inercia en 0G), WASD 1.0/s, Dash 3.0
-// de golpe, Ataque 2.0/s.
+// Economía de Edén (base 100): +1%/s de regeneración siempre en suelo (aunque
+// andes o esprines) y en flotación solo sin WASD ni clics (aunque te deslices
+// por inercia en 0G), WASD 1.0/s, Dash 3.0 de golpe, Ataque 2.0/s.
 //
 // Lock-In del visor: enemigo más cercano al centro de la mira a <= 62 px y
 // con línea de visión libre (un suelo interponido NO permite can_lock ni
@@ -138,6 +138,10 @@ const VOID_IMPACT_WOBBLE = 1.0;
 const FLOAT_ACCEL = 13.5;
 const FLOAT_MAX_SPEED = 28.0;
 const FLOAT_DRAG = 0.06; // exp(-0.06*dt): conserva ~95% de la velocidad por segundo
+// Por debajo de esta velocidad y sin pulsar nada, Nyx entra en la pose de
+// flotación quieta (`zero_g_float`); por encima sigue la flotación direccional
+// aunque vaya a la deriva por inercia.
+const FLOAT_IDLE_SPEED = 2.0;
 const CENTRIPETAL_SPEED_K = 0.11; // centripetalFactor = 1/(1+speed*0.11)
 const BODY_TURN_RATE = 10;
 const VEL_ALIGN_RATE = 4.0;
@@ -2544,13 +2548,13 @@ export class NyxDomeController {
         break;
       }
       case 'floating': {
-        // En 0G el clip manda: la flotación direccional mientras haya input,
-        // `zero_g_float` cuando se queda a la deriva. Sin GLB se usa el ciclo
-        // procedural.
-        const moving = hasMoveInput && speed > 0.6;
+        // En 0G el clip manda: flotación direccional mientras haya input o
+        // inercia, y `zero_g_float` solo cuando se queda quieta de verdad
+        // (< 2 m/s sin pulsar nada). Sin GLB se usa el ciclo procedural.
+        const idleFloat = !hasMoveInput && speed < FLOAT_IDLE_SPEED;
         const idle = this.clips.floatIdle;
         const float = this.clips.float;
-        if (moving && float !== null) {
+        if (!idleFloat && float !== null) {
           // El cuerpo mira siempre al aim de cámara, así que el banco sigue a
           // la componente lateral de la velocidad y no al vector completo:
           // avanzando recto va centrada, desplazándose de lado se inclina.
@@ -2563,7 +2567,7 @@ export class NyxDomeController {
           float.setActive(true);
           return;
         }
-        if (!moving && idle !== null) {
+        if (idleFloat && idle !== null) {
           float?.cancel();
           idle.setActive(true);
           return;
@@ -2595,16 +2599,16 @@ export class NyxDomeController {
   }
 
   private updateEden(dt: number, hasMoveInput: boolean): void {
-    // Sin WASD ni clics (en suelo o flotando, incluso deslizándote por inercia
-    // en 0G a cualquier velocidad): regenera según edenRegenFrac (base +1%/s).
-    const idle =
-      (this.mode === 'grounded' || this.mode === 'floating') &&
+    // En suelo regenera siempre, incluso andando o esprintando. En flotación
+    // solo con las manos quietas (sin WASD ni clics), aunque te deslices por
+    // inercia en 0G. Base +1%/s (edenRegenFrac).
+    const handsOff =
       !hasMoveInput &&
       !this.attackHeld &&
       !this.dashHeld &&
       !this.gpAttackHeld &&
       !this.gpDashHeld;
-    if (idle) {
+    if (this.mode === 'grounded' || (this.mode === 'floating' && handsOff)) {
       this.eden += this.maxEden * this.edenRegenFrac * dt;
     }
     this.eden = Math.min(this.maxEden, this.eden);
