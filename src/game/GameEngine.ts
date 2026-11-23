@@ -58,14 +58,6 @@ const DEFAULT_ADAPTATION: PlanetAdaptationConfig = {
   summaryReasons: [],
 };
 
-/** Libera la geometría de un subárbol (los materiales compartidos no se tocan). */
-function disposeObject3D(root: THREE.Object3D): void {
-  root.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (mesh.isMesh) mesh.geometry?.dispose();
-  });
-}
-
 /**
  * Orquestador Three.js de la GALAXIA CONTINUA: monta los 5 planetas a la vez
  * en una sola escena, ejecuta el loop principal, gestiona Pointer Lock /

@@ -422,8 +422,6 @@ export class TitleDioramaSandbox {
     setHalftonesEnabled(settings.halftonesEnabled);
   }
 
-  setControlsSuspended(_suspended: boolean): void {}
-
   dispose(): void {
     this.disposed = true;
     cancelAnimationFrame(this.rafId);

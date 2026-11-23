@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameSettings } from '@/game/settings';
-import type { TutorialId } from '@/game/levels/tutorialDefinitions';
 import { useI18n } from '@/i18n';
 import { TitleDioramaSandbox } from '@/ui/TitleDioramaSandbox';
 import ControlsModal from '@/ui/ControlsModal';
@@ -10,8 +9,6 @@ type MenuModal = 'controls' | 'leaderboard' | null;
 
 interface TitleScreenProps {
   onPlay: () => void;
-  /** PASO B: lanza un mini-tutorial jugable desde la portada. */
-  onPlayTutorial?: (id: TutorialId) => void;
   /** Modo Entrenamiento / Debug: cúpula con panel de pruebas (F2 / Tab). */
   onPlayTraining?: () => void;
   /** Ajustes persistentes (Controles) compartidos con el GameEngine. */
@@ -54,11 +51,6 @@ export default function TitleScreen({
   useEffect(() => {
     sandboxRef.current?.setSettings(settings);
   }, [settings]);
-
-  // Ningún modal abierto puede robar el teclado al diorama.
-  useEffect(() => {
-    sandboxRef.current?.setControlsSuspended(modal !== null);
-  }, [modal]);
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden bg-[#05010f]">

@@ -65,7 +65,7 @@ export interface WaveInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Constantes de comportamiento (heredadas del feel de TestEnemySpheres)
+// Constantes de comportamiento
 // ---------------------------------------------------------------------------
 
 const FLOAT_SPRING = 2.4;
@@ -1209,10 +1209,6 @@ export class DomeWaveManager {
         this.resetEnemyOffense(internal);
       }
     }
-  }
-
-  getEnemiesPassive(): boolean {
-    return this.enemiesPassive;
   }
 
   /** Cancela todo ataque/telegraph en curso y devuelve al enemigo a reposo. */

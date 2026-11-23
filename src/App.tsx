@@ -103,14 +103,6 @@ export default function App() {
     setRunKey((key) => key + 1);
   }, []);
 
-  /** JUGAR TUTORIAL: carga el mini-nivel pedido con su personaje recomendado. */
-  const handlePlayTutorial = useCallback((id: TutorialId) => {
-    setHud(null);
-    setActiveTutorialId(id);
-    setScreen('game');
-    setRunKey((key) => key + 1);
-  }, []);
-
   /** SIGUIENTE TUTORIAL: avanza en el catálogo (no-op si ya es el último). */
   const handleNextTutorial = useCallback(() => {
     const index = TUTORIAL_SPECS.findIndex((spec) => spec.id === activeTutorialId);
@@ -140,7 +132,6 @@ export default function App() {
       {screen === 'title' ? (
         <TitleScreen
           onPlay={handlePlay}
-          onPlayTutorial={handlePlayTutorial}
           onPlayTraining={handlePlayTraining}
           settings={settings}
           onUpdateSettings={handleUpdateSettings}

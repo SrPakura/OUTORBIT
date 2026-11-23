@@ -4,7 +4,6 @@ import { NyxAnimator } from '@/game/render/nyxAnimator';
 
 // ============================================================================
 // Shader Raven Nebula: piel de NYX como nebulosa viva con estrellas titilantes
-// (extraído de src/ui/DomeArenaPreview.tsx)
 // ============================================================================
 
 const nyxVert = /* glsl */ `
@@ -89,7 +88,7 @@ function srgbVec3(hex: string): THREE.Vector3 {
 
 /**
  * Contorno blanco Inverted Hull que sigue el esqueleto de una SkinnedMesh,
- * con grosor de pincel irregular (extraído de DomeArenaPreview.tsx).
+ * con grosor de pincel irregular.
  */
 function addSkinnedWhiteOutline(mesh: THREE.SkinnedMesh, thickness: number): void {
   const outlineMat = new THREE.ShaderMaterial({

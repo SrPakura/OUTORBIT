@@ -1896,68 +1896,6 @@ export function buildPlanetModel(spec: PlanetSpec): {
 }
 
 // ============================================================================
-// Portal Warp (baliza de fin de nivel)
-// ============================================================================
-
-/**
- * Baliza/portal brillante que marca el final del nivel. Dos anillos
- * contrarrotando, núcleo pulsante y columna de luz semitransparente.
- */
-export function buildWarpPortal(): { group: THREE.Group; animTick: (dt: number) => void } {
-  const group = new THREE.Group();
-  group.name = 'warpPortal';
-
-  const base = toonMesh(new THREE.CylinderGeometry(0.9, 1.2, 0.4, 12), '#475569', 0.04);
-  base.position.y = -1.6;
-  group.add(base);
-
-  const ringA = toonMesh(new THREE.TorusGeometry(1.5, 0.14, 10, 40), '#67e8f9', 0.04, '#22d3ee');
-  group.add(ringA);
-
-  const ringB = toonMesh(new THREE.TorusGeometry(1.05, 0.11, 10, 32), '#c4b5fd', 0.035, '#a78bfa');
-  ringB.rotation.x = Math.PI / 2;
-  group.add(ringB);
-
-  const core = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(0.55, 1),
-    new THREE.MeshBasicMaterial({ color: 0x99f6e4 })
-  );
-  group.add(core);
-
-  const column = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.5, 0.75, 9, 12, 1, true),
-    new THREE.MeshBasicMaterial({
-      color: 0x67e8f9,
-      transparent: true,
-      opacity: 0.22,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
-  );
-  column.position.y = 3.4;
-  group.add(column);
-
-  const light = new THREE.PointLight(0x67e8f9, 60, 30, 1.8);
-  group.add(light);
-
-  let clock = 0;
-  return {
-    group,
-    animTick(dt: number): void {
-      clock += dt;
-      ringA.rotation.y += dt * 1.4;
-      ringA.rotation.x = Math.sin(clock * 0.8) * 0.3;
-      ringB.rotation.z += dt * -2.1;
-      const pulse = 1 + Math.sin(clock * 3.2) * 0.18;
-      core.scale.setScalar(pulse);
-      core.rotation.y += dt * 1.1;
-      light.intensity = 45 + Math.sin(clock * 3.2) * 20;
-    },
-  };
-}
-
-// ============================================================================
 // Guardias (centinelas de prueba del Hito 2) y disfraz robado
 // ============================================================================
 
