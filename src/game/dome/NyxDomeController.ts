@@ -150,18 +150,22 @@ const CAM_TUG_TOTAL = CAM_TUG_CONTRACT_TIME + CAM_TUG_STRETCH_TIME;
 const FOV_TUG_MAX = 18;
 // Offset over-the-shoulder: deja a Nyx abajo-izquierda del visor y libera la
 // estrella de 4 puntas al apuntar en flotación.
-const CAM_OFFSET_RIGHT_AIM = 0.48;
-const CAM_OFFSET_UP_AIM = 0.18;
-const CAM_OFFSET_RIGHT_ATTACK = 0.15;
+const CAM_OFFSET_RIGHT_AIM = 1.05;
+const CAM_OFFSET_UP_AIM = 0.36;
+const CAM_OFFSET_RIGHT_ATTACK = 0.65;
 // Encuadre de ataque: sube el look para que Nyx quede baja de centro.
-const CAM_ATTACK_LOOK_LIFT = 0.28;
-const CAM_ATTACK_LOOK_LIFT_FAST = 0.42;
+const CAM_ATTACK_LOOK_LIFT = 0.42;
+const CAM_ATTACK_LOOK_LIFT_FAST = 0.62;
 // Slerp de nivelación del horizonte al aterrizar (Gravity Rush).
 const CAM_HORIZON_SLERP_TIME = 0.45;
-// Dutch roll del horizonte (±0.22 rad ≈ ±12.5°).
-const CAM_ROLL_MAX = 0.22;
-const CAM_ROLL_TURN_K = 0.016;
-const CAM_ROLL_DASH_SIDE = 0.11;
+// Dutch roll del horizonte (±0.38 rad ≈ ±22°).
+const CAM_ROLL_MAX = 0.38;
+const CAM_ROLL_TURN_K = 0.032;
+const CAM_ROLL_DASH_SIDE = 0.22;
+// Lag elástico del rig: la base de seguimiento persigue a Nyx con un lerp
+// exponencial rápido en vuelo (inercia del dash) y casi rígido en suelo.
+const CAM_LOOK_LAG_LAMBDA_AIR = 16;
+const CAM_LOOK_LAG_LAMBDA_GROUND = 40;
 // Muelle de aterrizaje: hundimiento de cámara proporcional al impacto.
 const LANDING_DIP_MAX = 0.48;
 const LANDING_DIP_K = 0.045;
@@ -355,7 +359,10 @@ export class NyxDomeController {
   private camOffsetUp = 0; // offset over-the-shoulder vertical
   private lookLift = 0; // subida del look en patada / caída al vacío
   private landingDip = 0; // hundimiento vertical del look al aterrizar
-  private cameraRollRad = 0; // Dutch roll del horizonte (±0.22 rad)
+  // Base de seguimiento con lag elástico: el rig persigue a Nyx con inercia
+  // (se inicializa en el constructor sobre la posición de spawn).
+  private readonly camLookSmooth = new THREE.Vector3();
+  private cameraRollRad = 0; // Dutch roll del horizonte (±0.38 rad)
   private rollImpulse = 0; // impulso de roll por choque lateral (hit_stagger)
   private dashSideRoll = 0; // roll sostenido por dash lateral (A/D)
   private hitStopTimer = 0; // segundos REALES de hit-stop restantes
@@ -439,6 +446,9 @@ export class NyxDomeController {
     this.audio = audio;
     this.gamepad = gamepad;
     this.applySettings(settings);
+    // El rig arranca ya pegado a Nyx: sin barrido desde el origen en el
+    // primer frame del lag elástico.
+    this.camLookSmooth.copy(nyxRoot.position).addScaledVector(this.up, CAM_LOOK_HEIGHT);
     // Estado inicial: flotando en 0G donde la escena haya colocado a Nyx.
     this.animator.setState('zero_g_float');
   }
@@ -990,7 +1000,7 @@ export class NyxDomeController {
     this.gyroSpinRad += rawDt * (0.45 + speed * 0.22 + (isDrillReady ? 2.4 : 0));
 
     // --- Ruptura sónica al cruzar el umbral del taladro espiral (18 m/s):
-    // anillo de condensación que Nyx atraviesa + aura de velocidad terminal.
+    // anillo de condensación que Nyx atraviesa.
     if (isDrillReady && !this.terminalSpeedActive) {
       this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
     }
@@ -1025,9 +1035,7 @@ export class NyxDomeController {
       sdt,
       this.nyxRoot.position,
       this.velocity,
-      this.facing,
       this.mode,
-      isDrillReady,
       slabs,
       this.up,
     );
@@ -2421,30 +2429,44 @@ export class NyxDomeController {
     // --- Tambaleo orgánico de cámara (camWobble): turbulencia continua por
     // velocidad (fuerza G) + latigazo elástico amortiguado del dash + tambaleo
     // contundente del impacto, escalado por la energía cinética del golpe.
+    // En flotación quieta ya respira con una base orgánica (0.3) para que la
+    // cámara nunca se sienta muerta; desde 4 m/s la fuerza G manda.
     this.wobbleTime += dt;
     const wt = this.wobbleTime;
-    const g = clamp01((speed - 10) / 14);
+    const hoverBase = this.mode === 'floating' ? 0.3 : 0;
+    const g = Math.max(hoverBase, clamp01((speed - 4) / 14));
     const dashOsc = Math.sin(wt * 34) * this.dashWobbleImpulse;
     const impactOsc = Math.sin(wt * 26 + 0.6) * this.impactWobbleImpulse;
     this.dashWobbleImpulse *= Math.exp(-7 * dt);
     this.impactWobbleImpulse *= Math.exp(-6 * dt);
     const wobblePitch =
-      g * 0.026 * (Math.sin(wt * 6.7) * 0.6 + Math.sin(wt * 12.9 + 1.3) * 0.4) +
-      dashOsc * 0.05 +
-      impactOsc * 0.055;
+      g * 0.065 * (Math.sin(wt * 6.7) * 0.6 + Math.sin(wt * 12.9 + 1.3) * 0.4) +
+      dashOsc * 0.09 +
+      impactOsc * 0.099;
     const wobbleYaw =
-      g * 0.034 * (Math.sin(wt * 5.1 + 2.1) * 0.6 + Math.sin(wt * 10.7 + 0.4) * 0.4) +
-      dashOsc * 0.04 +
-      impactOsc * 0.045;
+      g * 0.085 * (Math.sin(wt * 5.1 + 2.1) * 0.6 + Math.sin(wt * 10.7 + 0.4) * 0.4) +
+      dashOsc * 0.072 +
+      impactOsc * 0.081;
     const wobbleRoll =
-      g * 0.042 * Math.sin(wt * 4.3 + 0.9) + dashOsc * 0.085 + impactOsc * 0.07;
+      g * 0.11 * Math.sin(wt * 4.3 + 0.9) + dashOsc * 0.153 + impactOsc * 0.126;
 
-    const look = this.tmpA
+    // --- Lag elástico del rig: la base de seguimiento persigue a Nyx con un
+    // lerp exponencial rápido (~16/s en vuelo) para que el dash y los giros
+    // bruscos tiren de la cámara con inercia física. Cámara y look se
+    // desplazan juntos, así que la dirección de mira no cambia y el apuntado
+    // sigue exacto: solo el encuadre se retrasa.
+    this.tmpA
       .copy(this.nyxRoot.position)
       .addScaledVector(this.up, CAM_LOOK_HEIGHT + this.landingDip)
       .addScaledVector(camUp, this.lookLift)
       .addScaledVector(this.camRight, this.camOffsetRight)
-      .addScaledVector(camUp, this.camOffsetUp)
+      .addScaledVector(camUp, this.camOffsetUp);
+    const lookLambda =
+      this.mode === 'grounded' ? CAM_LOOK_LAG_LAMBDA_GROUND : CAM_LOOK_LAG_LAMBDA_AIR;
+    this.camLookSmooth.lerp(this.tmpA, 1 - Math.exp(-lookLambda * dt));
+
+    const look = this.tmpA
+      .copy(this.camLookSmooth)
       .addScaledVector(this.camRight, wobbleYaw * this.camDist)
       .addScaledVector(camUp, wobblePitch * this.camDist);
     const back = this.tmpB.copy(this.camFwd).multiplyScalar(-1);

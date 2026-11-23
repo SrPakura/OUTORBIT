@@ -12,7 +12,6 @@ import type { NyxMovementMode, SlabCollider, SlabRaycastHit } from '@/game/dome/
 //   aterrizaje/despegue/derrape, motas de la estela gravitatoria).
 // - `rings`: anillos expansivos (rebote de cúpula, ruptura sónica, área).
 // - `streaks`: `LineSegments` con trazos de viento 3D que pasan junto a Nyx.
-// - `aura`: cáscara translúcida alrededor del cuerpo a velocidad terminal.
 // - `telemetry`: disco de sombra + anillo telémetro proyectados por raycast
 //   sobre el slab de aterrizaje (lectura de profundidad en 3D).
 //
@@ -31,8 +30,6 @@ const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 /** Velocidad a la que arrancan los trazos de viento 3D. */
 const STREAK_MIN_SPEED = 10;
-/** Velocidad terminal: aura + anillo de ruptura sónica + rayos 2D del HUD. */
-const TERMINAL_SPEED = 18;
 /** Alcance del telémetro de aterrizaje. */
 const TELEMETRY_RANGE = 14;
 
@@ -339,10 +336,6 @@ export class MotionVfxSystem {
   private streakCursor = 0;
   private streakAccum = 0;
 
-  // --- Aura de velocidad terminal
-  private readonly aura: THREE.Mesh;
-  private auraIntensity = 0;
-
   // --- Telémetro de aterrizaje (disco de sombra + anillo)
   private readonly telemetry: THREE.Group;
   private readonly telemetryDisc: THREE.Mesh;
@@ -402,22 +395,6 @@ export class MotionVfxSystem {
     );
     this.streaks.frustumCulled = false;
     scene.add(this.streaks);
-
-    // --- Aura de velocidad terminal
-    this.aura = new THREE.Mesh(
-      new THREE.SphereGeometry(1, 18, 12),
-      new THREE.MeshBasicMaterial({
-        color: 0x9be8ff,
-        transparent: true,
-        opacity: 0,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-    );
-    this.aura.visible = false;
-    this.aura.frustumCulled = false;
-    scene.add(this.aura);
 
     // --- Telémetro de aterrizaje
     this.telemetry = new THREE.Group();
@@ -483,7 +460,6 @@ export class MotionVfxSystem {
   spawnSonicBoomRing(position: THREE.Vector3, direction: THREE.Vector3): void {
     this.spawnRing(position, direction, 0x9be8ff, 5.5, 0.55, 0.85);
     this.spawnRing(position, direction, 0xffffff, 3.2, 0.4, 0.7);
-    this.auraIntensity = Math.max(this.auraIntensity, 0.85);
   }
 
   /**
@@ -561,9 +537,7 @@ export class MotionVfxSystem {
     dt: number,
     playerPos: THREE.Vector3,
     velocity: THREE.Vector3,
-    facing: THREE.Vector3,
     mode: NyxMovementMode,
-    isDrillReady: boolean,
     slabs: SlabCollider[],
     up: THREE.Vector3,
   ): void {
@@ -572,7 +546,6 @@ export class MotionVfxSystem {
     this.dust.update(dt);
     this.updateRings(dt);
     this.updateStreaks(dt, playerPos, velocity, speed);
-    this.updateAura(dt, playerPos, velocity, facing, speed, mode, isDrillReady, up);
     this.updateTelemetry(dt, playerPos, velocity, speed, mode, slabs, up);
   }
 
@@ -706,37 +679,6 @@ export class MotionVfxSystem {
     }
   }
 
-  private updateAura(
-    dt: number,
-    playerPos: THREE.Vector3,
-    velocity: THREE.Vector3,
-    facing: THREE.Vector3,
-    speed: number,
-    mode: NyxMovementMode,
-    isDrillReady: boolean,
-    up: THREE.Vector3,
-  ): void {
-    const terminal = speed >= TERMINAL_SPEED || isDrillReady;
-    const target = terminal && mode !== 'grounded' ? 1 : 0;
-    const lambda = target > this.auraIntensity ? 10 : 6;
-    this.auraIntensity += (target - this.auraIntensity) * (1 - Math.exp(-lambda * dt));
-    if (this.auraIntensity < 0.01) {
-      this.aura.visible = false;
-      return;
-    }
-    this.aura.visible = true;
-    // Centrada en el torso (el root de Nyx está a los pies).
-    this.aura.position.copy(playerPos).addScaledVector(up, 0.95);
-    _sDir.copy(velocity);
-    if (_sDir.lengthSq() < 1e-4) _sDir.copy(facing);
-    if (_sDir.lengthSq() < 1e-4) _sDir.set(0, 0, -1);
-    _sDir.normalize();
-    this.aura.quaternion.setFromUnitVectors(RING_FORWARD, _sDir);
-    const stretch = 1.6 + Math.min(1.6, speed * 0.05);
-    this.aura.scale.set(0.95, 0.95, stretch);
-    (this.aura.material as THREE.MeshBasicMaterial).opacity = 0.16 * this.auraIntensity;
-  }
-
   private updateTelemetry(
     dt: number,
     playerPos: THREE.Vector3,
@@ -830,9 +772,6 @@ export class MotionVfxSystem {
     this.scene.remove(this.streaks);
     this.streaks.geometry.dispose();
     (this.streaks.material as THREE.LineBasicMaterial).dispose();
-    this.scene.remove(this.aura);
-    this.aura.geometry.dispose();
-    (this.aura.material as THREE.MeshBasicMaterial).dispose();
     this.scene.remove(this.telemetry);
     this.telemetryDisc.geometry.dispose();
     (this.telemetryDisc.material as THREE.MeshBasicMaterial).dispose();
