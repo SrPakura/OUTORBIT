@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { NyxAnimator } from '@/game/render/nyxAnimator';
 import { NyxWalkPlayer, type WalkClips } from '@/game/render/nyxWalkPlayer';
+import { NyxLoopPlayer } from '@/game/render/nyxLoopPlayer';
 
 // ============================================================================
 // Shader Raven Nebula: piel de NYX como nebulosa viva con estrellas titilantes
@@ -156,11 +157,21 @@ function addSkinnedWhiteOutline(mesh: THREE.SkinnedMesh, thickness: number): voi
 // Carga del modelo riggeado de NYX con materiales cósmicos
 // ============================================================================
 
+export interface NyxClips {
+  /** Marcha con clips horneados; `null` si los GLB no están disponibles. */
+  walk: NyxWalkPlayer | null;
+  /** Carrera (BlendCap `run_lean`); `null` si falta el GLB. */
+  run: NyxLoopPlayer | null;
+  /** Flotación en 0G sin input (BlendCap `zero_g_float`). */
+  floatIdle: NyxLoopPlayer | null;
+  /** Flotación en 0G avanzando (BlendCap `float_fwd`). */
+  floatFwd: NyxLoopPlayer | null;
+}
+
 export interface LoadedNyx {
   root: THREE.Group;
   animator: NyxAnimator;
-  /** Marcha con clips horneados; `null` si los GLB no están disponibles. */
-  walk: NyxWalkPlayer | null;
+  clips: NyxClips;
   universeMat: THREE.ShaderMaterial;
   dispose: () => void;
 }
@@ -188,6 +199,23 @@ async function loadWalkClips(loader: GLTFLoader): Promise<WalkClips | null> {
     return { start, loop, end };
   } catch (error) {
     console.warn('[nyx] marcha desactivada, se usa el ciclo procedural', error);
+    return null;
+  }
+}
+
+/**
+ * Carga un clip de bucle de BlendCap. Igual que la marcha, un asset ausente no
+ * bloquea la partida: se devuelve `null` y el estado cae al ciclo procedural.
+ */
+async function loadLoopClip(
+  loader: GLTFLoader,
+  url: string,
+  label: string,
+): Promise<THREE.AnimationClip | null> {
+  try {
+    return await loadClip(loader, url);
+  } catch (error) {
+    console.warn(`[nyx] ${label} desactivado, se usa el ciclo procedural`, error);
     return null;
   }
 }
@@ -241,8 +269,43 @@ export async function loadNyxRigged(): Promise<LoadedNyx> {
   const walkClips = await loadWalkClips(loader);
   const walk = walkClips ? new NyxWalkPlayer(model, animator, walkClips) : null;
 
+  // Los tres clips de BlendCap llegan ya recortados al tramo que cierra en
+  // bucle. La carrera va por velocidad; las dos flotaciones son movimientos
+  // lentos sin cadencia que escalar, así que van a ritmo fijo.
+  const [runClip, floatIdleClip, floatFwdClip] = await Promise.all([
+    loadLoopClip(loader, '/models/nyx_run_loop.glb', 'carrera'),
+    loadLoopClip(loader, '/models/nyx_zero_g_float.glb', 'flotación 0G'),
+    loadLoopClip(loader, '/models/nyx_float_fwd.glb', 'flotación avanzando'),
+  ]);
+
+  const clips: NyxClips = {
+    walk,
+    // El clip de `run_lean` es un trote de ~1,6 m/s de suelo. A los 7,4 m/s del
+    // sprint el ritmo exacto sería 4,6 y la zancada se leería acelerada; con
+    // 0,42 baja a ~1,9 (0,39 s por ciclo) y se ve una carrera rápida. El precio
+    // es deslizamiento de pies, asumido igual que en la marcha.
+    run: runClip
+      ? new NyxLoopPlayer(model, animator, runClip, {
+          groundSpeed: 1.6,
+          cadenceScale: 0.42,
+          minRate: 1.2,
+          maxRate: 2.0,
+          blend: 0.16,
+        })
+      : null,
+    floatIdle: floatIdleClip
+      ? new NyxLoopPlayer(model, animator, floatIdleClip, { blend: 0.3 })
+      : null,
+    floatFwd: floatFwdClip
+      ? new NyxLoopPlayer(model, animator, floatFwdClip, { blend: 0.3 })
+      : null,
+  };
+
   const dispose = (): void => {
     walk?.dispose();
+    clips.run?.dispose();
+    clips.floatIdle?.dispose();
+    clips.floatFwd?.dispose();
     const materials = new Set<THREE.Material>();
     model.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
@@ -256,5 +319,5 @@ export async function loadNyxRigged(): Promise<LoadedNyx> {
     model.removeFromParent();
   };
 
-  return { root: model, animator, walk, universeMat, dispose };
+  return { root: model, animator, clips, universeMat, dispose };
 }

@@ -20,6 +20,7 @@ import {
 } from '@/game/dome/DomeSlabs';
 import { NyxAnimator, type NyxAnimParams, type NyxAnimState } from '@/game/render/nyxAnimator';
 import type { NyxWalkPlayer } from '@/game/render/nyxWalkPlayer';
+import type { NyxClips } from '@/game/render/nyxModelLoader';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
 import {
   formatKeyCode,
@@ -275,6 +276,7 @@ export class NyxDomeController {
   private readonly nyxRoot: THREE.Group;
   private readonly animator: NyxAnimator;
   private readonly walk: NyxWalkPlayer | null;
+  private readonly clips: NyxClips;
   private readonly vfx: MotionVfxSystem;
   private readonly audio: SynthAudio | undefined;
   private readonly gamepad: GamepadInput | undefined;
@@ -484,6 +486,7 @@ export class NyxDomeController {
     nyxRoot: THREE.Group,
     animator: NyxAnimator,
     walk: NyxWalkPlayer | null,
+    clips: NyxClips,
     vfx: MotionVfxSystem,
     settings: GameSettings,
     audio?: SynthAudio,
@@ -492,6 +495,7 @@ export class NyxDomeController {
     this.nyxRoot = nyxRoot;
     this.animator = animator;
     this.walk = walk;
+    this.clips = clips;
     this.vfx = vfx;
     this.audio = audio;
     this.gamepad = gamepad;
@@ -1096,6 +1100,9 @@ export class NyxDomeController {
     // La marcha escribe el esqueleto antes que el animador; mientras está
     // activa el animador está suspendido y su `update` no toca los huesos.
     this.walk?.update(simDt, speed);
+    this.clips.run?.update(simDt, speed);
+    this.clips.floatIdle?.update(simDt);
+    this.clips.floatFwd?.update(simDt);
     this.animator.update(simDt, _animParams);
     this.vfx.update(
       sdt,
@@ -2459,10 +2466,18 @@ export class NyxDomeController {
       // esqueleto antes de consultar si el estado ya terminó, porque mientras
       // está suspendida su `stateTime` no avanza.
       this.walk?.cancel();
+      this.clips.run?.cancel();
       if (this.animator.isFinished()) this.animLock = null;
       else return;
     }
-    if (this.mode !== 'grounded') this.walk?.cancel();
+    if (this.mode !== 'grounded') {
+      this.walk?.cancel();
+      this.clips.run?.cancel();
+    }
+    if (this.mode !== 'floating') {
+      this.clips.floatIdle?.cancel();
+      this.clips.floatFwd?.cancel();
+    }
     switch (this.mode) {
       case 'grounded': {
         const walk = this.walk;
@@ -2473,6 +2488,7 @@ export class NyxDomeController {
             speed > WALK_ANIM_MIN_SPEED &&
             speed <= WALK_ANIM_MAX_SPEED;
           if (wantsWalk) {
+            this.clips.run?.cancel();
             walk.setMoving(true, speed);
             return; // el clip manda sobre el esqueleto
           }
@@ -2487,14 +2503,42 @@ export class NyxDomeController {
             }
           }
         }
+        // Carrera horneada: cubre la banda que la marcha deja libre. Si el GLB
+        // falta, `run` es null y se cae al ciclo procedural de siempre.
+        const run = this.clips.run;
+        if (run !== null) {
+          if (!this.isSliding && hasMoveInput && speed > WALK_ANIM_MAX_SPEED) {
+            run.setActive(true);
+            return;
+          }
+          run.cancel();
+        }
         if (this.isSliding) this.animator.setState('gravity_slide');
         else if (speed > 0.7 && hasMoveInput) this.animator.setState('run');
         else this.animator.setState('idle');
         break;
       }
-      case 'floating':
+      case 'floating': {
+        // En 0G el clip manda: `float_fwd` mientras haya input, `zero_g_float`
+        // cuando se queda a la deriva. Sin GLB se usa el ciclo procedural.
+        const moving = hasMoveInput && speed > 0.6;
+        const idle = this.clips.floatIdle;
+        const fwd = this.clips.floatFwd;
+        if (moving && fwd !== null) {
+          idle?.cancel();
+          fwd.setActive(true);
+          return;
+        }
+        if (!moving && idle !== null) {
+          fwd?.cancel();
+          idle.setActive(true);
+          return;
+        }
+        idle?.cancel();
+        fwd?.cancel();
         this.animator.setState('zero_g_float');
         break;
+      }
       case 'dashing':
         if (this.animator.getState() !== 'air_dash') this.animator.setState('air_dash');
         break;
@@ -2792,9 +2836,12 @@ export class NyxDomeController {
   }
 
   private playOneShot(state: NyxAnimState): void {
-    // Un one-shot siempre gana: la marcha suelta el esqueleto antes de fijar
+    // Un one-shot siempre gana: los clips sueltan el esqueleto antes de fijar
     // el estado, para que el animador lo adopte ya con la pose del clip.
     this.walk?.cancel();
+    this.clips.run?.cancel();
+    this.clips.floatIdle?.cancel();
+    this.clips.floatFwd?.cancel();
     this.animator.setState(state);
     this.animLock = state;
   }
