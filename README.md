@@ -127,7 +127,7 @@ Referencia completa para navegar el código (incluye los módulos extraídos en 
 | Archivo | Líneas | Qué hace |
 |---------|--------|----------|
 | `types.ts` | 600 | **Contrato sagrado**: tipos y specs compartidos de todo el motor (planetas, niveles, enemigos, props, estructuras, HUD) + `GAME_CONSTANTS`. No tocar a la ligera. |
-| `settings.ts` | 396 | `GameSettings`, bindings reasignables de teclado y mando, persistencia en localStorage, formato de teclas. |
+| `settings.ts` | 399 | `GameSettings`, bindings reasignables de teclado y mando, persistencia en localStorage, formato de teclas. |
 | `GameEngine.ts` | 1464 | Bucle principal de campaña: renderer, cámara orbital, listeners de input, sincronización de HUD, pausa, zoom. |
 
 #### `src/game/entities/`
@@ -142,23 +142,23 @@ Referencia completa para navegar el código (incluye los módulos extraídos en 
 
 | Archivo | Líneas | Qué hace |
 |---------|--------|----------|
-| `domeTypes.ts` | 100 | Tipos compartidos del modo: `DomeHudState`, `SlabCollider`, `TestEnemySphere`, constantes de límites. |
-| `NyxDomeController.ts` | 2006 | Controlador de Nyx dentro de la Cúpula: input, acciones, modos de física (flotar/suelo), colisiones con slabs, cámara. |
-| `DomeWaveManager.ts` | 2065 | Oleadas: arquetipos, spawning, proyectiles, poses de enemigos. Delega la IA de jefes en los módulos `dome*Behavior`. |
+| `domeTypes.ts` | 145 | Tipos compartidos del modo: `DomeHudState` (incluye brújula gravitatoria y destello de Edén), `SlabCollider`, `SlabRaycastHit`, `TestEnemySphere`, constantes de límites. |
+| `NyxDomeController.ts` | 2561 | Controlador de Nyx dentro de la Cúpula: input, acciones, modos de física (flotar/suelo), colisiones con slabs, cámara spring-arm con slerp de horizonte, y físicas de flujo (derrape aéreo, landing slide, ledge glance, touch-and-go). |
+| `DomeWaveManager.ts` | 2069 | Oleadas: arquetipos, spawning, proyectiles, poses de enemigos. Delega la IA de jefes en los módulos `dome*Behavior`. |
 | `domeKronosBehavior.ts` | 497 | **NUEVO (refactor)**: IA del Leviatán Kronos de la Cúpula (contexto `KronosBehaviorContext`). |
-| `domeCrabBehavior.ts` | 491 | **NUEVO (refactor)**: IA del Cangrejo Artillero (contexto `CrabBehaviorContext`). |
+| `domeCrabBehavior.ts` | 621 | **NUEVO (refactor)**: IA del Cangrejo Artillero (contexto `CrabBehaviorContext`). |
 | `domeEnemyOrient.ts` | 40 | **NUEVO (refactor)**: orientación de enemigos dome (`lookAtQuat`, `faceTowards`), deduplicada de 5 poses repetidas. |
 | `DomeCombatSystem.ts` | 421 | Daño, HP, atribución de golpes, regla de espinas (`THORNS_DAMAGE_TO_NYX`). |
 | `DomeProgression.ts` | 551 | Progresión roguelite: niveles, elección de cartas, catálogos de skills activas y pasivas. |
-| `DomeSkills.ts` | 1172 | Habilidades activas: campo gravitacional, wells, rocas. |
-| `DomePickups.ts` | 226 | Pickups de XP y vida. |
+| `DomeSkills.ts` | 1384 | Habilidades activas: campo gravitacional, wells, rocas, y el trío visual de área (anillo de suelo proyectado + cúpula iridiscente + giro 0G). |
+| `DomePickups.ts` | 232 | Pickups de XP, Edén y vida, con callback `onCollect` para la llamarada de absorción. |
 | `DomeRunStats.ts` | 222 | `DomeRunTracker` (estadísticas de la run) + envío al leaderboard vía Base44. |
-| `DomeFloatingSlabs.ts` | 432 | Plataformas flotantes de la arena (pool con colliders). |
+| `DomeFloatingSlabs.ts` | 445 | Plataformas flotantes de la arena (pool con colliders). |
 | `DomeSphereTiles.ts` | 475 | Suelos esféricos por modo de oleada (basic/miniboss/boss). |
-| `DomeSlabs.ts` | 423 | Gestión de slabs del suelo básico. |
-| `DomeSlabGeometry.ts` | 445 | Geometrías de los slabs. |
+| `DomeSlabs.ts` | 636 | Gestión de slabs del suelo básico y `raycastSlabs` (caja y malla exacta, con `out` reutilizable para evitar allocations). |
+| `DomeSlabGeometry.ts` | 467 | Geometrías de los slabs. |
 | `DomeEnemyModels.ts` | 650 | Modelos procedurales de los arquetipos enemigos de la Cúpula. |
-| `MotionVfx.ts` | 195 | VFX de movimiento (speed lines, flashes de impacto). |
+| `MotionVfx.ts` | 842 | VFX de movimiento: pools preasignados de chispas y polvo, anillos (barrera, ruptura sónica), trazos de viento 3D, aura de velocidad terminal, estela gravitatoria, llamarada de absorción y telémetro de aterrizaje. |
 | `domeArenaScene.ts` → en `render/` | 1804 | Ver `render/domeArenaScene.ts`. |
 
 #### `src/game/render/`
@@ -170,7 +170,7 @@ Referencia completa para navegar el código (incluye los módulos extraídos en 
 | `proceduralModels.ts` | 67 | **Barril de re-exportación** de `models/`: conserva la API histórica (`buildCharacterModel`, `buildEnemyModelBySkin`, `buildPlanetModel`, etc.) para que los consumidores no cambien. |
 | `cityModels.ts` | 829 | Props de ciudad (`buildCityPropMesh`). |
 | `domeArenaScene.ts` | 1804 | Backdrop de la Cúpula: shaders GLSL (niebla, estrellas), materiales y montaje de la escena de arena. |
-| `nyxModelLoader.ts` | 209 | Carga de `public/models/nyx_rigged.glb` (`loadNyxRigged`, tipo `LoadedNyx`). |
+| `nyxModelLoader.ts` | 234 | Carga de `public/models/nyx_rigged.glb` (`loadNyxRigged`, tipo `LoadedNyx`) y uniforms `uGravityShift`/`uSpeed01` del shader de Nyx. |
 | `nyxAnimator.ts` | 922 | Animator procedural de Nyx (se empaqueta aparte con esbuild). |
 | `nyxAnimsGrounded.ts` | 320 | Clips de animación en suelo (idle, correr, saltar). |
 | `nyxAnimsCombat.ts` | 347 | Clips de combate (disparo, parry, daño). |
@@ -241,26 +241,26 @@ Antes era un único `proceduralModels.ts` de 4.778 líneas; ahora cada familia t
 
 | Archivo | Líneas | Qué hace |
 |---------|--------|----------|
-| `TitleScreen.tsx` | 170 | Pantalla de título con menú principal (campaña, tutoriales, cúpula, opciones). |
+| `TitleScreen.tsx` | 171 | Pantalla de título con menú principal (campaña, tutoriales, cúpula, opciones). |
 | `TitleDioramaSandbox.ts` | 484 | Diorama 3D del título con el sandbox jugable de fondo. |
 | `GameHUD.tsx` | 1197 | HUD de campaña, memoizado por secciones (refactor): vida, estasis, escuadrón, retícula, prompts. |
-| `ControlsModal.tsx` | 457 | Panel de opciones y reasignación de controles (teclado + mando). |
-| `LeaderboardModal.tsx` | 128 | Leaderboard global del modo Cúpula. |
+| `ControlsModal.tsx` | 459 | Panel de opciones y reasignación de controles (teclado + mando). |
+| `LeaderboardModal.tsx` | 129 | Leaderboard global del modo Cúpula. |
 | `BattleReportScreen.tsx` | 353 | Informe de fin de campaña. |
-| `DomeGameView.tsx` | 291 | Vista del modo Cúpula: React puro (estado, handlers, JSX). El runtime vive en `domeGameLoop.ts`. |
-| `domeGameLoop.ts` | 833 | **NUEVO (refactor)**: runtime del modo Cúpula (`startDomeGameLoop`): renderer, escena, oleadas, input, tick y limpieza. Recibe refs y setters por parámetro y devuelve el dispose. |
-| `DomeHudSketch.tsx` | 467 | HUD del modo Cúpula (dibujado a mano alzada). |
-| `DomePauseModal.tsx` | 215 | Pausa del modo Cúpula. |
+| `DomeGameView.tsx` | 293 | Vista del modo Cúpula: React puro (estado, handlers, JSX). El runtime vive en `domeGameLoop.ts`. |
+| `domeGameLoop.ts` | 842 | **NUEVO (refactor)**: runtime del modo Cúpula (`startDomeGameLoop`): renderer, escena, oleadas, input, tick y limpieza. Recibe refs y setters por parámetro y devuelve el dispose. |
+| `DomeHudSketch.tsx` | 620 | HUD del modo Cúpula (dibujado a mano alzada): medidores con alerta crítica, brújula gravitatoria, rayos radiales de velocidad terminal y sheen de recarga. |
+| `DomePauseModal.tsx` | 217 | Pausa del modo Cúpula. |
 | `DomeBattleReport.tsx` | 260 | Informe de combate de la Cúpula (game over + envío de puntuación). |
 | `DomeTrainingPanel.tsx` | 284 | Panel debug de entrenamiento (F2 / Tab). |
 | `FluidLevelUpModal.tsx` | 408 | Modal de subida de nivel con elección de cartas. |
-| `MobileBlocker.tsx` | 44 | Aviso de "solo PC" en pantallas móviles. |
+| `MobileBlocker.tsx` | 45 | Aviso de "solo PC" en pantallas móviles. |
 
 ### `src/i18n/`, `src/api/`, `src/components/`, `src/pages/`, `src/lib/`
 
 | Carpeta | Qué hace |
 |---------|----------|
-| `src/i18n/` | `index.ts` (hook `useI18n`) + `es.json` y `en.json` con **paridad exacta de claves** (166). Si tocas UI con traducciones, mantén la paridad. |
+| `src/i18n/` | `index.ts` (hook `useI18n`) + `es.json` y `en.json` con **paridad exacta de claves** (170). Si tocas UI con traducciones, mantén la paridad. |
 | `src/api/` | `base44Client.js` (cliente Base44) y `leaderboard.ts` (API del leaderboard). |
 | `src/components/` + `src/pages/` + `src/lib/` | Boilerplate de auth de Base44: login, registro, MFA, OAuth, rutas protegidas. |
 

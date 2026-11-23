@@ -138,6 +138,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   const runTracker = new DomeRunTracker();
   runTrackerRef.current = runTracker;
   const vfx = new MotionVfxSystem(scene);
+  // Llamarada de absorción: recoger EXP/Edén en pleno vuelo se siente jugoso.
+  pickups.onCollect = (kind, position) => {
+    vfx.spawnAbsorbFlare(position, kind);
+  };
   const audio = new SynthAudio();
   audio.setVolumeMultiplier(settingsRef.current.masterVolume);
   audioRef.current = audio;
@@ -402,6 +406,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         gamepad,
       );
       controller.setViewportSize(window.innerWidth, window.innerHeight);
+      // Gravity Shift: el material de nebulosa de Nyx se enciende en vuelo.
+      controller.attachNyxMaterial(nyx.universeMat);
       controller.onDomeBounceDamage = () => {
         combat.applyDomeBarrierDamageToNyx();
       };

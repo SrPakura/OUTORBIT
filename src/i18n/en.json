@@ -73,7 +73,8 @@
     "floatControls": "IN 0G FLOAT: MOUSE ROTATE BODY · WASD THRUST (1 EDEN/S, 0G INERTIA) · RIGHT CLICK + WASD DASH (3 EDEN)",
     "speedAttackControls": "SPEED ATTACK (2 EDEN/S): LEFT CLICK (WITH ENEMY IN SIGHT = KICK/DRILL · NO ENEMY = VOID FALL) · SPACE CANCELS WITH FLIP",
     "gamepadConnected": "GAMEPAD CONNECTED · OPTIONS PAUSE",
-    "menuButton": "← MENU"
+    "menuButton": "← MENU",
+    "gravityCompass": "GRAV"
   },
   "pause": {
     "subtitle": "DOME · FROZEN SIMULATION",

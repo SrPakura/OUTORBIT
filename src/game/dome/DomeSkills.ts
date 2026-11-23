@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createComicCelMaterial } from '@/game/render/toonMaterials';
-import type { SlabCollider } from './domeTypes';
+import { raycastSlabs } from './DomeSlabs';
+import type { SlabCollider, SlabRaycastHit } from './domeTypes';
 import type { ActiveSkillId } from './DomeProgression';
 
 // ============================================================================
@@ -86,6 +87,16 @@ const _impulse = new THREE.Vector3();
 /** Impulso nulo de las habilidades sin empuje (implosión). */
 const _zeroImpulse = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
+/** Hit reutilizado por el raycast de proyección del anillo de suelo. */
+const _groundHit: SlabRaycastHit = {
+  slab: null as unknown as SlabCollider,
+  point: new THREE.Vector3(),
+  normal: new THREE.Vector3(),
+  distance: 0,
+};
+/** Origen/dirección del raycast del anillo de suelo (no aliasan con _v1.._v3). */
+const _ringOrigin = new THREE.Vector3();
+const _ringDir = new THREE.Vector3();
 
 function nearestEnemy(
   from: THREE.Vector3,
@@ -209,6 +220,56 @@ interface FadingVfx {
   duration: number;
 }
 
+/** Cúpula translúcida de área con borde iridiscente cian-magenta. */
+interface AreaDomeVfx {
+  mesh: THREE.Mesh;
+  material: THREE.ShaderMaterial;
+  elapsed: number;
+  duration: number;
+  radius: number;
+}
+
+const AREA_DOME_VERT = /* glsl */ `
+  varying vec3 vNormalW;
+  varying vec3 vViewDir;
+  void main() {
+    vec4 worldPos = modelMatrix * vec4( position, 1.0 );
+    vNormalW = normalize( mat3( modelMatrix ) * normal );
+    vViewDir = normalize( cameraPosition - worldPos.xyz );
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
+  }
+`;
+
+const AREA_DOME_FRAG = /* glsl */ `
+  uniform vec3 uColorA;
+  uniform vec3 uColorB;
+  uniform float uOpacity;
+  varying vec3 vNormalW;
+  varying vec3 vViewDir;
+  void main() {
+    float f = 1.0 - abs( dot( normalize( vNormalW ), normalize( vViewDir ) ) );
+    float rim = smoothstep( 0.35, 1.0, f );
+    vec3 col = mix( uColorA, uColorB, rim );
+    gl_FragColor = vec4( col, uOpacity * ( 0.10 + rim * 0.90 ) );
+  }
+`;
+
+function createAreaDomeMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    vertexShader: AREA_DOME_VERT,
+    fragmentShader: AREA_DOME_FRAG,
+    uniforms: {
+      uColorA: { value: new THREE.Color(0x22d3ee) },
+      uColorB: { value: new THREE.Color(0xa855f7) },
+      uOpacity: { value: 0.55 },
+    },
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // DomeSkillExecutor
 // ---------------------------------------------------------------------------
@@ -224,6 +285,7 @@ export class DomeSkillExecutor {
   private readonly blackHoles: BlackHoleState[] = [];
   private readonly implosions: FadingVfx[] = [];
   private readonly halos: FadingVfx[] = [];
+  private readonly domes: AreaDomeVfx[] = [];
   private gravityField: GravityFieldState | null = null;
   /** Escombros de suelos rotos esperando a ser agarrados por el campo. */
   private readonly looseDebris: LooseDebris[] = [];
@@ -237,6 +299,8 @@ export class DomeSkillExecutor {
   private readonly linkGeometry = new THREE.CylinderGeometry(0.05, 0.05, 1, 6, 1, true);
   private readonly haloGeometry = new THREE.TorusGeometry(1.15, 0.06, 8, 42);
   private readonly flashGeometry = new THREE.SphereGeometry(1, 16, 12);
+  private readonly domeGeometry = new THREE.SphereGeometry(1, 24, 16);
+  private readonly groundRingGeometry = new THREE.RingGeometry(0.86, 1, 48).rotateX(-Math.PI / 2);
 
   // --- Materiales compartidos (roca sólida limpia sin shader galáctico) ---
   private readonly rockMaterial = new THREE.MeshStandardMaterial({
@@ -296,6 +360,14 @@ export class DomeSkillExecutor {
     color: 0xdf9fff,
     transparent: true,
     opacity: 0.85,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  private readonly groundRingMaterial = new THREE.MeshBasicMaterial({
+    color: 0x67e8f9,
+    transparent: true,
+    opacity: 0.75,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
@@ -420,6 +492,8 @@ export class DomeSkillExecutor {
       fragments: [],
       level,
     };
+    // Capa 1 del trío de área: anillo en el suelo bajo el ancla del campo.
+    this.spawnAreaGroundRing(anchor, 4 + level, 0.6, ctx.slabs);
 
     // Escombros agarrables: los más cercanos a Nyx se convierten en rocas
     // orbitantes antes de generar rocas nuevas.
@@ -579,7 +653,11 @@ export class DomeSkillExecutor {
       _v1.subVectors(enemy.position, ctx.playerPos);
       const dist = _v1.length();
       if (dist > radius || dist < 1e-4) continue;
-      _v1.divideScalar(dist).multiplyScalar(force);
+      _v1.divideScalar(dist);
+      // Giro lento en 0G: componente tangencial al radio, además del empuje.
+      _v2.crossVectors(_v1, UP);
+      if (_v2.lengthSq() > 1e-6) _v2.normalize();
+      _v1.multiplyScalar(force).addScaledVector(_v2, force * 0.35);
       _v1.y += force * 0.25;
       _impulse.copy(_v1);
       ctx.onDamageEnemy(enemy, damage, _impulse);
@@ -600,6 +678,10 @@ export class DomeSkillExecutor {
     }
 
     this.spawnExpandingWave(ctx.playerPos, radius + 2.5, 0.55, this.waveMaterial);
+    // Lectura de área en 3 capas: anillo pegado al suelo + cúpula iridiscente
+    // con el radio exacto (el giro 0G va en el impulso tangencial de arriba).
+    this.spawnAreaDome(ctx.playerPos, radius, 0.55);
+    this.spawnAreaGroundRing(ctx.playerPos, radius, 0.55, ctx.slabs);
     return { triggered: true, animOverride: 'counter_parry' };
   }
 
@@ -625,6 +707,10 @@ export class DomeSkillExecutor {
     if (candidates.length >= 2) {
       const link = new THREE.Mesh(this.linkGeometry, this.linkMaterial.clone());
       this.scene.add(link);
+      // Cúpula de área en el punto medio del enlace: marca el radio de acción.
+      _v3.addVectors(candidates[0].position, candidates[1].position).multiplyScalar(0.5);
+      this.spawnAreaDome(_v3, 6 + level, ATTRACTION_DURATION);
+      this.spawnAreaGroundRing(_v3, 6 + level, ATTRACTION_DURATION, ctx.slabs);
       this.wells.push({
         mode: 'enemy_pair',
         level,
@@ -648,6 +734,13 @@ export class DomeSkillExecutor {
       if (slabs.length === 2) {
         const link = new THREE.Mesh(this.linkGeometry, this.linkMaterial.clone());
         this.scene.add(link);
+        this.spawnAreaDome(candidates[0].position, 5 + level, ATTRACTION_DURATION);
+        this.spawnAreaGroundRing(
+          candidates[0].position,
+          5 + level,
+          ATTRACTION_DURATION,
+          ctx.slabs,
+        );
         this.wells.push({
           mode: 'slab_crush',
           level,
@@ -710,6 +803,10 @@ export class DomeSkillExecutor {
     group.position.copy(ctx.playerPos).addScaledVector(ctx.forwardDir, 1.5);
     this.scene.add(group);
 
+    // Cúpula de área anclada al grupo: acompaña a la singularidad en su deriva.
+    this.spawnAreaDome(group.position, 8 + level * 2.5, BLACK_HOLE_DURATION, group);
+    this.spawnAreaGroundRing(group.position, 8 + level * 2.5, BLACK_HOLE_DURATION, ctx.slabs);
+
     this.blackHoles.push({
       group,
       core,
@@ -731,6 +828,8 @@ export class DomeSkillExecutor {
     if (target === null) return { triggered: false };
 
     this.spawnImplosion(target.position);
+    this.spawnAreaDome(target.position, 4, 0.5);
+    this.spawnAreaGroundRing(target.position, 4, 0.5, ctx.slabs);
     ctx.onDamageEnemy(target, IMPLOSION_DAMAGE, _zeroImpulse, true);
     return { triggered: true, animOverride: 'eden_absorb' };
   }
@@ -752,6 +851,7 @@ export class DomeSkillExecutor {
     this.updateWaves(dt);
     this.updateWells(dt, enemies, onDamageEnemy);
     this.updateBlackHoles(dt, enemies, onDamageEnemy);
+    this.updateDomes(dt);
     this.updateFadingVfx(this.implosions, dt);
     this.updateFadingVfx(this.halos, dt);
   }
@@ -1071,6 +1171,110 @@ export class DomeSkillExecutor {
     this.spawnExpandingWave(position, 4, 0.35, this.flashMaterial);
   }
 
+  /**
+   * Capa 2 de lectura de área: cúpula translúcida con borde iridiscente
+   * cian-magenta que marca el radio EXACTO de acción de la habilidad.
+   */
+  private spawnAreaDome(
+    position: THREE.Vector3,
+    radius: number,
+    duration: number,
+    parent?: THREE.Object3D,
+  ): void {
+    const material = createAreaDomeMaterial();
+    const mesh = new THREE.Mesh(this.domeGeometry, material);
+    if (parent) {
+      mesh.position.set(0, 0, 0);
+      parent.add(mesh);
+    } else {
+      mesh.position.copy(position);
+      this.scene.add(mesh);
+    }
+    mesh.scale.setScalar(0.01);
+    this.domes.push({ mesh, material, elapsed: 0, duration, radius });
+  }
+
+  /**
+   * Capa 1 de lectura de área: anillo expansivo pegado al suelo más cercano,
+   * orientado a su normal para que se lea como una onda de choque en 3D.
+   */
+  /**
+   * Capa 1 del trío de área: anillo expansivo pegado al suelo más cercano.
+   * Proyecta el centro con un raycast para que no quede flotando en el aire
+   * cuando la habilidad se lanza en pleno vuelo.
+   */
+  private spawnAreaGroundRing(
+    position: THREE.Vector3,
+    radius: number,
+    duration: number,
+    slabs: SlabCollider[],
+  ): void {
+    const normal = this.nearestSlabNormal(position, slabs, 14);
+    if (normal === null) return;
+    _ringOrigin.copy(position).addScaledVector(normal, 3);
+    _ringDir.copy(normal).multiplyScalar(-1);
+    const hit = raycastSlabs(slabs, _ringOrigin, _ringDir, 8, _groundHit);
+    this.spawnGroundRing(hit ? hit.point : position, normal, radius, duration);
+  }
+
+  private spawnGroundRing(
+    position: THREE.Vector3,
+    normal: THREE.Vector3,
+    radius: number,
+    duration: number,
+  ): void {
+    const material = this.groundRingMaterial.clone();
+    const mesh = new THREE.Mesh(this.groundRingGeometry, material);
+    mesh.position.copy(position).addScaledVector(normal, 0.05);
+    mesh.quaternion.setFromUnitVectors(UP, normal);
+    mesh.scale.setScalar(0.01);
+    this.scene.add(mesh);
+    this.waves.push({
+      mesh,
+      material,
+      elapsed: 0,
+      duration,
+      maxRadius: radius,
+      baseOpacity: material.opacity,
+    });
+  }
+
+  /** Normal de la cara superior del slab más cercano (o null si no hay). */
+  private nearestSlabNormal(
+    position: THREE.Vector3,
+    slabs: SlabCollider[],
+    maxDistance: number,
+  ): THREE.Vector3 | null {
+    let best: SlabCollider | null = null;
+    let bestDist = maxDistance;
+    for (const slab of slabs) {
+      const d = slab.center.distanceTo(position);
+      if (d < bestDist) {
+        bestDist = d;
+        best = slab;
+      }
+    }
+    if (best === null) return null;
+    return _v1.set(0, 1, 0).applyQuaternion(best.quaternion);
+  }
+
+  private updateDomes(dt: number): void {
+    for (let i = this.domes.length - 1; i >= 0; i--) {
+      const dome = this.domes[i];
+      dome.elapsed += dt;
+      const t = Math.min(1, dome.elapsed / dome.duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      dome.mesh.scale.setScalar(Math.max(0.01, dome.radius * eased));
+      dome.mesh.rotation.y += dt * 0.35;
+      dome.material.uniforms.uOpacity.value = 0.55 * (1 - t);
+      if (t >= 1) {
+        dome.mesh.removeFromParent();
+        dome.material.dispose();
+        this.domes.splice(i, 1);
+      }
+    }
+  }
+
   // ------------------------------------------------------------------
   // Helpers
   // ------------------------------------------------------------------
@@ -1143,6 +1347,11 @@ export class DomeSkillExecutor {
     this.wells.length = 0;
     for (const bh of this.blackHoles) this.scene.remove(bh.group);
     this.blackHoles.length = 0;
+    for (const dome of this.domes) {
+      dome.mesh.removeFromParent();
+      dome.material.dispose();
+    }
+    this.domes.length = 0;
     for (const list of [this.implosions, this.halos]) {
       for (const vfx of list) {
         this.scene.remove(vfx.mesh);
@@ -1159,6 +1368,8 @@ export class DomeSkillExecutor {
     this.linkGeometry.dispose();
     this.haloGeometry.dispose();
     this.flashGeometry.dispose();
+    this.domeGeometry.dispose();
+    this.groundRingGeometry.dispose();
     this.rockMaterial.dispose();
     this.waveMaterial.dispose();
     this.sliceMaterial.dispose();
@@ -1168,5 +1379,6 @@ export class DomeSkillExecutor {
     this.haloMaterial.dispose();
     this.flashMaterial.dispose();
     this.implosionMaterial.dispose();
+    this.groundRingMaterial.dispose();
   }
 }

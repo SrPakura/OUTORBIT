@@ -58,6 +58,8 @@ const INITIAL_HUD: DomeHudState = {
   impactFlash: 0,
   cameraRollDeg: 0,
   gyroSpinRad: 0,
+  gravityCompassDeg: 90,
+  edenFlash: 0,
 };
 
 export default function DomeGameView({ settings, onExit, trainingMode }: DomeGameViewProps) {

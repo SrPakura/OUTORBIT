@@ -434,6 +434,7 @@ export function raycastSlabs(
   origin: THREE.Vector3,
   direction: THREE.Vector3,
   maxDistance: number,
+  out?: SlabRaycastHit,
 ): SlabRaycastHit | null {
   let bestT = maxDistance;
   let best: SlabRaycastHit | null = null;
@@ -468,12 +469,14 @@ export function raycastSlabs(
         if (t <= 1e-4 || t >= bestT) continue;
         bestT = t;
         if (!best) {
-          best = {
-            slab,
-            point: new THREE.Vector3(),
-            normal: new THREE.Vector3(),
-            distance: t,
-          };
+          best =
+            out ??
+            {
+              slab,
+              point: new THREE.Vector3(),
+              normal: new THREE.Vector3(),
+              distance: t,
+            };
         }
         best.slab = slab;
         best.distance = t;
@@ -537,12 +540,16 @@ export function raycastSlabs(
     }
     bestT = tmin;
     if (!best) {
-      best = {
-        slab,
-        point: new THREE.Vector3(),
-        normal: new THREE.Vector3(),
-        distance: tmin,
-      };
+      // `out` permite reutilizar el objeto de impacto en bucles calientes
+      // (telémetro de aterrizaje): cero allocations por frame.
+      best =
+        out ??
+        {
+          slab,
+          point: new THREE.Vector3(),
+          normal: new THREE.Vector3(),
+          distance: tmin,
+        };
     }
     best.slab = slab;
     best.distance = tmin;

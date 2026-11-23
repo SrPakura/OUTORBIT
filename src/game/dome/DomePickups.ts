@@ -52,6 +52,11 @@ export class DomePickupManager {
   private readonly pool: PickupItem[] = [];
   private readonly geometry = new THREE.OctahedronGeometry(PICKUP_RADIUS, 0);
   private readonly materials: Record<DomePickupKind, THREE.MeshBasicMaterial>;
+  /**
+   * Callback al recoger un orbe: la vista lo usa para la llamarada de
+   * absorción (destello espiral violeta/cian de 0.25 s en el torso de Nyx).
+   */
+  onCollect?: (kind: DomePickupKind, position: THREE.Vector3) => void;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -148,6 +153,7 @@ export class DomePickupManager {
         if (item.kind === 'exp') gains.expGained += item.value;
         else if (item.kind === 'eden') gains.edenGained += item.value;
         else gains.hpGained += item.value;
+        this.onCollect?.(item.kind, item.mesh.position);
         this.deactivate(item);
       }
     }

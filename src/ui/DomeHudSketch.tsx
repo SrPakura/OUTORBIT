@@ -27,27 +27,56 @@ function Meter({
   max,
   barClass,
   glow,
+  critical = false,
+  flash = 0,
 }: {
   label: string;
   value: number;
   max: number;
   barClass: string;
   glow: string;
+  critical?: boolean;
+  flash?: number;
 }) {
   const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
   return (
     <div className="mt-2">
       <div className="flex items-baseline justify-between text-[9px] font-bold tracking-[0.28em]">
-        <span className="text-white/55">{label}</span>
-        <span className="tabular-nums text-white/40">
+        <span
+          className={critical ? 'text-rose-300' : 'text-white/55'}
+          style={critical ? { animation: 'domeHudCritical 0.7s ease-in-out infinite' } : undefined}
+        >
+          {label}
+        </span>
+        <span className={`tabular-nums ${critical ? 'text-rose-300' : 'text-white/40'}`}>
           {Math.max(0, Math.ceil(value))}
         </span>
       </div>
-      <div className="mt-1 h-[3px] w-full -skew-x-12 overflow-hidden bg-white/12">
+      <div
+        className={`relative mt-1 h-[3px] w-full -skew-x-12 overflow-hidden ${
+          critical ? 'bg-rose-500/25' : 'bg-white/12'
+        }`}
+      >
         <div
-          className={`h-full transition-[width] duration-150 ${barClass}`}
-          style={{ width: `${pct}%`, boxShadow: glow }}
+          className={`h-full transition-[width] duration-150 ${
+            critical ? 'bg-gradient-to-r from-rose-500 to-amber-300' : barClass
+          }`}
+          style={{
+            width: `${pct}%`,
+            boxShadow: critical ? '0 0 10px rgba(244,63,94,0.9)' : glow,
+          }}
         />
+        {/* Sheen de recarga: destello blanco que barre la barra al recuperar. */}
+        {flash > 0.01 && (
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              opacity: Math.min(1, flash),
+              background:
+                'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.95) 45%, transparent 100%)',
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -85,6 +114,13 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
   const expPct =
     hud.expToNext > 0 ? Math.max(0, Math.min(100, (hud.exp / hud.expToNext) * 100)) : 0;
 
+  // --- Alerta crítica de Edén (< 20%): barra y borde del visor en rojo/ámbar.
+  const edenPct = hud.maxEden > 0 ? hud.eden / hud.maxEden : 1;
+  const edenCritical = edenPct < 0.2;
+
+  // --- Rayos radiales anime 2D: solo a velocidad terminal (>= 18 m/s).
+  const radialLines = Math.max(0, (hud.speedLinesIntensity - 0.5) / 0.5);
+
   return (
     <div className="pointer-events-none absolute inset-0 z-20 select-none overflow-hidden font-mono text-white">
       {/* 1. Screentones halftone manga en los bordes — densidad por velocidad */}
@@ -99,6 +135,23 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
             backgroundPosition: '0 0, 6px 6px',
             maskImage: HALFTONE_MASK,
             WebkitMaskImage: HALFTONE_MASK,
+          }}
+        />
+      )}
+
+      {/* 1a. Rayos radiales anime 2D — velocidad terminal (>= 18 m/s):
+          corona de líneas cinéticas blancas y oscuras apuntando al punto de
+          fuga central, complementando los screentones halftone. */}
+      {radialLines > 0.01 && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            opacity: Math.min(0.85, radialLines),
+            backgroundImage:
+              'repeating-conic-gradient(from 0deg at 50% 50%, rgba(255,255,255,0.85) 0deg 0.32deg, transparent 0.32deg 2.4deg, rgba(9,3,20,0.9) 2.4deg 2.9deg, transparent 2.9deg 5.8deg)',
+            maskImage: 'radial-gradient(circle at 50% 50%, transparent 34%, black 78%)',
+            WebkitMaskImage: 'radial-gradient(circle at 50% 50%, transparent 34%, black 78%)',
+            transform: `scale(${1 + radialLines * 0.06})`,
           }}
         />
       )}
@@ -149,6 +202,18 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
           style={{
             boxShadow:
               'inset 0 0 220px 70px rgba(109,40,217,0.40), inset 0 0 130px 36px rgba(79,70,229,0.30)',
+          }}
+        />
+      )}
+
+      {/* 3b. Alerta crítica de Edén (< 20%): borde del visor en rojo/ámbar */}
+      {edenCritical && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            animation: 'domeHudCritical 0.7s ease-in-out infinite',
+            boxShadow:
+              'inset 0 0 120px 26px rgba(244,63,94,0.30), inset 0 0 40px 10px rgba(251,191,36,0.22)',
           }}
         />
       )}
@@ -406,7 +471,54 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
           max={hud.maxEden}
           barClass="bg-gradient-to-r from-cyan-300 to-violet-400"
           glow="0 0 8px rgba(34,211,238,0.7)"
+          critical={edenCritical}
+          flash={hud.edenFlash}
         />
+
+        {/* Brújula gravitatoria: indica dónde está el polo "abajo" de la
+            cúpula (-Y global) para no perder la orientación absoluta. */}
+        <div className="mt-2.5 flex items-center gap-2">
+          <svg width="34" height="34" viewBox="0 0 34 34" className="shrink-0 overflow-visible">
+            <circle
+              cx="17"
+              cy="17"
+              r="15"
+              fill="none"
+              stroke="rgba(255,255,255,0.22)"
+              strokeWidth="1"
+            />
+            <circle
+              cx="17"
+              cy="17"
+              r="10.5"
+              fill="none"
+              stroke="rgba(255,255,255,0.12)"
+              strokeWidth="0.6"
+              strokeDasharray="2 3"
+            />
+            <g
+              style={{
+                transform: `rotate(${hud.gravityCompassDeg}deg)`,
+                transformOrigin: '17px 17px',
+              }}
+            >
+              <line
+                x1="17"
+                y1="17"
+                x2="28"
+                y2="17"
+                stroke="#22d3ee"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              />
+              <polygon points="27,13.6 32,17 27,20.4" fill="#22d3ee" />
+            </g>
+            <circle cx="17" cy="17" r="2" fill="#ffffff" />
+          </svg>
+          <span className="text-[8px] font-bold tracking-[0.24em] text-white/35">
+            {t('hud.gravityCompass')}
+          </span>
+        </div>
       </div>
 
       {/* 8. Selector inferior de 3 habilidades */}
@@ -494,6 +606,10 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
         @keyframes domeHudBulletPulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.6; }
+        }
+        @keyframes domeHudCritical {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.45; }
         }
       `}</style>
     </div>

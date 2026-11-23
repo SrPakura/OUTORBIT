@@ -30,6 +30,11 @@ const nyxFrag = /* glsl */ `
   uniform vec3 uNebulaB;
   uniform vec3 uRimColor;
   uniform float uTime;
+  // Gravity Shift: 0 = grounded (contorno blanco limpio), 1 = poder
+  // gravitatorio encendido (rim cian-violeta + núcleo brillante + estrellas
+  // interiores aceleradas por la velocidad).
+  uniform float uGravityShift;
+  uniform float uSpeed01;
   varying vec3 vNormalWorld;
   varying vec3 vViewDir;
   float hash21( vec2 p ) {
@@ -72,11 +77,29 @@ const nyxFrag = /* glsl */ `
     float n2 = fbm( uv * 2.2 - drift * 1.3 + n1 * 0.85 );
     vec3 col = mix( uDeepColor, uNebulaA, smoothstep( 0.34, 0.78, n1 ) * 0.85 );
     col = mix( col, uNebulaB, smoothstep( 0.44, 0.86, n2 ) * 0.75 );
-    float stars = starLayer( uv + drift * 0.35, 16.0, 2.4 ) * 0.9
-                + starLayer( uv - drift * 0.20, 28.0, 3.6 ) * 1.25;
+
+    // Estrellas interiores: el pulso se acelera con la velocidad y el shift.
+    float starSpeed = mix( 2.4, 2.4 + 7.0 * uSpeed01, uGravityShift );
+    float stars = starLayer( uv + drift * 0.35, 16.0, starSpeed ) * 0.9
+                + starLayer( uv - drift * 0.20, 28.0, starSpeed * 1.5 ) * 1.25;
     col += mix( vec3( 1.0 ), uRimColor, 0.35 ) * stars;
+
+    // Rim Light Fresnel: blanco limpio en suelo, cian-violeta intenso en vuelo.
     float fresnel = pow( 1.0 - max( dot( N, V ), 0.0 ), 2.6 );
-    col += uRimColor * smoothstep( 0.25, 0.9, fresnel ) * 0.65;
+    vec3 shiftRim = mix(
+      vec3( 0.13, 0.83, 0.93 ),
+      vec3( 0.66, 0.33, 0.97 ),
+      0.5 + 0.5 * sin( uTime * 1.7 )
+    );
+    float rimStrength = mix( 0.65, 2.15, uGravityShift );
+    col += mix( uRimColor, shiftRim, uGravityShift )
+         * smoothstep( 0.25, 0.9, fresnel ) * rimStrength;
+
+    // Núcleo: el emblema del cinturón y el halo brillan con el poder encendido.
+    float corePulse = 0.5 + 0.5 * sin( uTime * ( 3.0 + 6.0 * uSpeed01 ) );
+    col += shiftRim * uGravityShift * ( 0.10 + 0.16 * corePulse );
+    col = mix( col, col * 1.22, uGravityShift );
+
     gl_FragColor = vec4( col, 0.90 );
   }
 `;
@@ -163,6 +186,8 @@ export function loadNyxRigged(): Promise<LoadedNyx> {
             uNebulaB: { value: srgbVec3('#06b6d4') },
             uRimColor: { value: srgbVec3('#f8fafc') },
             uTime: { value: 0 },
+            uGravityShift: { value: 0 },
+            uSpeed01: { value: 0 },
           },
           transparent: true,
           depthWrite: true,

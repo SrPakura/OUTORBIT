@@ -8,6 +8,7 @@ import {
   type NyxMovementMode,
   type ReticleLockState,
   type SlabCollider,
+  type SlabRaycastHit,
   type SpeedAttackKind,
   type TestEnemySphere,
 } from '@/game/dome/domeTypes';
@@ -132,15 +133,31 @@ const REDIRECT_SPEED_RETENTION = 0.80;
 // --- Cámara
 const CAM_PITCH_LIMIT = 1.15;
 const AIM_PITCH_MAX_DOT = 0.985;
-const CAM_DISTANCE = 6.2;
+const CAM_DISTANCE = 6.2; // suelo
+const CAM_SETTLE_DISTANCE = 6.1; // vuelo estabilizado
+const CAM_HOVER_DISTANCE = 4.8; // flotación quieta: intimidad y precisión
 const CAM_LOOK_HEIGHT = 1.35;
 const FOV_SPEED_REF = 32;
 const FOV_BOOST = 22;
-// Tirachinas de distancia: tira +1.25 m al arrancar y recoge a 5.6 m a tope.
-const CAM_TUG_DISTANCE = 1.25;
-const CAM_HIGH_SPEED_DISTANCE = 5.6;
+const FOV_MAX = 100;
+// Tirachinas (spring-arm): micro-contracción de 0.07 s a 4.4 m y estiramiento
+// elástico de 0.45 s hasta 7.4 m antes de estabilizarse en 6.1 m.
+const CAM_TUG_CONTRACT = 4.4;
+const CAM_TUG_STRETCH = 7.4;
+const CAM_TUG_CONTRACT_TIME = 0.07;
+const CAM_TUG_STRETCH_TIME = 0.45;
+const CAM_TUG_TOTAL = CAM_TUG_CONTRACT_TIME + CAM_TUG_STRETCH_TIME;
+const FOV_TUG_MAX = 18;
+// Offset over-the-shoulder: deja a Nyx abajo-izquierda del visor y libera la
+// estrella de 4 puntas al apuntar en flotación.
+const CAM_OFFSET_RIGHT_AIM = 0.48;
+const CAM_OFFSET_UP_AIM = 0.18;
+const CAM_OFFSET_RIGHT_ATTACK = 0.15;
 // Encuadre de ataque: sube el look para que Nyx quede baja de centro.
 const CAM_ATTACK_LOOK_LIFT = 0.28;
+const CAM_ATTACK_LOOK_LIFT_FAST = 0.42;
+// Slerp de nivelación del horizonte al aterrizar (Gravity Rush).
+const CAM_HORIZON_SLERP_TIME = 0.45;
 // Dutch roll del horizonte (±0.22 rad ≈ ±12.5°).
 const CAM_ROLL_MAX = 0.22;
 const CAM_ROLL_TURN_K = 0.016;
@@ -154,6 +171,27 @@ const HIT_STOP_DRILL = 0.068;
 const FOV_PUNCH_KICK = -7;
 const FOV_PUNCH_DRILL = -11;
 const FOV_PUNCH_CAP = -30; // tope de zoom puntual por energía cinética
+
+// --- Físicas de flujo ("caer, no volar" y cero atascos)
+const AIR_DRIFT_TIME = 0.25; // derrape aéreo al redirigir/frenar
+const AIR_DRIFT_TURN_RATE = 9.0; // rad/s de absorción elástica del vector viejo
+const AIR_DRIFT_DECAY = 1.1; // exp(-1.1*dt): el derrape suelta velocidad
+const ATTACK_RAMP_TIME = 0.28; // curva de arranque del ataque de velocidad
+const LANDING_SLIDE_MIN_SPEED = 9; // m/s tangenciales para convertir en derrape
+const LANDING_SLIDE_KEEP = 0.75; // 75% de la velocidad tangencial conservada
+const LANDING_SLIDE_MIN_TIME = 0.35;
+const LANDING_SLIDE_MAX_TIME = 0.55;
+const LAND_CANCEL_WINDOW = 0.12; // early cancel de land_recover / jump_land
+const LEDGE_GLANCE_DEPTH = 0.35; // penetración superficial = roce de canto
+const LEDGE_GLANCE_MIN_SPEED = 6;
+const LEDGE_GLANCE_PUSH = 0.6; // separación del canto
+const LEDGE_GLANCE_KEEP = 0.8; // 80% de velocidad conservada
+const TOUCH_GO_EDEN_FRAC = 0.12; // +12% Edén instantáneo al tocar y despegar
+const TOUCH_GO_COOLDOWN = 2.5; // s por slab
+const TOUCH_GO_MIN_IMPACT = 3;
+// Resbalón en pendientes empinadas (sin input sobre superficie casi vertical).
+const STEEP_SLIDE_THRESHOLD = 0.72;
+const STEEP_SLIDE_ACCEL = 7.5;
 
 const DOME_BOUNCE_DAMAGE = 10;
 
@@ -308,7 +346,13 @@ export class NyxDomeController {
   private shake = 0;
 
   // --- Dirección de cámara arcade (estilo Persona 5)
-  private camDist = CAM_DISTANCE; // muelle de distancia de cámara (tirachinas)
+  private camDist = CAM_DISTANCE; // distancia real del spring-arm
+  private camDistVel = 0; // velocidad del muelle (tirachinas elástico)
+  private camTugTimer = 0; // segundos restantes del tirachinas
+  private camTugElapsed = 0; // tiempo transcurrido del tirachinas
+  private fovTug = 0; // apertura progresiva de FOV del estiramiento
+  private camOffsetRight = 0; // offset over-the-shoulder lateral
+  private camOffsetUp = 0; // offset over-the-shoulder vertical
   private lookLift = 0; // subida del look en patada / caída al vacío
   private landingDip = 0; // hundimiento vertical del look al aterrizar
   private cameraRollRad = 0; // Dutch roll del horizonte (±0.22 rad)
@@ -318,6 +362,28 @@ export class NyxDomeController {
   private fovPunch = 0; // grados de zoom puntual en el impacto
   private impactFlash = 0; // 0..1 para el HUD
   private gyroSpinRad = 0; // ángulo acumulado de los arcos giroscópicos del visor
+  private gravityCompassDeg = 0; // polo "abajo" de la cúpula proyectado en pantalla
+
+  // --- Slerp de nivelación del horizonte al aterrizar (0.45 s ease-out)
+  private readonly camUpSmooth = new THREE.Vector3(0, 1, 0);
+  private readonly transitionFromUp = new THREE.Vector3(0, 1, 0);
+  private readonly transitionToUp = new THREE.Vector3(0, 1, 0);
+  private transitionCamUpTimer = 0;
+  private readonly quatIdentity = new THREE.Quaternion();
+
+  // --- Físicas de flujo
+  private airDriftTimer = 0; // derrape aéreo de redirección
+  private readonly airDriftDir = new THREE.Vector3(0, 0, -1);
+  private airDriftSpeed = 0;
+  private slideTimer = 0; // derrape horizontal tras aterrizar en oblicuo
+  private landAnimElapsed = 0; // ventana de early cancel de land_recover
+  private readonly touchGoTimes = new Map<string, number>();
+  private edenFlash = 0; // 0..1 destello de recarga para el HUD
+
+  // --- Gravity Shift: estado gravitatorio visible en el material de Nyx
+  private nyxMaterial: THREE.ShaderMaterial | null = null;
+  private gravityShift = 0; // 0 = grounded, 1 = poder gravitatorio encendido
+  private terminalSpeedActive = false; // cruce del umbral de taladro (18 m/s)
 
   // --- Tambaleo orgánico de cámara (camWobble)
   private wobbleTime = 0; // reloj procedural del tambaleo
@@ -338,6 +404,26 @@ export class NyxDomeController {
   private readonly quatB = new THREE.Quaternion();
   private readonly mat = new THREE.Matrix4();
   private turnRate = 0;
+  // Scratch de raycasts calientes: reutilizan el objeto de impacto (cero
+  // allocations por frame en cámara, oclusión del visor y sondeo de suelo).
+  private readonly camHitScratch: SlabRaycastHit = {
+    slab: null as unknown as SlabCollider,
+    point: new THREE.Vector3(),
+    normal: new THREE.Vector3(),
+    distance: 0,
+  };
+  private readonly occlusionHitScratch: SlabRaycastHit = {
+    slab: null as unknown as SlabCollider,
+    point: new THREE.Vector3(),
+    normal: new THREE.Vector3(),
+    distance: 0,
+  };
+  private readonly stickHitScratch: SlabRaycastHit = {
+    slab: null as unknown as SlabCollider,
+    point: new THREE.Vector3(),
+    normal: new THREE.Vector3(),
+    distance: 0,
+  };
 
   constructor(
     nyxRoot: THREE.Group,
@@ -369,6 +455,14 @@ export class NyxDomeController {
       for (const code of resolved[action]) this.actionByCode.set(code, action);
     }
     this.gamepad?.applySettings(settings);
+  }
+
+  /**
+   * Engancha el material de nebulosa de Nyx para modular en vivo el Gravity
+   * Shift (rim cian-violeta + brillo del núcleo + pulso de estrellas).
+   */
+  attachNyxMaterial(material: THREE.ShaderMaterial): void {
+    this.nyxMaterial = material;
   }
 
   /** Escala de tiempo del mundo: 0.20 en redirección, 0.22 en cámara lenta. */
@@ -603,7 +697,11 @@ export class NyxDomeController {
 
   restoreResources(hpDelta: number, edenDelta: number): void {
     if (hpDelta > 0) this.hp = Math.min(this.maxHp, this.hp + hpDelta);
-    if (edenDelta > 0) this.eden = Math.min(this.maxEden, this.eden + edenDelta);
+    if (edenDelta > 0) {
+      this.eden = Math.min(this.maxEden, this.eden + edenDelta);
+      // Sheen de recarga en la barra del HUD (solo pulsos reales, no el goteo).
+      if (edenDelta > 0.5) this.edenFlash = Math.max(this.edenFlash, 0.6);
+    }
   }
 
   applyDamage(amount: number): void {
@@ -701,6 +799,8 @@ export class NyxDomeController {
       impactFlash: this.impactFlash,
       cameraRollDeg: this.cameraRollRad * (180 / Math.PI),
       gyroSpinRad: this.gyroSpinRad,
+      gravityCompassDeg: this.gravityCompassDeg,
+      edenFlash: this.edenFlash,
       radarEnabled: this.radarEnabled,
       radarDots: this.radarDots,
     };
@@ -791,6 +891,7 @@ export class NyxDomeController {
     // se sientan incluso dentro del hit-stop y de la cámara lenta.
     this.impactFlash = Math.max(0, this.impactFlash - rawDt * 3.8);
     this.fovPunch *= Math.exp(-14 * rawDt);
+    this.edenFlash = Math.max(0, this.edenFlash - rawDt * 2.6);
 
     // --- Entrada de mando (Gamepad API): stick derecho = cámara, botones = acciones
     this.applyGamepadInput(rawDt);
@@ -812,6 +913,19 @@ export class NyxDomeController {
     // tras suelos, y puntos rojos del radar de enemigos (Tab).
     this.updateReticle(camera, enemies, slabs);
     this.updateRadarDots(camera, enemies);
+
+    // --- Early Cancel: tras los primeros 0.12 s de impacto, cualquier WASD,
+    // despegue o Dash corta el animLock de land_recover / jump_land para que
+    // Nyx nunca se sienta pesada ni bloqueada en combate.
+    if (this.animLock === 'land_recover' || this.animLock === 'jump_land') {
+      this.landAnimElapsed += rawDt;
+      if (
+        this.landAnimElapsed > LAND_CANCEL_WINDOW &&
+        (hasMoveInput || this.wantJump || this.wantDash)
+      ) {
+        this.animLock = null;
+      }
+    }
 
     // --- Acciones encoladas por los eventos
     if (this.wantSlot !== null) {
@@ -875,8 +989,28 @@ export class NyxDomeController {
     const isDrillReady = speed >= DRILL_SPEED_THRESHOLD;
     this.gyroSpinRad += rawDt * (0.45 + speed * 0.22 + (isDrillReady ? 2.4 : 0));
 
+    // --- Ruptura sónica al cruzar el umbral del taladro espiral (18 m/s):
+    // anillo de condensación que Nyx atraviesa + aura de velocidad terminal.
+    if (isDrillReady && !this.terminalSpeedActive) {
+      this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
+    }
+    this.terminalSpeedActive = isDrillReady;
+
     // --- Cámara (siempre en tiempo real: vibra durante el hit-stop)
     this.updateCamera(rawDt, slabs, camera, speed);
+
+    // --- Gravity Shift: el estado gravitatorio se lee en 1 ms. En suelo el
+    // rim se apaga de golpe (lambda alta) con un destello limpio; en vuelo,
+    // dash o ataque se enciende cian-violeta y acelera el pulso de estrellas.
+    const shiftTarget =
+      this.mode === 'grounded' ? 0 : this.mode === 'floating' ? 0.55 : 1;
+    const shiftLambda = shiftTarget < this.gravityShift ? 22 : 9;
+    this.gravityShift += (shiftTarget - this.gravityShift) * (1 - Math.exp(-shiftLambda * rawDt));
+    if (this.nyxMaterial !== null) {
+      const uniforms = this.nyxMaterial.uniforms;
+      uniforms.uGravityShift.value = this.gravityShift;
+      uniforms.uSpeed01.value = clamp01(speed / 24);
+    }
 
     // --- Animador y VFX
     const hairG = this.mode === 'grounded' ? -1 : -0.25;
@@ -894,6 +1028,8 @@ export class NyxDomeController {
       this.facing,
       this.mode,
       isDrillReady,
+      slabs,
+      this.up,
     );
   }
 
@@ -1013,7 +1149,7 @@ export class NyxDomeController {
     if (dist < 1e-4) return false;
     this.tmpE.divideScalar(dist);
     const reach = Math.max(0.25, dist - enemy.radius);
-    return raycastSlabs(slabs, camera.position, this.tmpE, reach) !== null;
+    return raycastSlabs(slabs, camera.position, this.tmpE, reach, this.occlusionHitScratch) !== null;
   }
 
   /**
@@ -1139,7 +1275,12 @@ export class NyxDomeController {
       this.facing.copy(this.aimForward);
       this.mode = 'floating';
       this.groundedSlab = null;
+      // Despegue inmediato: corta el slerp de horizonte del aterrizaje.
+      this.transitionCamUpTimer = 0;
+      this.slideTimer = 0;
       this.animator.setState('zero_g_float');
+      this.vfx.spawnDustBurst(this.nyxRoot.position, this.groundNormal, 'takeoff');
+      this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
       this.audio?.playAnchor();
     } else if (this.mode === 'speed_attack') {
       // Espacio frena: 1 flip tras patada simple/caída, 2 tras taladro.
@@ -1216,7 +1357,9 @@ export class NyxDomeController {
       }
       // Latigazo elástico de cámara + tirachinas de distancia.
       this.dashWobbleImpulse = 1.0;
-      this.camDist = Math.min(this.camDist + CAM_TUG_DISTANCE, CAM_DISTANCE + CAM_TUG_DISTANCE);
+      this.startCamTug();
+      this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
+      this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
       // Cámara lenta SOLO si había enemigo marcado (para re-lockear). En una
       // Caída al Vacío sin enemigo, el dash solo corta el vector: NUNCA la toca.
       if (hadLockedEnemy) this.bulletTimeTimer = BULLET_TIME_DURATION;
@@ -1259,7 +1402,9 @@ export class NyxDomeController {
       this.mode = 'dashing';
       this.dashTimer = DASH_DURATION;
       // Tirachinas de cámara + roll hacia el lado del dash lateral.
-      this.camDist = Math.min(this.camDist + CAM_TUG_DISTANCE, CAM_DISTANCE + CAM_TUG_DISTANCE);
+      this.startCamTug();
+      this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
+      this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
       this.dashSideRoll = -r * CAM_ROLL_DASH_SIDE;
       // Latigazo elástico de cámara del dash.
       this.dashWobbleImpulse = 1.0;
@@ -1322,7 +1467,9 @@ export class NyxDomeController {
     this.bulletTimeTimer = 0;
     this.redirectWindowTimer = 0;
     // Latigazo potente: tirachinas + tambaleo elástico + micro shake.
-    this.camDist = Math.min(this.camDist + CAM_TUG_DISTANCE, CAM_DISTANCE + CAM_TUG_DISTANCE);
+    this.startCamTug();
+    this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
+    this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
     this.dashWobbleImpulse = 1.3;
     this.shake = Math.max(this.shake, 0.2);
     this.audio?.playGravityShift();
@@ -1388,7 +1535,9 @@ export class NyxDomeController {
     this.mode = 'speed_attack';
     this.dashTimer = 0;
     // Tirachinas de cámara: la patada/caída arranca con un tirón de distancia.
-    this.camDist = Math.min(this.camDist + CAM_TUG_DISTANCE, CAM_DISTANCE + CAM_TUG_DISTANCE);
+    this.startCamTug();
+    this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
+    this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
     this.audio?.playMelee();
   }
 
@@ -1468,14 +1617,54 @@ export class NyxDomeController {
     }
 
     const speed = this.velocity.length();
-    this.isSliding = sprintHeld && hasMoveInput && speed > RUN_SPEED + 0.5;
+    // Derrape de aterrizaje: mantiene la inercia tangencial 0.35-0.55 s.
+    if (this.slideTimer > 0) {
+      this.slideTimer = Math.max(0, this.slideTimer - dt);
+      this.isSliding = true;
+    } else {
+      this.isSliding = sprintHeld && hasMoveInput && speed > RUN_SPEED + 0.5;
+    }
     const targetSpeed = this.isSliding ? SLIDE_SPEED : sprintHeld ? RUN_SPEED : WALK_SPEED;
 
     // Magnitud analógica del input (1 con teclado): con el stick izquierdo a
     // medio recorrido se camina/flota más despacio.
     const inputMag = hasMoveInput ? Math.min(1, Math.hypot(f, r)) : 0;
-    const target = this.tmpB.copy(move).multiplyScalar(targetSpeed * inputMag);
-    this.velocity.lerp(target, 1 - Math.exp(-GROUND_ACCEL_LAMBDA * dt));
+    if (this.slideTimer > 0) {
+      // Derrape: conserva la inercia y solo corrige el rumbo suavemente.
+      const slideDir = this.tmpC.copy(this.velocity);
+      if (slideDir.lengthSq() < 1e-4) slideDir.copy(move);
+      if (slideDir.lengthSq() < 1e-4) slideDir.copy(this.groundFwd);
+      slideDir.normalize();
+      const slideTarget = this.tmpB
+        .copy(slideDir)
+        .multiplyScalar(Math.max(SLIDE_SPEED, speed));
+      this.velocity.lerp(slideTarget, 1 - Math.exp(-2.2 * dt));
+    } else {
+      const target = this.tmpB.copy(move).multiplyScalar(targetSpeed * inputMag);
+      this.velocity.lerp(target, 1 - Math.exp(-GROUND_ACCEL_LAMBDA * dt));
+    }
+
+    // --- Resbalón en pendientes empinadas: sin input, sobre una superficie
+    // muy inclinada respecto al centro de la cúpula, Nyx se desliza cuesta
+    // abajo con chispas en vez de quedarse clavada.
+    if (!hasMoveInput && this.slideTimer <= 0) {
+      const radial = this.tmpC.copy(this.nyxRoot.position);
+      if (radial.lengthSq() > 1e-6) {
+        radial.normalize();
+        const steepness = 1 - Math.abs(n.dot(radial));
+        if (steepness > STEEP_SLIDE_THRESHOLD) {
+          const downhill = this.tmpB.copy(radial).addScaledVector(n, -radial.dot(n));
+          if (downhill.lengthSq() > 1e-6) {
+            downhill.normalize();
+            this.velocity.addScaledVector(downhill, STEEP_SLIDE_ACCEL * steepness * dt);
+            this.isSliding = true;
+            if (Math.random() < dt * 7) {
+              this.vfx.spawnDustBurst(this.nyxRoot.position, n, 'slide');
+            }
+          }
+        }
+      }
+    }
 
     // Adherencia a paredes y techos.
     this.velocity.addScaledVector(n, -GRAVITY * dt);
@@ -1496,6 +1685,35 @@ export class NyxDomeController {
 
     // Inercia espacial real: rozamiento casi nulo (conserva ~95% por segundo).
     this.velocity.multiplyScalar(Math.exp(-FLOAT_DRAG * dt));
+
+    // --- Derrape aéreo: el vector viejo se absorbe elásticamente mientras Nyx
+    // gira hacia el nuevo (0.25 s) con estela de partículas. Manda sobre la
+    // aceleración normal para que la redirección se sienta como un derrape.
+    if (this.airDriftTimer > 0) {
+      this.airDriftTimer = Math.max(0, this.airDriftTimer - dt);
+      const k = 1 - this.airDriftTimer / AIR_DRIFT_TIME;
+      const target = this.tmpB.set(0, 0, 0);
+      if (f !== 0 || r !== 0) {
+        target.addScaledVector(this.camFwd, f).addScaledVector(this.camRight, r);
+      } else {
+        target.copy(this.camFwd);
+      }
+      if (target.lengthSq() > 1e-6) {
+        target.normalize();
+        // Arranca girando rápido y suelta el giro al final del derrape.
+        this.rotateToward(
+          this.airDriftDir,
+          target,
+          AIR_DRIFT_TURN_RATE * (1 - k * 0.7) * dt,
+        );
+      }
+      this.airDriftSpeed *= Math.exp(-AIR_DRIFT_DECAY * dt);
+      // El derrape respeta el tope de flotación (no puede superar 28 m/s).
+      const driftMax = FLOAT_MAX_SPEED * this.speedMultiplier;
+      if (this.airDriftSpeed > driftMax) this.airDriftSpeed = driftMax;
+      this.velocity.copy(this.airDriftDir).multiplyScalar(this.airDriftSpeed);
+      return;
+    }
 
     // Tope suave ~28 m/s (escalado por pasiva de velocidad).
     const sp = this.velocity.length();
@@ -1523,7 +1741,11 @@ export class NyxDomeController {
       this.rotateToward(this.dashDir, this.aimForward, DASH_TURN_RATE * dt);
     }
     this.velocity.copy(this.dashDir).multiplyScalar(this.dashSpeed);
-    if (this.dashTimer <= 0) this.mode = 'floating';
+    if (this.dashTimer <= 0) {
+      this.mode = 'floating';
+      // Al salir del dash a alta velocidad, derrape aéreo de absorción.
+      this.startAirDrift();
+    }
   }
 
   private updateSpeedAttack(dt: number, onHitEnemy: HitEnemyCallback | undefined): void {
@@ -1594,9 +1816,13 @@ export class NyxDomeController {
         : this.speedAttackKind === 'void_fall'
           ? VOID_FALL_MAX_SPEED
           : GRAVITY_KICK_SPEED) * this.speedMultiplier;
+    // Curva de arranque: pull-in gravitatorio exponencial. Empieza tirando
+    // suave y rompe a aceleración máxima a los 0.28 s (nunca lineal plana).
+    const ramp = clamp01(this.attackElapsed / ATTACK_RAMP_TIME);
+    const accel = ATTACK_ACCEL * (0.15 + 0.85 * ramp * ramp);
     const targetSpeed =
       speed < maxSpeed
-        ? Math.min(maxSpeed, speed + ATTACK_ACCEL * dt)
+        ? Math.min(maxSpeed, speed + accel * dt)
         : Math.max(maxSpeed, speed - ATTACK_ACCEL * dt);
     const dir = this.tmpB.copy(this.velocity);
     if (dir.lengthSq() < 1e-4) dir.copy(this.facing);
@@ -1632,6 +1858,8 @@ export class NyxDomeController {
     } else {
       this.mode = 'floating';
       this.animator.setState('zero_g_float');
+      // Sale del frenado con inercia: derrape aéreo de absorción.
+      this.startAirDrift();
     }
   }
 
@@ -1673,6 +1901,30 @@ export class NyxDomeController {
           this.nyxRoot.position.copy(this.contact.point).addScaledVector(n, PLAYER_RADIUS);
           this.landOn(n, Math.max(0, -approach));
         } else {
+          // --- Ledge Glance: roce superficial contra el canto de un slab. En
+          // vez de comerse un hit_stagger seco de pared, se desvía suave con
+          // una nubecita de polvo conservando el 80% de la velocidad para no
+          // romper el flow.
+          const sideHit = Math.abs(n.dot(this.up)) < 0.55;
+          const superficial = this.contact.depth < LEDGE_GLANCE_DEPTH;
+          const fastEnough = this.velocity.length() > LEDGE_GLANCE_MIN_SPEED;
+          if (sideHit && superficial && fastEnough && this.bounceCooldown <= 0) {
+            this.nyxRoot.position
+              .copy(this.contact.point)
+              .addScaledVector(n, PLAYER_RADIUS + LEDGE_GLANCE_PUSH);
+            const vn = this.velocity.dot(n);
+            if (vn < 0) this.velocity.addScaledVector(n, -vn * 1.15);
+            this.velocity.multiplyScalar(LEDGE_GLANCE_KEEP);
+            this.vfx.spawnDustBurst(this.nyxRoot.position, n, 'glance');
+            this.rollImpulse = THREE.MathUtils.clamp(
+              this.rollImpulse + n.dot(this.camRight) * 0.1,
+              -CAM_ROLL_MAX,
+              CAM_ROLL_MAX,
+            );
+            this.bounceCooldown = 0.18;
+            return;
+          }
+
           // Choque lateral / canto / de cabeza: rebota físicamente y NO entra
           // en grounded; se queda en floating recomponiéndose con hit_stagger.
           this.nyxRoot.position
@@ -1731,6 +1983,7 @@ export class NyxDomeController {
       this.nyxRoot.position,
       down,
       PLAYER_RADIUS + GROUND_STICK_RANGE,
+      this.stickHitScratch,
     );
     if (stick) {
       this.nyxRoot.position.copy(stick.point).addScaledVector(stick.normal, PLAYER_RADIUS);
@@ -1745,6 +1998,8 @@ export class NyxDomeController {
       // Te sales del borde: pasas a flotación 0G (no existe caída con gravedad).
       this.mode = 'floating';
       this.groundedSlab = null;
+      this.transitionCamUpTimer = 0;
+      this.slideTimer = 0;
       this.aimForward.copy(this.facing).normalize();
       this.aimUp.copy(this.up);
       this.prevAimFwd.copy(this.aimForward);
@@ -1755,10 +2010,18 @@ export class NyxDomeController {
     const prevMode = this.mode;
     const angle = Math.acos(THREE.MathUtils.clamp(this.up.dot(normal), -1, 1));
 
+    // Horizonte: guarda el up de vuelo y arranca el slerp de nivelación de
+    // 0.45 s para que el mundo rote suave en vez de dar un latigazo.
+    this.transitionFromUp.copy(this.camUpSmooth);
+    this.transitionToUp.copy(normal);
+    this.transitionCamUpTimer = CAM_HORIZON_SLERP_TIME;
+
     this.mode = 'grounded';
     this.groundNormal.copy(normal);
     this.up.copy(normal);
     this.dashTimer = 0;
+    this.airDriftTimer = 0;
+    this.slideTimer = 0;
     // Ancla al suelo pisado para heredar su movimiento (Moving Platform Ride).
     this.groundedSlab = this.contact.slab;
     if (this.contact.slab) {
@@ -1791,23 +2054,62 @@ export class NyxDomeController {
     // Muelle de aterrizaje: la cámara baja acompañando la flexión de rodillas
     // de land_recover / jump_land, proporcional a la velocidad de impacto.
     this.landingDip = -Math.min(LANDING_DIP_MAX, impact * LANDING_DIP_K);
+    this.landAnimElapsed = 0;
 
-    // Animación según el ángulo de reorientación y la velocidad de impacto.
-    if (angle > WALL_FLIP_ANGLE) {
-      this.playOneShot('wall_shift_flip');
-      this.vfx.spawnBurst(this.nyxRoot.position, normal, 0xffc24d, 22);
-      this.audio?.playGravityShift();
-    } else if (impact > LAND_RECOVER_SPEED) {
-      this.playOneShot('land_recover');
-      this.vfx.spawnBurst(this.nyxRoot.position, normal, 0xffc24d, 26);
+    // --- Landing Slide: aterrizar en oblicuo a velocidad media/alta convierte
+    // la caída en un derrape horizontal que conserva el 75% de la velocidad
+    // tangencial (chispas y humo blanco por las botas) en vez de frenar en seco.
+    const tangential = this.tmpA
+      .copy(this.velocity)
+      .addScaledVector(normal, -this.velocity.dot(normal));
+    const tangentialSpeed = tangential.length();
+    const canSlide = angle <= WALL_FLIP_ANGLE && tangentialSpeed > LANDING_SLIDE_MIN_SPEED;
+    if (canSlide) {
+      this.slideTimer = THREE.MathUtils.clamp(
+        LANDING_SLIDE_MIN_TIME + tangentialSpeed * 0.012,
+        LANDING_SLIDE_MIN_TIME,
+        LANDING_SLIDE_MAX_TIME,
+      );
+      this.isSliding = true;
+      this.velocity.copy(tangential).multiplyScalar(LANDING_SLIDE_KEEP);
+      // gravity_slide es un estado SOSTENIDO (duración infinita): se fija
+      // directamente, nunca con playOneShot, para no dejar el animLock colgado.
+      this.animLock = null;
+      this.animator.setState('gravity_slide');
+      this.vfx.spawnDustBurst(this.nyxRoot.position, normal, 'slide');
       this.audio?.playLand();
-    } else if (impact > JUMP_LAND_SPEED) {
-      this.playOneShot('jump_land');
-      this.vfx.spawnBurst(this.nyxRoot.position, normal, 0xffc24d, 14);
+    } else {
+      // Animación según el ángulo de reorientación y la velocidad de impacto.
+      if (angle > WALL_FLIP_ANGLE) {
+        this.playOneShot('wall_shift_flip');
+        this.vfx.spawnBurst(this.nyxRoot.position, normal, 0xffc24d, 22);
+        this.audio?.playGravityShift();
+      } else if (impact > LAND_RECOVER_SPEED) {
+        this.playOneShot('land_recover');
+        this.vfx.spawnDustBurst(this.nyxRoot.position, normal, 'land');
+        this.audio?.playLand();
+      } else if (impact > JUMP_LAND_SPEED) {
+        this.playOneShot('jump_land');
+        this.vfx.spawnDustBurst(this.nyxRoot.position, normal, 'land');
+      }
+
+      // Frena la inercia tangencial según la dureza del impacto.
+      this.velocity.multiplyScalar(Math.exp(-Math.min(impact, 20) * 0.06));
     }
 
-    // Frena la inercia tangencial según la dureza del impacto.
-    this.velocity.multiplyScalar(Math.exp(-Math.min(impact, 20) * 0.06));
+    // --- Touch-and-Go: tocar un suelo flotante tras un vuelo largo recarga
+    // Edén de golpe (+12%) con destello cian, premiando el estilo acrobático
+    // de tocar pared/suelo un segundo y volver a saltar al vacío.
+    const slab = this.contact.slab;
+    if (slab !== null && impact > TOUCH_GO_MIN_IMPACT) {
+      const last = this.touchGoTimes.get(slab.id);
+      if (last === undefined || this.time - last >= TOUCH_GO_COOLDOWN) {
+        this.touchGoTimes.set(slab.id, this.time);
+        this.eden = Math.min(this.maxEden, this.eden + this.maxEden * TOUCH_GO_EDEN_FRAC);
+        this.edenFlash = 1;
+        this.vfx.spawnEdenPulse(this.nyxRoot.position, normal);
+      }
+    }
   }
 
   private resolveDomeBound(): void {
@@ -2001,19 +2303,101 @@ export class NyxDomeController {
   ): void {
     // Dirección de mira final del frame (puede haber curvado el auto-aim).
     this.computeCameraBasis();
-    const camUp = this.tmpD.copy(this.mode === 'grounded' ? this.up : this.aimUp);
 
-    // --- Tirachinas de distancia: el tirón del dash/ataque se recoge
-    // suavemente de 6.2 m hasta 5.6 m a velocidad máxima.
-    const speed01 = clamp01(speed / FOV_SPEED_REF);
-    const distTarget = THREE.MathUtils.lerp(CAM_DISTANCE, CAM_HIGH_SPEED_DISTANCE, speed01);
-    this.camDist += (distTarget - this.camDist) * (1 - Math.exp(-(2.0 + speed * 0.45) * dt));
+    // --- Horizonte: slerp de nivelación al aterrizar (0.45 s ease-out). Al
+    // pasar de vuelo a suelo el mundo rota suave como en Gravity Rush en vez
+    // de dar un latigazo de 1 frame.
+    if (this.transitionCamUpTimer > 0) {
+      this.transitionCamUpTimer = Math.max(0, this.transitionCamUpTimer - dt);
+      const t = 1 - this.transitionCamUpTimer / CAM_HORIZON_SLERP_TIME;
+      const eased = 1 - Math.pow(1 - t, 3);
+      this.quat.setFromUnitVectors(this.transitionFromUp, this.transitionToUp);
+      this.quat.slerp(this.quatIdentity, 1 - eased);
+      this.camUpSmooth.copy(this.transitionFromUp).applyQuaternion(this.quat);
+    } else {
+      this.camUpSmooth.copy(this.mode === 'grounded' ? this.up : this.aimUp);
+    }
+    // Re-ortonormaliza contra la mira: el horizonte nunca se invierte.
+    this.camUpSmooth.addScaledVector(this.camFwd, -this.camUpSmooth.dot(this.camFwd));
+    if (this.camUpSmooth.lengthSq() < 1e-8) this.camUpSmooth.copy(this.up);
+    this.camUpSmooth.normalize();
+    const camUp = this.tmpD.copy(this.camUpSmooth);
+
+    // --- Offset over-the-shoulder: al apuntar en flotación Nyx queda abajo-
+    // izquierda del visor y la estrella de 4 puntas queda 100% libre.
+    const isAttack = this.mode === 'speed_attack' && this.speedAttackKind !== null;
+    const isAim = this.mode === 'floating' || this.mode === 'dashing';
+    const fastAttack = isAttack && speed >= 14;
+    let offsetRightTarget = 0;
+    let offsetUpTarget = 0;
+    if (isAttack) {
+      offsetRightTarget = fastAttack ? CAM_OFFSET_RIGHT_ATTACK : CAM_OFFSET_RIGHT_AIM;
+      offsetUpTarget = CAM_OFFSET_UP_AIM;
+    } else if (isAim) {
+      offsetRightTarget = CAM_OFFSET_RIGHT_AIM;
+      offsetUpTarget = CAM_OFFSET_UP_AIM;
+    }
 
     // --- Encuadre de ataque: en patada/taladro/Caída al Vacío el look sube
-    // para que Nyx quede más abajo del centro del visor y no tape al enemigo.
-    const liftTarget =
-      this.mode === 'speed_attack' && this.speedAttackKind !== null ? CAM_ATTACK_LOOK_LIFT : 0;
+    // para que Nyx quede en el tercio inferior y se vea el punto de impacto.
+    let liftTarget = 0;
+    if (isAttack) liftTarget = fastAttack ? CAM_ATTACK_LOOK_LIFT_FAST : CAM_ATTACK_LOOK_LIFT;
+
+    // --- Distancia base por estado: hover íntimo, vuelo estabilizado, suelo.
+    // Mirando muy arriba en suelo la cámara se acerca y Nyx cae al borde
+    // inferior sin que su cabeza tape el cielo.
+    let distTarget: number;
+    if (this.mode === 'grounded') {
+      const lookUp01 = clamp01(this.camPitch / CAM_PITCH_LIMIT);
+      distTarget = CAM_DISTANCE - lookUp01 * 1.1;
+      liftTarget += lookUp01 * 0.5;
+      offsetUpTarget -= lookUp01 * 0.25;
+    } else if (this.mode === 'floating' && speed < 1.5) {
+      distTarget = CAM_HOVER_DISTANCE;
+    } else {
+      distTarget = CAM_SETTLE_DISTANCE;
+    }
     this.lookLift += (liftTarget - this.lookLift) * (1 - Math.exp(-6 * dt));
+    this.camOffsetRight += (offsetRightTarget - this.camOffsetRight) * (1 - Math.exp(-7 * dt));
+    this.camOffsetUp += (offsetUpTarget - this.camOffsetUp) * (1 - Math.exp(-7 * dt));
+
+    // --- Tirachinas: micro-contracción de 0.07 s y estiramiento elástico de
+    // 0.45 s (Nyx sale disparada alejándose de la cámara) con apertura de FOV
+    // progresiva antes de estabilizarse en 6.1 m.
+    if (this.camTugTimer > 0) {
+      this.camTugTimer = Math.max(0, this.camTugTimer - dt);
+      this.camTugElapsed += dt;
+      const tugT = this.camTugElapsed;
+      if (tugT < CAM_TUG_CONTRACT_TIME) {
+        distTarget = THREE.MathUtils.lerp(
+          distTarget,
+          CAM_TUG_CONTRACT,
+          tugT / CAM_TUG_CONTRACT_TIME,
+        );
+      } else if (tugT < CAM_TUG_TOTAL) {
+        const k = (tugT - CAM_TUG_CONTRACT_TIME) / CAM_TUG_STRETCH_TIME;
+        const eased = 1 - Math.pow(1 - k, 3);
+        distTarget = THREE.MathUtils.lerp(CAM_TUG_CONTRACT, CAM_TUG_STRETCH, eased);
+        this.fovTug = FOV_TUG_MAX * eased;
+      } else {
+        distTarget = CAM_SETTLE_DISTANCE;
+        this.camTugTimer = 0;
+        this.camTugElapsed = 0;
+      }
+    } else {
+      this.fovTug *= Math.exp(-6 * dt);
+    }
+
+    // --- Spring-arm: muelle subamortiguado (elástico durante el tirachinas,
+    // tranquilo el resto del tiempo). Integración con dt acotado para que un
+    // frame largo no lo desestabilice.
+    const springDt = Math.min(dt, 1 / 60);
+    const stiffness = this.camTugTimer > 0 ? 130 : 30;
+    const damping = this.camTugTimer > 0 ? 15 : 13;
+    this.camDistVel += (distTarget - this.camDist) * stiffness * springDt;
+    this.camDistVel *= Math.exp(-damping * springDt);
+    this.camDist += this.camDistVel * springDt;
+    this.camDist = THREE.MathUtils.clamp(this.camDist, 1.1, 9.5);
 
     // --- Muelle de aterrizaje: el hundimiento recupera hacia 0 en ~0.35 s.
     this.landingDip += -this.landingDip * (1 - Math.exp(-7 * dt));
@@ -2059,13 +2443,15 @@ export class NyxDomeController {
       .copy(this.nyxRoot.position)
       .addScaledVector(this.up, CAM_LOOK_HEIGHT + this.landingDip)
       .addScaledVector(camUp, this.lookLift)
+      .addScaledVector(this.camRight, this.camOffsetRight)
+      .addScaledVector(camUp, this.camOffsetUp)
       .addScaledVector(this.camRight, wobbleYaw * this.camDist)
       .addScaledVector(camUp, wobblePitch * this.camDist);
     const back = this.tmpB.copy(this.camFwd).multiplyScalar(-1);
 
     // Evita atravesar slabs con la cámara.
     let camDist = this.camDist;
-    const camHit = raycastSlabs(slabs, look, back, this.camDist);
+    const camHit = raycastSlabs(slabs, look, back, this.camDist, this.camHitScratch);
     if (camHit) camDist = Math.max(1.1, camHit.distance - 0.25);
 
     const camPos = this.tmpC.copy(look).addScaledVector(back, camDist);
@@ -2085,8 +2471,33 @@ export class NyxDomeController {
     }
     camera.lookAt(look);
 
-    // Frenesí: FOV dinámico con la velocidad + punch de impacto (zoom corto).
-    const targetFov = this.settings.baseFov + FOV_BOOST * speed01 + this.fovPunch;
+    // --- Brújula gravitatoria: dirección en pantalla del polo "abajo" de la
+    // cúpula (-Y global) proyectada sobre el plano de la cámara. 0° = derecha,
+    // 90° = abajo (convención CSS rotate).
+    this.tmpE.crossVectors(this.camFwd, camUp);
+    if (this.tmpE.lengthSq() > 1e-8) {
+      this.tmpE.normalize();
+      this.tmpB.crossVectors(this.tmpE, this.camFwd).normalize();
+      const compassX = -this.tmpE.y;
+      const compassY = this.tmpB.y;
+      // El roll de cámara gira el mundo en pantalla: se compensa para que la
+      // brújula siga apuntando al polo real.
+      this.gravityCompassDeg =
+        Math.atan2(compassY, compassX) * (180 / Math.PI) - totalRoll * (180 / Math.PI);
+    }
+
+    // Frenesí: FOV dinámico con la velocidad + apertura del tirachinas + punch
+    // de impacto (zoom corto). Durante el estiramiento el boost por velocidad
+    // se amortigua para que la suma no se dispare.
+    const speed01 = clamp01(speed / FOV_SPEED_REF);
+    const tugBlend = this.fovTug / FOV_TUG_MAX;
+    const targetFov = Math.min(
+      FOV_MAX,
+      this.settings.baseFov +
+        FOV_BOOST * speed01 * (1 - 0.5 * tugBlend) +
+        this.fovTug +
+        this.fovPunch,
+    );
     if (Math.abs(targetFov - camera.fov) > 0.05) {
       camera.fov = targetFov;
       camera.updateProjectionMatrix();
@@ -2124,5 +2535,27 @@ export class NyxDomeController {
   private playOneShot(state: NyxAnimState): void {
     this.animator.setState(state);
     this.animLock = state;
+  }
+
+  /** Arranca el tirachinas de cámara (contracción + estiramiento elástico). */
+  private startCamTug(): void {
+    this.camTugTimer = CAM_TUG_TOTAL;
+    this.camTugElapsed = 0;
+  }
+
+  /**
+   * Arranca el derrape aéreo: guarda el vector viejo para que se absorba
+   * elásticamente mientras Nyx gira hacia el nuevo (0.25 s). Siempre limpia
+   * el estado anterior: un derrape interrumpido (flip, ataque, aterrizaje) no
+   * puede resucitar con la velocidad vieja al volver a flotación.
+   */
+  private startAirDrift(): void {
+    this.airDriftTimer = 0;
+    this.airDriftSpeed = 0;
+    const speed = this.velocity.length();
+    if (speed < 6) return;
+    this.airDriftTimer = AIR_DRIFT_TIME;
+    this.airDriftDir.copy(this.velocity).multiplyScalar(1 / speed);
+    this.airDriftSpeed = speed;
   }
 }
