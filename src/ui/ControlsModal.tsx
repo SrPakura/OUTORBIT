@@ -15,30 +15,31 @@ import {
 } from '@/game/settings';
 import { getConnectedGamepadName, readConnectedGamepad } from '@/game/input/GamepadInput';
 import MenuModalShell from '@/ui/MenuModalShell';
+import { useI18n } from '@/i18n';
 
-const ACTION_LABELS: Record<ControlAction, string> = {
-  forward: 'Avanzar',
-  back: 'Retroceder',
-  left: 'Izquierda',
-  right: 'Derecha',
-  jump: 'Saltar',
-  sprint: 'Sprint',
-  interact: 'Interactuar',
-  parry: 'Parry',
-  stasis: 'Estasis',
-  lockOn: 'Fijar objetivo',
-  slot1: 'Personaje 1',
-  slot2: 'Personaje 2',
-  slot3: 'Personaje 3',
+const ACTION_LABEL_KEYS: Record<ControlAction, string> = {
+  forward: 'controls.actions.forward',
+  back: 'controls.actions.back',
+  left: 'controls.actions.left',
+  right: 'controls.actions.right',
+  jump: 'controls.actions.jump',
+  sprint: 'controls.actions.sprint',
+  interact: 'controls.actions.interact',
+  parry: 'controls.actions.parry',
+  stasis: 'controls.actions.stasis',
+  lockOn: 'controls.actions.lockOn',
+  slot1: 'controls.actions.slot1',
+  slot2: 'controls.actions.slot2',
+  slot3: 'controls.actions.slot3',
 };
 
-const GAMEPAD_ACTION_LABELS: Record<GamepadAction, string> = {
-  attack: 'Ataque de Velocidad / Lanzar roca',
-  dash: 'Dash / Redirección (cámara lenta)',
-  jump: 'Salto / Despegue / Freno aéreo',
-  skill: 'Usar habilidad (ranura activa)',
-  cycleSlot: 'Cambiar ranura (1/2/3)',
-  pause: 'Pausa',
+const GAMEPAD_ACTION_LABEL_KEYS: Record<GamepadAction, string> = {
+  attack: 'controls.gamepadActions.attack',
+  dash: 'controls.gamepadActions.dash',
+  jump: 'controls.gamepadActions.jump',
+  skill: 'controls.gamepadActions.skill',
+  cycleSlot: 'controls.gamepadActions.cycleSlot',
+  pause: 'controls.gamepadActions.pause',
 };
 
 interface ControlsModalProps {
@@ -123,6 +124,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
   const [capturingPad, setCapturingPad] = useState<GamepadAction | null>(null);
   // Estado de conexión en vivo del mando (poll + eventos de la Gamepad API).
   const [padName, setPadName] = useState<string | null>(() => getConnectedGamepadName());
+  const { t } = useI18n();
 
   useEffect(() => {
     const update = () => setPadName(getConnectedGamepadName());
@@ -218,8 +220,8 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
 
   return (
     <MenuModalShell
-      title="MODIFICAR CONTROLES"
-      subtitle="Ajustes persistentes · se aplican al menú y a la partida"
+      title={t('controls.title')}
+      subtitle={t('controls.subtitle')}
       accent="#22d3ee"
       onClose={onClose}
       footer={
@@ -233,14 +235,14 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
             }}
             className="cursor-pointer rounded-lg border-2 border-[#0b0b14] bg-white/10 px-4 py-2 text-[11px] font-black tracking-[0.16em] text-white transition-colors hover:bg-white/20"
           >
-            RESTAURAR DEFECTO
+            {t('controls.restoreDefaults')}
           </button>
           <button
             type="button"
             onClick={handleSave}
             className="cursor-pointer rounded-lg border-2 border-[#0b0b14] bg-gradient-to-r from-cyan-400 to-violet-500 px-5 py-2 text-[11px] font-black tracking-[0.16em] text-[#05010f] shadow-[4px_4px_0_#0b0b14] transition-transform hover:-translate-y-0.5 active:translate-y-0"
           >
-            GUARDAR Y APLICAR
+            {t('controls.saveApply')}
           </button>
         </div>
       }
@@ -256,7 +258,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
               : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
           }`}
         >
-          TECLADO / RATÓN
+          {t('controls.tabKeyboard')}
         </button>
         <button
           type="button"
@@ -267,7 +269,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
               : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
           }`}
         >
-          MANDO (PS4 / GENÉRICO)
+          {t('controls.tabGamepad')}
         </button>
       </div>
 
@@ -276,7 +278,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
           <div className="grid gap-5 md:grid-cols-2">
             <div className="space-y-4">
               <SliderRow
-                label="Sensibilidad del ratón"
+                label={t('controls.mouseSensitivity')}
                 value={draft.mouseSensitivity}
                 min={SETTINGS_LIMITS.mouseSensitivity.min}
                 max={SETTINGS_LIMITS.mouseSensitivity.max}
@@ -285,7 +287,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
                 onChange={(value) => setDraft((prev) => ({ ...prev, mouseSensitivity: value }))}
               />
               <SliderRow
-                label="Campo de visión (FOV)"
+                label={t('controls.fov')}
                 value={draft.baseFov}
                 min={SETTINGS_LIMITS.baseFov.min}
                 max={SETTINGS_LIMITS.baseFov.max}
@@ -294,7 +296,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
                 onChange={(value) => setDraft((prev) => ({ ...prev, baseFov: value }))}
               />
               <SliderRow
-                label="Volumen del audio"
+                label={t('controls.volume')}
                 value={draft.masterVolume}
                 min={SETTINGS_LIMITS.masterVolume.min}
                 max={SETTINGS_LIMITS.masterVolume.max}
@@ -306,25 +308,24 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
 
             <div className="space-y-3">
               <ToggleRow
-                label="Invertir eje Y"
+                label={t('controls.invertY')}
                 checked={draft.invertY}
                 onChange={(checked) => setDraft((prev) => ({ ...prev, invertY: checked }))}
               />
               <ToggleRow
-                label="Trama Halftone (cómic)"
+                label={t('controls.halftone')}
                 checked={draft.halftonesEnabled}
                 onChange={(checked) => setDraft((prev) => ({ ...prev, halftonesEnabled: checked }))}
               />
               <p className="rounded-lg border-2 border-white/10 bg-white/5 px-3 py-2 text-[10px] leading-relaxed text-slate-300">
-                La sensibilidad y el eje Y afectan a la cámara de la partida; el FOV y la trama
-                halftone se ven al instante en el diorama y en el juego.
+                {t('controls.keyboardHint')}
               </p>
             </div>
           </div>
 
           <div className="mt-6">
             <p className="mb-3 text-[11px] font-black uppercase tracking-[0.26em] text-violet-300">
-              Asignación de teclas
+              {t('controls.keyBindings')}
             </p>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {CONTROL_ACTIONS.map((action) => {
@@ -335,7 +336,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
                     className="flex items-center justify-between gap-2 rounded-lg border-2 border-white/10 bg-white/5 px-3 py-2"
                   >
                     <span className="text-[11px] font-bold text-slate-200">
-                      {ACTION_LABELS[action]}
+                      {t(ACTION_LABEL_KEYS[action])}
                     </span>
                     <button
                       type="button"
@@ -346,7 +347,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
                           : 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100 hover:bg-cyan-400/20'
                       }`}
                     >
-                      {isCapturing ? 'PULSA TECLA...' : formatKeyCode(draft.bindings[action])}
+                      {isCapturing ? t('controls.pressKey') : formatKeyCode(draft.bindings[action])}
                     </button>
                   </div>
                 );
@@ -367,7 +368,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
             }`}
           >
             <span className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-200">
-              Mando conectado
+              {t('controls.gamepadConnected')}
             </span>
             <span
               className={`max-w-[60%] truncate text-right text-[10px] font-bold ${
@@ -375,19 +376,18 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
               }`}
               title={padName ?? undefined}
             >
-              {padName ?? '— ninguno —'}
+              {padName ?? t('controls.gamepadNone')}
             </span>
           </div>
           {!padName && (
             <p className="rounded-lg border-2 border-white/10 bg-white/5 px-3 py-2 text-[10px] leading-relaxed text-slate-300">
-              Conecta un mando (DualShock 4 por USB o Bluetooth, o cualquier mando genérico) y
-              pulsa cualquier botón para que el navegador lo detecte.
+              {t('controls.gamepadConnectHint')}
             </p>
           )}
 
           <div className="grid gap-5 md:grid-cols-2">
             <SliderRow
-              label="Sensibilidad del stick derecho"
+              label={t('controls.stickSensitivity')}
               value={draft.gamepadSensitivity}
               min={SETTINGS_LIMITS.gamepadSensitivity.min}
               max={SETTINGS_LIMITS.gamepadSensitivity.max}
@@ -396,7 +396,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
               onChange={(value) => setDraft((prev) => ({ ...prev, gamepadSensitivity: value }))}
             />
             <SliderRow
-              label="Zona muerta de los sticks"
+              label={t('controls.deadzone')}
               value={draft.gamepadDeadzone}
               min={SETTINGS_LIMITS.gamepadDeadzone.min}
               max={SETTINGS_LIMITS.gamepadDeadzone.max}
@@ -409,14 +409,14 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
           <div>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <p className="text-[11px] font-black uppercase tracking-[0.26em] text-violet-300">
-                Asignación de botones
+                {t('controls.buttonBindings')}
               </p>
               <button
                 type="button"
                 onClick={handleResetGamepad}
                 className="cursor-pointer rounded-lg border-2 border-[#0b0b14] bg-white/10 px-4 py-1.5 text-[10px] font-black tracking-[0.16em] text-white transition-colors hover:bg-white/20"
               >
-                RESTAURAR MANDO POR DEFECTO
+                {t('controls.resetGamepad')}
               </button>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -428,7 +428,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
                     className="flex items-center justify-between gap-2 rounded-lg border-2 border-white/10 bg-white/5 px-3 py-2"
                   >
                     <span className="text-[11px] font-bold text-slate-200">
-                      {GAMEPAD_ACTION_LABELS[action]}
+                      {t(GAMEPAD_ACTION_LABEL_KEYS[action])}
                     </span>
                     <button
                       type="button"
@@ -440,7 +440,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
                       }`}
                     >
                       {isCapturing
-                        ? 'PULSA BOTÓN...'
+                        ? t('controls.pressButton')
                         : formatGamepadButton(draft.gamepadBindings[action])}
                     </button>
                   </div>
@@ -448,10 +448,7 @@ export default function ControlsModal({ settings, onClose, onSaveSettings }: Con
               })}
             </div>
             <p className="mt-3 rounded-lg border-2 border-white/10 bg-white/5 px-3 py-2 text-[10px] leading-relaxed text-slate-300">
-              Mapeo W3C estándar: 0=Cruz (A), 1=Círculo (B), 2=Cuadrado (X), 3=Triángulo (Y), 4=L1,
-              5=R1, 6=L2, 7=R2, 9=Options (Start), 12..15=D-Pad. El stick izquierdo mueve a Nyx
-              (WASD analógico), el stick derecho gira la cámara y el mando funciona sin capturar
-              el ratón. Options abre/cierra la pausa y Círculo (B) cierra la pausa.
+              {t('controls.w3cMappingNote')}
             </p>
           </div>
         </div>

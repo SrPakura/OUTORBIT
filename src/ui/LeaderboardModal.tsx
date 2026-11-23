@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { fetchTopLeaderboard } from '@/api/leaderboard';
 import type { LeaderboardEntryRecord } from '@/game/types';
 import MenuModalShell from '@/ui/MenuModalShell';
+import { useI18n } from '@/i18n';
 
 interface LeaderboardModalProps {
   onClose: () => void;
@@ -23,6 +24,7 @@ export default function LeaderboardModal({ onClose }: LeaderboardModalProps) {
   const [entries, setEntries] = useState<LeaderboardEntryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
+  const { t } = useI18n();
 
   useEffect(() => {
     let cancelled = false;
@@ -43,14 +45,14 @@ export default function LeaderboardModal({ onClose }: LeaderboardModalProps) {
 
   return (
     <MenuModalShell
-      title="LEADERBOARD"
-      subtitle="Top 15 pilotos · ranking global vía Base44"
+      title={t('leaderboard.title')}
+      subtitle={t('leaderboard.subtitle')}
       accent="#fbbf24"
       onClose={onClose}
       footer={
         <div className="flex items-center justify-between gap-3">
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-            {loading ? 'Sincronizando...' : `${entries.length} registros`}
+            {loading ? t('leaderboard.syncing') : t('leaderboard.records', { n: entries.length })}
           </p>
           <button
             type="button"
@@ -58,30 +60,30 @@ export default function LeaderboardModal({ onClose }: LeaderboardModalProps) {
             disabled={loading}
             className="cursor-pointer rounded-lg border-2 border-[#0b0b14] bg-white/10 px-4 py-2 text-[11px] font-black tracking-[0.16em] text-white transition-colors hover:bg-white/20 disabled:cursor-wait disabled:opacity-50"
           >
-            RECARGAR
+            {t('leaderboard.reload')}
           </button>
         </div>
       }
     >
       {loading ? (
         <p className="py-10 text-center text-xs font-bold tracking-[0.2em] text-cyan-300">
-          CARGANDO RANKING...
+          {t('leaderboard.loading')}
         </p>
       ) : entries.length === 0 ? (
         <p className="py-10 text-center text-xs leading-relaxed text-slate-300">
-          Sin registros todavía.
+          {t('leaderboard.emptyLine1')}
           <br />
-          Sé el primero en alcanzar el portal de KRONOS.
+          {t('leaderboard.emptyLine2')}
         </p>
       ) : (
         <div className="overflow-hidden rounded-xl border-2 border-white/10">
           <div className="grid grid-cols-[42px_1fr_64px_64px_1fr_56px] gap-2 border-b-2 border-white/10 bg-white/5 px-3 py-2 text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">
-            <span>#</span>
-            <span>Piloto</span>
-            <span className="text-right">Tiempo</span>
-            <span className="text-right">Score</span>
-            <span>Estilo</span>
-            <span className="text-right">Alarmas</span>
+            <span>{t('leaderboard.colRank')}</span>
+            <span>{t('leaderboard.colPilot')}</span>
+            <span className="text-right">{t('leaderboard.colTime')}</span>
+            <span className="text-right">{t('leaderboard.colScore')}</span>
+            <span>{t('leaderboard.colStyle')}</span>
+            <span className="text-right">{t('leaderboard.colAlarms')}</span>
           </div>
           <ol>
             {entries.map((entry, index) => (

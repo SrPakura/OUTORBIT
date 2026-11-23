@@ -1,6 +1,7 @@
 import { TUTORIAL_SPECS, type TutorialId } from '@/game/levels/tutorialDefinitions';
 import { GAME_CONSTANTS } from '@/game/types';
 import MenuModalShell from '@/ui/MenuModalShell';
+import { useI18n } from '@/i18n';
 
 interface TutorialsModalProps {
   onClose: () => void;
@@ -13,10 +14,12 @@ interface TutorialsModalProps {
  * mini-nivel directamente.
  */
 export default function TutorialsModal({ onClose, onStartTutorial }: TutorialsModalProps) {
+  const { t } = useI18n();
+
   return (
     <MenuModalShell
-      title="TUTORIALES"
-      subtitle="Una mecánica por nivel · 5 lecciones jugables"
+      title={t('tutorials.title')}
+      subtitle={t('tutorials.subtitle')}
       accent="#a78bfa"
       onClose={onClose}
     >
@@ -59,7 +62,7 @@ export default function TutorialsModal({ onClose, onStartTutorial }: TutorialsMo
                 onClick={() => onStartTutorial(spec.id)}
                 className="shrink-0 cursor-pointer rounded-lg border-2 border-[#0b0b14] bg-gradient-to-r from-violet-400 to-cyan-400 px-4 py-2 text-[10px] font-black tracking-[0.16em] text-[#05010f] shadow-[4px_4px_0_#0b0b14] transition-transform hover:-translate-y-0.5 active:translate-y-0"
               >
-                JUGAR TUTORIAL
+                {t('tutorials.play')}
               </button>
             </article>
           );
