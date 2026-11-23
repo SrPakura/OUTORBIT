@@ -516,6 +516,11 @@ const _upAxis = new THREE.Vector3(0, 1, 0);
 // HITO 3: eje del agujero del torus del anillo de daño (local Z -> up tangente).
 const _zAxis = new THREE.Vector3(0, 0, 1);
 const _dummy = new THREE.Object3D();
+
+// Buckets vacíos compartidos: los planetas sin estructuras/props devuelven
+// estas referencias en vez de alocar arrays nuevos por consulta.
+const EMPTY_STRUCTURE_COLLIDERS: StructureCollider[] = [];
+const EMPTY_PROP_COLLIDERS: PropCollider[] = [];
 // HITO 1: scratch dedicado de steering/separación (cero allocations en el loop).
 // HITO 2: scratch del sondeo de props (distancia segmento-segmento, cero allocs).
 // HITO 4: scratch del producto cruzado del giro enemigo (banking de voladores).
@@ -1123,9 +1128,13 @@ export class WorldObjectsManager implements EnemyAIHost {
     defeated: false,
   };
   // --- Oleada 2: galaxia continua ---
-  readonly structureColliders: StructureCollider[] = [];
+  // P10: colliders particionados por planeta. Antes los lectores calientes
+  // (visión enemiga, steering, colisión del jugador) barrían TODOS los
+  // colliders de la galaxia filtrando por planetId en cada comprobación
+  // (O(N·M)); ahora cada planeta solo ve su bucket.
+  private readonly structureCollidersByPlanet = new Map<string, StructureCollider[]>();
   // --- HITO 2: colliders físicos de props (flora, rocas, obstáculos) ---
-  readonly propColliders: PropCollider[] = [];
+  private readonly propCollidersByPlanet = new Map<string, PropCollider[]>();
   private readonly planetGenTotal = new Map<string, number>();
   private readonly planetGenDestroyed = new Map<string, number>();
   private readonly planetKeycardTotal = new Map<string, number>();
@@ -1299,13 +1308,18 @@ export class WorldObjectsManager implements EnemyAIHost {
       const groundedRadius =
         planet.spec.radius + getPlanetTerrainOffsetVec(spec.planetId, _v1);
       this.group.add(buildStructureMesh(spec, planet.centerVec, groundedRadius));
-      this.structureColliders.push(
+      this.addToPlanetBucket(
+        this.structureCollidersByPlanet,
         createStructureCollider(spec, planet.centerVec, groundedRadius)
       );
       if (spec.kind === 'arch_gate') {
-        this.structureColliders.push(
-          ...createArchGatePillarColliders(spec, planet.centerVec, groundedRadius)
-        );
+        for (const pillar of createArchGatePillarColliders(
+          spec,
+          planet.centerVec,
+          groundedRadius
+        )) {
+          this.addToPlanetBucket(this.structureCollidersByPlanet, pillar);
+        }
       }
     }
 
@@ -1453,6 +1467,19 @@ export class WorldObjectsManager implements EnemyAIHost {
     const planet = this.planets.find((p) => p.spec.id === id);
     if (!planet) throw new Error(`WorldObjects: planeta desconocido "${id}"`);
     return planet;
+  }
+
+  /** Añade un collider al bucket de su planeta (fuente única de colisión). */
+  private addToPlanetBucket<T extends { planetId: string }>(
+    map: Map<string, T[]>,
+    collider: T,
+  ): void {
+    let bucket = map.get(collider.planetId);
+    if (!bucket) {
+      bucket = [];
+      map.set(collider.planetId, bucket);
+    }
+    bucket.push(collider);
   }
 
   private placeOnPlanet(
@@ -1604,7 +1631,7 @@ export class WorldObjectsManager implements EnemyAIHost {
         planet.centerVec,
         gateGroundedRadius
       );
-      this.structureColliders.push(collider);
+      this.addToPlanetBucket(this.structureCollidersByPlanet, collider);
       this.lockedGates.push({
         id: spec.id,
         mesh: gate.group,
@@ -1662,7 +1689,7 @@ export class WorldObjectsManager implements EnemyAIHost {
         planet.centerVec,
         wallGroundedRadius
       );
-      this.structureColliders.push(collider);
+      this.addToPlanetBucket(this.structureCollidersByPlanet, collider);
       this.breakableWalls.push({
         id: spec.id,
         mesh: wall.group,
@@ -1747,7 +1774,7 @@ export class WorldObjectsManager implements EnemyAIHost {
     if (blueprint === undefined) return; // stone_path / wood_bridge: transitable
 
     const push = (center: THREE.Vector3, upDir: THREE.Vector3, baseAltitude: number, id: string): void => {
-      this.propColliders.push({
+      this.addToPlanetBucket(this.propCollidersByPlanet, {
         id,
         planetId: spec.planetId,
         center,
@@ -2529,9 +2556,10 @@ export class WorldObjectsManager implements EnemyAIHost {
       _v1.normalize();
       if (_v1.dot(zone.dir) > zone.cosThreshold) return true;
     }
-    for (let i = 0; i < this.propColliders.length; i++) {
-      const c = this.propColliders[i];
-      if (!c.isStealthBush || c.planetId !== planet.spec.id) continue;
+    const propColliders = this.getPropColliders(planet.spec.id);
+    for (let i = 0; i < propColliders.length; i++) {
+      const c = propColliders[i];
+      if (!c.isStealthBush) continue;
       const r = c.radius + 0.4;
       if (pos.distanceToSquared(c.center) < r * r) return true;
     }
@@ -2541,9 +2569,10 @@ export class WorldObjectsManager implements EnemyAIHost {
   /** HITO 2 — El jugador está dentro de follaje denso (helechos/bambú):
    *  empuje elástico suave y factor de velocidad reducido. */
   isInFoliage(pos: THREE.Vector3, planet: PlanetRuntime): boolean {
-    for (let i = 0; i < this.propColliders.length; i++) {
-      const c = this.propColliders[i];
-      if (!c.softFoliage || c.planetId !== planet.spec.id) continue;
+    const propColliders = this.getPropColliders(planet.spec.id);
+    for (let i = 0; i < propColliders.length; i++) {
+      const c = propColliders[i];
+      if (!c.softFoliage) continue;
       const r = c.radius + 0.5;
       if (pos.distanceToSquared(c.center) < r * r) return true;
     }
@@ -2815,14 +2844,14 @@ export class WorldObjectsManager implements EnemyAIHost {
 
   // --------------------------------------------------------------------------
 
-  /** Colliders de todas las estructuras de la galaxia (colisión del jugador). */
-  getStructureColliders(): StructureCollider[] {
-    return this.structureColliders;
+  /** Colliders de las estructuras del planeta dado (colisión/visión/steering). */
+  getStructureColliders(planetId: string): StructureCollider[] {
+    return this.structureCollidersByPlanet.get(planetId) ?? EMPTY_STRUCTURE_COLLIDERS;
   }
 
-  /** HITO 2 — Colliders físicos de todos los props (flora, rocas, obstáculos). */
-  getPropColliders(): PropCollider[] {
-    return this.propColliders;
+  /** HITO 2 — Colliders físicos de los props del planeta dado (flora, rocas). */
+  getPropColliders(planetId: string): PropCollider[] {
+    return this.propCollidersByPlanet.get(planetId) ?? EMPTY_PROP_COLLIDERS;
   }
 
   getGeneratorTotalOn(planetId: string): number {
@@ -4058,9 +4087,9 @@ export class WorldObjectsManager implements EnemyAIHost {
     this.teleportCooldown = 0;
     this.predictiveShields = false;
     this.alertBoost = 0;
-    this.structureColliders.length = 0;
+    this.structureCollidersByPlanet.clear();
     // HITO 2: colliders físicos de props.
-    this.propColliders.length = 0;
+    this.propCollidersByPlanet.clear();
     // HITO 1: zonas restringidas, infracciones y banner de aviso.
     this.restrictedZones.length = 0;
     this.zoneCachePlanetId = null;

@@ -199,10 +199,10 @@ export interface EnemyAIHost {
   readonly enemies: EnemyObj[];
   /** Pool de proyectiles de torretas (también usado por los orbes de KRONOS). */
   readonly projectiles: TurretProjectile[];
-  /** Colliders de edificios/estructuras (visión y steering). */
-  readonly structureColliders: StructureCollider[];
-  /** Colliders físicos de props (flora, rocas). */
-  readonly propColliders: PropCollider[];
+  /** Colliders de edificios/estructuras del planeta dado (visión y steering). */
+  getStructureColliders(planetId: string): StructureCollider[];
+  /** Colliders físicos de props del planeta dado (flora, rocas). */
+  getPropColliders(planetId: string): PropCollider[];
   /** Planetas de la galaxia continua. */
   readonly planets: PlanetRuntime[];
   /** Zonas restringidas instanciadas en buildGalaxy. */
@@ -337,7 +337,7 @@ export class EnemyAISystem {
       isLineBlockedByStructures(
         enemy.pos,
         state.pos,
-        this.host.structureColliders,
+        this.host.getStructureColliders(enemy.planet.spec.id),
         enemy.planet.spec.id
       )
     ) {
@@ -1057,7 +1057,7 @@ export class EnemyAISystem {
         !isLineBlockedByStructures(
           _steerStart,
           _steerEnd,
-          this.host.structureColliders,
+          this.host.getStructureColliders(enemy.planet.spec.id),
           enemy.planet.spec.id
         ) &&
         !this.isSegmentBlockedByProps(
@@ -1088,7 +1088,7 @@ export class EnemyAISystem {
       !isLineBlockedByStructures(
         _steerStart,
         _steerEnd,
-        this.host.structureColliders,
+        this.host.getStructureColliders(enemy.planet.spec.id),
         enemy.planet.spec.id
       ) &&
       !this.isSegmentBlockedByProps(_steerStart, _steerEnd, enemy.planet.spec.id, GUARD_STRUCTURE_RADIUS)
@@ -1109,9 +1109,10 @@ export class EnemyAISystem {
   ): boolean {
     _propMid.copy(a).add(b).multiplyScalar(0.5);
     const halfLen = a.distanceTo(b) * 0.5;
-    for (let i = 0; i < this.host.propColliders.length; i++) {
-      const c = this.host.propColliders[i];
-      if (c.planetId !== planetId || c.softFoliage) continue;
+    const propColliders = this.host.getPropColliders(planetId);
+    for (let i = 0; i < propColliders.length; i++) {
+      const c = propColliders[i];
+      if (c.softFoliage) continue;
       const bound = c.height + c.radius + radius + halfLen + 0.6;
       if (c.center.distanceToSquared(_propMid) > bound * bound) continue;
 
@@ -1263,7 +1264,7 @@ export class EnemyAISystem {
         enemy.pos,
         0,
         false,
-        this.host.structureColliders,
+        this.host.getStructureColliders(enemy.planet.spec.id),
         enemy.planet.spec.id,
         GUARD_STRUCTURE_RADIUS
       );
@@ -1279,7 +1280,7 @@ export class EnemyAISystem {
         0,
         terrainH + altitude,
         enemy.planet,
-        this.host.propColliders,
+        this.host.getPropColliders(enemy.planet.spec.id),
         GUARD_STRUCTURE_RADIUS
       );
       if (propRes.hitProp) {

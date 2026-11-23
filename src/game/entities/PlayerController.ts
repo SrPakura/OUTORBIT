@@ -1510,7 +1510,7 @@ export class PlayerController {
       this.pos,
       this.vertVel,
       this.isBurrowing,
-      this.world.getStructureColliders(),
+      this.world.getStructureColliders(planet.spec.id),
       planet.spec.id,
       PLAYER_STRUCTURE_RADIUS
     );
@@ -1527,7 +1527,7 @@ export class PlayerController {
       this.vertVel,
       this.altitude,
       planet,
-      this.world.getPropColliders(),
+      this.world.getPropColliders(planet.spec.id),
       PLAYER_STRUCTURE_RADIUS
     );
     const propElevated = propRes.groundAltitude - terrainOffset;
