@@ -6,6 +6,7 @@ import { TitleDioramaSandbox } from '@/ui/TitleDioramaSandbox';
 import FluidInkButton from '@/ui/FluidInkButton';
 import SettingsScreen from '@/ui/SettingsScreen';
 import LeaderboardModal from '@/ui/LeaderboardModal';
+import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
 
 type MenuModal = 'settings' | 'leaderboard' | null;
 
@@ -38,6 +39,19 @@ export default function TitleScreen({
   const { language, toggleLanguage, t } = useI18n();
 
   const [modal, setModal] = useState<MenuModal>(null);
+
+  // Navegación con mando: D-Pad/stick mueve, Cruz (A) activa.
+  const actions = [
+    { id: 'play', run: onPlay },
+    ...(onPlayTraining ? [{ id: 'training', run: onPlayTraining }] : []),
+    { id: 'settings', run: () => setModal('settings') },
+    { id: 'leaderboard', run: () => setModal('leaderboard') },
+    { id: 'language', run: toggleLanguage },
+  ] as const;
+  const [padIndex] = useGamepadListNav(actions.length, {
+    enabled: modal === null,
+    onConfirm: (i) => actions[i]?.run(),
+  });
 
   // Montaje único del runtime WebGL (el sandbox se reconstruye solo al salir).
   useEffect(() => {
@@ -93,6 +107,7 @@ export default function TitleScreen({
             label={t('menu.play')}
             stops={['#e11d48', '#f43f5e', '#fb923c', '#fbbf24']}
             vbHeight={116}
+            focused={padIndex === 0}
             onClick={onPlay}
           />
           {onPlayTraining && (
@@ -100,17 +115,20 @@ export default function TitleScreen({
               label={t('menu.training')}
               hint={t('menu.trainingDebug')}
               stops={['#22d3ee', '#38bdf8', '#6366f1', '#4f46e5']}
+              focused={padIndex === 1}
               onClick={onPlayTraining}
             />
           )}
           <FluidInkButton
             label={t('menu.controls')}
             stops={['#a855f7', '#8b5cf6', '#6366f1', '#22d3ee']}
+            focused={padIndex === (onPlayTraining ? 2 : 1)}
             onClick={() => setModal('settings')}
           />
           <FluidInkButton
             label={t('menu.leaderboard')}
             stops={['#fbbf24', '#f59e0b', '#f43f5e', '#e11d48']}
+            focused={padIndex === (onPlayTraining ? 3 : 2)}
             onClick={() => setModal('leaderboard')}
           />
         </nav>
@@ -123,6 +141,7 @@ export default function TitleScreen({
             vbHeight={72}
             cornerRadius={20}
             amplitude={3}
+            focused={padIndex === actions.length - 1}
             ariaLabel="Toggle language / Cambiar idioma"
             onClick={toggleLanguage}
           />

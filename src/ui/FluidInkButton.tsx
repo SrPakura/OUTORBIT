@@ -24,6 +24,8 @@ export interface FluidInkButtonProps {
   textColor?: string;
   /** Amplitud de la ondulación (4.5 = media, como la referencia). */
   amplitude?: number;
+  /** Resaltado de foco (navegación con mando / teclado). */
+  focused?: boolean;
   ariaLabel?: string;
   onClick?: () => void;
 }
@@ -152,6 +154,7 @@ export default function FluidInkButton({
   core = '#f1f1ed',
   textColor = '#0b0d12',
   amplitude = 4.5,
+  focused = false,
   ariaLabel,
   onClick,
 }: FluidInkButtonProps) {
@@ -274,7 +277,7 @@ export default function FluidInkButton({
   }, [vbHeight, cornerRadius, amplitude]);
 
   return (
-    <div className="fink-wrap">
+    <div className={`fink-wrap${focused ? ' is-focused' : ''}`}>
       <svg viewBox={`0 0 ${VB_W} ${vbHeight}`} className="fink-svg" aria-hidden="true">
         <defs>
           <filter id={`${uid}-aura`} x="-35%" y="-35%" width="170%" height="170%" colorInterpolationFilters="sRGB">
@@ -325,7 +328,11 @@ export default function FluidInkButton({
       </button>
 
       <style>{`
-        .fink-wrap { position: relative; width: 100%; }
+        .fink-wrap { position: relative; width: 100%; transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), filter 0.16s ease; }
+        .fink-wrap.is-focused {
+          transform: scale(1.035) translateX(6px);
+          filter: drop-shadow(0 0 16px rgba(225, 29, 72, 0.5));
+        }
         .fink-svg { display: block; width: 100%; height: auto; overflow: visible; }
         .fink-btn {
           position: absolute;

@@ -38,10 +38,10 @@ export type GameSoundKind =
   | 'bounce';
 
 /**
- * Volumen maestro de los efectos: +30% respecto al original (0.36) para que
- * los one-shots se oigan por encima de la música incluso en pleno combate.
+ * Volumen maestro de los efectos: subido a 0.65 para que corten por encima de
+ * la música (BASE_VOLUME 0.2 del MusicPlayer) incluso en pleno combate.
  */
-const MASTER_VOLUME = 0.47;
+const MASTER_VOLUME = 0.65;
 
 /**
  * Sintetizador procedural: osciladores con envolventes cortas + ruido filtrado

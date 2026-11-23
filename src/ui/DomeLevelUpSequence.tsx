@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useI18n } from '@/i18n';
 import type { LevelUpCardOption } from '@/game/dome/DomeProgression';
 import type { SynthAudio } from '@/game/audio/SynthAudio';
+import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
 
 // ============================================================================
 // Subida de nivel cinemática — secuencia completa de pantalla completa:
@@ -838,6 +839,36 @@ export default function DomeLevelUpSequence({
     [finish, flyToCenter, requiresSlotReplacement],
   );
 
+  // Mando — cartas: D-Pad/stick izq-der mueve, Cruz (A) elige.
+  const [padCardIndex] = useGamepadListNav(choices?.length ?? 0, {
+    enabled: phase === 'cards' && !showReplace,
+    columns: choices?.length ?? 1,
+    onConfirm: (i) => {
+      const option = choices?.[i];
+      if (option) pick(option);
+    },
+  });
+
+  // Mando — ranuras de reemplazo: Cruz (A) confirma, Círculo (B) vuelve.
+  const [padSlotIndex] = useGamepadListNav(equippedSlots.length, {
+    enabled: showReplace,
+    columns: equippedSlots.length,
+    onConfirm: (i) => {
+      if (flyingRef.current) finish(flyingRef.current, i as 0 | 1 | 2);
+    },
+    onBack: closeReplace,
+  });
+
+  // Foco visual de las cartas: imperativo para no pisar las clases de
+  // vuelo/sello que se gestionan con classList.
+  useEffect(() => {
+    if (phase !== 'cards') return;
+    const focusedId = showReplace ? null : choices?.[padCardIndex]?.id ?? null;
+    cardEls.current.forEach((el, id) => {
+      el.classList.toggle('is-pad-focus', id === focusedId);
+    });
+  }, [phase, showReplace, choices, padCardIndex]);
+
   // Teclado: [1..N] elige carta · con carta en vuelo [1..3] elige ranura · ESC vuelve
   useEffect(() => {
     if (phase !== 'cards' || !choices) return;
@@ -946,7 +977,7 @@ export default function DomeLevelUpSequence({
               <button
                 key={i}
                 type="button"
-                className="lu-slot"
+                className={`lu-slot${padSlotIndex === i ? ' is-pad-focus' : ''}`}
                 onClick={() => flyingRef.current && finish(flyingRef.current, i as 0 | 1 | 2)}
               >
                 <span className="lu-slot__idx">R{i + 1}</span>
@@ -1134,6 +1165,11 @@ export default function DomeLevelUpSequence({
           100% { opacity: 1; transform: skewX(-5deg) translateY(0) rotate(0deg) scale(1); }
         }
         .lu-card:hover {
+          transform: skewX(-5deg) translateY(-12px) scale(1.05);
+          box-shadow: 14px 14px 0 var(--accent, #0b0d12);
+          z-index: 2;
+        }
+        .lu-card.is-pad-focus {
           transform: skewX(-5deg) translateY(-12px) scale(1.05);
           box-shadow: 14px 14px 0 var(--accent, #0b0d12);
           z-index: 2;
@@ -1374,7 +1410,7 @@ export default function DomeLevelUpSequence({
           from { opacity: 0; transform: skewX(-5deg) translateY(70px); }
           to   { opacity: 1; transform: skewX(-5deg) translateY(0); }
         }
-        .lu-slot:hover {
+        .lu-slot:hover, .lu-slot.is-pad-focus {
           transform: skewX(-5deg) translateY(-10px) scale(1.05);
           box-shadow: 11px 11px 0 #e11d48;
           border-color: #e11d48;

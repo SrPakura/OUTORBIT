@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useI18n, waveLabelKey } from '@/i18n';
+import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
 
 // ============================================================================
 // Menú de Pausa de la Cúpula — mismo ADN visual que la subida de nivel y los
@@ -23,18 +24,20 @@ function PauseButton({
   label,
   hotkey,
   accent,
+  focused,
   onClick,
 }: {
   label: string;
   hotkey: string;
   accent: string;
+  focused?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="pause-btn"
+      className={`pause-btn${focused ? ' is-focused' : ''}`}
       style={{ '--accent': accent } as React.CSSProperties}
     >
       <span className="pause-btn__label">{label}</span>
@@ -67,6 +70,14 @@ export function DomePauseModal({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, onResume, onOpenSettings, onRestart, onExitToMenu]);
+
+  // Mando: D-Pad/stick mueve, Cruz (A) activa, Círculo (B) reanuda.
+  const pauseActions = [onResume, onOpenSettings, onRestart, onExitToMenu];
+  const [padIndex] = useGamepadListNav(pauseActions.length, {
+    enabled: isOpen,
+    onConfirm: (i) => pauseActions[i]?.(),
+    onBack: onResume,
+  });
 
   if (!isOpen) return null;
 
@@ -105,24 +116,28 @@ export function DomePauseModal({
             label={t('pause.resume')}
             hotkey="[1]"
             accent="#22d3ee"
+            focused={padIndex === 0}
             onClick={onResume}
           />
           <PauseButton
             label={t('pause.settings')}
             hotkey="[2]"
             accent="#fbbf24"
+            focused={padIndex === 1}
             onClick={onOpenSettings}
           />
           <PauseButton
             label={t('pause.restart')}
             hotkey="[3]"
             accent="#e11d48"
+            focused={padIndex === 2}
             onClick={onRestart}
           />
           <PauseButton
             label={t('pause.exit')}
             hotkey="[4]"
             accent="#0b0d12"
+            focused={padIndex === 3}
             onClick={onExitToMenu}
           />
         </nav>
@@ -254,7 +269,7 @@ export function DomePauseModal({
           from { opacity: 0; transform: skewX(-6deg) translateX(-46px); }
           to   { opacity: 1; transform: skewX(-6deg) translateX(0); }
         }
-        .pause-btn:hover {
+        .pause-btn:hover, .pause-btn.is-focused {
           transform: skewX(-6deg) translateX(10px);
           box-shadow: 10px 10px 0 var(--accent, #0b0d12);
           background: #fff;

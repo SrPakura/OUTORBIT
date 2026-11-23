@@ -17,7 +17,7 @@ import { DomeSphereTileManager } from '@/game/dome/DomeSphereTiles';
 import { DomeWaveManager, type ManagedWaveEnemy, type WaveFloorMode } from '@/game/dome/DomeWaveManager';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
-import { GamepadInput } from '@/game/input/GamepadInput';
+import { GamepadInput, readConnectedGamepad } from '@/game/input/GamepadInput';
 import {
   ACTIVE_SKILLS_CATALOG,
   DomeProgressionManager,
@@ -536,6 +536,13 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     }
   };
 
+  // El AudioContext de los SFX se desbloquea con CUALQUIER gesto: con el mando
+  // se puede jugar entero sin tocar el ratón, y antes los efectos quedaban
+  // mudos porque solo se desbloqueaba el contexto en el clic del lienzo.
+  const onUnlockAudio = () => audio.unlock();
+  window.addEventListener('pointerdown', onUnlockAudio, { passive: true });
+  window.addEventListener('keydown', onUnlockAudio);
+
   const onPointerLockChange = () => {
     const locked = document.pointerLockElement === canvas;
     if (locked) {
@@ -670,6 +677,17 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     // para poder abrir/cerrar DomePauseModal con Options y cerrarla con
     // Círculo (B). El resto de botones los consume el controlador al jugar.
     gamepad.update();
+    // Cualquier botón del mando también desbloquea el AudioContext (se puede
+    // jugar una run entera sin tocar el ratón ni el teclado).
+    const rawPad = readConnectedGamepad();
+    if (rawPad) {
+      for (const button of rawPad.buttons) {
+        if (button && button.pressed) {
+          audio.unlock();
+          break;
+        }
+      }
+    }
     if (gamepad.justPressedAction('pause')) {
       if (!levelUpOpenRef.current && !battleReportOpenRef.current && !settingsOpenRef.current) {
         if (pauseOpenRef.current) {
@@ -901,6 +919,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     window.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('keyup', onKeyUp);
     window.removeEventListener('resize', onResize);
+    window.removeEventListener('pointerdown', onUnlockAudio);
+    window.removeEventListener('keydown', onUnlockAudio);
     controllerRef.current = null;
     audioRef.current = null;
     // El motor gravitacional tiene capas continuas (viento/zumbido): sin esto
