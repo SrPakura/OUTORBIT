@@ -38,7 +38,7 @@
     "buttonBindings": "Button bindings",
     "resetGamepad": "RESTORE DEFAULT GAMEPAD",
     "pressButton": "PRESS BUTTON...",
-    "w3cMappingNote": "Standard W3C mapping: 0=Cross (A), 1=Circle (B), 2=Square (X), 3=Triangle (Y), 4=L1, 5=R1, 6=L2, 7=R2, 9=Options (Start), 12..15=D-Pad. The left stick moves Nyx (analog WASD), the right stick rotates the camera and the gamepad works without capturing the mouse. Options opens/closes the pause menu and Circle (B) closes the pause menu.",
+    "w3cMappingNote": "Standard W3C mapping: 0=Cross (A), 1=Circle (B), 2=Square (X), 3=Triangle (Y), 4=L1, 5=R1, 6=L2, 7=R2, 9=Options (Start), 12..15=D-Pad. The left stick moves Nyx (analog WASD), the right stick rotates the camera and the gamepad works without capturing the mouse. Options opens/closes the pause menu and Circle (B) also closes it.",
     "actions": {
       "forward": "Move forward",
       "back": "Move back",
@@ -72,9 +72,9 @@
     "levelShort": "Lv.",
     "bulletTimeHint": "⚡ DASH [RIGHT CLICK] TO REDIRECT KICK",
     "clickToCapture": "CLICK THE ARENA TO CAPTURE THE MOUSE · ESC TO RELEASE",
-    "groundControls": "ON GROUND: WASD WALK · MOUSE FREE CAMERA · SPACE ENTER 0G FLOATING",
-    "floatControls": "IN 0G FLOATING: MOUSE ROTATE BODY · WASD THRUST (1 EDEN/S, 0G INERTIA) · RIGHT CLICK + WASD DASH (3 EDEN)",
-    "speedAttackControls": "SPEED ATTACK (2 EDEN/S): LEFT CLICK (WITH ENEMY IN SIGHT = KICK/DRILL · NO ENEMY = VOID FALL) · SPACE CANCEL WITH FLIP",
+    "groundControls": "ON GROUND: WASD WALK · MOUSE FREE CAMERA · SPACE ENTER 0G FLOAT",
+    "floatControls": "IN 0G FLOAT: MOUSE ROTATE BODY · WASD THRUST (1 EDEN/S, 0G INERTIA) · RIGHT CLICK + WASD DASH (3 EDEN)",
+    "speedAttackControls": "SPEED ATTACK (2 EDEN/S): LEFT CLICK (WITH ENEMY IN SIGHT = KICK/DRILL · NO ENEMY = VOID FALL) · SPACE CANCELS WITH FLIP",
     "gamepadConnected": "GAMEPAD CONNECTED · OPTIONS PAUSE",
     "menuButton": "← MENU"
   },
@@ -129,7 +129,7 @@
     "bounceHorizon": "Bounce Horizon",
     "blackHole": "Black Hole",
     "implosion": "Implosion",
-    "speed": "Speed (+Physical strength)",
+    "speed": "Speed (+ Physical Strength)",
     "edenRegen": "Eden Regeneration",
     "hpRegen": "Health Regeneration"
   },
@@ -138,7 +138,7 @@
     "waveMiniboss": "MINIBOSS",
     "waveBoss": "BOSS",
     "spiralOctopus": "Spiral Octopus",
-    "groundGolem": "Ground Golem",
+    "groundGolem": "Groundbreaker Golem",
     "giantSparrow": "Giant Sparrow",
     "prismaNecrozma": "Prisma Necrozma",
     "kronosLeviathan": "KRONOS Leviathan"
