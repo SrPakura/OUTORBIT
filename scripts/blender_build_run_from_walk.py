@@ -43,8 +43,8 @@ RUN_SPEEDUP = 1.7
 
 # Inclinacion adelante repartida entre los dos huesos del torso. Nyx mira a -Y,
 # asi que un giro positivo alrededor de X echa el torso hacia adelante.
-LEAN_SPINE_DEG = 7.0
-LEAN_CHEST_DEG = 6.0
+LEAN_SPINE_DEG = 3.0
+LEAN_CHEST_DEG = 2.5
 
 # Braceo. El clip de caminar mueve el brazo apenas +-2 grados, asi que
 # amplificarlo no sirve: el balanceo se sintetiza a partir de la fase del muslo
@@ -71,6 +71,11 @@ def parse_args():
     p.add_argument("--name", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--no-export", action="store_true")
+    p.add_argument("--save-blend", default="",
+                   help="guarda el .blend con la accion de carrera ya asignada "
+                        "a nyx_armature, lista para retocar a mano")
+    p.add_argument("--keep-source", action="store_true",
+                   help="no borra el armature importado del caminar")
     p.add_argument("--stills", default="")
     p.add_argument("--stills-dir", default="")
     p.add_argument("--video", default="")
@@ -272,16 +277,23 @@ def build(src, act, f0, f1, dst):
             ang = math.degrees(math.atan2(-d.y, -d.z))
             splay = math.degrees(math.atan2(abs(d.x), math.hypot(d.y, d.z)))
             parts.append(f"{name}={ang:+6.1f}/{splay:4.1f}")
-        log(f"  f{f:02d} " + "  ".join(parts))
+        # Inclinacion del torso: adelante (+ = hacia -Y) y de lado (+ = +X).
+        a = dst.matrix_world @ dst.pose.bones["chest"].head
+        b = dst.matrix_world @ dst.pose.bones["neck"].head
+        d = (b - a).normalized()
+        fwd = math.degrees(math.atan2(-d.y, d.z))
+        lat = math.degrees(math.atan2(d.x, d.z))
+        log(f"  f{f:02d} " + "  ".join(parts)
+            + f"  torso adelante={fwd:+5.1f} lado={lat:+5.1f}")
     return out, n_out
 
 
 def export_glb(arm, action, path):
     arm.animation_data.action = action
+    # Solo el armature: la malla la pone `nyx_rigged.glb` en el juego, igual
+    # que en los clips de caminar. Exportar las mallas triplicaba el fichero.
     bpy.ops.object.select_all(action="DESELECT")
-    for ob in bpy.data.objects:
-        if ob.type in ("ARMATURE", "MESH") and ob.name.startswith("nyx"):
-            ob.select_set(True)
+    arm.select_set(True)
     bpy.context.view_layer.objects.active = arm
     bpy.ops.export_scene.gltf(
         filepath=path,
@@ -290,7 +302,7 @@ def export_glb(arm, action, path):
         export_animations=True,
         export_animation_mode="ACTIONS",
         export_bake_animation=True,
-        export_optimize_animation_size=False,
+        export_optimize_animation_size=True,
         export_apply=False,
     )
     log(f"exportado {os.path.basename(path)} ({os.path.getsize(path)} bytes)")
@@ -368,9 +380,26 @@ def main():
     dst = bpy.data.objects[NYX]
     out_act, n_out = build(src, act, f0, f1, dst)
 
+    # El armature del caminar ya no hace falta y, si se queda, el export se lo
+    # lleva al GLB con su propia animacion: el fichero salia con dos clips y
+    # 60 nodos en vez de uno y 28.
+    if not args.keep_source:
+        bpy.data.objects.remove(src, do_unlink=True)
+        if act.name in bpy.data.actions:
+            bpy.data.actions.remove(act)
+
     if not args.no_export:
         os.makedirs(args.out, exist_ok=True)
         export_glb(dst, out_act, os.path.join(args.out, args.name + ".glb"))
+
+    if args.save_blend:
+        dst.animation_data.action = out_act
+        sc = bpy.context.scene
+        sc.frame_start = 0
+        sc.frame_end = n_out - 1
+        sc.frame_set(0)
+        bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(args.save_blend))
+        log(f"blend guardado en {args.save_blend}")
 
     if args.stills:
         sdir = args.stills_dir or os.path.join(args.out, "stills")

@@ -25,3 +25,7 @@ __pycache__/
 # Referencias con copyright (Gravity Rush y otros): nunca al repo
 referencias y base/
 base44/.app.jsonc
+
+# Material de trabajo de animación: brutos de Blender, BVH de BlendCap y vídeos.
+# Los clips finales que consume el juego viven en public/models/.
+animaciones_generadas/

@@ -280,11 +280,11 @@ export async function loadNyxRigged(): Promise<LoadedNyx> {
 
   const clips: NyxClips = {
     walk,
-    // El clip de `run_lean` ya trae cadencia de carrera: 0,67 s por ciclo, que
-    // es lo que pide un sprint real. A los 7,4 m/s del juego el ritmo exacto
-    // sería 4,6 y el ciclo se quedaría en 0,14 s, ilegible; con 0,28 se queda
-    // entre 1,0 y 1,25, así que la zancada se lee entera. El precio es
-    // deslizamiento de pies, asumido igual que en la marcha.
+    // El clip de carrera sale del de caminar acelerado 1,7x: 1,40 s por ciclo.
+    // A los 7,4 m/s del juego el ritmo exacto sería 4,6 y el ciclo se quedaría
+    // en 0,30 s, ilegible; con 0,28 se queda entre 0,9 y 1,25, así que la
+    // zancada se lee entera. El precio es deslizamiento de pies, asumido igual
+    // que en la marcha.
     run: runClip
       ? new NyxLoopPlayer(model, animator, runClip, {
           groundSpeed: 1.6,
