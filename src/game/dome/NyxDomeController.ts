@@ -72,7 +72,9 @@ const DEG = Math.PI / 180;
 // --- Suelo (cualquier SlabCollider: suelo, pared o techo)
 const PLAYER_RADIUS = 0.45;
 const GRAVITY = 22; // solo como fuerza de adherencia al suelo
-const WALK_SPEED = 4.2;
+// Ajustada a los 0,98 m/s que avanza el clip de marcha horneado: a 2,0 m/s el
+// rate queda en 2,04 (por debajo del tope de 2,6) y los pies no patinan.
+const WALK_SPEED = 2.0;
 const RUN_SPEED = 7.4;
 const SLIDE_SPEED = 10.0;
 // Banda en la que manda el clip de marcha horneado. Por debajo Nyx está
