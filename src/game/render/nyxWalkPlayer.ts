@@ -16,8 +16,9 @@ import type { NyxAnimator } from './nyxAnimator';
 //   end --setMoving(true)--> loop si aún frena, start si ya casi está parada
 //
 // El clip no tiene root motion: el avance lo sigue poniendo el controlador. El
-// ritmo se ajusta a la velocidad real para que los pies no patinen más de la
-// cuenta, con un tope para que la marcha no se convierta en una carrera.
+// ritmo se ajusta a la velocidad real, pero escalado por `CADENCE_SCALE` para
+// que la zancada se lea tranquila aunque Nyx avance a 2 m/s; el deslizamiento
+// que eso deja es deliberado.
 // ============================================================================
 
 /** Velocidad de suelo que representa el clip a ritmo 1 (medida del bucle). */
@@ -25,6 +26,15 @@ const CLIP_GROUND_SPEED = 0.98;
 /** Ritmo mínimo y máximo: por debajo se arrastra, por encima parece un dibujo. */
 const MIN_RATE = 1.0;
 const MAX_RATE = 2.6;
+/**
+ * Escala de cadencia: el clip se reproduce deliberadamente más lento de lo que
+ * pediría la velocidad real. A 2,0 m/s el ritmo exacto sería 2,04 y la zancada
+ * se lee acelerada; con 0,75 baja a 1,53 (1,27 pasos/s) y se ve un andar
+ * tranquilo. El precio son ~25% de deslizamiento de pies, asumido a cambio de
+ * que la marcha no parezca un trote. Subir hacia 1,0 quita deslizamiento y
+ * devuelve la cadencia rápida; bajar hacia 0,6 la vuelve un paseo.
+ */
+const CADENCE_SCALE = 0.75;
 /** Mezcla de entrada desde la pose que dejó el animador. */
 const ENTER_BLEND = 0.18;
 /** Mezcla al saltar entre clips (arranque, bucle, frenada). */
@@ -144,7 +154,7 @@ export class NyxWalkPlayer {
   update(dt: number, speed: number): void {
     if (this.phase === 'off') return;
 
-    const rate = clamp(speed / CLIP_GROUND_SPEED, MIN_RATE, MAX_RATE);
+    const rate = clamp((speed / CLIP_GROUND_SPEED) * CADENCE_SCALE, MIN_RATE, MAX_RATE);
     this.actions.start.setEffectiveTimeScale(rate);
     this.actions.loop.setEffectiveTimeScale(rate);
     this.actions.end.setEffectiveTimeScale(rate);
