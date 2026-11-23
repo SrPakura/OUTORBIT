@@ -24,6 +24,7 @@ const MAX_SPARKS = 360;
 const MAX_DUST = 240;
 const MAX_RINGS = 10;
 const MAX_STREAKS = 64;
+const MAX_FLASHES = 8;
 
 const RING_FORWARD = new THREE.Vector3(0, 0, 1);
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -181,6 +182,8 @@ const _sUp = new THREE.Vector3();
 const _sDir = new THREE.Vector3();
 const _sOffset = new THREE.Vector3();
 const _ringNormal = new THREE.Vector3();
+const _explosionColor = new THREE.Color();
+const WHITE = new THREE.Color(0xffffff);
 const _telemetryHit: SlabRaycastHit = {
   slab: null as unknown as SlabCollider,
   point: new THREE.Vector3(),
@@ -338,6 +341,14 @@ export class MotionVfxSystem {
   private readonly ringOpacity: Float32Array;
   private ringCursor = 0;
 
+  // --- Destellos billboard (núcleo luminoso de los estallidos)
+  private readonly flashes: THREE.Sprite[] = [];
+  private readonly flashTexture: THREE.Texture;
+  private readonly flashLife: Float32Array;
+  private readonly flashMaxLife: Float32Array;
+  private readonly flashMaxScale: Float32Array;
+  private flashCursor = 0;
+
   // --- Trazos de viento 3D (LineSegments)
   private readonly streaks: THREE.LineSegments;
   private readonly streakVerts: Float32Array;
@@ -370,7 +381,7 @@ export class MotionVfxSystem {
     this.ringOpacity = new Float32Array(MAX_RINGS);
     for (let i = 0; i < MAX_RINGS; i++) {
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.55, 1, 48),
+        new THREE.RingGeometry(0.8, 1, 48),
         new THREE.MeshBasicMaterial({
           color: 0xffffff,
           transparent: true,
@@ -384,6 +395,29 @@ export class MotionVfxSystem {
       ring.frustumCulled = false;
       this.rings.push(ring);
       scene.add(ring);
+    }
+
+    // --- Destellos billboard
+    this.flashLife = new Float32Array(MAX_FLASHES);
+    this.flashMaxLife = new Float32Array(MAX_FLASHES);
+    this.flashMaxScale = new Float32Array(MAX_FLASHES);
+    const flashTexture = MotionVfxSystem.createFlashTexture();
+    this.flashTexture = flashTexture;
+    for (let i = 0; i < MAX_FLASHES; i++) {
+      const flash = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: flashTexture,
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      flash.visible = false;
+      flash.frustumCulled = false;
+      this.flashes.push(flash);
+      scene.add(flash);
     }
 
     // --- Trazos de viento
@@ -474,6 +508,57 @@ export class MotionVfxSystem {
     STYLE_SPARK.color = 0x9be8ff;
     STYLE_SPARK.count = 26;
     this.sparks.spawn(position, normal, STYLE_SPARK);
+  }
+
+  /**
+   * Estallido de muerte de un enemigo: chispas del color del bicho, doble
+   * anillo (color + blanco) y un golpe de polvo para dar volumen. Se dispara
+   * cuando la malla termina de vibrar, no al recibir el golpe letal.
+   */
+  spawnEnemyExplosion(position: THREE.Vector3, radius: number, color: number): void {
+    // El color del bicho suele ser oscuro (granate, violeta profundo): se
+    // aclara hacia el blanco para que el estallido recorte contra el fondo.
+    _explosionColor.setHex(color).lerp(WHITE, 0.6);
+    const bright = _explosionColor.getHex();
+
+    this.spawnFlash(position, bright, 1.4 + radius, 0.3);
+    this.spawnFlash(position, 0xffffff, 0.9 + radius * 0.6, 0.2);
+
+    STYLE_SPARK.color = bright;
+    STYLE_SPARK.count = 46;
+    STYLE_SPARK.speedMin = 3;
+    STYLE_SPARK.speedMax = 10;
+    STYLE_SPARK.size = 0.34;
+    this.sparks.spawn(position, null, STYLE_SPARK);
+
+    STYLE_SPARK.color = 0xffffff;
+    STYLE_SPARK.count = 18;
+    STYLE_SPARK.speedMin = 6;
+    STYLE_SPARK.speedMax = 14;
+    STYLE_SPARK.size = 0.22;
+    this.sparks.spawn(position, null, STYLE_SPARK);
+
+    this.dust.spawn(position, null, STYLE_DUST_LAND);
+    this.spawnRing(position, WORLD_UP, bright, radius * 1.5, 0.5, 0.95);
+    this.spawnRing(position, WORLD_UP, 0xffffff, radius * 0.95, 0.34, 0.9);
+  }
+
+  /**
+   * Destello billboard que se abre y se apaga: el fogonazo central de un
+   * estallido, legible a cualquier distancia porque siempre mira a cámara.
+   */
+  spawnFlash(position: THREE.Vector3, color: number, maxScale: number, lifetime: number): void {
+    const idx = this.flashCursor;
+    this.flashCursor = (this.flashCursor + 1) % MAX_FLASHES;
+    const flash = this.flashes[idx];
+    flash.position.copy(position);
+    flash.scale.setScalar(maxScale * 0.35);
+    flash.visible = true;
+    (flash.material as THREE.SpriteMaterial).color.setHex(color);
+    (flash.material as THREE.SpriteMaterial).opacity = 1;
+    this.flashLife[idx] = lifetime;
+    this.flashMaxLife[idx] = lifetime;
+    this.flashMaxScale[idx] = maxScale;
   }
 
   /**
@@ -598,8 +683,25 @@ export class MotionVfxSystem {
     this.sparks.update(dt);
     this.dust.update(dt);
     this.updateRings(dt);
+    this.updateFlashes(dt);
     this.updateStreaks(dt, playerPos, velocity, speed);
     this.updateTelemetry(dt, playerPos, velocity, speed, mode, slabs, up);
+  }
+
+  private updateFlashes(dt: number): void {
+    for (let i = 0; i < MAX_FLASHES; i++) {
+      if (this.flashLife[i] <= 0) continue;
+      this.flashLife[i] -= dt;
+      const flash = this.flashes[i];
+      if (this.flashLife[i] <= 0) {
+        flash.visible = false;
+        continue;
+      }
+      const k = 1 - this.flashLife[i] / this.flashMaxLife[i];
+      // Se abre rápido y se apaga con una caída cuadrática.
+      flash.scale.setScalar(this.flashMaxScale[i] * (0.35 + 0.65 * Math.sqrt(k)));
+      (flash.material as THREE.SpriteMaterial).opacity = (1 - k) * (1 - k);
+    }
   }
 
   private updateRings(dt: number): void {
@@ -787,6 +889,34 @@ export class MotionVfxSystem {
   // Helpers
   // ------------------------------------------------------------------
 
+  /** Gradiente radial blanco con caída rápida: núcleo duro + halo corto. */
+  private static createFlashTexture(): THREE.Texture {
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const gradient = ctx.createRadialGradient(
+        size / 2,
+        size / 2,
+        0,
+        size / 2,
+        size / 2,
+        size / 2,
+      );
+      gradient.addColorStop(0, 'rgba(255,255,255,1)');
+      gradient.addColorStop(0.3, 'rgba(255,255,255,0.85)');
+      gradient.addColorStop(0.62, 'rgba(255,255,255,0.22)');
+      gradient.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, size, size);
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
+
   private spawnRing(
     position: THREE.Vector3,
     normal: THREE.Vector3,
@@ -822,6 +952,11 @@ export class MotionVfxSystem {
       ring.geometry.dispose();
       (ring.material as THREE.MeshBasicMaterial).dispose();
     }
+    for (const flash of this.flashes) {
+      this.scene.remove(flash);
+      (flash.material as THREE.SpriteMaterial).dispose();
+    }
+    this.flashTexture.dispose();
     this.scene.remove(this.streaks);
     this.streaks.geometry.dispose();
     (this.streaks.material as THREE.LineBasicMaterial).dispose();

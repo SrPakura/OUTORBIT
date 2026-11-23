@@ -14,6 +14,7 @@ import {
   collectNecrozmaRig,
   collectSparrowRig,
   instantiateEnemyVisual,
+  INK_DISTANCE_SCALE,
   measureStandHeight,
   onEnemyModelLoaded,
   preloadEnemyModels,
@@ -578,6 +579,27 @@ export interface EnemyInternal {
 }
 
 /**
+ * Enemigo en plena animación de muerte: vibra `DEATH_SHAKE_TIME` y luego se
+ * infla y estalla. La malla sigue en escena (ya fuera de `enemies`) hasta que
+ * termina el efecto; los materiales se liberan al final.
+ */
+interface DyingEnemy {
+  mesh: THREE.Object3D;
+  basePos: THREE.Vector3;
+  baseScale: THREE.Vector3;
+  elapsed: number;
+  radius: number;
+  color: number;
+  materials: THREE.Material[];
+  exploded: boolean;
+}
+
+/** Temblor previo al estallido (s). */
+const DEATH_SHAKE_TIME = 0.22;
+/** Inflado final antes de desaparecer (s). */
+const DEATH_POP_TIME = 0.16;
+
+/**
  * Localiza el material del cuerpo del enemigo para el flash de impacto:
  * prefiere la carne nebulosa (uniforms `uTime` + `uEmissiveBoost`) y cae al
  * primer material cel con `uEmissiveBoost` (star_core, forma provisional).
@@ -632,6 +654,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   readonly kronosRings: KronosRing[] = [];
   private readonly kronosRingGeometry = new THREE.TorusGeometry(1, 0.07, 8, 48);
   private readonly kronosRingMaterial: THREE.ShaderMaterial;
+
+  /** Enemigos vibrando/estallando (fuera ya de `enemies`). */
+  private readonly dying: DyingEnemy[] = [];
+  /**
+   * Se dispara cuando un enemigo termina de vibrar y estalla: el bucle de
+   * juego lo usa para la ráfaga de chispas y el anillo de la explosión.
+   */
+  onEnemyExplode?: (position: THREE.Vector3, radius: number, color: number) => void;
 
   private currentWave = 0;
   private waveTime = 0;
@@ -820,7 +850,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       });
       const fallbackMesh = new THREE.Mesh(visual.geometry, material);
       fallbackMesh.name = `waveEnemy_${this.currentWave}_${archetype}_${index}`;
-      const outline = addComicOutline(fallbackMesh, visual.outlineThickness);
+      const outline = addComicOutline(
+        fallbackMesh,
+        visual.outlineThickness,
+        0x090b14,
+        INK_DISTANCE_SCALE,
+      );
       outlineMaterial = outline.material as THREE.ShaderMaterial;
 
       // Estrella interior de prueba: núcleo brillante visible a través del cuerpo.
@@ -1066,31 +1101,101 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal.chargeTimer = 0;
   }
 
-  /** Elimina un enemigo (escena + materiales + listas). Idempotente. */
-  killEnemy(enemy: ManagedWaveEnemy): void {
+  /**
+   * Elimina un enemigo (escena + materiales + listas). Idempotente.
+   *
+   * Con `withVfx` la malla no desaparece de golpe: queda en `dying` vibrando
+   * `DEATH_SHAKE_TIME` y luego se infla y estalla. El enemigo sale de
+   * `enemies` al instante, así que la lógica de juego no cambia.
+   */
+  killEnemy(enemy: ManagedWaveEnemy, withVfx = true): void {
     const internal = this.internals.get(enemy.id);
     if (!internal) {
       return;
     }
     enemy.entity.alive = false;
     enemy.entity.hp = 0;
-    this.scene.remove(enemy.mesh);
-    internal.material?.dispose();
-    internal.outlineMaterial?.dispose();
-    // Carne nebulosa + contornos vibrantes: material propio por instancia.
-    for (const animatedMaterial of internal.animatedMaterials) {
-      animatedMaterial.dispose();
-    }
-    // Estrella interior: material propio por enemigo, geometría compartida.
-    for (const child of enemy.mesh.children) {
-      if (child instanceof THREE.Mesh) {
-        (child.material as THREE.Material).dispose();
-      }
-    }
     this.internals.delete(enemy.id);
     const idx = this.enemies.indexOf(enemy);
     if (idx >= 0) {
       this.enemies.splice(idx, 1);
+    }
+
+    const materials = this.collectEnemyMaterials(enemy, internal);
+    if (withVfx) {
+      this.dying.push({
+        mesh: enemy.mesh,
+        basePos: enemy.mesh.position.clone(),
+        baseScale: enemy.mesh.scale.clone(),
+        elapsed: 0,
+        radius: enemy.radius,
+        color: this.visuals[enemy.entity.archetype].color,
+        materials,
+        exploded: false,
+      });
+      return;
+    }
+    this.scene.remove(enemy.mesh);
+    for (const material of materials) material.dispose();
+  }
+
+  /** Materiales propios de la instancia (se liberan al terminar la muerte). */
+  private collectEnemyMaterials(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+  ): THREE.Material[] {
+    const materials = new Set<THREE.Material>();
+    if (internal.material) materials.add(internal.material);
+    if (internal.outlineMaterial) materials.add(internal.outlineMaterial);
+    // Carne nebulosa + contornos vibrantes: material propio por instancia.
+    for (const animatedMaterial of internal.animatedMaterials) {
+      materials.add(animatedMaterial);
+    }
+    // Estrella interior y piezas: material propio por enemigo.
+    for (const child of enemy.mesh.children) {
+      if (child instanceof THREE.Mesh) materials.add(child.material as THREE.Material);
+    }
+    return [...materials];
+  }
+
+  /** Avanza temblor, estallido y limpieza de los enemigos moribundos. */
+  private updateDying(dt: number): void {
+    for (let i = this.dying.length - 1; i >= 0; i--) {
+      const dying = this.dying[i];
+      dying.elapsed += dt;
+
+      if (dying.elapsed < DEATH_SHAKE_TIME) {
+        // Vibración de alta frecuencia que crece hacia el estallido, con
+        // estrujón de escala para que se lea como un cuerpo a punto de romper.
+        const k = dying.elapsed / DEATH_SHAKE_TIME;
+        const amp = 0.06 + 0.3 * k;
+        dying.mesh.position.set(
+          dying.basePos.x + Math.sin(dying.elapsed * 92) * amp,
+          dying.basePos.y + Math.cos(dying.elapsed * 77) * amp,
+          dying.basePos.z + Math.sin(dying.elapsed * 83 + 1.7) * amp,
+        );
+        dying.mesh.rotation.z = Math.sin(dying.elapsed * 70) * 0.2 * k;
+        const squash = 1 + Math.sin(dying.elapsed * 110) * 0.09 * k;
+        dying.mesh.scale.copy(dying.baseScale).multiplyScalar(squash);
+        continue;
+      }
+
+      if (!dying.exploded) {
+        dying.exploded = true;
+        dying.mesh.position.copy(dying.basePos);
+        dying.mesh.rotation.z = 0;
+        this.onEnemyExplode?.(dying.basePos, dying.radius, dying.color);
+      }
+
+      const pop = (dying.elapsed - DEATH_SHAKE_TIME) / DEATH_POP_TIME;
+      if (pop >= 1) {
+        this.scene.remove(dying.mesh);
+        for (const material of dying.materials) material.dispose();
+        this.dying.splice(i, 1);
+        continue;
+      }
+      // Inflado final: el cuerpo se hincha justo cuando estalla.
+      dying.mesh.scale.copy(dying.baseScale).multiplyScalar(1 + pop * 0.7);
     }
   }
 
@@ -1129,6 +1234,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   ): { didEnemyEvadeDash: boolean } {
     let didEnemyEvadeDash = false;
     this.waveTime += dt;
+    this.updateDying(dt);
     const lockedId = lockedEnemy?.id ?? null;
 
     // Iteración hacia atrás por índice: killEnemy hace splice de this.enemies
@@ -2074,9 +2180,15 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
 
   private clearEnemies(): void {
     for (const enemy of [...this.enemies]) {
-      this.killEnemy(enemy);
+      // Sin animación: al reiniciar la oleada los cuerpos se van de golpe.
+      this.killEnemy(enemy, false);
     }
     this.enemies.length = 0;
     this.internals.clear();
+    for (const dying of this.dying) {
+      this.scene.remove(dying.mesh);
+      for (const material of dying.materials) material.dispose();
+    }
+    this.dying.length = 0;
   }
 }

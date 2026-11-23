@@ -3,10 +3,10 @@ import * as THREE from 'three';
 // ============================================================================
 // DomePickups — Partículas flotantes de EXP y Edén/Vida.
 //
-// Al morir, cada enemigo se deshace en orbes octaédricos brillantes que
-// flotan con inercia y bob senoidal. Cuando Nyx entra en el radio de
-// magnetismo (que escala con su nivel), los orbes aceleran hacia ella con
-// una interpolación suave y se recogen al contacto.
+// Al morir, cada enemigo se deshace en orbes esféricos brillantes (verde lima
+// tipo Minecraft para la EXP) con un halo aditivo que los hace legibles a
+// cualquier distancia. Flotan con inercia y bob senoidal; pasado un margen
+// persiguen a Nyx desde cualquier punto y se recogen al contacto.
 // ============================================================================
 
 export type DomePickupKind = 'exp' | 'eden' | 'hp';
@@ -19,6 +19,8 @@ export interface DomePickupGains {
 
 interface PickupItem {
   mesh: THREE.Mesh;
+  /** Halo billboard: mantiene el orbe visible a distancia. */
+  glow: THREE.Sprite;
   kind: DomePickupKind;
   active: boolean;
   value: number;
@@ -30,7 +32,10 @@ interface PickupItem {
 }
 
 const MAX_PICKUPS = 160;
-const PICKUP_RADIUS = 0.32;
+/** Radio del núcleo: orbe de EXP de Minecraft (~0,25 bloques). */
+const PICKUP_RADIUS = 0.2;
+/** Tamaño del halo: sólo un cerco, el núcleo sólido manda en la lectura. */
+const GLOW_SCALE = 0.62;
 const COLLECT_DISTANCE = 1.5;
 const BASE_LIFETIME = 30;
 const FADE_TIME = 4;
@@ -50,9 +55,9 @@ const HOMING_CATCHUP = 6;
 const HOMING_MAX_SPEED = 60;
 
 const KIND_COLORS: Record<DomePickupKind, number> = {
-  exp: 0x7ae8dc,  // aqua-menta
-  eden: 0xdf9fff, // lavanda-rosa
-  hp: 0x7dffa8,   // verde vida
+  exp: 0x8cff3a,  // verde lima de orbe de EXP de Minecraft
+  eden: 0xc77dff, // lavanda
+  hp: 0x5cff8a,   // verde vida
 };
 
 // --- Scratch a nivel de módulo: sin allocations por frame ---
@@ -62,8 +67,10 @@ const _magnetTarget = new THREE.Vector3();
 export class DomePickupManager {
   private readonly scene: THREE.Scene;
   private readonly pool: PickupItem[] = [];
-  private readonly geometry = new THREE.OctahedronGeometry(PICKUP_RADIUS, 0);
+  private readonly geometry = new THREE.SphereGeometry(PICKUP_RADIUS, 10, 8);
   private readonly materials: Record<DomePickupKind, THREE.MeshBasicMaterial>;
+  private readonly glowMaterials: Record<DomePickupKind, THREE.SpriteMaterial>;
+  private readonly glowTexture: THREE.Texture;
   /**
    * Callback al recoger un orbe: la vista lo usa para la llamarada de
    * absorción (destello espiral violeta/cian de 0.25 s en el torso de Nyx).
@@ -72,17 +79,28 @@ export class DomePickupManager {
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+    this.glowTexture = DomePickupManager.createGlowTexture();
     this.materials = {
       exp: DomePickupManager.createKindMaterial(KIND_COLORS.exp),
       eden: DomePickupManager.createKindMaterial(KIND_COLORS.eden),
       hp: DomePickupManager.createKindMaterial(KIND_COLORS.hp),
     };
+    this.glowMaterials = {
+      exp: DomePickupManager.createGlowMaterial(this.glowTexture, KIND_COLORS.exp),
+      eden: DomePickupManager.createGlowMaterial(this.glowTexture, KIND_COLORS.eden),
+      hp: DomePickupManager.createGlowMaterial(this.glowTexture, KIND_COLORS.hp),
+    };
     for (let i = 0; i < MAX_PICKUPS; i++) {
       const mesh = new THREE.Mesh(this.geometry, this.materials.exp);
       mesh.visible = false;
+      // Halo billboard: el orbe se lee a 40 m aunque el núcleo sea diminuto.
+      const glow = new THREE.Sprite(this.glowMaterials.exp);
+      glow.scale.setScalar(GLOW_SCALE);
+      mesh.add(glow);
       scene.add(mesh);
       this.pool.push({
         mesh,
+        glow,
         kind: 'exp',
         active: false,
         value: 0,
@@ -198,7 +216,9 @@ export class DomePickupManager {
     this.geometry.dispose();
     for (const id of Object.keys(this.materials) as DomePickupKind[]) {
       this.materials[id].dispose();
+      this.glowMaterials[id].dispose();
     }
+    this.glowTexture.dispose();
   }
 
   // ------------------------------------------------------------------
@@ -213,10 +233,11 @@ export class DomePickupManager {
     item.age = 0;
     item.phase = Math.random() * Math.PI * 2;
     item.mesh.material = this.materials[kind];
+    item.glow.material = this.glowMaterials[kind];
     item.mesh.position.set(
-      position.x + (Math.random() - 0.5) * 1.2,
-      position.y + (Math.random() - 0.5) * 1.2,
-      position.z + (Math.random() - 0.5) * 1.2
+      position.x + (Math.random() - 0.5) * 2.2,
+      position.y + (Math.random() - 0.5) * 2.2,
+      position.z + (Math.random() - 0.5) * 2.2
     );
     item.velocity.set(
       (Math.random() - 0.5) * 6,
@@ -244,13 +265,58 @@ export class DomePickupManager {
     item.mesh.visible = false;
   }
 
+  /** Halo radial suave generado una sola vez (sin assets externos). */
+  private static createGlowTexture(): THREE.Texture {
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const gradient = ctx.createRadialGradient(
+        size / 2,
+        size / 2,
+        0,
+        size / 2,
+        size / 2,
+        size / 2,
+      );
+      gradient.addColorStop(0, 'rgba(255,255,255,1)');
+      gradient.addColorStop(0.18, 'rgba(255,255,255,0.78)');
+      gradient.addColorStop(0.45, 'rgba(255,255,255,0.14)');
+      gradient.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, size, size);
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
+
+  private static createGlowMaterial(
+    map: THREE.Texture,
+    color: number,
+  ): THREE.SpriteMaterial {
+    return new THREE.SpriteMaterial({
+      map,
+      color,
+      transparent: true,
+      opacity: 0.45,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+  }
+
+  /**
+   * Núcleo opaco y saturado: con blending aditivo el orbe se leía como una
+   * mancha translúcida y perdía el color. Sin blending mantiene el verde lima
+   * plano de los orbes de EXP de Minecraft y recorta silueta contra el fondo.
+   */
   private static createKindMaterial(color: number): THREE.MeshBasicMaterial {
     return new THREE.MeshBasicMaterial({
       color,
-      transparent: true,
-      opacity: 0.95,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
+      transparent: false,
+      depthWrite: true,
     });
   }
 }

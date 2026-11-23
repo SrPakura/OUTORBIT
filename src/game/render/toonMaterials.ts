@@ -207,11 +207,16 @@ export function createToonMaterial(
  * que comparte geometría y extruye los vértices a lo largo de la normal en el
  * vertex shader, con variación de grosor tipo pincel. Grosores finos y limpios
  * en personajes (0.015-0.024). Devuelve la malla de contorno (hija de `mesh`).
+ *
+ * `distanceScale` engorda el trazo con la distancia a cámara (0 = grosor fijo).
+ * A partir de ~18 m el contorno deja de ser sub-píxel y la silueta del enemigo
+ * se sigue leyendo en el fondo de la cúpula.
  */
 export function addComicOutline(
   mesh: THREE.Mesh,
   thickness = 0.045,
-  color: number = 0x090b14
+  color: number = 0x090b14,
+  distanceScale = 0
 ): THREE.Mesh {
   const outlineMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -219,15 +224,20 @@ export function addComicOutline(
       uThickness: { value: thickness },
       uNoiseAmp: { value: 0.35 },
       uInkColor: { value: new THREE.Color(color) },
+      uDistanceScale: { value: distanceScale },
     },
     vertexShader: /* glsl */ `
       uniform float uThickness;
       uniform float uNoiseAmp;
+      uniform float uDistanceScale;
       void main() {
         // Ruido determinista según posición para simular trazo de pincel irregular.
         float brushVar = sin( position.x * 7.3 + position.y * 5.1 ) * cos( position.z * 6.7 - position.y * 4.2 );
         float width = max( 0.008, uThickness * ( 1.0 + brushVar * uNoiseAmp ) );
-        vec3 extruded = position + normalize( normal ) * width;
+        // Grosor en espacio de mundo: crece con la distancia para conservar
+        // la silueta cuando el enemigo está lejos.
+        float distScale = 1.0 + clamp( -modelViewMatrix[ 3 ].z / 18.0, 0.0, 1.0 ) * uDistanceScale;
+        vec3 extruded = position + normalize( normal ) * width * distScale;
         gl_Position = projectionMatrix * modelViewMatrix * vec4( extruded, 1.0 );
       }
     `,

@@ -66,6 +66,12 @@ const FLESH_CRIMSON_NEBULA = new THREE.Color(0xa12045);
 const FLESH_PURPLE_NEBULA = new THREE.Color(0x5b21b6);
 const FLESH_INK_WHITE = 0xffffff;
 const FLESH_OUTLINE_THICKNESS = 0.05;
+/**
+ * Engorde del trazo de tinta con la distancia (0 = grosor fijo). Los enemigos
+ * aparecen a 26-56 m: sin esto el contorno cae por debajo del píxel y solo se
+ * ve una mancha oscura sobre el fondo de la cúpula.
+ */
+export const INK_DISTANCE_SCALE = 2.6;
 
 // --- Vibración de energía descontrolada (compartida carne + contorno) ---
 const ENERGY_WOBBLE_GLSL = /* glsl */ `
@@ -237,11 +243,13 @@ function addVibratingInkOutline(
       uNoiseAmp: { value: 0.35 },
       uInkColor: { value: new THREE.Color(inkColor) },
       uTime: { value: 0 },
+      uDistanceScale: { value: INK_DISTANCE_SCALE },
     },
     vertexShader: /* glsl */ `
       uniform float uThickness;
       uniform float uNoiseAmp;
       uniform float uTime;
+      uniform float uDistanceScale;
       ${ENERGY_WOBBLE_GLSL}
       void main() {
         // La tinta vibra exactamente igual que la superficie de la carne.
@@ -249,7 +257,9 @@ function addVibratingInkOutline(
         // Grosor de pincel irregular (mismo trazo que addComicOutline).
         float brushVar = sin( position.x * 7.3 + position.y * 5.1 ) * cos( position.z * 6.7 - position.y * 4.2 );
         float width = max( 0.008, uThickness * ( 1.0 + brushVar * uNoiseAmp ) );
-        vec3 extruded = pos + normalize( normal ) * width;
+        // El trazo engorda con la distancia: la silueta aguanta en el fondo.
+        float distScale = 1.0 + clamp( -modelViewMatrix[ 3 ].z / 18.0, 0.0, 1.0 ) * uDistanceScale;
+        vec3 extruded = pos + normalize( normal ) * width * distScale;
         gl_Position = projectionMatrix * modelViewMatrix * vec4( extruded, 1.0 );
       }
     `,
@@ -490,7 +500,12 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
         rimStrength: 1.0,
         emissiveBoost: STAR_CORE_EMISSIVE,
       });
-      addComicOutline(mesh, STAR_CORE_OUTLINE_THICKNESS, STAR_CORE_INK).name = OUTLINE_MARKER;
+      addComicOutline(
+        mesh,
+        STAR_CORE_OUTLINE_THICKNESS,
+        STAR_CORE_INK,
+        INK_DISTANCE_SCALE,
+      ).name = OUTLINE_MARKER;
       starCores.push(mesh);
     } else if (names.includes('flesh')) {
       mesh.renderOrder = 1;
@@ -507,7 +522,12 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
         rimColor: DETAIL_RIM,
         rimStrength: 0.4,
       });
-      addComicOutline(mesh, DETAIL_OUTLINE_THICKNESS, FLESH_INK_WHITE).name = OUTLINE_MARKER;
+      addComicOutline(
+        mesh,
+        DETAIL_OUTLINE_THICKNESS,
+        FLESH_INK_WHITE,
+        INK_DISTANCE_SCALE,
+      ).name = OUTLINE_MARKER;
     }
   });
 

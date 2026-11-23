@@ -143,6 +143,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   pickups.onCollect = (kind, position) => {
     vfx.spawnAbsorbFlare(position, kind);
   };
+  // Muerte de enemigo: la malla vibra y estalla; aquí van chispas y anillos.
+  waveMgr.onEnemyExplode = (position, radius, color) => {
+    vfx.spawnEnemyExplosion(position, radius, color);
+  };
   const audio = new SynthAudio();
   audio.setVolumeMultiplier(settingsRef.current.masterVolume);
   audioRef.current = audio;
