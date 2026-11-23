@@ -23,6 +23,28 @@ import {
   type NecrozmaRig,
   type SparrowRig,
 } from './DomeEnemyModels';
+import {
+  CHARGE_CONTACT_PADDING,
+  deactivateKronosRings,
+  KRONOS_RING_POOL_SIZE,
+  updateKronosAttack,
+  updateKronosMovement,
+  updateKronosPose,
+  updateKronosRings,
+  type KronosBehaviorContext,
+  type KronosRing,
+} from './domeKronosBehavior';
+import {
+  computeCrabMuzzle,
+  CRAB_STAND_HEIGHT,
+  pickCrabSpawnSlab,
+  pickSlabLocalPoint,
+  slabTopPoint,
+  updateCrabEnemy,
+  type CrabBehaviorContext,
+  type CrabJump,
+} from './domeCrabBehavior';
+import { faceTowards, lookAtQuat } from './domeEnemyOrient';
 
 // ============================================================================
 // DomeWaveManager — ciclo infinito de oleadas de la cúpula.
@@ -146,47 +168,9 @@ const NECROZMA_TURN_RATE = 2.6;
 
 // --- Leviatán KRONOS (Boss): serpenteo con huesos + 3 patrones de ataque ---
 // Ondulación serpentina progresiva de la cadena seg_01..seg_12.
-const KRONOS_TURN_RATE = 1.7; // Giro suave del cuerpo hacia la dirección de avance.
-const KRONOS_TURN_RATE_CHARGE = 4.0; // La embestida endereza el cuerpo rápido.
-const KRONOS_SEG_WAVE_SPEED = 3.2; // Frecuencia base de la onda (rad/s).
-const KRONOS_SEG_PHASE_STEP = 0.55; // Desfase progresivo entre segmentos (rad).
-const KRONOS_SEG_YAW_AMP = 0.085; // Amplitud de guiñada por segmento (rad).
-const KRONOS_SEG_PITCH_AMP = 0.045; // Amplitud de cabeceo por segmento (rad).
-const KRONOS_FIN_FLAP_SPEED = 3.1; // Aleteo de las aletas pectorales (rad/s).
-const KRONOS_FIN_FLAP_AMP = 0.3; // Amplitud del aleteo (rad).
-const KRONOS_JAW_OPEN_RAD = 0.5; // Apertura del hueso jaw (Anillos de Contención).
 // Ataque 1 — Tramo Devorasuelos: embestida que atraviesa la arena rompiendo suelos.
-const KRONOS_CHARGE_SPEED = 26.0; // m/s de la embestida.
-const KRONOS_CHARGE_SEC = 2.3; // Duración del cruze de la arena (s).
-const KRONOS_CHARGE_DAMAGE = 16;
-const KRONOS_CHARGE_RECONTACT_SEC = 0.8; // Daño de contacto con cooldown (atraviesa).
-const KRONOS_SLAB_BREAK_RADIUS = 9.0; // Alcance de la rotura de suelos flotantes (m).
-const KRONOS_CHARGE_END_RADIUS = 76.0; // Fin anticipado al acercarse a la Barrera.
 // Ataque 2 — Anillos de Contención: jaw abierta + ondas circulares expansivas.
-const KRONOS_RING_TELEGRAPH_SEC = 0.8; // Apertura de fauces antes del disparo.
-const KRONOS_RING_COUNT = [3, 2, 1]; // Anillos por ataque (rotado).
-const KRONOS_RING_INTERVAL_SEC = 0.45; // Separación entre anillos emitidos.
-const KRONOS_RING_RECOVER_SEC = 0.5; // Cierre de fauces tras el último anillo.
-const KRONOS_RING_TRAVEL_SPEED = 9.0; // Avance del centro del anillo (m/s).
-const KRONOS_RING_EXPAND_SPEED = 16.0; // Crecimiento del radio (m/s).
-const KRONOS_RING_MAX_RADIUS = 55.0; // Radio al que se disipa el anillo (m).
-const KRONOS_RING_HIT_BAND = 1.7; // Grosor de la banda de empuje (m).
-const KRONOS_RING_PUSH_SPEED = 30.0; // Empuje radial hacia la Barrera Blanca (m/s).
-const KRONOS_RING_POOL_SIZE = 8;
 // Ataque 3 — Enrosco Gravitatorio (Fase < 50% HP).
-const KRONOS_COIL_HP_FRACTION = 0.5; // Umbral de vida que habilita el enrosco.
-const KRONOS_COIL_SEC = 7.0; // Duración del enrosco (s).
-const KRONOS_COIL_COOLDOWN_SEC = 11.0; // Segundos entre enroscos.
-const KRONOS_COIL_ORBIT_R = 34.0; // Radio de la órbita alrededor del centro (m).
-const KRONOS_COIL_ANG_SPEED = 0.85; // Velocidad angular de la órbita (rad/s).
-const KRONOS_COIL_HEIGHT = 12.0; // Altura de la órbita sobre el centro (m).
-const KRONOS_COIL_CURL = 0.14; // Encorvadura extra de los segmentos al enroscarse.
-const KRONOS_COIL_SHOT_INTERVAL = 0.13; // Cadencia de la espiral de esferas (s).
-const KRONOS_COIL_SHOT_DAMAGE = 9;
-const KRONOS_COIL_SHOT_SPEED = 13.0;
-const KRONOS_COIL_SPIRAL_STEP = 0.55; // Giro del abanico espiral entre esferas (rad).
-const KRONOS_COIL_FLESH = 100; // Carne de los segmentos mientras se enrosca.
-const KRONOS_ATTACK_COOLDOWN_SEC = 3.4; // Descanso entre ataques del boss (s).
 
 // Proyectiles oscuros lentos (pool fijo, sin allocations por frame).
 const PROJECTILE_POOL_SIZE = 32;
@@ -195,7 +179,6 @@ const PROJECTILE_PLAYER_RADIUS = 1.6;
 const PROJECTILE_BOUND_RADIUS = 88.0;
 
 // Embestidas (ave legendaria): carga directa contra Nyx.
-const CHARGE_CONTACT_PADDING = 1.9;
 
 // --- Pulpo Espiral: orientación procedural + tentáculos sin clips ---
 const OCTOPUS_TURN_RATE = 3.2; // Velocidad de giro hacia Nyx (slerp/seg).
@@ -208,28 +191,8 @@ const OCTOPUS_INK_FORWARD = 0.55; // Fracción del radius: frente del manto.
 const OCTOPUS_INK_UP = 0.35; // Elevación del manto sobre el centro.
 
 // --- Cangrejo Artillero: pegado a suelos + cañón que apunta ---
-const CRAB_TURN_RATE = 4.0; // Giro del cuerpo sobre el slab (slerp/seg).
-const CRAB_TURRET_TURN_RATE = 6.0; // Giro del cañón hacia Nyx (slerp/seg).
-const CANNON_MUZZLE_DISTANCE = 1.4; // Boca del cañón desde el hueso turret.
-const CRAB_SLAB_MARGIN = 1.1; // Margen para no salirse del borde del slab.
-const CRAB_ATTACH_BLEND_TIME = 0.45; // Aterrizaje suave al cambiar de slab.
 // --- Cangrejo Artillero: spawn sobre suelos + salto entre ellos ---
-const CRAB_SPAWN_MAX_R = 70.0; // Radio preferido del slab de spawn.
-const CRAB_LEAVE_R = 72.0; // El slab flotante sale de la cúpula: saltar.
-const CRAB_JUMP_TARGET_MAX_R = 68.0; // Radio preferido del slab de aterrizaje.
-const CRAB_JUMP_DURATION = 0.75; // Duración base del arco del salto (s).
-const CRAB_JUMP_DURATION_MAX = 2.4; // Techo de duración en saltos largos (s).
-const CRAB_JUMP_H_SPEED = 22.0; // Velocidad horizontal de referencia (m/s).
-const CRAB_JUMP_ARC_MIN = 2.5; // Altura mínima del arco (m).
-const CRAB_JUMP_ARC_MAX = 9.0; // Altura máxima del arco (m).
-const CRAB_GRAB_RANGE = 55.0; // Alcance del salto de agarre desde el aire (m).
-const CRAB_SKID_DAMPING = 6.0; // Fricción del deslizamiento por knockback (1/s).
-const CRAB_AIR_DAMPING = 3.0; // Fricción del desvío por knockback en vuelo (1/s).
-const CRAB_LEG_WAVE_SPEED = 14.0; // Velocidad del aleteo de patas en vuelo.
 const CRAB_LEG_WAVE_AMPLITUDE = 0.3; // Amplitud del aleteo de patas (rad).
-const CRAB_FLIGHT_WOBBLE = 0.12; // Guiñeo ligero del cuerpo en vuelo (rad).
-const CRAB_FLIGHT_WOBBLE_SPEED = 2.7; // Frecuencia del guiñeo de vuelo (rad/s).
-const CRAB_STAND_HEIGHT = 1.0; // Altura del cuerpo sobre la cara superior del slab (m).
 
 // --- Voladores contra icebergs (activeSlabs): nunca atraviesan los suelos ---
 const SLAB_BOUNCE_RESTITUTION = 0.35; // Rebote suave de la velocidad contra la normal.
@@ -244,7 +207,6 @@ const _shotDir = new THREE.Vector3();
 const _lookDir = new THREE.Vector3();
 const _aimDir = new THREE.Vector3();
 const _basisX = new THREE.Vector3();
-const _basisMat = new THREE.Matrix4();
 const _targetQuat = new THREE.Quaternion();
 const _rollQuat = new THREE.Quaternion();
 const _invQuat = new THREE.Quaternion();
@@ -261,19 +223,12 @@ const _boneQuat = new THREE.Quaternion();
 const _boneEuler = new THREE.Euler();
 const _spiralDir = new THREE.Vector3();
 const _ringForward = new THREE.Vector3(0, 0, 1);
-const _origin = new THREE.Vector3();
 const _slabContact: SlabContact = {
   slab: null,
   normal: new THREE.Vector3(),
   depth: 0,
   point: new THREE.Vector3(),
 };
-
-/** Cuaternión que orienta el +Z local hacia `dir` con la referencia `up`. */
-function lookAtQuat(dir: THREE.Vector3, up: THREE.Vector3, out: THREE.Quaternion): THREE.Quaternion {
-  _basisMat.lookAt(dir, _origin, up);
-  return out.setFromRotationMatrix(_basisMat);
-}
 
 // ---------------------------------------------------------------------------
 // Plan de oleada
@@ -530,173 +485,7 @@ function collectLegBones(root: THREE.Object3D): TentacleBone[] {
   return legs;
 }
 
-/** Punto mundial sobre la cara superior (+Y local) del slab para un offset local. */
-function slabTopPoint(slab: SlabCollider, local: THREE.Vector2, out: THREE.Vector3): THREE.Vector3 {
-  _localOffset.set(local.x, slab.halfExtents.y, local.y).applyQuaternion(slab.quaternion);
-  return out.copy(slab.center).add(_localOffset);
-}
-
-/**
- * Offset local (lx, lz) aleatorio dentro de la zona pisable del slab: el
- * rectángulo OBB con margen, o un punto baricéntrico del triángulo 2D si el
- * slab es un triángulo de la esfera (Miniboss/Boss).
- */
-function pickSlabLocalPoint(slab: SlabCollider, rng: () => number, out: THREE.Vector2): void {
-  const tri = slab.localTriangle2D;
-  if (tri) {
-    let u = rng();
-    let v = rng();
-    if (u + v > 1) {
-      u = 1 - u;
-      v = 1 - v;
-    }
-    const w = 1 - u - v;
-    const gx = (tri[0] + tri[2] + tri[4]) / 3;
-    const gz = (tri[1] + tri[3] + tri[5]) / 3;
-    // Contraído hacia el centroide para respetar el margen del borde.
-    out.set(
-      gx + (u * tri[0] + v * tri[2] + w * tri[4] - gx) * 0.65,
-      gz + (u * tri[1] + v * tri[3] + w * tri[5] - gz) * 0.65,
-    );
-    return;
-  }
-  const mx = Math.max(0, slab.halfExtents.x - CRAB_SLAB_MARGIN);
-  const mz = Math.max(0, slab.halfExtents.z - CRAB_SLAB_MARGIN);
-  out.set((rng() * 2 - 1) * mx, (rng() * 2 - 1) * mz);
-}
-
-/** Fija el offset local dentro de los bordes del slab (el knockback desliza). */
-function clampSlabLocalPoint(slab: SlabCollider, local: THREE.Vector2): void {
-  const tri = slab.localTriangle2D;
-  if (tri) {
-    // Triángulo: si el deslizamiento salió del triángulo, tira al centroide.
-    const s1 = (tri[2] - tri[0]) * (local.y - tri[1]) - (tri[3] - tri[1]) * (local.x - tri[0]);
-    const s2 = (tri[4] - tri[2]) * (local.y - tri[3]) - (tri[5] - tri[3]) * (local.x - tri[2]);
-    const s3 = (tri[0] - tri[4]) * (local.y - tri[5]) - (tri[1] - tri[5]) * (local.x - tri[4]);
-    if ((s1 < 0 || s2 < 0 || s3 < 0) && (s1 > 0 || s2 > 0 || s3 > 0)) {
-      local.set((tri[0] + tri[2] + tri[4]) / 3, (tri[1] + tri[3] + tri[5]) / 3);
-    }
-    return;
-  }
-  const mx = Math.max(0, slab.halfExtents.x - CRAB_SLAB_MARGIN);
-  const mz = Math.max(0, slab.halfExtents.z - CRAB_SLAB_MARGIN);
-  local.x = THREE.MathUtils.clamp(local.x, -mx, mx);
-  local.y = THREE.MathUtils.clamp(local.y, -mz, mz);
-}
-
-/**
- * Slab de spawn del cangrejo: uno aleatorio dentro de R < 70 m; si todos están
- * lejos, el más cercano al centro de la cúpula.
- */
-function pickCrabSpawnSlab(activeSlabs: SlabCollider[], rng: () => number): SlabCollider | null {
-  if (activeSlabs.length === 0) {
-    return null;
-  }
-  let nearCount = 0;
-  for (const slab of activeSlabs) {
-    if (slab.center.length() < CRAB_SPAWN_MAX_R) {
-      nearCount++;
-    }
-  }
-  if (nearCount > 0) {
-    let pick = Math.floor(rng() * nearCount);
-    for (const slab of activeSlabs) {
-      if (slab.center.length() < CRAB_SPAWN_MAX_R && pick-- === 0) {
-        return slab;
-      }
-    }
-  }
-  let best = activeSlabs[0];
-  for (const slab of activeSlabs) {
-    if (slab.center.length() < best.center.length()) {
-      best = slab;
-    }
-  }
-  return best;
-}
-
-/**
- * Destino del salto del cangrejo: el slab disponible más cercano al cangrejo
- * con center < 68 m o, si todos están lejos, el más cercano al centro de la
- * cúpula. Excluye el slab que está abandonando.
- */
-function pickCrabJumpSlab(
-  activeSlabs: SlabCollider[] | undefined,
-  leavingSlabId: string | null,
-  fromPos: THREE.Vector3,
-): SlabCollider | null {
-  if (!activeSlabs || activeSlabs.length === 0) {
-    return null;
-  }
-  let best: SlabCollider | null = null;
-  let bestScore = Infinity;
-  for (const slab of activeSlabs) {
-    if (slab.id === leavingSlabId) {
-      continue;
-    }
-    if (slab.center.length() < CRAB_JUMP_TARGET_MAX_R) {
-      const score = fromPos.distanceTo(slab.center);
-      if (score < bestScore) {
-        best = slab;
-        bestScore = score;
-      }
-    }
-  }
-  if (best) {
-    return best;
-  }
-  for (const slab of activeSlabs) {
-    if (slab.id === leavingSlabId) {
-      continue;
-    }
-    const score = slab.center.length();
-    if (score < bestScore) {
-      best = slab;
-      bestScore = score;
-    }
-  }
-  return best;
-}
-
-/** Altura del arco del salto según la distancia al slab destino. */
-function crabJumpArc(dist: number): number {
-  return Math.min(CRAB_JUMP_ARC_MAX, CRAB_JUMP_ARC_MIN + dist * 0.22);
-}
-
-/** Busca un slab por id dentro de la lista de suelos activos. */
-function findSlabById(slabs: SlabCollider[], id: string): SlabCollider | null {
-  for (const slab of slabs) {
-    if (slab.id === id) {
-      return slab;
-    }
-  }
-  return null;
-}
-
-/** Duración del salto: ~0.75 s en saltos cortos, algo más en saltos largos. */
-function crabJumpDuration(dist: number): number {
-  return Math.min(CRAB_JUMP_DURATION_MAX, Math.max(CRAB_JUMP_DURATION, dist / CRAB_JUMP_H_SPEED));
-}
-
-/** Salto parabólico del cangrejo entre suelos (estado en vuelo). */
-interface CrabJump {
-  /** Punto de despegue en espacio mundo. */
-  from: THREE.Vector3;
-  /** Id del slab de aterrizaje. */
-  targetSlabId: string;
-  /** Offset local (lx, lz) de aterrizaje dentro del slab destino. */
-  targetLocal: THREE.Vector2;
-  /** Duración total del salto (s). */
-  duration: number;
-  /** Segundos de vuelo transcurridos. */
-  time: number;
-  /** Altura del vértice del arco sobre la línea despegue→aterrizaje (m). */
-  arcHeight: number;
-  /** Desvío acumulado por knockback durante el vuelo (m). */
-  offset: THREE.Vector3;
-}
-
-interface EnemyInternal {
+export interface EnemyInternal {
   enemy: ManagedWaveEnemy;
   material: THREE.ShaderMaterial | null;
   outlineMaterial: THREE.ShaderMaterial | null;
@@ -817,28 +606,12 @@ interface WaveProjectile {
   life: number;
 }
 
-/** Anillo de Contención de KRONOS: onda circular expansiva visible que empuja
- * radialmente a Nyx hacia la Barrera Blanca al cruzarla. */
-interface KronosRing {
-  mesh: THREE.Mesh;
-  active: boolean;
-  /** Centro de emisión (espacio mundo); el anillo avanza desde ahí. */
-  origin: THREE.Vector3;
-  /** Dirección de avance de la onda (hacia Nyx en el momento del disparo). */
-  dir: THREE.Vector3;
-  /** Distancia recorrida por el centro desde `origin` (m). */
-  travel: number;
-  /** Radio actual del anillo (m). */
-  radius: number;
-  /** true cuando ya empujó a Nyx (cada anillo empuja una sola vez). */
-  pushed: boolean;
-}
 
 // ---------------------------------------------------------------------------
 // DomeWaveManager
 // ---------------------------------------------------------------------------
 
-export class DomeWaveManager {
+export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorContext {
   /** Enemigos vivos de la oleada (compatibles con TestEnemySphere[]). */
   readonly enemies: ManagedWaveEnemy[] = [];
 
@@ -850,13 +623,13 @@ export class DomeWaveManager {
   private readonly projectileGeometry = new THREE.SphereGeometry(0.55, 12, 10);
   private readonly darkProjectileMaterial: THREE.ShaderMaterial;
   private readonly inkProjectileMaterial: THREE.ShaderMaterial;
-  private readonly kronosRings: KronosRing[] = [];
+  readonly kronosRings: KronosRing[] = [];
   private readonly kronosRingGeometry = new THREE.TorusGeometry(1, 0.07, 8, 48);
   private readonly kronosRingMaterial: THREE.ShaderMaterial;
 
   private currentWave = 0;
   private waveTime = 0;
-  private speedMult = 1;
+  speedMult = 1;
   /** Modo Entrenamiento: los enemigos no atacan ni esquivan (sacos de boxeo). */
   private enemiesPassive = false;
 
@@ -932,7 +705,7 @@ export class DomeWaveManager {
   startWave(waveNumber: number, activeSlabs?: SlabCollider[]): void {
     this.clearEnemies();
     this.deactivateAllProjectiles();
-    this.deactivateKronosRings();
+    deactivateKronosRings(this);
 
     this.currentWave = waveNumber;
     this.waveTime = 0;
@@ -1216,7 +989,7 @@ export class DomeWaveManager {
   ): ManagedWaveEnemy | null {
     this.clearEnemies();
     this.deactivateAllProjectiles();
-    this.deactivateKronosRings();
+    deactivateKronosRings(this);
     const rng = makeRng(Math.floor(Math.random() * 0x7fffffff) || 1);
     this.spawnEnemy(archetype, 0, rng, activeSlabs, homePos);
     return this.enemies[this.enemies.length - 1] ?? null;
@@ -1234,7 +1007,7 @@ export class DomeWaveManager {
     this.enemiesPassive = passive;
     if (passive) {
       this.deactivateAllProjectiles();
-      this.deactivateKronosRings();
+      deactivateKronosRings(this);
       for (const internal of this.internals.values()) {
         this.resetEnemyOffense(internal);
       }
@@ -1453,9 +1226,9 @@ export class DomeWaveManager {
       // --- Movimiento: cangrejo pegado a suelos / KRONOS / flotación del resto ---
       const isCrab = enemy.entity.archetype === 'crab_gunner';
       if (isCrab) {
-        this.updateCrabEnemy(enemy, internal, dt, elapsed, playerPos, activeSlabs);
+        updateCrabEnemy(this, enemy, internal, dt, elapsed, playerPos, activeSlabs);
       } else if (enemy.entity.archetype === 'kronos_leviathan') {
-        this.updateKronosMovement(enemy, internal, dt, elapsed);
+        updateKronosMovement(this, enemy, internal, dt, elapsed);
       } else {
         this.applyFloatMovement(enemy, internal, dt, elapsed);
       }
@@ -1492,7 +1265,7 @@ export class DomeWaveManager {
       } else if (enemy.entity.archetype === 'ground_golem') {
         this.updateGolemPose(enemy, internal, dt, elapsed, playerPos);
       } else if (enemy.entity.archetype === 'kronos_leviathan') {
-        this.updateKronosPose(enemy, internal, dt, elapsed, playerPos);
+        updateKronosPose(this, enemy, internal, dt, elapsed, playerPos);
       }
 
       enemy.entity.position.copy(enemy.position);
@@ -1519,7 +1292,7 @@ export class DomeWaveManager {
     }
 
     this.updateProjectiles(dt, playerPos, onPlayerHit, onOctopusInk);
-    this.updateKronosRings(dt, playerPos, onGolemSmash);
+    updateKronosRings(this, dt, playerPos, onGolemSmash);
 
     return { didEnemyEvadeDash };
   }
@@ -1588,7 +1361,7 @@ export class DomeWaveManager {
 
     // Leviatán KRONOS: máquina de estados de sus 3 patrones de ataque.
     if (archetype === 'kronos_leviathan') {
-      this.updateKronosAttack(
+      updateKronosAttack(this, 
         enemy,
         internal,
         dt,
@@ -1628,7 +1401,7 @@ export class DomeWaveManager {
           enemy.attackTimer = 0.35;
           break;
         }
-        if (this.computeCrabMuzzle(internal, _muzzlePos)) {
+        if (computeCrabMuzzle(internal, _muzzlePos)) {
           this.fireProjectile(enemy, playerPos, 'dark', 8, 10 * mult, 0, _muzzlePos);
         } else {
           this.fireProjectile(enemy, playerPos, 'dark', 8, 10 * mult);
@@ -1857,365 +1630,6 @@ export class DomeWaveManager {
    *    disparando una espiral continua de esferas oscuras mientras protege sus
    *    segmentos internos (carne al máximo).
    */
-  private updateKronosAttack(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    dt: number,
-    playerPos: THREE.Vector3,
-    activeSlabs: SlabCollider[] | undefined,
-    onPlayerHit: (damage: number) => void,
-    onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
-    onSlabSmash?: (slab: SlabCollider) => void,
-  ): void {
-    internal.kronosContactCd = Math.max(0, internal.kronosContactCd - dt);
-
-    switch (internal.kronosState) {
-      case 'charge': {
-        internal.kronosTimer -= dt;
-        // Atraviesa a Nyx: daño por contacto con cooldown (no frena el cruze).
-        if (
-          internal.kronosContactCd <= 0 &&
-          enemy.position.distanceTo(playerPos) < enemy.radius + CHARGE_CONTACT_PADDING
-        ) {
-          onPlayerHit(KRONOS_CHARGE_DAMAGE);
-          internal.kronosContactCd = KRONOS_CHARGE_RECONTACT_SEC;
-        }
-        // Tramo Devorasuelos: todo suelo flotante cercano se rompe en escombros
-        // reales agarrables por el Campo Gravitacional (vía onSlabSmash).
-        if (activeSlabs && onSlabSmash) {
-          for (const slab of activeSlabs) {
-            if (slab.center.distanceTo(enemy.position) < KRONOS_SLAB_BREAK_RADIUS) {
-              onSlabSmash(slab);
-            }
-          }
-        }
-        if (internal.kronosTimer <= 0 || enemy.position.length() > KRONOS_CHARGE_END_RADIUS) {
-          internal.kronosState = 'roam';
-          enemy.attackTimer = KRONOS_ATTACK_COOLDOWN_SEC / this.speedMult;
-          enemy.homePos.copy(enemy.position);
-        }
-        return;
-      }
-
-      case 'rings': {
-        internal.kronosTimer -= dt;
-        enemy.entity.mouthOpen = true;
-        if (internal.kronosTimer <= 0) {
-          if (internal.kronosRingsLeft > 0) {
-            this.emitKronosRing(enemy, internal, playerPos);
-            internal.kronosRingsLeft--;
-            internal.kronosTimer =
-              internal.kronosRingsLeft > 0 ? KRONOS_RING_INTERVAL_SEC : KRONOS_RING_RECOVER_SEC;
-          } else {
-            internal.kronosState = 'roam';
-            enemy.entity.mouthOpen = false;
-            enemy.attackTimer = KRONOS_ATTACK_COOLDOWN_SEC / this.speedMult;
-            enemy.homePos.copy(enemy.position);
-          }
-        }
-        return;
-      }
-
-      case 'coil': {
-        internal.kronosTimer -= dt;
-        internal.kronosSpiralTimer -= dt;
-        if (internal.kronosSpiralTimer <= 0) {
-          this.fireKronosSpiralShot(enemy, internal, playerPos);
-          internal.kronosSpiralTimer = KRONOS_COIL_SHOT_INTERVAL;
-        }
-        if (internal.kronosTimer <= 0) {
-          // Fin del enrosco: los segmentos recuperan su carne habitual.
-          enemy.entity.fleshThickness = internal.kronosFleshRestore;
-          internal.kronosState = 'roam';
-          internal.kronosCoilCooldown = KRONOS_COIL_COOLDOWN_SEC;
-          enemy.attackTimer = KRONOS_ATTACK_COOLDOWN_SEC / this.speedMult;
-          enemy.homePos.copy(enemy.position);
-        }
-        return;
-      }
-
-      case 'roam':
-      default: {
-        internal.kronosCoilCooldown = Math.max(0, internal.kronosCoilCooldown - dt);
-        if (enemy.attackTimer > 0) {
-          return;
-        }
-        const mult = this.speedMult;
-        const belowHalf = enemy.entity.hp <= enemy.entity.maxHp * KRONOS_COIL_HP_FRACTION;
-        if (belowHalf && internal.kronosCoilCooldown <= 0) {
-          // Ataque 3 — Enrosco Gravitatorio: órbita + espiral + segmentos protegidos.
-          internal.kronosState = 'coil';
-          internal.kronosTimer = KRONOS_COIL_SEC;
-          internal.kronosSpiralTimer = 0.35;
-          internal.kronosFleshRestore = enemy.entity.fleshThickness;
-          enemy.entity.fleshThickness = KRONOS_COIL_FLESH;
-          enemy.hitFlash = Math.max(enemy.hitFlash, 0.3);
-        } else if (internal.kronosAttackIndex % 2 === 0) {
-          // Ataque 1 — Tramo Devorasuelos: línea directa a través de la arena.
-          internal.chargeDir.subVectors(playerPos, enemy.position);
-          if (internal.chargeDir.lengthSq() < 1e-4) {
-            internal.chargeDir.set(0, 0, 1);
-          } else {
-            internal.chargeDir.normalize();
-          }
-          internal.chargeSpeed = KRONOS_CHARGE_SPEED * mult;
-          internal.kronosState = 'charge';
-          internal.kronosTimer = KRONOS_CHARGE_SEC;
-          internal.kronosContactCd = 0;
-          enemy.hitFlash = Math.max(enemy.hitFlash, 0.25);
-        } else {
-          // Ataque 2 — Anillos de Contención: fauces abiertas + ondas expansivas.
-          internal.kronosState = 'rings';
-          internal.kronosRingsLeft =
-            KRONOS_RING_COUNT[internal.kronosAttackIndex % KRONOS_RING_COUNT.length];
-          internal.kronosTimer = KRONOS_RING_TELEGRAPH_SEC;
-          enemy.entity.mouthOpen = true;
-          enemy.hitFlash = Math.max(enemy.hitFlash, 0.2);
-        }
-        internal.kronosAttackIndex++;
-        return;
-      }
-    }
-  }
-
-  /** Emite un Anillo de Contención desde las fauces abiertas (hueso `jaw`). */
-  private emitKronosRing(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    playerPos: THREE.Vector3,
-  ): void {
-    const ring = this.kronosRings.find((r) => !r.active);
-    if (!ring) {
-      return;
-    }
-    const jaw = internal.kronosRig?.jaw;
-    if (jaw) {
-      jaw.bone.updateWorldMatrix(true, false);
-      jaw.bone.getWorldPosition(_muzzlePos);
-    } else {
-      _muzzlePos.copy(enemy.position);
-    }
-    _shotDir.subVectors(playerPos, _muzzlePos);
-    if (_shotDir.lengthSq() < 1e-4) {
-      _shotDir.set(0, 0, 1);
-    } else {
-      _shotDir.normalize();
-    }
-    ring.active = true;
-    ring.origin.copy(_muzzlePos);
-    ring.dir.copy(_shotDir);
-    ring.travel = 0;
-    ring.radius = 1.5;
-    ring.pushed = false;
-    ring.mesh.position.copy(_muzzlePos);
-    ring.mesh.quaternion.setFromUnitVectors(_ringForward, _shotDir);
-    ring.mesh.scale.setScalar(ring.radius);
-    ring.mesh.visible = true;
-  }
-
-  /**
-   * Avanza los Anillos de Contención activos: el centro viaja hacia Nyx
-   * mientras el radio crece; cuando la banda de la onda cruza a Nyx recibe un
-   * fuerte empuje radial (único por anillo) hacia la Barrera Blanca — el
-   * `-10 HP` lo aplica la propia Barrera al tocarla.
-   */
-  private updateKronosRings(
-    dt: number,
-    playerPos: THREE.Vector3,
-    onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
-  ): void {
-    for (const ring of this.kronosRings) {
-      if (!ring.active) {
-        continue;
-      }
-      ring.travel += KRONOS_RING_TRAVEL_SPEED * dt;
-      ring.radius += KRONOS_RING_EXPAND_SPEED * dt;
-      ring.mesh.position.copy(ring.origin).addScaledVector(ring.dir, ring.travel);
-      ring.mesh.scale.setScalar(ring.radius);
-
-      if (!ring.pushed) {
-        _toEnemy.subVectors(playerPos, ring.mesh.position);
-        const dist = _toEnemy.length();
-        if (Math.abs(dist - ring.radius) < KRONOS_RING_HIT_BAND) {
-          ring.pushed = true;
-          if (dist > 1e-4) {
-            _toEnemy.divideScalar(dist);
-          } else {
-            _toEnemy.copy(ring.dir);
-          }
-          onGolemSmash?.(0, _toEnemy, KRONOS_RING_PUSH_SPEED);
-        }
-      }
-
-      if (ring.radius >= KRONOS_RING_MAX_RADIUS) {
-        ring.active = false;
-        ring.mesh.visible = false;
-      }
-    }
-  }
-
-  /** Desactiva todos los Anillos de Contención en vuelo. */
-  private deactivateKronosRings(): void {
-    for (const ring of this.kronosRings) {
-      ring.active = false;
-      ring.mesh.visible = false;
-    }
-  }
-
-  /**
-   * Esfera oscura de la espiral del Enrosco: abanico que gira alrededor del
-   * eje vertical de la órbita, ligeramente homing hacia Nyx para cubrir toda
-   * la cúpula mientras KRONOS se enrosca.
-   */
-  private fireKronosSpiralShot(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    playerPos: THREE.Vector3,
-  ): void {
-    internal.kronosSpiralAngle += KRONOS_COIL_SPIRAL_STEP;
-    const head = internal.kronosRig?.head;
-    if (head) {
-      head.bone.updateWorldMatrix(true, false);
-      head.bone.getWorldPosition(_muzzlePos);
-    } else {
-      _muzzlePos.copy(enemy.position);
-    }
-    _spiralDir.set(
-      Math.cos(internal.kronosSpiralAngle),
-      0,
-      Math.sin(internal.kronosSpiralAngle),
-    );
-    _toEnemy.subVectors(playerPos, _muzzlePos);
-    if (_toEnemy.lengthSq() > 1e-6) {
-      _toEnemy.normalize();
-      _spiralDir.multiplyScalar(0.8).addScaledVector(_toEnemy, 0.35).normalize();
-    }
-    this.fireProjectile(
-      enemy,
-      _muzzlePos,
-      'dark',
-      KRONOS_COIL_SHOT_DAMAGE,
-      KRONOS_COIL_SHOT_SPEED * this.speedMult,
-      0,
-      _muzzlePos,
-      _spiralDir,
-    );
-  }
-
-  /**
-   * Movimiento de KRONOS: embestida en línea recta (Tramo Devorasuelos),
-   * órbita alrededor del centro de la cúpula (Enrosco Gravitatorio) y la
-   * flotación con muelle hacia homePos del resto del tiempo.
-   */
-  private updateKronosMovement(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    dt: number,
-    elapsed: number,
-  ): void {
-    switch (internal.kronosState) {
-      case 'charge':
-        // Embestida: velocidad constante en línea, sin freno ni muelle.
-        enemy.velocity.copy(internal.chargeDir).multiplyScalar(internal.chargeSpeed);
-        enemy.position.addScaledVector(enemy.velocity, dt);
-        return;
-      case 'coil': {
-        // Enrosco: órbita alrededor del centro de la cúpula con bob vertical.
-        internal.kronosOrbitAngle += KRONOS_COIL_ANG_SPEED * this.speedMult * dt;
-        _targetPos.set(
-          Math.cos(internal.kronosOrbitAngle) * KRONOS_COIL_ORBIT_R,
-          KRONOS_COIL_HEIGHT + Math.sin(elapsed * 0.9 + enemy.phase) * 3,
-          Math.sin(internal.kronosOrbitAngle) * KRONOS_COIL_ORBIT_R,
-        );
-        _toHome.subVectors(_targetPos, enemy.position);
-        const blend = 1 - Math.exp(-2.6 * dt);
-        enemy.position.addScaledVector(_toHome, blend);
-        enemy.velocity.copy(_toHome).multiplyScalar(2.6);
-        return;
-      }
-      default:
-        this.applyFloatMovement(enemy, internal, dt, elapsed);
-        return;
-    }
-  }
-
-  /**
-   * Leviatán KRONOS: ondulación serpentina progresiva de la cadena
-   * `seg_01..seg_12` (yaw/pitch proporcionales a la velocidad de desplazamiento
-   * para serpentear orgánicamente por la cúpula), aleteo de las aletas
-   * pectorales, cabeza escrutando a Nyx y jaw que abre clarísimo durante los
-   * Anillos de Contención. Las 4 Estrellas Vitales rotan vía `starCores` y
-   * aquí responden al daño pulsando su brillo.
-   */
-  private updateKronosPose(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    dt: number,
-    elapsed: number,
-    playerPos: THREE.Vector3,
-  ): void {
-    const speed = enemy.velocity.length();
-    const charging = internal.kronosState === 'charge';
-    const coiling = internal.kronosState === 'coil';
-
-    // Orientación: el cuerpo avanza hacia su velocidad (rígido en la embestida).
-    if (speed > 2.5) {
-      _lookDir.copy(enemy.velocity).divideScalar(speed);
-    } else {
-      _lookDir.subVectors(playerPos, enemy.position);
-      if (_lookDir.lengthSq() < 1e-6) {
-        _lookDir.set(0, 0, 1);
-      } else {
-        _lookDir.normalize();
-      }
-    }
-    lookAtQuat(_lookDir, _up, _targetQuat);
-    const turnRate = charging ? KRONOS_TURN_RATE_CHARGE : KRONOS_TURN_RATE;
-    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-turnRate * dt));
-
-    const rig = internal.kronosRig;
-    if (!rig) {
-      return;
-    }
-
-    // Onda senoidal progresiva: fase integrada (acelera sin saltos) y
-    // amplitud/frecuencia proporcionales a la velocidad de desplazamiento.
-    const speedFactor = THREE.MathUtils.clamp(speed / 12, 0.35, 1.6);
-    const waveSpeed = KRONOS_SEG_WAVE_SPEED * (0.7 + speedFactor * 0.5) * (coiling ? 1.5 : 1);
-    internal.flapPhase += waveSpeed * dt;
-    const segments = rig.segments;
-    for (let i = 0; i < segments.length; i++) {
-      const t = internal.flapPhase + i * KRONOS_SEG_PHASE_STEP;
-      const yaw = Math.sin(t) * KRONOS_SEG_YAW_AMP * speedFactor;
-      const pitch = Math.cos(t * 0.8 + enemy.phase) * KRONOS_SEG_PITCH_AMP * speedFactor;
-      // Enrosco: encorvadura creciente hacia la cola para enroscarse en espiral.
-      const curl = coiling ? KRONOS_COIL_CURL * (i / Math.max(1, segments.length)) : 0;
-      this.poseBone(segments[i], pitch, yaw + curl, 0);
-    }
-
-    // Aletas pectorales: aleteo orgánico independiente de la onda del cuerpo.
-    const finFlap = Math.sin(elapsed * KRONOS_FIN_FLAP_SPEED + enemy.phase);
-    this.poseBone(rig.finL, 0, 0, finFlap * KRONOS_FIN_FLAP_AMP);
-    this.poseBone(rig.finR, 0, 0, -finFlap * KRONOS_FIN_FLAP_AMP);
-
-    // Cabeza: vaivén escrutando a Nyx; jaw abre claro en los Anillos.
-    this.poseBone(
-      rig.head,
-      Math.sin(elapsed * 1.1 + enemy.phase) * 0.05,
-      Math.sin(elapsed * 0.9) * 0.07,
-      0,
-    );
-    const jawTarget = internal.kronosState === 'rings' ? 1 : 0;
-    internal.kronosJawOpen += (jawTarget - internal.kronosJawOpen) * Math.min(1, dt * 10);
-    this.poseBone(rig.jaw, -KRONOS_JAW_OPEN_RAD * internal.kronosJawOpen, 0, 0);
-
-    // Estrellas Vitales: pulso de brillo con el daño recibido (y al enroscarse).
-    const starBoost = enemy.hitFlash * 1.5 + (coiling ? 0.7 + Math.sin(elapsed * 9) * 0.3 : 0);
-    for (const material of rig.starCoreMaterials) {
-      material.uniforms.uEmissiveBoost.value = STAR_CORE_EMISSIVE + starBoost;
-    }
-  }
-
   private startCharge(
     enemy: ManagedWaveEnemy,
     internal: EnemyInternal,
@@ -2241,7 +1655,7 @@ export class DomeWaveManager {
    * nace en el borde de la esfera del enemigo. Con `dirOverride` (espiral del
    * Enrosco de KRONOS) sale en esa dirección exacta en vez de apuntar a Nyx.
    */
-  private fireProjectile(
+  fireProjectile(
     enemy: ManagedWaveEnemy,
     playerPos: THREE.Vector3,
     kind: 'dark' | 'ink',
@@ -2340,7 +1754,7 @@ export class DomeWaveManager {
    * Flotación estándar: bob senoidal + muelle hacia homePos (salvo dash o
    * embestida en curso) e integración de la velocidad en la posición.
    */
-  private applyFloatMovement(
+  applyFloatMovement(
     enemy: ManagedWaveEnemy,
     internal: EnemyInternal,
     dt: number,
@@ -2387,251 +1801,6 @@ export class DomeWaveManager {
    * el suyo sale de la cúpula o desaparece, y flotación suave (con agarre de
    * suelos cercanos) mientras no quede ninguno disponible.
    */
-  private updateCrabEnemy(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    dt: number,
-    elapsed: number,
-    playerPos: THREE.Vector3,
-    activeSlabs: SlabCollider[] | undefined,
-  ): void {
-    const slab =
-      internal.attachedSlabId && activeSlabs
-        ? findSlabById(activeSlabs, internal.attachedSlabId)
-        : null;
-
-    // El slab salió de la cúpula (>72 m) o desapareció: salta hacia otro.
-    if (internal.attachedSlabId && (!slab || slab.center.length() > CRAB_LEAVE_R)) {
-      this.startCrabJump(enemy, internal, activeSlabs, internal.attachedSlabId);
-    }
-
-    if (internal.jump) {
-      this.updateCrabJump(enemy, internal, dt, activeSlabs);
-      this.flapCrabLegs(enemy, internal, elapsed);
-      return;
-    }
-
-    if (internal.attachedSlabId && slab) {
-      this.updateCrabOnSlab(enemy, internal, slab, dt, playerPos);
-      return;
-    }
-
-    // Sin slab: flotación suave + guiñeo de vuelo + agarre de suelos cercanos.
-    this.applyFloatMovement(enemy, internal, dt, elapsed);
-    this.orientCrabInFlight(enemy, dt, elapsed, playerPos);
-    this.flapCrabLegs(enemy, internal, elapsed);
-    if (activeSlabs && activeSlabs.length > 0) {
-      const target = pickCrabJumpSlab(activeSlabs, null, enemy.position);
-      if (target && enemy.position.distanceTo(target.center) <= CRAB_GRAB_RANGE) {
-        this.startCrabJump(enemy, internal, activeSlabs, null);
-      }
-    }
-  }
-
-  /**
-   * Arranca el salto parabólico hacia el mejor slab disponible (center < 68 m
-   * o el más cercano al centro). Sin destino, el cangrejo pasa a flotación
-   * suave anclada donde está.
-   */
-  private startCrabJump(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    activeSlabs: SlabCollider[] | undefined,
-    leavingSlabId: string | null,
-  ): CrabJump | null {
-    const target = pickCrabJumpSlab(activeSlabs, leavingSlabId, enemy.position);
-    if (!target) {
-      internal.attachedSlabId = null;
-      internal.jump = null;
-      enemy.homePos.copy(enemy.position);
-      return null;
-    }
-    const targetLocal = new THREE.Vector2();
-    pickSlabLocalPoint(target, Math.random, targetLocal);
-    slabTopPoint(target, targetLocal, _targetPos);
-    _slabUp.set(0, 1, 0).applyQuaternion(target.quaternion);
-    _targetPos.addScaledVector(_slabUp, CRAB_STAND_HEIGHT);
-    const dist = enemy.position.distanceTo(_targetPos);
-    internal.jump = {
-      from: enemy.position.clone(),
-      targetSlabId: target.id,
-      targetLocal,
-      duration: crabJumpDuration(dist),
-      time: 0,
-      arcHeight: crabJumpArc(dist),
-      offset: new THREE.Vector3(),
-    };
-    internal.attachedSlabId = null;
-    return internal.jump;
-  }
-
-  /** Progresa el arco del salto en curso hasta aterrizar pegado al destino. */
-  private updateCrabJump(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    dt: number,
-    activeSlabs: SlabCollider[] | undefined,
-  ): void {
-    const jump = internal.jump;
-    if (!jump) {
-      return;
-    }
-
-    // El knockback en vuelo desvía el arco; el amortiguador de aire lo frena.
-    jump.offset.addScaledVector(enemy.velocity, dt);
-    enemy.velocity.multiplyScalar(Math.exp(-CRAB_AIR_DAMPING * dt));
-
-    const targetSlab = activeSlabs ? findSlabById(activeSlabs, jump.targetSlabId) : null;
-    if (!targetSlab) {
-      // El slab destino desapareció en pleno vuelo: re-objetiva o flota.
-      const next = this.startCrabJump(enemy, internal, activeSlabs, jump.targetSlabId);
-      if (next) {
-        next.offset.add(jump.offset);
-      }
-      return;
-    }
-
-    jump.time += dt;
-    const t = Math.min(1, jump.time / jump.duration);
-
-    // Aterrizaje sobre la cara superior del slab destino (sigue su bob).
-    slabTopPoint(targetSlab, jump.targetLocal, _targetPos);
-    _slabUp.set(0, 1, 0).applyQuaternion(targetSlab.quaternion);
-    _targetPos.addScaledVector(_slabUp, CRAB_STAND_HEIGHT);
-
-    // Arco parabólico: línea despegue→aterrizaje más la altura del salto.
-    enemy.position.lerpVectors(jump.from, _targetPos, t);
-    enemy.position.y += jump.arcHeight * 4 * t * (1 - t);
-    enemy.position.add(jump.offset);
-
-    if (t >= 1) {
-      // Aterrizaje pegado al slab destino, con blend suave desde donde tocó.
-      internal.jump = null;
-      internal.attachedSlabId = jump.targetSlabId;
-      internal.slabLocalOffset.copy(jump.targetLocal);
-      internal.attachBlend = 0;
-      internal.attachFrom.copy(enemy.position);
-    }
-  }
-
-  /** Cangrejo pegado a su slab: anclaje, deslizamiento por knockback y apuntado. */
-  private updateCrabOnSlab(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    slab: SlabCollider,
-    dt: number,
-    playerPos: THREE.Vector3,
-  ): void {
-    // El knockback desliza el offset local, fijado dentro de los bordes.
-    if (enemy.velocity.lengthSq() > 1e-6) {
-      _localOffset.copy(enemy.velocity).applyQuaternion(slab.invQuaternion);
-      internal.slabLocalOffset.x += _localOffset.x * dt;
-      internal.slabLocalOffset.y += _localOffset.z * dt;
-      clampSlabLocalPoint(slab, internal.slabLocalOffset);
-      enemy.velocity.multiplyScalar(Math.exp(-CRAB_SKID_DAMPING * dt));
-    }
-
-    // Anclaje a la cara superior (+Y local) del slab.
-    slabTopPoint(slab, internal.slabLocalOffset, _targetPos);
-    _slabUp.set(0, 1, 0).applyQuaternion(slab.quaternion);
-    _targetPos.addScaledVector(_slabUp, CRAB_STAND_HEIGHT);
-    if (internal.attachBlend < 1) {
-      internal.attachBlend = Math.min(1, internal.attachBlend + dt / CRAB_ATTACH_BLEND_TIME);
-      const t = internal.attachBlend;
-      enemy.position.lerpVectors(internal.attachFrom, _targetPos, t * t * (3 - 2 * t));
-    } else {
-      enemy.position.copy(_targetPos);
-    }
-
-    // El cuerpo gira sobre el slab para encarar a Nyx.
-    _aimDir.subVectors(playerPos, enemy.position);
-    if (_aimDir.lengthSq() > 1e-6) {
-      _aimDir.normalize();
-      _slabForward.copy(_aimDir).addScaledVector(_slabUp, -_aimDir.dot(_slabUp));
-      if (_slabForward.lengthSq() > 1e-4) {
-        _slabForward.normalize();
-        _basisX.crossVectors(_slabUp, _slabForward).normalize();
-        _basisMat.makeBasis(_basisX, _slabUp, _slabForward);
-        _targetQuat.setFromRotationMatrix(_basisMat);
-        enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-CRAB_TURN_RATE * dt));
-      }
-    }
-
-    // El cañón apunta fino hacia Nyx por encima del giro del cuerpo.
-    this.aimCrabTurret(internal, dt, playerPos);
-  }
-
-  /** Boca del cañón en espacio mundo (hueso `turret` o mesh `detail_cannon`). */
-  private computeCrabMuzzle(internal: EnemyInternal, out: THREE.Vector3): boolean {
-    const node = internal.turretNode;
-    if (!node) {
-      return false;
-    }
-    node.updateWorldMatrix(true, false);
-    node.getWorldPosition(out);
-    node.getWorldQuaternion(_turretWorldQuat);
-    _muzzleDir.copy(internal.turretForward).applyQuaternion(_turretWorldQuat);
-    out.addScaledVector(_muzzleDir, CANNON_MUZZLE_DISTANCE);
-    return true;
-  }
-
-  /** Gira el hueso del cañón para apuntar su eje de disparo hacia Nyx. */
-  private aimCrabTurret(internal: EnemyInternal, dt: number, playerPos: THREE.Vector3): void {
-    const node = internal.turretNode;
-    if (!node) {
-      return;
-    }
-    node.updateWorldMatrix(true, false);
-    node.getWorldPosition(_muzzlePos);
-    _lookDir.subVectors(playerPos, _muzzlePos);
-    if (_lookDir.lengthSq() < 1e-6) {
-      return;
-    }
-    _lookDir.normalize();
-    // Orientación mundial deseada: el eje local del cañón apunta a Nyx.
-    _targetQuat.setFromUnitVectors(internal.turretForward, _lookDir);
-    const parent = node.parent;
-    if (parent) {
-      parent.getWorldQuaternion(_invQuat).invert();
-      _targetQuat.premultiply(_invQuat);
-    }
-    node.quaternion.slerp(_targetQuat, 1 - Math.exp(-CRAB_TURRET_TURN_RATE * dt));
-  }
-
-  /** Cangrejo en el aire sin slab: encara a Nyx con un guiñeo ligero. */
-  private orientCrabInFlight(
-    enemy: ManagedWaveEnemy,
-    dt: number,
-    elapsed: number,
-    playerPos: THREE.Vector3,
-  ): void {
-    _lookDir.subVectors(playerPos, enemy.position);
-    if (_lookDir.lengthSq() < 1e-6) {
-      _lookDir.set(0, 0, 1);
-    } else {
-      _lookDir.normalize();
-    }
-    lookAtQuat(_lookDir, _up, _targetQuat);
-    _rollQuat.setFromAxisAngle(
-      _up,
-      Math.sin(elapsed * CRAB_FLIGHT_WOBBLE_SPEED + enemy.phase) * CRAB_FLIGHT_WOBBLE,
-    );
-    _targetQuat.premultiply(_rollQuat);
-    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-CRAB_TURN_RATE * dt));
-  }
-
-  /** Aleteo procedural de las patas (`leg_*`) mientras el cangrejo vuela. */
-  private flapCrabLegs(enemy: ManagedWaveEnemy, internal: EnemyInternal, elapsed: number): void {
-    for (let i = 0; i < internal.legs.length; i++) {
-      const leg = internal.legs[i];
-      _legWaveQuat.setFromAxisAngle(
-        _legWaveAxis,
-        Math.sin(elapsed * CRAB_LEG_WAVE_SPEED + enemy.phase + i * 0.8) * leg.amplitude,
-      );
-      leg.bone.quaternion.copy(leg.rest).multiply(_legWaveQuat);
-    }
-  }
-
   /** Pulpo: orientación suave hacia Nyx con balanceo en espiral y tentáculos ondeando. */
   private updateOctopusPose(
     enemy: ManagedWaveEnemy,
@@ -2667,7 +1836,7 @@ export class DomeWaveManager {
   }
 
   /** Compone una rotación euleriana sobre la pose de reposo de un hueso. */
-  private poseBone(bone: EnemyBone | null, rotX: number, rotY: number, rotZ: number): void {
+  poseBone(bone: EnemyBone | null, rotX: number, rotY: number, rotZ: number): void {
     if (!bone) {
       return;
     }
@@ -2696,8 +1865,7 @@ export class DomeWaveManager {
     } else {
       _lookDir.normalize();
     }
-    lookAtQuat(_lookDir, _up, _targetQuat);
-    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-SPARROW_TURN_RATE * dt));
+    faceTowards(enemy.mesh, _lookDir, SPARROW_TURN_RATE, dt);
 
     const rig = internal.sparrowRig;
     if (!rig) {
@@ -2768,8 +1936,7 @@ export class DomeWaveManager {
     } else {
       _lookDir.normalize();
     }
-    lookAtQuat(_lookDir, _up, _targetQuat);
-    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-NECROZMA_TURN_RATE * dt));
+    faceTowards(enemy.mesh, _lookDir, NECROZMA_TURN_RATE, dt);
 
     const rig = internal.necrozmaRig;
     if (!rig) {
@@ -2830,8 +1997,7 @@ export class DomeWaveManager {
     } else {
       _lookDir.normalize();
     }
-    lookAtQuat(_lookDir, _up, _targetQuat);
-    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-GOLEM_TURN_RATE * dt));
+    faceTowards(enemy.mesh, _lookDir, GOLEM_TURN_RATE, dt);
 
     const rig = internal.golemRig;
     if (!rig) {
