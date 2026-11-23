@@ -13,16 +13,16 @@ Uso en Blender (Text Editor o Blender MCP):
 
 import bpy
 
-# Mapeo SOMA (Kimodo) -> NYX (27 huesos exactos de nyxAnimator.ts)
-# Se preservan intactos hair_1..4 y sleeve_L/R para física secundaria en Three.js.
+# Mapeo SOMA30 (Kimodo, esqueleto canonico de /capabilities) -> NYX (27 huesos
+# exactos de nyxAnimator.ts). Nombres verificados contra la jerarquia real:
+# Hips -> Spine1 -> Spine2 -> Chest -> Neck1 -> Neck2 -> Head y
+# LeftLeg (muslo) -> LeftShin -> LeftFoot -> LeftToeBase.
+# Se preservan intactos hair_1..4 y sleeve_L/R para fisica secundaria en Three.js.
 SOMA_TO_NYX_BONE_MAP = {
     "Hips": "hips",
-    "Spine": "spine",
     "Spine1": "spine",
     "Chest": "chest",
-    "Spine2": "chest",
-    "UpperChest": "chest",
-    "Neck": "neck",
+    "Neck2": "neck",
     "Head": "head",
     "LeftShoulder": "clavicle_L",
     "LeftArm": "upperArm_L",
@@ -32,12 +32,12 @@ SOMA_TO_NYX_BONE_MAP = {
     "RightArm": "upperArm_R",
     "RightForeArm": "forearm_R",
     "RightHand": "hand_R",
-    "LeftUpLeg": "thigh_L",
-    "LeftLeg": "shin_L",
+    "LeftLeg": "thigh_L",
+    "LeftShin": "shin_L",
     "LeftFoot": "foot_L",
     "LeftToeBase": "toe_L",
-    "RightUpLeg": "thigh_R",
-    "RightLeg": "shin_R",
+    "RightLeg": "thigh_R",
+    "RightShin": "shin_R",
     "RightFoot": "foot_R",
     "RightToeBase": "toe_R",
 }
@@ -101,6 +101,15 @@ def retarget_soma_to_nyx(
 
     if bake_and_clean:
         bpy.context.view_layer.objects.active = dst
+        # nla.bake con use_current_action=True no crea la accion por si solo:
+        # hace falta una accion asignada al rig destino antes de hornear.
+        if dst.animation_data is None:
+            dst.animation_data_create()
+        if dst.animation_data.action is None:
+            dst.animation_data.action = bpy.data.actions.new(
+                name=f"kimodo_{src.animation_data.action.name if src.animation_data and src.animation_data.action else 'retarget'}"
+            )
+        bpy.ops.object.mode_set(mode="POSE")  # nla.bake no hace nada en OBJECT en Blender 5.3
         bpy.ops.nla.bake(
             frame_start=f_start,
             frame_end=f_end,
@@ -110,6 +119,7 @@ def retarget_soma_to_nyx(
             use_current_action=True,
             bake_types={"POSE"},
         )
+        bpy.ops.object.mode_set(mode="OBJECT")
 
         # Ajustar timing (p.ej. acelerar frames de ataque con time_scale < 1.0)
         action = dst.animation_data.action if dst.animation_data else None
