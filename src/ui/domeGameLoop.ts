@@ -448,7 +448,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         );
         if (fired) {
           controller.triggerSkillAnim('stasis_throw');
-          audio.playMelee();
+          audio.playStasisThrow();
           if (!skillExecutor.hasActiveGravityRocks()) {
             const gSlot = progression.slots.find((s) => s.skillId === 'gravity_field');
             if (gSlot) gSlot.cooldownRemaining = ACTIVE_SKILLS_CATALOG.gravity_field.cooldown;
@@ -489,6 +489,30 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
             slot.cooldownRemaining = def.cooldown;
           }
           if (res.animOverride) controller.triggerSkillAnim(res.animOverride);
+          // Firma sonora por habilidad: viento, gravedad y energía propias.
+          switch (slot.skillId) {
+            case 'gravity_field':
+              audio.playStasisGrab();
+              break;
+            case 'repulse_push':
+              audio.playRepulsePush();
+              break;
+            case 'eden_absorb':
+              audio.playEdenAbsorb();
+              break;
+            case 'attraction_well':
+              audio.playAttractionWell();
+              break;
+            case 'bounce_horizon':
+              audio.playBounceHorizon();
+              break;
+            case 'black_hole':
+              audio.playBlackHoleCast();
+              break;
+            case 'implosion':
+              audio.playImplosion();
+              break;
+          }
         }
       };
       controllerRef.current = controller;
@@ -744,6 +768,14 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         controller.getAimForward(),
       );
 
+      // Motor gravitacional: el viento sigue la velocidad real de Nyx (30
+      // m/s = tope de dash/taladro) y el zumbido grave acompaña a las rocas
+      // en órbita y a cualquier agujero negro vivo.
+      audio.updateMovementSpeed(Math.min(1, controller.getCurrentSpeed() / 30));
+      audio.setGravityFieldActive(
+        skillExecutor.hasActiveGravityRocks() || skillExecutor.hasActiveBlackHole(),
+      );
+
       // Actualizar partículas de EXP / Edén con magnetismo por nivel
       const pickupGains = pickups.update(
         worldDt,
@@ -858,6 +890,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     window.removeEventListener('resize', onResize);
     controllerRef.current = null;
     audioRef.current = null;
+    // El motor gravitacional tiene capas continuas (viento/zumbido): sin esto
+    // el AudioContext huérfano seguiría sonando tras desmontar la vista.
+    audio.dispose();
     musicPlayer.stop();
     progressionRef.current = null;
     trainingBridgeRef.current = null;

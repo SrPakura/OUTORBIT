@@ -1454,7 +1454,10 @@ export class NyxDomeController {
       // Cámara lenta SOLO si había enemigo marcado (para re-lockear). En una
       // Caída al Vacío sin enemigo, el dash solo corta el vector: NUNCA la toca.
       if (hadLockedEnemy) this.bulletTimeTimer = BULLET_TIME_DURATION;
-      this.audio?.playGravityShift();
+      // Lateral: corte de viento con paneo estéreo al lado del dash; frenazo
+      // trasero: caída etérea clásica.
+      if (r !== 0) this.audio?.playSideDash(r > 0 ? 1 : -1);
+      else this.audio?.playGravityShift();
     } else if (this.mode === 'dashing' && (this.redirectWindowTimer > 0 || this.bulletTimeTimer > 0)) {
       if (this.eden < EDEN_DASH_COST) return;
       // Re-captura SOLO con el enemigo de vuelta dentro del visor: sin
@@ -1503,7 +1506,8 @@ export class NyxDomeController {
       this.animLock = null;
       if (r !== 0) this.animator.setState('air_dash', { dashDir: r > 0 ? -1 : 1 });
       else this.animator.setState('air_dash');
-      this.audio?.playGravityShift();
+      // Whoosh con paneo al lado del dash (recto sin paneo).
+      this.audio?.playSideDash(r !== 0 ? (r > 0 ? 1 : -1) : 0);
     }
   }
 
@@ -1629,7 +1633,12 @@ export class NyxDomeController {
     this.startCamTug();
     this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
     this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
-    this.audio?.playMelee();
+    // Firma sonora por ataque: el taladro espiral comprime aire en el pie
+    // (giro), la Caída al Vacío es puro viento cayendo y la patada
+    // gravitatoria conserva el whoosh clásico.
+    if (this.speedAttackKind === 'spiral_drill_kick') this.audio?.playSpinKick();
+    else if (this.speedAttackKind === 'void_fall') this.audio?.playVoidFall();
+    else this.audio?.playMelee();
   }
 
   /**
@@ -1694,7 +1703,10 @@ export class NyxDomeController {
       CAM_ROLL_MAX,
     );
     this.vfx.spawnImpactRing(enemy.position, this.facing);
-    this.audio?.playMelee();
+    // El taladro espiral impacta con golpe cinético seco; la patada simple
+    // conserva el whoosh + thud clásico.
+    if (isDrill) this.audio?.playKineticImpact();
+    else this.audio?.playMelee();
   }
 
   // ==========================================================================

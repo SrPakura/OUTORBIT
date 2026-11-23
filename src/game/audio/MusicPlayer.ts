@@ -1,11 +1,16 @@
 // ============================================================================
-// Música de fondo — reproductor con crossfade
+// Música de fondo — reproductor con fundidos y silencio entre pistas
 // ============================================================================
 //
-// Cuatro pistas servidas desde `public/audio/`: la del menú, dos que rotan en
-// las oleadas básicas y de miniboss, y la del jefe. El volumen se rampa con un
-// temporizador corto (50 ms) para que el cambio de pista no corte en seco: la
-// saliente baja mientras la entrante sube.
+// Cada pista suena de inicio a fin (sin loop). Al terminar, un fundido en
+// silencio de duración aleatoria (3-6 s) y arranca la siguiente: la que haya
+// quedado en cola (la oleada más reciente la pidió) o, si nadie pidió nada,
+// la rotación natural (waveA <-> waveB).
+//
+// Excepción — jefe: la pista del jefe interrumpe SIEMPRE, aunque la actual
+// vaya por la mitad: fundido corto (~1 s) y suena la de boss. Al acabar la
+// oleada del jefe ocurre lo contrario: la de boss se funde vaya por donde
+// vaya y vuelve la de básicos.
 //
 // Autoplay: los navegadores bloquean `play()` sin un gesto previo del usuario.
 // Si la promesa se rechaza, la pista queda pendiente y se reintenta en el
@@ -26,13 +31,29 @@ const TRACK_SOURCES: Record<MusicTrackId, string> = {
  * Edén, subida de nivel, oleada) se oigan siempre por encima del tema.
  */
 const BASE_VOLUME = 0.2;
-/** Paso de la rampa por tick: 0.05 cada 50 ms -> ~1 s de crossfade completo. */
+/** Paso de la rampa por tick: 0.05 cada 50 ms -> ~1 s de fundido completo. */
 const FADE_STEP = 0.05;
 const FADE_TICK_MS = 50;
+/** Silencio entre pistas: 3-6 s aleatorios. */
+const GAP_MIN_MS = 3000;
+const GAP_MAX_MS = 6000;
+/** Rotación natural al terminar una pista sin peticiones en cola. */
+const NATURAL_NEXT: Record<MusicTrackId, MusicTrackId> = {
+  menu: 'menu',
+  waveA: 'waveB',
+  waveB: 'waveA',
+  boss: 'boss',
+};
 
 export class MusicPlayer {
   private readonly elements = new Map<MusicTrackId, HTMLAudioElement>();
   private current: MusicTrackId | null = null;
+  /** Pista pedida mientras suena otra (no jefe): suena al terminar la actual. */
+  private queued: MusicTrackId | null = null;
+  /** Pista que arranca en cuanto termine el fundido de interrupción. */
+  private pendingSwitch: MusicTrackId | null = null;
+  /** Temporizador del silencio entre pistas (fin natural -> siguiente). */
+  private gapTimer: ReturnType<typeof setTimeout> | null = null;
   private volumeMultiplier = 1;
   private muted = false;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -57,47 +78,113 @@ export class MusicPlayer {
     this.startFade();
   }
 
-  /** Cambia de pista con crossfade (no-op si ya está sonando). */
+  /**
+   * Pide una pista. Reglas:
+   * - Nada sonando: arranca ya.
+   * - Jefe pedido con otra cosa sonando: interrumpe con fundido (a mitad de
+   *   canción si hace falta) y suena la del jefe.
+   * - Algo sonando y llega una no-jefe: va a la cola; la actual acaba de
+   *   inicio a fin y, tras el silencio, arranca la nueva.
+   * - La del jefe sonando y llega una no-jefe (fin de oleada de jefe): se
+   *   interrumpe igual, vaya por donde vaya la canción.
+   */
   play(track: MusicTrackId): void {
-    if (this.current === track) return;
-    this.current = track;
-    const el = this.element(track);
-    el.currentTime = 0;
-    this.resume(el, track);
-    this.startFade();
+    // Silencio entre pistas: la anterior ya acabó, la petición arranca ya.
+    if (this.gapTimer !== null) {
+      this.clearGap();
+      this.startTrack(track);
+      return;
+    }
+    if (this.current === track && this.pendingSwitch === null) {
+      this.queued = null;
+      return;
+    }
+    const interrupting =
+      this.current !== null && (track === 'boss' || this.current === 'boss');
+    if (this.current === null) {
+      this.startTrack(track);
+      return;
+    }
+    if (interrupting) {
+      this.queued = null;
+      this.pendingSwitch = track;
+      this.startFade();
+      return;
+    }
+    this.queued = track;
   }
 
   /** Baja el volumen hasta cero y deja de sonar. */
   stop(): void {
-    if (this.current === null) return;
+    if (this.current === null && this.pendingSwitch === null) return;
     this.current = null;
+    this.queued = null;
+    this.pendingSwitch = null;
+    this.clearGap();
     this.startFade();
   }
 
   dispose(): void {
     this.stopTimer();
+    this.clearGap();
     for (const el of this.elements.values()) {
       el.pause();
       el.removeAttribute('src');
     }
     this.elements.clear();
     this.current = null;
+    this.pendingSwitch = null;
+    this.queued = null;
   }
 
   // --------------------------------------------------------------------------
   // Interno
   // --------------------------------------------------------------------------
 
+  /** Arranca una pista desde el principio con fundido de entrada. */
+  private startTrack(track: MusicTrackId): void {
+    this.current = track;
+    this.queued = null;
+    this.pendingSwitch = null;
+    const el = this.element(track);
+    el.currentTime = 0;
+    this.resume(el, track);
+    this.startFade();
+  }
+
   private element(track: MusicTrackId): HTMLAudioElement {
     let el = this.elements.get(track);
     if (!el) {
       el = new Audio(TRACK_SOURCES[track]);
-      el.loop = true;
+      // Sin loop: la pista vive de inicio a fin y el `ended` decide qué
+      // viene después (silencio aleatorio + siguiente).
+      el.loop = false;
       el.preload = 'auto';
       el.volume = 0;
+      el.addEventListener('ended', () => this.onTrackEnded(track));
       this.elements.set(track, el);
     }
     return el;
+  }
+
+  /** Fin natural de una pista: silencio de 3-6 s y luego la siguiente. */
+  private onTrackEnded(track: MusicTrackId): void {
+    if (this.current !== track || this.pendingSwitch !== null) return;
+    const next = this.queued ?? NATURAL_NEXT[track];
+    this.queued = null;
+    const gap = GAP_MIN_MS + Math.random() * (GAP_MAX_MS - GAP_MIN_MS);
+    this.gapTimer = setTimeout(() => {
+      this.gapTimer = null;
+      // Durante el silencio pudo llegar una interrupción (p. ej. jefe).
+      if (this.current !== track || this.pendingSwitch !== null) return;
+      this.startTrack(next);
+    }, gap);
+  }
+
+  private clearGap(): void {
+    if (this.gapTimer === null) return;
+    clearTimeout(this.gapTimer);
+    this.gapTimer = null;
   }
 
   private targetVolume(): number {
@@ -142,9 +229,12 @@ export class MusicPlayer {
 
   private tick(): void {
     const target = this.targetVolume();
+    // Durante una interrupción, la pista pendiente es la que sube: la actual
+    // se funde a cero aunque siga siendo `current` hasta el relevo.
+    const rising = this.pendingSwitch ?? this.current;
     let moving = false;
     for (const [id, el] of this.elements) {
-      const goal = id === this.current ? target : 0;
+      const goal = id === rising ? target : 0;
       const diff = goal - el.volume;
       if (Math.abs(diff) <= FADE_STEP) {
         if (el.volume !== goal) el.volume = goal;
@@ -154,7 +244,14 @@ export class MusicPlayer {
       el.volume = Math.min(1, Math.max(0, el.volume + Math.sign(diff) * FADE_STEP));
       moving = true;
     }
-    if (!moving) this.stopTimer();
+    if (moving) return;
+    this.stopTimer();
+    // El fundido de interrupción terminó: arranca la pista pendiente.
+    if (this.pendingSwitch !== null) {
+      const next = this.pendingSwitch;
+      this.pendingSwitch = null;
+      this.startTrack(next);
+    }
   }
 }
 

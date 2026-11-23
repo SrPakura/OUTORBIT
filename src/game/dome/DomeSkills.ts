@@ -404,6 +404,11 @@ export class DomeSkillExecutor {
     return this.gravityField !== null && this.gravityField.fragments.length > 0;
   }
 
+  /** Hay una singularidad viva en la cúpula (para el zumbido del motor de audio). */
+  hasActiveBlackHole(): boolean {
+    return this.blackHoles.length > 0;
+  }
+
   cancelGravityField(): void {
     const gf = this.gravityField;
     if (gf === null) return;

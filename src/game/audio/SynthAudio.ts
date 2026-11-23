@@ -3,8 +3,14 @@
 // ============================================================================
 //
 // Sonidos sintetizados ligeros y agradables (envolventes cortas, volumen
-// moderado ~0.18) sin dependencias externas. El AudioContext se crea/reanuda
+// moderado) sin dependencias externas. El AudioContext se crea/reanuda
 // al primer gesto del usuario (`unlock`). La tecla M alterna el mute.
+//
+// Además del one-shots, integra el motor de audio gravitacional del
+// simulador de referencia: una capa CONTINUA de viento (ruido rosa filtrado)
+// cuya frecuencia y volumen siguen la velocidad de Nyx, y un zumbido grave
+// de campo gravitacional que se enciende con el Campo Gravitacional y el
+// Agujero Negro. Así el movimiento frenético se oye, no solo se ve.
 
 /** Tipos de sonido del juego (enrutados desde PlayerController / WorldObjects). */
 export type GameSoundKind =
@@ -31,7 +37,11 @@ export type GameSoundKind =
   | 'npcTalk'
   | 'bounce';
 
-const MASTER_VOLUME = 0.36;
+/**
+ * Volumen maestro de los efectos: +30% respecto al original (0.36) para que
+ * los one-shots se oigan por encima de la música incluso en pleno combate.
+ */
+const MASTER_VOLUME = 0.47;
 
 /**
  * Sintetizador procedural: osciladores con envolventes cortas + ruido filtrado
@@ -47,6 +57,20 @@ export class SynthAudio {
   private _muted = false;
   /** Multiplicador de volumen del ajuste persistente `masterVolume`. */
   private volumeMultiplier = 1;
+
+  // --- Motor gravitacional (capa continua, del simulador de referencia) ---
+  /** Ruido rosa de 3 s (Paul Kellet): base del viento, más natural que el blanco. */
+  private pinkBuffer: AudioBuffer | null = null;
+  private windSource: AudioBufferSourceNode | null = null;
+  private windFilter: BiquadFilterNode | null = null;
+  private windResonance: BiquadFilterNode | null = null;
+  private windGain: GainNode | null = null;
+  private gravityOsc1: OscillatorNode | null = null;
+  private gravityOsc2: OscillatorNode | null = null;
+  private gravityGain: GainNode | null = null;
+  private gravityActive = false;
+  /** Última velocidad normalizada aplicada al viento (evita trabajos repetidos). */
+  private windSpeed = -1;
 
   get muted(): boolean {
     return this._muted;
@@ -102,6 +126,40 @@ export class SynthAudio {
     this.master = this.ctx.createGain();
     this.master.gain.value = this._muted ? 0 : this.masterGain;
     this.master.connect(this.ctx.destination);
+    this.initGravityEngine();
+  }
+
+  /**
+   * Libera el contexto y las capas continuas (viento + zumbido). El bucle de
+   * la cúpula lo llama al desmontar: sin esto, el viento de una partida
+   * anterior seguiría sonando en el AudioContext huérfano.
+   */
+  dispose(): void {
+    try {
+      this.windSource?.stop();
+      this.gravityOsc1?.stop();
+      this.gravityOsc2?.stop();
+    } catch {
+      // Los nodos pueden haber terminado ya: stop() sobre un nodo parado no
+      // debe tumbar el desmontaje.
+    }
+    this.windSource = null;
+    this.gravityOsc1 = null;
+    this.gravityOsc2 = null;
+    this.windFilter = null;
+    this.windResonance = null;
+    this.windGain = null;
+    this.gravityGain = null;
+    this.gravityActive = false;
+    this.windSpeed = -1;
+    if (this.ctx && this.ctx.state !== 'closed') {
+      this.ctx.close().catch(() => {});
+    }
+    this.ctx = null;
+    this.master = null;
+    this.noiseBuffer = null;
+    this.pinkBuffer = null;
+    this.levelUpEcho = null;
   }
 
   /** Alterna el mute; devuelve el nuevo estado. */
@@ -229,6 +287,137 @@ export class SynthAudio {
       for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
     }
     return this.noiseBuffer;
+  }
+
+  // --------------------------------------------------------------------------
+  // Motor gravitacional (simulador de audio de referencia)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Monta las dos capas continuas del simulador:
+   * 1. Viento: ruido rosa en bucle -> bandpass (130 Hz base) -> resonancia
+   *    peaking -> ganancia. La frecuencia, la Q y el volumen los mueve
+   *    `updateMovementSpeed` con la velocidad real de Nyx.
+   * 2. Zumbido de gravedad: seno de 55 Hz + triángulo de 110.5 Hz -> lowpass
+   *    180 Hz -> ganancia (0 hasta que un campo gravitacional lo enciende).
+   * Todo cuelga del bus maestro: mute y volumen de ajustes ya lo respetan.
+   */
+  private initGravityEngine(): void {
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+
+    // Ruido rosa (filtro de Paul Kellet): el viento con blanco era áspero.
+    const bufferSize = Math.floor(ctx.sampleRate * 3);
+    const pink = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const out = pink.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < bufferSize; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      out[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.04;
+      b6 = white * 0.115926;
+    }
+    this.pinkBuffer = pink;
+
+    const noiseSource = ctx.createBufferSource();
+    noiseSource.buffer = pink;
+    noiseSource.loop = true;
+
+    this.windFilter = ctx.createBiquadFilter();
+    this.windFilter.type = 'bandpass';
+    this.windFilter.frequency.value = 130;
+    this.windFilter.Q.value = 1.2;
+
+    this.windResonance = ctx.createBiquadFilter();
+    this.windResonance.type = 'peaking';
+    this.windResonance.frequency.value = 260;
+    this.windResonance.gain.value = 5;
+
+    this.windGain = ctx.createGain();
+    this.windGain.gain.value = 0;
+
+    noiseSource.connect(this.windFilter);
+    this.windFilter.connect(this.windResonance);
+    this.windResonance.connect(this.windGain);
+    this.windGain.connect(master);
+    noiseSource.start(0);
+    this.windSource = noiseSource;
+
+    this.gravityOsc1 = ctx.createOscillator();
+    this.gravityOsc2 = ctx.createOscillator();
+    this.gravityOsc1.type = 'sine';
+    this.gravityOsc2.type = 'triangle';
+    this.gravityOsc1.frequency.value = 55;
+    this.gravityOsc2.frequency.value = 110.5;
+
+    const gravFilter = ctx.createBiquadFilter();
+    gravFilter.type = 'lowpass';
+    gravFilter.frequency.value = 180;
+
+    this.gravityGain = ctx.createGain();
+    this.gravityGain.gain.value = 0;
+
+    this.gravityOsc1.connect(gravFilter);
+    this.gravityOsc2.connect(gravFilter);
+    gravFilter.connect(this.gravityGain);
+    this.gravityGain.connect(master);
+    this.gravityOsc1.start(0);
+    this.gravityOsc2.start(0);
+  }
+
+  /**
+   * Viento por velocidad de Nyx (0..1 normalizada). Curva del simulador:
+   * `curve = speed^1.65` -> el aire pasa de brisa (35%) a silbido de caída
+   * (90%+). La resonancia sigue a 1.45x la frecuencia del bandpass. Con el
+   * zumbido de gravedad activo, sus osciladores también suben con la velocidad
+   * (el campo "se estira" al moverte rápido dentro de él).
+   */
+  updateMovementSpeed(normalizedSpeed: number): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.windFilter || !this.windResonance || !this.windGain) return;
+    const speed = Math.max(0, Math.min(1, Number.isFinite(normalizedSpeed) ? normalizedSpeed : 0));
+    if (Math.abs(speed - this.windSpeed) < 0.01) return;
+    this.windSpeed = speed;
+    const now = ctx.currentTime;
+
+    const curve = Math.pow(speed, 1.65);
+    const targetFreq = 130 + curve * 1520;
+    const targetQ = 1.2 + curve * 2.4;
+    // Tope algo menor que el del simulador (1.0): aquí el viento compite con
+    // one-shots y música; con 0.62 sigue mandando sin tapar los impactos.
+    const targetWindVol = speed < 0.02 ? 0 : 0.12 + curve * 0.5;
+
+    this.windFilter.frequency.setTargetAtTime(targetFreq, now, 0.06);
+    this.windFilter.Q.setTargetAtTime(targetQ, now, 0.08);
+    this.windResonance.frequency.setTargetAtTime(targetFreq * 1.45, now, 0.06);
+    this.windGain.gain.setTargetAtTime(targetWindVol, now, 0.08);
+
+    if (this.gravityActive) {
+      this.gravityOsc1?.frequency.setTargetAtTime(55 + curve * 24, now, 0.1);
+      this.gravityOsc2?.frequency.setTargetAtTime(110.5 + curve * 48, now, 0.1);
+    }
+  }
+
+  /**
+   * Zumbido grave del campo gravitacional (rocas en órbita, agujero negro):
+   * sube a 0.24 en 150 ms y baja igual al apagarse.
+   */
+  setGravityFieldActive(active: boolean): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.gravityGain || this.gravityActive === active) return;
+    this.gravityActive = active;
+    this.gravityGain.gain.setTargetAtTime(active ? 0.24 : 0, ctx.currentTime, 0.15);
+    if (!active) {
+      // El zumbido vuelve a su frecuencia de reposo para el próximo uso.
+      this.gravityOsc1?.frequency.setTargetAtTime(55, ctx.currentTime, 0.1);
+      this.gravityOsc2?.frequency.setTargetAtTime(110.5, ctx.currentTime, 0.1);
+    }
   }
 
   /** Ruido blanco con filtro lowpass y envolvente (explosiones). */
@@ -409,6 +598,324 @@ export class SynthAudio {
     this.tone('sine', 240, 620, 0.18, 0.7);
     this.tone('triangle', 240, 620, 0.16, 0.4, 0.02);
     this.tone('sine', 620, 880, 0.08, 0.3, 0.12);
+  }
+
+  // --------------------------------------------------------------------------
+  // Movimiento y combate (motor gravitacional del simulador de referencia)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Dash lateral: corte de viento con paneo estéreo que barre del lado de
+   * origen al de destino (-1 izq, 1 der, 0 sin paneo) + silbido grave del
+   * impulso. Del `triggerSideDash` del simulador.
+   */
+  playSideDash(direction: -1 | 0 | 1): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const now = ctx.currentTime;
+    const duration = 0.24;
+
+    let dest: AudioNode = master;
+    if (direction !== 0 && typeof ctx.createStereoPanner === 'function') {
+      const panner = ctx.createStereoPanner();
+      panner.pan.setValueAtTime(-direction * 0.65, now);
+      panner.pan.linearRampToValueAtTime(direction * 0.85, now + duration);
+      panner.connect(master);
+      dest = panner;
+    }
+
+    const buffer = this.pinkBuffer ?? this.getNoiseBuffer();
+    if (!buffer) return;
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 3.2;
+    filter.frequency.setValueAtTime(600, now);
+    filter.frequency.exponentialRampToValueAtTime(2600, now + 0.08);
+    filter.frequency.exponentialRampToValueAtTime(450, now + duration);
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.01, now);
+    noiseGain.gain.linearRampToValueAtTime(0.7, now + 0.04);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+    noise.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(dest);
+    noise.start(now, Math.random() * 1.5);
+    noise.stop(now + duration);
+
+    const osc = ctx.createOscillator();
+    const oscGain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(480, now);
+    osc.frequency.exponentialRampToValueAtTime(160, now + duration);
+    oscGain.gain.setValueAtTime(0.24, now);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+    osc.connect(oscGain);
+    oscGain.connect(dest);
+    osc.start(now);
+    osc.stop(now + duration);
+  }
+
+  /**
+   * Taladro espiral (patada giratoria): el giro comprime aire en el pie —
+   * ruido rosa con bandpass estrecho que sube 280 -> 3200 Hz modulado por un
+   * LFO de 26 Hz que se apaga al comprimir, más un silbido de sierra que
+   * barre el lowpass. El impacto va aparte (`playKineticImpact`) porque el
+   * tiempo de vuelo hasta el enemigo es dinámico. Del `triggerAttackKick`.
+   */
+  playSpinKick(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const now = ctx.currentTime;
+    const spinDuration = 0.34;
+    const buffer = this.pinkBuffer ?? this.getNoiseBuffer();
+    if (!buffer) return;
+
+    // 1. Giro y compresión focalizada de aire en el pie.
+    const airNoise = ctx.createBufferSource();
+    airNoise.buffer = buffer;
+
+    const airFilter = ctx.createBiquadFilter();
+    airFilter.type = 'bandpass';
+    airFilter.Q.value = 6.5;
+    airFilter.frequency.setValueAtTime(280, now);
+    airFilter.frequency.exponentialRampToValueAtTime(3200, now + spinDuration);
+    airFilter.frequency.exponentialRampToValueAtTime(520, now + spinDuration + 0.2);
+
+    const spinLfo = ctx.createOscillator();
+    const spinLfoGain = ctx.createGain();
+    spinLfo.frequency.value = 26;
+    spinLfoGain.gain.setValueAtTime(180, now);
+    spinLfoGain.gain.exponentialRampToValueAtTime(10, now + spinDuration);
+    spinLfo.connect(spinLfoGain);
+    spinLfoGain.connect(airFilter.frequency);
+
+    const airGain = ctx.createGain();
+    airGain.gain.setValueAtTime(0.05, now);
+    airGain.gain.exponentialRampToValueAtTime(0.9, now + spinDuration);
+    airGain.gain.exponentialRampToValueAtTime(0.001, now + spinDuration + 0.2);
+
+    airNoise.connect(airFilter);
+    airFilter.connect(airGain);
+    airGain.connect(master);
+
+    spinLfo.start(now);
+    spinLfo.stop(now + spinDuration);
+    airNoise.start(now, Math.random());
+    airNoise.stop(now + spinDuration + 0.2);
+
+    // 2. Silbido giratorio del barrido de la pierna.
+    const whipOsc = ctx.createOscillator();
+    const whipGain = ctx.createGain();
+    whipOsc.type = 'sawtooth';
+
+    const whipFilter = ctx.createBiquadFilter();
+    whipFilter.type = 'lowpass';
+    whipFilter.frequency.setValueAtTime(400, now);
+    whipFilter.frequency.exponentialRampToValueAtTime(2800, now + spinDuration);
+
+    whipOsc.frequency.setValueAtTime(140, now);
+    whipOsc.frequency.exponentialRampToValueAtTime(780, now + spinDuration);
+
+    whipGain.gain.setValueAtTime(0.01, now);
+    whipGain.gain.linearRampToValueAtTime(0.25, now + spinDuration - 0.03);
+    whipGain.gain.exponentialRampToValueAtTime(0.001, now + spinDuration + 0.06);
+
+    whipOsc.connect(whipFilter);
+    whipFilter.connect(whipGain);
+    whipGain.connect(master);
+    whipOsc.start(now);
+    whipOsc.stop(now + spinDuration + 0.07);
+  }
+
+  /**
+   * Impacto cinético del taladro contra el enemigo: golpe de sub grave con
+   * ataque seco + chasquido de ruido. Es el "puño" del `triggerAttackKick`,
+   * disparado aquí en el frame real del impacto.
+   */
+  playKineticImpact(): void {
+    if (!this.audible) return;
+    this.tone('sine', 190, 36, 0.25, 0.85);
+    this.tone('square', 150, 60, 0.12, 0.4);
+    this.noise(0.12, 0.5, 900);
+  }
+
+  /**
+   * Caída al Vacío (patada sin enemigo en la mira): ráfaga de viento que
+   * cae de agudo a grave — el aire pasa de silbar a rugir al lanzarse.
+   */
+  playVoidFall(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const now = ctx.currentTime;
+    const duration = 0.5;
+    const buffer = this.pinkBuffer ?? this.getNoiseBuffer();
+    if (!buffer) return;
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 1.6;
+    filter.frequency.setValueAtTime(2200, now);
+    filter.frequency.exponentialRampToValueAtTime(320, now + duration);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.05, now);
+    gain.gain.linearRampToValueAtTime(0.55, now + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+    src.connect(filter).connect(gain).connect(master);
+    src.start(now, Math.random());
+    src.stop(now + duration);
+
+    this.tone('sine', 240, 70, 0.4, 0.4);
+  }
+
+  // --------------------------------------------------------------------------
+  // Habilidades activas (viento y firma sonora por skill)
+  // --------------------------------------------------------------------------
+
+  /** Empuje: onda antigravitatoria — ráfaga de aire que explota y se apaga. */
+  playRepulsePush(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const now = ctx.currentTime;
+    const buffer = this.pinkBuffer ?? this.getNoiseBuffer();
+    if (!buffer) return;
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(3200, now);
+    filter.frequency.exponentialRampToValueAtTime(180, now + 0.35);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.75, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    src.connect(filter).connect(gain).connect(master);
+    src.start(now, Math.random());
+    src.stop(now + 0.35);
+
+    this.tone('sine', 95, 42, 0.3, 0.7);
+  }
+
+  /** Absorción de Edén: tres armónicos suaves que ascienden (halo de curación). */
+  playEdenAbsorb(): void {
+    if (!this.audible) return;
+    const notes = [392, 523.25, 659.25];
+    for (let i = 0; i < notes.length; i++) {
+      this.tone('sine', notes[i], notes[i] * 1.5, 0.4, 0.4, i * 0.09);
+    }
+    this.tone('sine', 1568, 2093, 0.3, 0.2, 0.3);
+  }
+
+  /** Pozo de Atracción: tensión grave que se aprieta (dos sierras desafinadas subiendo). */
+  playAttractionWell(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const now = ctx.currentTime;
+    const duration = 1.2;
+
+    for (const detune of [-9, 9]) {
+      const osc = ctx.createOscillator();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.detune.setValueAtTime(detune, now);
+      osc.frequency.setValueAtTime(70, now);
+      osc.frequency.exponentialRampToValueAtTime(240, now + duration);
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(120, now);
+      filter.frequency.exponentialRampToValueAtTime(520, now + duration);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.32, now + duration * 0.55);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc.connect(filter).connect(gain).connect(master);
+      osc.start(now);
+      osc.stop(now + duration + 0.02);
+    }
+  }
+
+  /** Horizonte de Rebote: ondas cortantes — "shing" metálico agudo y breve. */
+  playBounceHorizon(): void {
+    if (!this.audible) return;
+    this.tone('square', 1900, 700, 0.14, 0.4);
+    this.tone('sawtooth', 2600, 1100, 0.1, 0.22, 0.02);
+    this.noise(0.1, 0.3, 4200);
+  }
+
+  /** Agujero Negro: sub grave que se hunde + succión de aire hacia el núcleo. */
+  playBlackHoleCast(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const now = ctx.currentTime;
+    const buffer = this.pinkBuffer ?? this.getNoiseBuffer();
+    if (!buffer) return;
+
+    // Sub que se hunde: la singularidad "aterriza".
+    this.tone('sine', 70, 28, 0.9, 0.85);
+
+    // Succión: ruido con bandpass que sube y se traga a sí mismo.
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 2.2;
+    filter.frequency.setValueAtTime(200, now);
+    filter.frequency.exponentialRampToValueAtTime(1600, now + 0.7);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.4, now + 0.25);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+    src.connect(filter).connect(gain).connect(master);
+    src.start(now, Math.random());
+    src.stop(now + 0.8);
+  }
+
+  /** Implosión: el aire se traga hacia dentro y luego el colapso estalla. */
+  playImplosion(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const now = ctx.currentTime;
+    const buffer = this.pinkBuffer ?? this.getNoiseBuffer();
+    if (!buffer) return;
+
+    // Succión inversa: el aire corre hacia el enemigo antes del colapso.
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 3.5;
+    filter.frequency.setValueAtTime(300, now);
+    filter.frequency.exponentialRampToValueAtTime(2600, now + 0.28);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.5, now + 0.22);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    src.connect(filter).connect(gain).connect(master);
+    src.start(now, Math.random());
+    src.stop(now + 0.3);
+
+    // Colapso: golpe grave seco tras la succión.
+    this.tone('sine', 170, 32, 0.3, 0.9, 0.26);
+    this.tone('square', 220, 70, 0.14, 0.35, 0.27);
   }
 
   // --------------------------------------------------------------------------
