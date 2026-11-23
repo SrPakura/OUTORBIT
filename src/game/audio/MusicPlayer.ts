@@ -83,8 +83,11 @@ export class MusicPlayer {
    * - Nada sonando: arranca ya.
    * - Jefe pedido con otra cosa sonando: interrumpe con fundido (a mitad de
    *   canción si hace falta) y suena la del jefe.
-   * - Algo sonando y llega una no-jefe: va a la cola; la actual acaba de
-   *   inicio a fin y, tras el silencio, arranca la nueva.
+   * - Cambio de contexto menú <-> juego: también interrumpe (la del menú no
+   *   se queda sonando minutos dentro de la Cúpula; al volver al título
+   *   ocurre lo contrario).
+   * - Algo sonando y llega otra del mismo contexto: va a la cola; la actual
+   *   acaba de inicio a fin y, tras el silencio, arranca la nueva.
    * - La del jefe sonando y llega una no-jefe (fin de oleada de jefe): se
    *   interrumpe igual, vaya por donde vaya la canción.
    */
@@ -100,7 +103,10 @@ export class MusicPlayer {
       return;
     }
     const interrupting =
-      this.current !== null && (track === 'boss' || this.current === 'boss');
+      this.current !== null &&
+      (track === 'boss' ||
+        this.current === 'boss' ||
+        (track === 'menu') !== (this.current === 'menu'));
     if (this.current === null) {
       this.startTrack(track);
       return;

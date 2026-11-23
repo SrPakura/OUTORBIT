@@ -207,6 +207,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     if (document.pointerLockElement === canvas) {
       document.exitPointerLock?.();
     }
+    // Marca síncrona: el `pointerlockchange` del exitPointerLock llega antes
+    // del re-render de React; sin esto, onPointerLockChange vería el ref a
+    // false y abriría la pausa DEBAJO del modal de subida de nivel.
+    levelUpOpenRef.current = true;
     const choices = progression.generateLevelUpChoices(forLevel);
     const allSlotsFull = progression.slots.every((s) => s.skillId !== null);
     setLevelUpState({
@@ -838,6 +842,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         if (document.pointerLockElement === canvas) {
           document.exitPointerLock?.();
         }
+        // Misma marca síncrona que openLevelUpModal: sin ella, la pausa se
+        // abriría debajo del Battle Report.
+        battleReportOpenRef.current = true;
         const equippedIds = progression.slots
           .filter((s) => s.skillId !== null)
           .map((s) => ({ id: s.skillId as string, level: s.level }));
