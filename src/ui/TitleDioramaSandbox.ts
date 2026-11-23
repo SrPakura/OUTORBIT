@@ -355,18 +355,11 @@ export class TitleDioramaSandbox {
   }
 
   private loadSeq = 0;
-  private currentVariant: 'new' | 'legacy' = 'new';
 
-  setNyxModelVariant(variant: 'new' | 'legacy'): void {
-    if (this.currentVariant === variant && this.pivot) return;
-    this.currentVariant = variant;
-    this.loadNyx(variant === 'legacy' ? '/models/nyx_rigged_legacy.glb' : '/models/nyx_rigged.glb');
-  }
-
-  private loadNyx(url = '/models/nyx_rigged.glb'): void {
+  private loadNyx(): void {
     const seq = ++this.loadSeq;
     const loader = new GLTFLoader();
-    loader.load(url, (gltf) => {
+    loader.load('/models/nyx_rigged.glb', (gltf) => {
       if (this.disposed || seq !== this.loadSeq) return;
       if (this.pivot) {
         this.scene.remove(this.pivot);
