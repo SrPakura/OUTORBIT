@@ -3,13 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>OUTORBIT // SUBIDA DE NIVEL — Plantilla</title>
+<title>OUTORBIT // SUBIDA DE NIVEL</title>
 <style>
   /* ============================================================================
-     SUBIDA DE NIVEL — Pantalla completa (ya no es un modal).
-     Lenguaje visual del CHARACTER SHEET: papel técnico con retícula, tinta,
-     carmesí / cian / dorado, etiquetas mono sesgadas y sombras duras.
-     Las cartas son PLANTILLA: el hueco de icono espera los SVG por habilidad.
+     SUBIDA DE NIVEL — pantalla completa, secuencia cinemática.
+     ADN del character-sheet (papel, tinta, carmesí/cian/dorado, mono, sombras
+     duras) pero composición de juego a sangre: tipografía brutal, sesgado
+     agresivo, líneas de velocidad, shake de pantalla y la carta elegida que
+     vuela al centro temblando hasta elegir ranura.
      ============================================================================ */
 
   :root {
@@ -17,8 +18,7 @@
     --ink-soft: #2a2f3d;
     --paper: #f1f1ed;
     --panel: #fbfbf8;
-    --grid: rgba(11, 13, 18, 0.065);
-    --grid-fine: rgba(11, 13, 18, 0.03);
+    --grid: rgba(11, 13, 18, 0.06);
     --crimson: #e11d48;
     --cyan: #22d3ee;
     --gold: #fbbf24;
@@ -32,266 +32,253 @@
   body {
     color: var(--ink);
     font-family: var(--sans);
-    background-color: var(--paper);
-    background-image:
-      linear-gradient(var(--grid) 1px, transparent 1px),
-      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
-      linear-gradient(var(--grid-fine) 1px, transparent 1px),
-      linear-gradient(90deg, var(--grid-fine) 1px, transparent 1px);
-    background-size: 96px 96px, 96px 96px, 16px 16px, 16px 16px;
-    -webkit-font-smoothing: antialiased;
+    background: var(--paper);
     overflow: hidden;
+    -webkit-font-smoothing: antialiased;
   }
 
-  /* ------------------------------------------------------------- pantalla */
+  /* ---------------------------------------------------------------- lienzo */
 
   .sheet {
     position: relative;
-    display: flex;
-    flex-direction: column;
     height: 100vh;
-    padding: 26px 34px 22px;
     overflow: hidden;
-  }
-
-  /* Barrido de tinta que cubre la pantalla al elegir (salida cómic) */
-  .wipe {
-    position: fixed;
-    inset: -10% -15%;
-    z-index: 40;
-    background: var(--ink);
-    border-right: 10px solid var(--crimson);
-    transform: translateX(-115%) skewX(-10deg);
-    pointer-events: none;
-  }
-  .wipe.is-on { animation: wipeSweep 620ms cubic-bezier(.7, 0, .25, 1) forwards; }
-
-  @keyframes wipeSweep {
-    0%   { transform: translateX(-115%) skewX(-10deg); }
-    46%   { transform: translateX(0) skewX(-10deg); }
-    100% { transform: translateX(115%) skewX(-10deg); }
-  }
-
-  /* Marcas de registro (crosshair) en las 4 esquinas, como plano técnico */
-  .regmark {
-    position: absolute;
-    width: 26px;
-    height: 26px;
-    z-index: 5;
-    pointer-events: none;
-    opacity: 0;
-  }
-  .regmark::before, .regmark::after {
-    content: "";
-    position: absolute;
-    background: var(--ink);
-  }
-  .regmark::before { left: 50%; top: 0; width: 1.5px; height: 100%; transform: translateX(-50%); }
-  .regmark::after  { top: 50%; left: 0; height: 1.5px; width: 100%; transform: translateY(-50%); }
-  .regmark--tl { top: 12px; left: 12px; }
-  .regmark--tr { top: 12px; right: 12px; }
-  .regmark--bl { bottom: 12px; left: 12px; }
-  .regmark--br { bottom: 12px; right: 12px; }
-
-  /* ---------------------------------------------------------------- header */
-
-  .hdr { position: relative; z-index: 2; flex: 0 0 auto; }
-
-  .hdr__top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
-    padding-bottom: 10px;
-    border-bottom: 2px solid var(--ink);
-  }
-
-  .hdr__id { display: flex; align-items: center; gap: 8px; }
-
-  .tag {
-    display: inline-block;
-    background: var(--ink);
-    color: #fff;
-    font: 800 10px/1 var(--mono);
-    letter-spacing: 0.16em;
-    padding: 6px 9px 5px;
-    transform: skewX(-9deg);
-  }
-  .tag--ghost {
-    background: transparent;
-    color: var(--ink);
-    border: 1px solid var(--ink);
-  }
-  .tag--live {
-    background: var(--cyan);
-    color: var(--ink);
-    animation: liveBlink 1.6s steps(2, jump-none) infinite;
-  }
-  @keyframes liveBlink { 50% { opacity: 0.55; } }
-
-  .hdr__meta {
-    font: 700 10px/1 var(--mono);
-    letter-spacing: 0.14em;
-    color: var(--ink-soft);
-  }
-
-  .hdr__title {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 14px;
-    margin: 18px 0 10px;
-    font-size: clamp(30px, 4.6vw, 62px);
-    font-weight: 900;
-    letter-spacing: -0.035em;
-    line-height: 0.94;
-    text-transform: uppercase;
-  }
-
-  .hdr__bar {
-    display: inline-block;
-    background: var(--ink);
-    padding: 4px 20px 9px;
-    transform: skewX(-9deg);
-    clip-path: inset(0 100% 0 0);
-  }
-  .hdr__bar > span { display: inline-block; transform: skewX(9deg); color: #fff; }
-  .hdr__bar--accent { box-shadow: 6px 6px 0 var(--crimson); }
-  .hdr__bar--accent > span { color: var(--cyan); }
-
-  .hdr__slash { color: var(--crimson); font-weight: 900; }
-
-  .hdr__vitals {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font: 800 11px/1 var(--mono);
-    letter-spacing: 0.14em;
-    color: var(--ink-soft);
-    text-transform: uppercase;
-  }
-  .hdr__vitals b { color: var(--crimson); }
-
-  .hdr__sub {
-    margin: 0;
-    padding-left: 12px;
-    border-left: 4px solid var(--crimson);
-    font: 700 11px/1.5 var(--mono);
-    letter-spacing: 0.13em;
-    color: var(--ink-soft);
-    text-transform: uppercase;
-  }
-
-  /* ------------------------------------------------------------------ stage */
-
-  .stage {
-    position: relative;
-    z-index: 2;
-    flex: 1 1 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 0;
-    padding: 18px 0;
-  }
-
-  .cards {
-    display: flex;
-    gap: 30px;
-    align-items: stretch;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  /* ------------------------------------------------------------------ card */
-
-  .card {
-    position: relative;
-    width: 296px;
-    max-width: 88vw;
-    display: flex;
-    flex-direction: column;
-    background-color: var(--panel);
+    background-color: var(--paper);
     background-image:
       linear-gradient(var(--grid) 1px, transparent 1px),
       linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-    background-size: 22px 22px;
-    border: 2px solid var(--ink);
-    box-shadow: 7px 7px 0 var(--accent, var(--ink));
-    padding: 40px 16px 16px;
+    background-size: 96px 96px;
+  }
+
+  /* Líneas de velocidad manga: rayos radiales que respiran desde el centro */
+  .speedlines {
+    position: absolute;
+    inset: -12%;
+    pointer-events: none;
+    background: repeating-conic-gradient(
+      from 0deg at 50% 46%,
+      transparent 0deg 5.2deg,
+      rgba(11, 13, 18, 0.05) 5.2deg 5.9deg
+    );
+    -webkit-mask-image: radial-gradient(circle at 50% 46%, transparent 26%, #000 78%);
+    mask-image: radial-gradient(circle at 50% 46%, transparent 26%, #000 78%);
+    opacity: 0;
+  }
+  .is-in .speedlines { animation: linesIn 900ms ease-out 200ms forwards; }
+  @keyframes linesIn { to { opacity: 1; } }
+
+  /* Estallido de halftone tras las cartas */
+  .burst {
+    position: absolute;
+    left: 50%;
+    top: 52%;
+    width: 130vmin;
+    height: 130vmin;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    background-image: radial-gradient(rgba(11,13,18,0.16) 2.4px, transparent 2.6px);
+    background-size: 15px 15px;
+    -webkit-mask-image: radial-gradient(circle, #000 0%, transparent 62%);
+    mask-image: radial-gradient(circle, #000 0%, transparent 62%);
+    opacity: 0;
+  }
+  .is-in .burst { animation: burstIn 700ms cubic-bezier(.2, .9, .3, 1) 350ms forwards; }
+  @keyframes burstIn {
+    from { opacity: 0; transform: translate(-50%, -50%) scale(0.4) rotate(-8deg); }
+    to   { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(0deg); }
+  }
+
+  /* Flash de impacto a pantalla completa (stamp / elección) */
+  .flash {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: #fff;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .flash.is-on { animation: flashBang 240ms steps(3) forwards; }
+  @keyframes flashBang { 0% { opacity: 0.95; } 100% { opacity: 0; } }
+
+  /* Barrido de tinta de salida */
+  .wipe {
+    position: fixed;
+    inset: -12% -18%;
+    z-index: 70;
+    background: var(--ink);
+    border-right: 12px solid var(--crimson);
+    transform: translateX(-118%) skewX(-11deg);
+    pointer-events: none;
+  }
+  .wipe.is-on { animation: wipeSweep 640ms cubic-bezier(.75, 0, .2, 1) forwards; }
+  @keyframes wipeSweep {
+    0%   { transform: translateX(-118%) skewX(-11deg); }
+    44%  { transform: translateX(0) skewX(-11deg); }
+    100% { transform: translateX(118%) skewX(-11deg); }
+  }
+
+  /* Shake de pantalla: lo dispara JS con la clase .is-shaking */
+  .sheet.is-shaking { animation: shake 300ms linear; }
+  @keyframes shake {
+    0%   { transform: translate(0, 0) rotate(0deg); }
+    15%  { transform: translate(-7px, 4px) rotate(-0.35deg); }
+    30%  { transform: translate(6px, -5px) rotate(0.3deg); }
+    45%  { transform: translate(-5px, -3px) rotate(-0.2deg); }
+    60%  { transform: translate(4px, 4px) rotate(0.15deg); }
+    75%  { transform: translate(-3px, 1px) rotate(0deg); }
+    100% { transform: translate(0, 0) rotate(0deg); }
+  }
+
+  /* ---------------------------------------------------------------- título */
+
+  .title {
+    position: absolute;
+    top: 7vh;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    z-index: 2;
+    white-space: nowrap;
+  }
+
+  .title__num {
+    display: block;
+    font-size: clamp(90px, 17vw, 230px);
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: -0.06em;
+    line-height: 0.82;
+    color: transparent;
+    -webkit-text-stroke: 3px var(--ink);
+    opacity: 0;
+  }
+  .is-in .title__num { animation: numIn 460ms cubic-bezier(.2, 1.3, .4, 1) 120ms forwards; }
+  @keyframes numIn {
+    from { opacity: 0; transform: translateY(60px) skewX(-14deg) scale(1.25); }
+    to   { opacity: 1; transform: translateY(0) skewX(-14deg) scale(1); }
+  }
+
+  .title__banner {
+    position: absolute;
+    left: 50%;
+    top: 38%;
+    transform: translate(-50%, -50%) rotate(-3.5deg);
+    background: var(--ink);
+    color: #fff;
+    font-weight: 900;
+    font-style: italic;
+    font-size: clamp(22px, 3.4vw, 44px);
+    letter-spacing: 0.02em;
+    padding: 8px 30px 13px;
+    box-shadow: 7px 7px 0 var(--crimson);
+    clip-path: inset(0 100% 0 0);
+    white-space: nowrap;
+  }
+  .is-in .title__banner { animation: bannerIn 380ms cubic-bezier(.2, .9, .25, 1) 300ms forwards; }
+  @keyframes bannerIn {
+    from { clip-path: inset(0 100% 0 0); }
+    to   { clip-path: inset(0 0 0 0); }
+  }
+
+  .title__slash {
+    position: absolute;
+    left: -60px;
+    top: -18px;
+    width: 130%;
+    height: 10px;
+    background: var(--crimson);
+    transform: rotate(-3.5deg) scaleX(0);
+    transform-origin: left center;
+    z-index: -1;
+  }
+  .is-in .title__slash { animation: slashIn 260ms cubic-bezier(.6, 0, .2, 1) 560ms forwards; }
+  @keyframes slashIn { to { transform: rotate(-3.5deg) scaleX(1); } }
+
+  /* ---------------------------------------------------------------- cartas */
+
+  .stage {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4vw;
+    padding-top: 16vh;
+  }
+
+  .card {
+    position: relative;
+    width: min(300px, 26vw);
+    background: var(--panel);
+    border: 3px solid var(--ink);
+    box-shadow: 9px 9px 0 var(--accent, var(--ink));
+    padding: 46px 18px 18px;
     cursor: pointer;
-    transition: transform 160ms ease, box-shadow 160ms ease, opacity 260ms ease, filter 260ms ease;
+    transform: skewX(-5deg);
+    transition: transform 150ms cubic-bezier(.2, .9, .3, 1), box-shadow 150ms ease, opacity 260ms ease, filter 260ms ease;
+    opacity: 0;
   }
   .card::before {
     content: "";
     position: absolute;
     inset: 0;
-    background: radial-gradient(circle at 50% 30%, rgba(255,255,255,0.9), rgba(255,255,255,0) 70%);
+    background-image: radial-gradient(rgba(11,13,18,0.1) 1.6px, transparent 1.8px);
+    background-size: 11px 11px;
+    -webkit-mask-image: linear-gradient(200deg, #000 0%, transparent 42%);
+    mask-image: linear-gradient(200deg, #000 0%, transparent 42%);
     pointer-events: none;
   }
+  .is-in .card { animation: cardSlam 520ms cubic-bezier(.16, 1.2, .3, 1) forwards; }
+  .is-in .card:nth-child(1) { animation-delay: 480ms; }
+  .is-in .card:nth-child(2) { animation-delay: 610ms; }
+  .is-in .card:nth-child(3) { animation-delay: 740ms; }
+  @keyframes cardSlam {
+    0%   { opacity: 0; transform: skewX(-5deg) translateY(72vh) rotate(9deg) scale(0.9); }
+    62%  { opacity: 1; transform: skewX(-5deg) translateY(-14px) rotate(0deg) scale(1.04); }
+    100% { opacity: 1; transform: skewX(-5deg) translateY(0) rotate(0deg) scale(1); }
+  }
+
   .card:hover {
-    transform: translate(-3px, -3px);
-    box-shadow: 10px 10px 0 var(--accent, var(--ink));
+    transform: skewX(-5deg) translateY(-12px) scale(1.05);
+    box-shadow: 14px 14px 0 var(--accent, var(--ink));
+    z-index: 2;
   }
-  .card:focus-visible { outline: 3px solid var(--cyan); outline-offset: 3px; }
+  .card:focus-visible { outline: 3px solid var(--cyan); outline-offset: 4px; }
 
-  /* Índice + nombre de panel, solapados al borde superior */
-  .card__label {
+  /* Número fantota gigante detrás del contenido */
+  .card__ghost {
     position: absolute;
-    top: -2px;
-    left: -2px;
-    display: flex;
-    align-items: stretch;
-  }
-  .card__idx {
-    display: flex;
-    align-items: center;
-    padding: 6px 8px 5px;
-    background: var(--ink);
-    color: #fff;
-    font: 800 10px/1 var(--mono);
-    letter-spacing: 0.08em;
-  }
-  .card__name {
-    display: flex;
-    align-items: center;
-    padding: 6px 10px 5px;
-    background: rgba(255, 255, 255, 0.92);
-    border-right: 1px solid var(--ink);
-    border-bottom: 1px solid var(--ink);
-    font: 800 10px/1 var(--mono);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    max-width: 210px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    right: 2px;
+    top: -14px;
+    font-size: 92px;
+    font-weight: 900;
+    font-style: italic;
+    line-height: 1;
+    color: transparent;
+    -webkit-text-stroke: 2px rgba(11, 13, 18, 0.14);
+    pointer-events: none;
+    user-select: none;
   }
 
-  /* Chip de rareza, esquina superior derecha */
   .card__rarity {
     position: absolute;
-    top: -2px;
-    right: -2px;
-    display: inline-block;
+    top: -3px;
+    left: -3px;
     background: var(--accent, var(--ink));
     color: #fff;
-    font: 800 9px/1 var(--mono);
-    letter-spacing: 0.2em;
-    padding: 6px 8px 5px;
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.22em;
+    padding: 7px 10px 6px;
     transform: skewX(-9deg);
   }
-  .card__rarity > span { display: inline-block; transform: skewX(9deg); }
 
-  /* Hueco de icono: PLANTILLA — aquí irá el SVG propio de cada habilidad */
   .card__icon {
     position: relative;
-    width: 104px;
-    height: 104px;
-    margin: 6px auto 14px;
+    width: 108px;
+    height: 108px;
+    margin: 10px auto 16px;
     border: 2px dashed var(--ink-soft);
-    background: rgba(255, 255, 255, 0.55);
+    background: rgba(255, 255, 255, 0.5);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -303,56 +290,47 @@
   }
   .card__icon::before { left: 50%; top: 0; bottom: 0; width: 1px; }
   .card__icon::after  { top: 50%; left: 0; right: 0; height: 1px; }
-  .card__icon svg { width: 100%; height: 100%; }
-  .card__icon .icon-ring {
+  .card__icon .ring {
     position: absolute;
-    inset: 8px;
-    border: 1.5px solid var(--accent, var(--ink));
+    inset: 9px;
+    border: 2px solid var(--accent, var(--ink));
     border-right-color: transparent;
     border-bottom-color: transparent;
     border-radius: 50%;
-    animation: ringSpin 9s linear infinite;
+    animation: ringSpin 8s linear infinite;
   }
   @keyframes ringSpin { to { transform: rotate(360deg); } }
-  .card__icon .icon-hint {
+  .card__icon .hint {
     position: relative;
     z-index: 1;
     font: 800 9px/1 var(--mono);
-    letter-spacing: 0.18em;
+    letter-spacing: 0.2em;
     color: var(--ink-soft);
     background: var(--panel);
     padding: 3px 6px;
     border: 1px solid var(--ink-soft);
   }
 
-  .card__kind {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font: 800 10px/1 var(--mono);
-    letter-spacing: 0.2em;
+  .card__name {
+    font-size: 21px;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: -0.02em;
+    line-height: 1;
     text-transform: uppercase;
     color: var(--ink);
-    margin-bottom: 8px;
-  }
-  .card__kind::before {
-    content: "";
-    width: 14px;
-    height: 3px;
-    background: var(--accent, var(--crimson));
-    transform: skewX(-24deg);
+    margin: 0 0 6px;
   }
 
   .card__level {
     font: 800 12px/1 var(--mono);
-    letter-spacing: 0.1em;
-    margin-bottom: 10px;
+    letter-spacing: 0.08em;
+    margin: 0 0 10px;
   }
   .card__level .arrow { color: var(--accent, var(--crimson)); }
 
   .card__cost {
     display: inline-block;
-    align-self: flex-start;
     background: var(--ink);
     color: var(--cyan);
     font: 800 9px/1 var(--mono);
@@ -362,293 +340,288 @@
   }
 
   .card__desc {
-    flex: 1 1 auto;
-    font: 400 11.5px/1.55 var(--sans);
+    font: 400 11.5px/1.5 var(--sans);
     color: var(--ink-soft);
-    margin: 0 0 14px;
-    min-height: 70px;
+    margin: 0;
+    min-height: 66px;
   }
 
-  /* Hotkey abajo a la derecha */
-  .card__hotkey {
+  .card__key {
     position: absolute;
     right: 8px;
     bottom: 8px;
     background: var(--ink);
     color: #fff;
     font: 800 10px/1 var(--mono);
-    letter-spacing: 0.14em;
     padding: 5px 8px 4px;
   }
 
-  /* -------------------------------------------------------- card elegida */
-
-  .card.is-chosen {
-    border-color: var(--crimson);
-    box-shadow: 10px 10px 0 var(--crimson);
-    transform: translate(-3px, -3px);
-    z-index: 3;
+  .card.is-out {
+    opacity: 0.16;
+    filter: grayscale(1);
+    pointer-events: none;
+    transform: skewX(-5deg) translateY(16px) scale(0.96);
   }
-  .card.is-chosen .card__rarity { background: var(--crimson); }
 
-  /* Onda de choque al elegir */
+  /* Sello y onda de la elección final */
+  .card .stamp {
+    position: absolute;
+    top: 44%;
+    left: 50%;
+    z-index: 5;
+    background: var(--crimson);
+    color: #fff;
+    font: 900 26px/1 var(--sans);
+    font-style: italic;
+    letter-spacing: 0.06em;
+    padding: 12px 22px 14px;
+    border: 3px solid #fff;
+    box-shadow: 6px 6px 0 var(--ink);
+    transform: translate(-50%, -50%) rotate(-8deg) scale(2.8);
+    opacity: 0;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .card.is-stamped .stamp { animation: stampSlam 280ms cubic-bezier(.2, 1.5, .4, 1) forwards; }
+  @keyframes stampSlam {
+    0%   { opacity: 0; transform: translate(-50%, -50%) rotate(-8deg) scale(2.8); }
+    55%  { opacity: 1; transform: translate(-50%, -50%) rotate(-8deg) scale(0.92); }
+    100% { opacity: 1; transform: translate(-50%, -50%) rotate(-8deg) scale(1); }
+  }
   .card .shock {
     position: absolute;
     inset: 0;
-    border: 3px solid var(--crimson);
+    border: 4px solid var(--crimson);
     opacity: 0;
     pointer-events: none;
   }
-  .card.is-chosen .shock { animation: shockwave 520ms cubic-bezier(.2, .7, .3, 1) forwards; }
+  .card.is-stamped .shock { animation: shockwave 520ms cubic-bezier(.2, .7, .3, 1) forwards; }
   @keyframes shockwave {
-    0%   { opacity: 0.9; transform: scale(1); }
-    100% { opacity: 0;   transform: scale(1.35); }
+    0%   { opacity: 0.95; transform: scale(1); }
+    100% { opacity: 0; transform: scale(1.45); }
   }
 
-  /* Sello ELEGIDA */
-  .card .stamp {
+  /* ------------------------------------------------- vuelo al centro + temblor */
+
+  .card.is-flying {
+    position: fixed;
+    margin: 0;
+    z-index: 45;
+    transition: transform 420ms cubic-bezier(.3, 1.1, .3, 1), box-shadow 420ms ease;
+  }
+  .card.is-flying:hover { transform: var(--fly-transform); }
+  .card.is-trembling { animation: tremble 130ms linear infinite; }
+  @keyframes tremble {
+    0%   { margin-top: 0px; margin-left: 0px; }
+    25%  { margin-top: -3px; margin-left: 2px; }
+    50%  { margin-top: 2px; margin-left: -3px; }
+    75%  { margin-top: -2px; margin-left: -1px; }
+    100% { margin-top: 0px; margin-left: 0px; }
+  }
+
+  /* ------------------------------------------------------- panel de ranuras */
+
+  .replace {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    padding-bottom: 7vh;
+    background: rgba(11, 13, 18, 0.82);
+    opacity: 0;
+    transition: opacity 260ms ease;
+  }
+  .replace.is-on { display: flex; opacity: 1; }
+
+  .replace__banner {
     position: absolute;
-    top: 42%;
+    top: 12vh;
     left: 50%;
-    z-index: 4;
+    transform: translateX(-50%) rotate(-2.5deg);
     background: var(--crimson);
     color: #fff;
-    font: 900 22px/1 var(--sans);
-    letter-spacing: 0.08em;
-    padding: 10px 18px 12px;
-    border: 3px solid #fff;
-    box-shadow: 5px 5px 0 var(--ink);
-    transform: translate(-50%, -50%) rotate(-7deg) scale(2.6);
-    opacity: 0;
-    pointer-events: none;
+    font: 900 italic clamp(20px, 3vw, 38px)/1 var(--sans);
+    letter-spacing: 0.01em;
+    padding: 12px 34px 16px;
+    box-shadow: 8px 8px 0 #fff;
+    white-space: nowrap;
   }
-  .card.is-chosen .stamp { animation: stampSlam 300ms cubic-bezier(.2, 1.4, .4, 1) forwards; }
-  @keyframes stampSlam {
-    0%   { opacity: 0; transform: translate(-50%, -50%) rotate(-7deg) scale(2.6); }
-    55%  { opacity: 1; transform: translate(-50%, -50%) rotate(-7deg) scale(0.94); }
-    100% { opacity: 1; transform: translate(-50%, -50%) rotate(-7deg) scale(1); }
+  .replace.is-on .replace__banner { animation: bannerDrop 360ms cubic-bezier(.2, 1.3, .4, 1) backwards; }
+  @keyframes bannerDrop {
+    from { opacity: 0; transform: translateX(-50%) translateY(-90px) rotate(-2.5deg); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0) rotate(-2.5deg); }
   }
 
-  .card.is-discarded {
-    opacity: 0.22;
-    filter: grayscale(0.9);
-    transform: translateY(12px);
-    pointer-events: none;
-  }
-
-  /* ---------------------------------------------------------------- footer */
-
-  .ftr {
-    position: relative;
-    z-index: 2;
-    flex: 0 0 auto;
+  .replace__slots {
     display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
-    padding-top: 12px;
-    border-top: 2px solid var(--ink);
+    gap: 2.4vw;
   }
-
-  .slots { display: flex; gap: 8px; flex-wrap: wrap; }
 
   .slot {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    border: 1px solid var(--ink);
-    background: rgba(255, 255, 255, 0.72);
-    padding: 6px 10px;
-    font: 800 10px/1 var(--mono);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    position: relative;
+    width: min(250px, 22vw);
+    background: var(--paper);
+    border: 3px solid #fff;
+    box-shadow: 7px 7px 0 var(--cyan);
+    padding: 16px 16px 14px;
+    cursor: pointer;
+    transform: skewX(-5deg);
+    transition: transform 140ms cubic-bezier(.2, .9, .3, 1), box-shadow 140ms ease;
   }
-  .slot i {
-    width: 9px;
-    height: 9px;
-    background: var(--ink);
-    transform: skewX(-12deg);
+  .replace.is-on .slot { animation: slotRise 380ms cubic-bezier(.2, 1.2, .35, 1) backwards; }
+  .replace.is-on .slot:nth-child(1) { animation-delay: 120ms; }
+  .replace.is-on .slot:nth-child(2) { animation-delay: 210ms; }
+  .replace.is-on .slot:nth-child(3) { animation-delay: 300ms; }
+  @keyframes slotRise {
+    from { opacity: 0; transform: skewX(-5deg) translateY(70px); }
+    to   { opacity: 1; transform: skewX(-5deg) translateY(0); }
   }
-  .slot--empty { color: var(--ink-soft); border-style: dashed; }
-  .slot--empty i { background: transparent; border: 1px solid var(--ink-soft); }
-
-  .ftr__ctrl { display: flex; gap: 8px; flex-wrap: wrap; }
-
-  .btn {
+  .slot:hover {
+    transform: skewX(-5deg) translateY(-10px) scale(1.05);
+    box-shadow: 11px 11px 0 var(--crimson);
+    border-color: var(--crimson);
+  }
+  .slot__idx {
+    position: absolute;
+    top: -3px;
+    left: -3px;
     background: var(--ink);
     color: #fff;
-    border: 2px solid var(--ink);
-    box-shadow: 3px 3px 0 var(--crimson);
-    font: 800 10px/1 var(--mono);
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    padding: 9px 12px 8px;
-    cursor: pointer;
-    transform: skewX(-9deg);
-    transition: transform 120ms ease, box-shadow 120ms ease;
+    font: 800 11px/1 var(--mono);
+    padding: 6px 9px 5px;
   }
-  .btn > span { display: inline-block; transform: skewX(9deg); }
-  .btn:hover { transform: skewX(-9deg) translate(-2px, -2px); box-shadow: 5px 5px 0 var(--crimson); }
-  .btn.is-on { background: var(--cyan); color: var(--ink); box-shadow: 3px 3px 0 var(--ink); }
-
-  .ftr__page {
-    font: 700 10px/1 var(--mono);
+  .slot__name {
+    font-size: 17px;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    line-height: 1.05;
+    margin: 14px 0 6px;
+    color: var(--ink);
+  }
+  .slot__lv {
+    font: 800 11px/1 var(--mono);
     letter-spacing: 0.14em;
     color: var(--ink-soft);
   }
 
-  /* ============================================================ ANIMACIÓN ==
-     Entrada propia (nada que ver con la referencia): el plano se "imprime" —
-     marcas de registro → barras del título que se revelan con clip →
-     cartas que ascienden y aterrizan con su sombra dura, en cascada.
-     ======================================================================== */
-
-  .is-entering .regmark { animation: regDraw 420ms ease-out backwards; }
-  .is-entering .regmark--tr { animation-delay: 70ms; }
-  .is-entering .regmark--bl { animation-delay: 140ms; }
-  .is-entering .regmark--br { animation-delay: 210ms; }
-  @keyframes regDraw {
-    from { opacity: 0; transform: scale(0.3) rotate(45deg); }
-    to   { opacity: 1; transform: scale(1) rotate(0deg); }
+  .replace__esc {
+    position: absolute;
+    top: calc(12vh + 90px);
+    left: 50%;
+    transform: translateX(-50%) rotate(-2.5deg);
+    background: transparent;
+    border: 2px solid rgba(255, 255, 255, 0.55);
+    color: rgba(255, 255, 255, 0.75);
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.22em;
+    padding: 7px 12px 6px;
+    cursor: pointer;
   }
+  .replace__esc:hover { border-color: #fff; color: #fff; }
 
-  .is-entering .tag { animation: tagStamp 320ms cubic-bezier(.2, 1.2, .4, 1) backwards; }
-  .is-entering .hdr__id .tag:nth-child(2) { animation-delay: 90ms; }
-  @keyframes tagStamp {
-    from { opacity: 0; transform: skewX(-9deg) translateY(-10px); }
-    to   { opacity: 1; transform: skewX(-9deg) translateY(0); }
+  /* --------------------------------------------------------------- controles */
+
+  .ctrl {
+    position: fixed;
+    right: 14px;
+    bottom: 12px;
+    z-index: 30;
+    display: flex;
+    gap: 8px;
   }
-
-  .is-entering .hdr__bar { animation: barReveal 480ms cubic-bezier(.2, .9, .25, 1) backwards; }
-  .is-entering .hdr__bar--accent { animation-delay: 160ms; }
-  @keyframes barReveal {
-    from { clip-path: inset(0 100% 0 0); }
-    to   { clip-path: inset(0 0 0 0); }
+  .ctrl button {
+    background: var(--ink);
+    color: #fff;
+    border: 2px solid var(--ink);
+    font: 800 9px/1 var(--mono);
+    letter-spacing: 0.18em;
+    padding: 8px 10px 7px;
+    cursor: pointer;
+    opacity: 0.45;
+    transition: opacity 120ms ease;
   }
+  .ctrl button:hover { opacity: 1; }
+  .ctrl button.is-on { background: var(--cyan); color: var(--ink); opacity: 0.85; }
 
-  .is-entering .hdr__slash,
-  .is-entering .hdr__vitals,
-  .is-entering .hdr__sub { animation: fadeUp 380ms ease-out 340ms backwards; }
-  @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(10px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-
-  .is-entering .card {
-    animation: cardLand 540ms cubic-bezier(.2, 1.1, .3, 1) backwards;
-  }
-  .is-entering .card:nth-child(1) { animation-delay: 300ms; }
-  .is-entering .card:nth-child(2) { animation-delay: 430ms; }
-  .is-entering .card:nth-child(3) { animation-delay: 560ms; }
-  @keyframes cardLand {
-    0% {
-      opacity: 0;
-      transform: translateY(56px);
-      box-shadow: 0 0 0 var(--accent, var(--ink));
-    }
-    70% {
-      opacity: 1;
-      transform: translateY(-7px);
-      box-shadow: 9px 9px 0 var(--accent, var(--ink));
-    }
-    100% {
-      opacity: 1;
-      transform: translateY(0);
-      box-shadow: 7px 7px 0 var(--accent, var(--ink));
-    }
-  }
-
-  .is-entering .ftr { animation: fadeUp 420ms ease-out 620ms backwards; }
-
-  /* Respeto por movimiento reducido: sin cascada, todo visible */
   @media (prefers-reduced-motion: reduce) {
-    .is-entering *, .card, .wipe.is-on { animation-duration: 1ms !important; animation-delay: 0ms !important; }
+    *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0ms !important; transition-duration: 1ms !important; }
   }
 </style>
 </head>
 <body>
+  <div class="sheet is-in" id="sheet">
+    <div class="speedlines"></div>
+    <div class="burst"></div>
+
+    <div class="title">
+      <span class="title__num" id="title-num">04</span>
+      <span class="title__banner" id="title-banner">¡SUBIDA DE NIVEL!<span class="title__slash"></span></span>
+    </div>
+
+    <main class="stage" id="stage"></main>
+  </div>
+
+  <div class="replace" id="replace">
+    <div class="replace__banner">¿POR CUÁL LA CAMBIAS?</div>
+    <button class="replace__esc" id="btn-esc">[ESC] VOLVER</button>
+    <div class="replace__slots" id="replace-slots"></div>
+  </div>
+
+  <div class="flash" id="flash"></div>
   <div class="wipe" id="wipe"></div>
 
-  <div class="sheet is-entering" id="sheet">
-    <div class="regmark regmark--tl"></div>
-    <div class="regmark regmark--tr"></div>
-    <div class="regmark regmark--bl"></div>
-    <div class="regmark regmark--br"></div>
-
-    <header class="hdr">
-      <div class="hdr__top">
-        <div class="hdr__id">
-          <span class="tag">OUTORBIT</span>
-          <span class="tag tag--ghost">CÚPULA // SECTOR 07</span>
-          <span class="tag tag--live">JUEGO EN PAUSA</span>
-        </div>
-        <div class="hdr__meta">FLUIDO EN CALIENTE · REGISTRO DE ASCENSO</div>
-      </div>
-      <h1 class="hdr__title">
-        <span class="hdr__bar"><span id="title-a">SUBIDA DE</span></span>
-        <span class="hdr__bar hdr__bar--accent"><span id="title-b">NIVEL 03</span></span>
-        <span class="hdr__slash">/</span>
-        <span class="hdr__vitals">VITALS <b>+5%</b> · HP/EDÉN <b>RESTAURADOS</b></span>
-      </h1>
-      <p class="hdr__sub" id="hint">ELIGE 1 DE 2 HABILIDADES · TECLAS [1] [2] · EL JUEGO SE REANUDA AL ELEGIR</p>
-    </header>
-
-    <main class="stage">
-      <div class="cards" id="cards"></div>
-    </main>
-
-    <footer class="ftr">
-      <div class="slots" id="slots"></div>
-      <div class="ftr__ctrl">
-        <button class="btn is-on" id="btn-skills"><span>HABILIDADES · 2 CARTAS</span></button>
-        <button class="btn" id="btn-passives"><span>PASIVAS · 3 CARTAS</span></button>
-        <button class="btn" id="btn-replay"><span>REPETIR [R]</span></button>
-      </div>
-      <div class="ftr__page">HOJA 04/12 · NYX-CORE v1.3</div>
-    </footer>
+  <div class="ctrl">
+    <button id="btn-mode">HAB / PAS</button>
+    <button id="btn-sfx">SFX ON</button>
+    <button id="btn-replay">OTRA VEZ</button>
   </div>
 
 <script>
   // ============================================================================
-  // Datos de ejemplo (mismos textos que el catálogo del juego). Las cartas de
-  // habilidad llevarán luego su propio SVG; aquí el icono es un hueco.
+  // Datos de ejemplo (catálogo real del juego). El icono es plantilla: aquí
+  // irán los SVG por habilidad.
   // ============================================================================
 
   var MODES = {
     skills: {
-      level: 3,
-      hint: 'ELIGE 1 DE 2 HABILIDADES · TECLAS [1] [2] · EL JUEGO SE REANUDA AL ELEGIR',
+      level: 4,
+      banner: '¡SUBIDA DE NIVEL!',
+      requiresSlotReplacement: true,
       cards: [
         {
-          idx: '01', name: 'CAMPO GRAVITACIONAL', rarity: 'BASE', accent: 'var(--cyan)',
-          kind: 'HABILIDAD NUEVA', level: [0, 1], cost: 8,
-          desc: 'Agarra hasta 2 escombros con estasis y los orbita frente a Nyx; vuelve a pulsar para lanzarlos contra un enemigo. Cada nivel agarra más objetos, más grandes y los lanza con mucha más fuerza.'
+          rarity: 'BASE', accent: 'var(--cyan)', name: 'CAMPO GRAVITACIONAL',
+          level: [0, 1], cost: 8,
+          desc: 'Agarra escombros con estasis y órbitalos frente a Nyx; vuelve a pulsar para lanzarlos contra un enemigo.'
         },
         {
-          idx: '02', name: 'AGUJERO NEGRO', rarity: 'ÉPICA', accent: 'var(--crimson)',
-          kind: 'HABILIDAD NUEVA', level: [0, 1], cost: 30,
-          desc: 'Lanza una mini-singularidad con disco de acreción que avanza lenta por la cúpula durante 4.5 s, succionando y dañando todo lo que entra en su horizonte de sucesos. Cada nivel amplía el radio de succión y el daño.'
+          rarity: 'ÉPICA', accent: 'var(--crimson)', name: 'AGUJERO NEGRO',
+          level: [0, 1], cost: 30,
+          desc: 'Lanza una mini-singularidad con disco de acreción que avanza por la cúpula succionando todo lo que toca su horizonte.'
         }
       ]
     },
     passives: {
-      level: 4,
-      hint: 'ELIGE 1 DE 3 PASIVAS · TECLAS [1] [2] [3] · EL JUEGO SE REANUDA AL ELEGIR',
+      level: 6,
+      banner: '¡SUBIDA DE NIVEL!',
+      requiresSlotReplacement: false,
       cards: [
         {
-          idx: '01', name: 'VELOCIDAD (+FUERZA)', rarity: 'PASIVA', accent: 'var(--gold)',
-          kind: 'PASIVA', level: [0, 1], levelLabel: '+20%', cost: null,
-          desc: 'Vuelo un 20% más rápido respecto a la base y, por física, las patadas golpean con más fuerza y penetran más profundo.'
+          rarity: 'PASIVA', accent: 'var(--gold)', name: 'VELOCIDAD +FUERZA',
+          level: [0, 1], levelLabel: '+20%', cost: null,
+          desc: 'Vuelo un 20% más rápido y, por física, las patadas golpean con más fuerza y penetran más profundo.'
         },
         {
-          idx: '02', name: 'REGEN. DE EDÉN', rarity: 'PASIVA', accent: 'var(--cyan)',
-          kind: 'PASIVA', level: [0, 1], levelLabel: '2% / S', cost: null,
+          rarity: 'PASIVA', accent: 'var(--cyan)', name: 'REGEN. DE EDÉN',
+          level: [0, 1], levelLabel: '2% / S', cost: null,
           desc: 'Regenera un 2% de tu barra de Edén por segundo, solo cuando estás quieta.'
         },
         {
-          idx: '03', name: 'REGEN. DE VIDA', rarity: 'PASIVA', accent: 'var(--crimson)',
-          kind: 'PASIVA', level: [0, 1], levelLabel: '1% / S', cost: null,
+          rarity: 'PASIVA', accent: 'var(--crimson)', name: 'REGEN. DE VIDA',
+          level: [0, 1], levelLabel: '1% / S', cost: null,
           desc: 'Regenera un 1% de Vida por segundo, constante incluso moviéndote o peleando.'
         }
       ]
@@ -658,113 +631,317 @@
   var EQUIPPED = [
     { name: 'EMPUJE', level: 2 },
     { name: 'POZO DE ATRACCIÓN', level: 1 },
-    null
+    { name: 'HORIZONTE DE REBOTE', level: 3 }
   ];
 
   var mode = 'skills';
-  var locked = false;
+  var flying = null;   // carta en vuelo al centro
+  var locked = false;   // secuencia final en marcha
 
   var sheet = document.getElementById('sheet');
-  var cardsEl = document.getElementById('cards');
+  var stage = document.getElementById('stage');
+  var replaceEl = document.getElementById('replace');
+  var replaceSlots = document.getElementById('replace-slots');
+  var flash = document.getElementById('flash');
   var wipe = document.getElementById('wipe');
+
+  // ============================================================================
+  // SFX — sintetizados con Web Audio, sin archivos. Arrancan con el primer
+  // gesto del usuario (política de autoplay).
+  // ============================================================================
+
+  var sfx = (function () {
+    var ctx = null;
+    var on = true;
+    function ensure() {
+      if (!ctx) {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (AC) ctx = new AC();
+      }
+      if (ctx && ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+    function env(node, t0, a, d, peak) {
+      var g = ctx.createGain();
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(peak, t0 + a);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + a + d);
+      node.connect(g);
+      g.connect(ctx.destination);
+      return g;
+    }
+    function slam() { // impacto de carta: golpe grave + ruido seco
+      if (!on || !ensure()) return;
+      var t = ctx.currentTime;
+      var o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(120, t);
+      o.frequency.exponentialRampToValueAtTime(38, t + 0.16);
+      env(o, t, 0.004, 0.22, 0.55);
+      o.start(t); o.stop(t + 0.3);
+      var len = Math.floor(ctx.sampleRate * 0.09);
+      var buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      var data = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      var f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 1400;
+      src.connect(f);
+      env(f, t, 0.002, 0.09, 0.3);
+      src.start(t);
+    }
+    function tremble() { // retumbo grave mientras la carta tiembla
+      if (!on || !ensure()) return;
+      var t = ctx.currentTime;
+      var o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(46, t);
+      var lfo = ctx.createOscillator();
+      lfo.frequency.value = 13;
+      var lg = ctx.createGain();
+      lg.gain.value = 16;
+      lfo.connect(lg); lg.connect(o.frequency);
+      var f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 220;
+      o.connect(f);
+      env(f, t, 0.01, 0.5, 0.22);
+      o.start(t); lfo.start(t);
+      o.stop(t + 0.6); lfo.stop(t + 0.6);
+    }
+    function stamp() { // sello: latigazo agudo + golpe
+      if (!on || !ensure()) return;
+      var t = ctx.currentTime;
+      var o = ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.setValueAtTime(880, t);
+      o.frequency.exponentialRampToValueAtTime(110, t + 0.12);
+      env(o, t, 0.002, 0.14, 0.2);
+      o.start(t); o.stop(t + 0.2);
+      slam();
+    }
+    function whoosh() { // barrido de tinta
+      if (!on || !ensure()) return;
+      var t = ctx.currentTime;
+      var len = Math.floor(ctx.sampleRate * 0.5);
+      var buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      var data = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      var f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.Q.value = 1.1;
+      f.frequency.setValueAtTime(240, t);
+      f.frequency.exponentialRampToValueAtTime(2600, t + 0.42);
+      src.connect(f);
+      env(f, t, 0.03, 0.44, 0.24);
+      src.start(t);
+    }
+    function arp() { // arpegio de subida de nivel (3 notas)
+      if (!on || !ensure()) return;
+      var t = ctx.currentTime;
+      [523.25, 659.25, 783.99].forEach(function (hz, i) {
+        var o = ctx.createOscillator();
+        o.type = 'triangle';
+        o.frequency.value = hz;
+        env(o, t + i * 0.085, 0.005, 0.3, 0.16);
+        o.start(t + i * 0.085);
+        o.stop(t + i * 0.085 + 0.4);
+      });
+    }
+    return {
+      unlock: ensure,
+      slam: slam, tremble: tremble, stamp: stamp, whoosh: whoosh, arp: arp,
+      toggle: function () { on = !on; return on; },
+    };
+  })();
+
+  window.addEventListener('pointerdown', function () { sfx.unlock(); }, { once: true });
+  window.addEventListener('keydown', function () { sfx.unlock(); }, { once: true });
+
+  // ============================================================================
+  // Render y secuencia
+  // ============================================================================
 
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
-  function renderSlots() {
-    var el = document.getElementById('slots');
-    el.innerHTML = '';
-    EQUIPPED.forEach(function (s, i) {
-      var d = document.createElement('span');
-      d.className = 'slot' + (s ? '' : ' slot--empty');
-      d.innerHTML = '<i></i>' + (s ? s.name + ' · NV. ' + s.level : 'HUECO ' + (i + 1) + ' · VACÍO');
-      el.appendChild(d);
-    });
+  function shake() {
+    sheet.classList.remove('is-shaking');
+    void sheet.offsetWidth;
+    sheet.classList.add('is-shaking');
   }
 
   function renderCards() {
     var data = MODES[mode];
-    cardsEl.innerHTML = '';
-    document.getElementById('title-b').textContent = 'NIVEL ' + pad2(data.level);
-    document.getElementById('hint').textContent = data.hint;
+    stage.innerHTML = '';
+    document.getElementById('title-num').textContent = pad2(data.level);
+    document.getElementById('title-banner').childNodes[0].textContent = data.banner;
 
     data.cards.forEach(function (c, i) {
       var card = document.createElement('div');
       card.className = 'card';
+      card.dataset.accent = c.accent;
       card.style.setProperty('--accent', c.accent);
       card.tabIndex = 0;
-
       var levelText = 'NV. ' + c.level[0] + ' <span class="arrow">→</span> NV. ' + c.level[1] +
         (c.levelLabel ? ' <span class="arrow">(' + c.levelLabel + ')</span>' : '');
-
       card.innerHTML =
-        '<div class="card__label"><span class="card__idx">' + c.idx + '</span>' +
-        '<span class="card__name">' + c.name + '</span></div>' +
-        '<span class="card__rarity"><span>' + c.rarity + '</span></span>' +
-        '<div class="card__icon"><div class="icon-ring"></div>' +
-        '<span class="icon-hint">SVG</span></div>' +
-        '<div class="card__kind">' + c.kind + '</div>' +
-        '<div class="card__level">' + levelText + '</div>' +
-        (c.cost != null ? '<span class="card__cost">COSTE: ' + c.cost + ' EDÉN</span>' : '') +
+        '<span class="card__ghost">' + pad2(i + 1) + '</span>' +
+        '<span class="card__rarity">' + c.rarity + '</span>' +
+        '<div class="card__icon"><div class="ring"></div><span class="hint">SVG</span></div>' +
+        '<p class="card__name">' + c.name + '</p>' +
+        '<p class="card__level">' + levelText + '</p>' +
+        (c.cost != null ? '<span class="card__cost">' + c.cost + ' EDÉN</span>' : '') +
         '<p class="card__desc">' + c.desc + '</p>' +
-        '<span class="card__hotkey">[' + (i + 1) + ']</span>' +
+        '<span class="card__key">[' + (i + 1) + ']</span>' +
         '<div class="shock"></div>' +
-        '<div class="stamp">ELEGIDA</div>';
-
-      card.addEventListener('click', function () { choose(card); });
+        '<div class="stamp">¡ELEGIDA!</div>';
+      card.addEventListener('click', function () { pick(card); });
       card.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(card); }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(card); }
       });
-      cardsEl.appendChild(card);
+      stage.appendChild(card);
     });
+
+    // Impactos escalonados de la entrada: shake + slam por carta
+    data.cards.forEach(function (_, i) {
+      setTimeout(function () { shake(); sfx.slam(); }, 480 + i * 130 + 430);
+    });
+    setTimeout(sfx.arp, 480);
   }
 
   function replay() {
     locked = false;
-    sheet.classList.remove('is-leaving');
-    renderCards();
-    // Reinicio de la cascada: forzar reflow para relanzar las keyframes
-    sheet.classList.remove('is-entering');
+    flying = null;
+    replaceEl.classList.remove('is-on');
+    replaceSlots.innerHTML = '';
+    wipe.classList.remove('is-on');
+    flash.classList.remove('is-on');
+    sheet.classList.remove('is-in');
     void sheet.offsetWidth;
-    sheet.classList.add('is-entering');
+    sheet.classList.add('is-in');
+    renderCards();
   }
 
-  function choose(card) {
-    if (locked) return;
-    locked = true;
-    var all = cardsEl.querySelectorAll('.card');
-    all.forEach(function (c) {
-      if (c !== card) c.classList.add('is-discarded');
+  // Elección de carta: con ranuras llenas vuela al centro; si no, sello directo
+  function pick(card) {
+    if (locked || flying) return;
+    var data = MODES[mode];
+    if (!data.requiresSlotReplacement) {
+      finish(card);
+      return;
+    }
+    var rect = card.getBoundingClientRect();
+    card.style.left = rect.left + 'px';
+    card.style.top = rect.top + 'px';
+    card.style.width = rect.width + 'px';
+    card.classList.add('is-flying');
+    // Vuelo al centro de pantalla, creciendo, con la sombra creciendo detrás
+    var cx = window.innerWidth / 2 - (rect.left + rect.width / 2);
+    var cy = window.innerHeight * 0.4 - (rect.top + rect.height / 2);
+    var fly = 'translate(' + cx + 'px, ' + cy + 'px) skewX(-5deg) scale(1.22)';
+    card.style.setProperty('--fly-transform', fly);
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        card.style.transform = fly;
+        card.style.boxShadow = '18px 18px 0 var(--accent)';
+      });
     });
-    card.classList.add('is-chosen');
-    // Barrido de tinta tras el sello, como vuelta al juego
-    setTimeout(function () { wipe.classList.add('is-on'); }, 420);
-    setTimeout(replay, 1000);
+    var siblings = stage.querySelectorAll('.card');
+    siblings.forEach(function (c) {
+      if (c !== card) c.classList.add('is-out');
+    });
+    flying = card;
+    sfx.whoosh();
+    setTimeout(function () {
+      card.classList.add('is-trembling');
+      sfx.tremble();
+      shake();
+      openReplace();
+    }, 430);
   }
 
-  function setMode(next) {
-    if (locked || next === mode) return;
-    mode = next;
-    document.getElementById('btn-skills').classList.toggle('is-on', mode === 'skills');
-    document.getElementById('btn-passives').classList.toggle('is-on', mode === 'passives');
-    replay();
+  function openReplace() {
+    replaceSlots.innerHTML = '';
+    EQUIPPED.forEach(function (s, i) {
+      var slot = document.createElement('div');
+      slot.className = 'slot';
+      slot.innerHTML =
+        '<span class="slot__idx">R' + (i + 1) + '</span>' +
+        '<p class="slot__name">' + s.name + '</p>' +
+        '<p class="slot__lv">NIVEL ' + s.level + '</p>';
+      slot.addEventListener('click', function () { finish(flying); });
+      replaceSlots.appendChild(slot);
+    });
+    replaceEl.classList.add('is-on');
   }
 
-  document.getElementById('btn-skills').addEventListener('click', function () { setMode('skills'); });
-  document.getElementById('btn-passives').addEventListener('click', function () { setMode('passives'); });
+  function closeReplace() {
+    if (!flying) return;
+    var card = flying;
+    flying = null;
+    replaceEl.classList.remove('is-on');
+    card.classList.remove('is-trembling');
+    // Vuelta a su sitio: se libera el fixed y el flujo la recoloca
+    card.style.transition = 'transform 320ms cubic-bezier(.3, 1, .3, 1), box-shadow 320ms ease';
+    card.style.transform = 'skewX(-5deg) scale(1)';
+    card.style.boxShadow = '9px 9px 0 var(--accent)';
+    setTimeout(function () {
+      card.classList.remove('is-flying');
+      card.style.cssText = '';
+      card.style.setProperty('--accent', card.dataset.accent);
+      renderCards();
+    }, 330);
+  }
+
+  // Final: flash + sello + onda + barrido de tinta
+  function finish(card) {
+    if (locked || !card) return;
+    locked = true;
+    replaceEl.classList.remove('is-on');
+    card.classList.remove('is-trembling');
+    card.classList.add('is-stamped');
+    flash.classList.add('is-on');
+    shake();
+    sfx.stamp();
+    setTimeout(function () { wipe.classList.add('is-on'); sfx.whoosh(); }, 460);
+    setTimeout(replay, 1120);
+  }
+
+  // ---------------------------------------------------------------- controles
+
   document.getElementById('btn-replay').addEventListener('click', replay);
+  document.getElementById('btn-mode').addEventListener('click', function () {
+    mode = mode === 'skills' ? 'passives' : 'skills';
+    this.classList.toggle('is-on', mode === 'passives');
+    replay();
+  });
+  document.getElementById('btn-sfx').addEventListener('click', function () {
+    this.textContent = sfx.toggle() ? 'SFX ON' : 'SFX OFF';
+  });
+  document.getElementById('btn-esc').addEventListener('click', closeReplace);
 
   window.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { closeReplace(); return; }
     if (e.key === 'r' || e.key === 'R') { replay(); return; }
-    if (e.key === 't' || e.key === 'T') { setMode(mode === 'skills' ? 'passives' : 'skills'); return; }
-    var n = parseInt(e.key, 10);
-    if (n >= 1 && n <= MODES[mode].cards.length) {
-      var card = cardsEl.children[n - 1];
-      if (card) choose(card);
+    if (e.key === 't' || e.key === 'T') {
+      document.getElementById('btn-mode').click();
+      return;
+    }
+    if (flying) {
+      var n = parseInt(e.key, 10);
+      if (n >= 1 && n <= EQUIPPED.length) finish(flying);
+      return;
+    }
+    var n2 = parseInt(e.key, 10);
+    if (n2 >= 1 && n2 <= MODES[mode].cards.length) {
+      var card = stage.children[n2 - 1];
+      if (card) pick(card);
     }
   });
-
-  renderSlots();
-  renderCards();
 </script>
 </body>
 </html>
