@@ -501,7 +501,7 @@
         </div>
       </div>
       <div class="ctrl">
-        <span class="ctrl__label">ANIMACIÓN (NyxAnimator · 19)</span>
+        <span class="ctrl__label">ANIMACIÓN (NyxAnimator · 20)</span>
         <div class="toggles" id="anim-btns">
           <button class="toggle" id="t-anim-prev" type="button" title="Anterior">◀</button>
           <select class="toggle" id="anim-select" style="font-family:inherit;cursor:pointer;padding:6px 10px;">
@@ -515,6 +515,7 @@
             <option value="air_dash">air_dash</option>
             <option value="gravity_kick">gravity_kick</option>
             <option value="kick_flip">kick_flip</option>
+            <option value="kick_flip_drill">kick_flip_drill</option>
             <option value="spiral_drill_kick">spiral_drill_kick</option>
             <option value="gravity_slide">gravity_slide</option>
             <option value="counter_parry">counter_parry</option>
@@ -596,6 +597,7 @@ const ANIM_LABELS = {
   air_dash: 'AIR DASH',
   gravity_kick: 'GRAVITY KICK',
   kick_flip: 'KICK FLIP',
+  kick_flip_drill: 'KICK FLIP DRILL',
   stasis_cast: 'STASIS CAST',
   stasis_throw: 'STASIS THROW',
   hit_stagger: 'HIT STAGGER',
@@ -1281,7 +1283,7 @@ const animPrev = document.getElementById('t-anim-prev');
 const animNext = document.getElementById('t-anim-next');
 const ANIM_LIST = [
   'idle', 'run', 'jump_land', 'land_recover', 'zero_g_float', 'gravity_fall',
-  'air_dash', 'gravity_kick', 'kick_flip', 'spiral_drill_kick', 'gravity_slide',
+  'air_dash', 'gravity_kick', 'kick_flip', 'kick_flip_drill', 'spiral_drill_kick', 'gravity_slide',
   'counter_parry', 'wall_shift_flip', 'dome_bounce', 'victory_float',
   'stasis_cast', 'stasis_throw', 'hit_stagger', 'eden_absorb',
 ];

@@ -1,14 +1,17 @@
 import type { Bone, Object3D } from 'three';
 import {
   COUNTER_PARRY_DURATION,
-  SPIRAL_DRILL_KICK_DURATION,
   poseCounterParry,
-  poseGravityKick,
   poseGravitySlide,
-  poseKickFlip,
-  poseSpiralDrillKick,
   type PoseWriter,
 } from './nyxAnimsCombat';
+import {
+  GRAVITY_KICK_LOOP,
+  KICK_FLIP_CLIP,
+  KICK_FLIP_DRILL_CLIP,
+  SPIRAL_DRILL_KICK_LOOP,
+  type NyxBakedClip,
+} from './nyxBakedClips';
 import {
   DOME_BOUNCE_DURATION,
   WALL_SHIFT_FLIP_DURATION,
@@ -67,6 +70,7 @@ export type NyxAnimState =
   | 'air_dash'
   | 'gravity_kick'
   | 'kick_flip'
+  | 'kick_flip_drill'
   | 'spiral_drill_kick'
   | 'gravity_slide'
   | 'counter_parry'
@@ -80,7 +84,7 @@ export type NyxAnimState =
 
 export const NYX_ANIM_STATES: readonly NyxAnimState[] = [
   'idle', 'run', 'jump_land', 'land_recover', 'zero_g_float', 'gravity_fall',
-  'air_dash', 'gravity_kick', 'kick_flip', 'spiral_drill_kick', 'gravity_slide',
+  'air_dash', 'gravity_kick', 'kick_flip', 'kick_flip_drill', 'spiral_drill_kick', 'gravity_slide',
   'counter_parry', 'wall_shift_flip', 'dome_bounce', 'victory_float',
   'stasis_cast', 'stasis_throw', 'hit_stagger', 'eden_absorb',
 ];
@@ -122,8 +126,9 @@ const INF = Number.POSITIVE_INFINITY;
 /** Duración (s) de los estados de un solo disparo; INF = estado sostenido. */
 const DURATION: Record<NyxAnimState, number> = {
   idle: INF, run: INF, jump_land: 1.15, land_recover: 1.1, zero_g_float: INF,
-  gravity_fall: INF, air_dash: 0.6, gravity_kick: 1.15, kick_flip: 0.85,
-  spiral_drill_kick: SPIRAL_DRILL_KICK_DURATION, gravity_slide: INF,
+  gravity_fall: INF, air_dash: 0.6, gravity_kick: INF, kick_flip: KICK_FLIP_CLIP.duration,
+  kick_flip_drill: KICK_FLIP_DRILL_CLIP.duration,
+  spiral_drill_kick: INF, gravity_slide: INF,
   counter_parry: COUNTER_PARRY_DURATION, wall_shift_flip: WALL_SHIFT_FLIP_DURATION,
   dome_bounce: DOME_BOUNCE_DURATION, victory_float: INF,
   stasis_cast: INF, stasis_throw: 1.30, hit_stagger: 0.95, eden_absorb: INF,
@@ -132,8 +137,9 @@ const DURATION: Record<NyxAnimState, number> = {
 const FALLBACK: Record<NyxAnimState, NyxAnimState> = {
   idle: 'idle', run: 'run', jump_land: 'idle', land_recover: 'idle',
   zero_g_float: 'zero_g_float', gravity_fall: 'gravity_fall', air_dash: 'zero_g_float',
-  gravity_kick: 'zero_g_float', kick_flip: 'zero_g_float',
-  spiral_drill_kick: 'zero_g_float', gravity_slide: 'gravity_slide',
+  gravity_kick: 'gravity_kick', kick_flip: 'zero_g_float',
+  kick_flip_drill: 'zero_g_float',
+  spiral_drill_kick: 'spiral_drill_kick', gravity_slide: 'gravity_slide',
   counter_parry: 'zero_g_float', wall_shift_flip: 'gravity_fall',
   dome_bounce: 'zero_g_float', victory_float: 'victory_float',
   stasis_cast: 'stasis_cast', stasis_throw: 'idle', hit_stagger: 'idle', eden_absorb: 'eden_absorb',
@@ -142,7 +148,7 @@ const FALLBACK: Record<NyxAnimState, NyxAnimState> = {
 const HAIR_GRAVITY_SCALE: Record<NyxAnimState, number> = {
   idle: 1, run: 0.7, jump_land: 0.9, land_recover: 1, zero_g_float: 0.12,
   gravity_fall: 0.9, air_dash: 0.35, gravity_kick: 0.3, kick_flip: 0.25,
-  spiral_drill_kick: 0.2, gravity_slide: 0.65, counter_parry: 0.35,
+  kick_flip_drill: 0.25, spiral_drill_kick: 0.2, gravity_slide: 0.65, counter_parry: 0.35,
   wall_shift_flip: 0.2, dome_bounce: 0.3, victory_float: 0.08,
   stasis_cast: 0.8, stasis_throw: 0.8, hit_stagger: 0.9, eden_absorb: -0.25,
 };
@@ -376,9 +382,10 @@ export class NyxAnimator {
     this.neutral();
     this.pose(st, this.stateTime, this.time);
 
-    // Envoltorio angular continuo para estados con giro completo (kick_flip en X;
+    // Envoltorio angular continuo para estados con giro completo (kick_flip y
+    // kick_flip_drill en X — el wrap hacia tgt lo hace su case del switch;
     // spiral_drill_kick, wall_shift_flip, victory_float en Y)
-    if (st !== 'kick_flip') {
+    if (st !== 'kick_flip' && st !== 'kick_flip_drill') {
       const ho = HIPS * 3;
       while (this.cur[ho] > Math.PI) this.cur[ho] -= 2 * Math.PI;
       while (this.cur[ho] <= -Math.PI) this.cur[ho] += 2 * Math.PI;
@@ -392,6 +399,16 @@ export class NyxAnimator {
       const hy = HIPS * 3 + 1;
       while (this.cur[hy] > Math.PI) this.cur[hy] -= 2 * Math.PI;
       while (this.cur[hy] <= -Math.PI) this.cur[hy] += 2 * Math.PI;
+    }
+    // Barrena del taladro: hips.z gira -2π por vuelta de bucle. El wrap hacia
+    // tgt evita el giro fantasma de vuelta al saltar el bucle o al salir del
+    // estado (kick_flip_drill, zero_g_float...); en los demás estados tgt.z
+    // vive en (-π, π] y el wrap es inocuo.
+    {
+      const hz = HIPS * 3 + 2;
+      const dz = this.tgt[hz] - this.cur[hz];
+      if (dz > Math.PI) this.cur[hz] += 2 * Math.PI;
+      else if (dz < -Math.PI) this.cur[hz] -= 2 * Math.PI;
     }
 
     // Persecución exponencial de la pose objetivo
@@ -574,15 +591,34 @@ export class NyxAnimator {
       case 'zero_g_float': poseZeroGFloat(this.writer, g); break;
       case 'gravity_fall': poseGravityFall(this.writer, g, this.vVel, this.hasVVel); break;
       case 'air_dash': poseAirDash(this.writer, t, g, this.dashDir); break;
-      case 'gravity_kick': poseGravityKick(this.writer, t, g); break;
-      case 'kick_flip': {
-        const flip = poseKickFlip(this.writer, t, g);
-        const o = HIPS * 3;
-        while (this.cur[o] - flip > Math.PI) this.cur[o] -= 2 * Math.PI;
-        while (this.cur[o] - flip < -Math.PI) this.cur[o] += 2 * Math.PI;
+      case 'gravity_kick': {
+        // Bucle de la pose de lanza (0.8 s): turbulencia de alta velocidad.
+        const c = GRAVITY_KICK_LOOP;
+        this.sampleClip(c, t % c.duration);
         break;
       }
-      case 'spiral_drill_kick': poseSpiralDrillKick(this.writer, t, g); break;
+      case 'kick_flip': {
+        this.sampleClip(KICK_FLIP_CLIP, t);
+        const o = HIPS * 3;
+        while (this.cur[o] - this.tgt[o] > Math.PI) this.cur[o] -= 2 * Math.PI;
+        while (this.cur[o] - this.tgt[o] < -Math.PI) this.cur[o] += 2 * Math.PI;
+        break;
+      }
+      case 'kick_flip_drill': {
+        this.sampleClip(KICK_FLIP_DRILL_CLIP, t);
+        const o = HIPS * 3;
+        while (this.cur[o] - this.tgt[o] > Math.PI) this.cur[o] -= 2 * Math.PI;
+        while (this.cur[o] - this.tgt[o] < -Math.PI) this.cur[o] += 2 * Math.PI;
+        break;
+      }
+      case 'spiral_drill_kick': {
+        // Bucle de la barrena (0.5 s): giro continuo de -2π por vuelta en
+        // hips.z (pista unwrapped); el wrap genérico de Z mantiene `cur`
+        // pegado a `tgt` también al saltar el bucle o al salir del estado.
+        const c = SPIRAL_DRILL_KICK_LOOP;
+        this.sampleClip(c, t % c.duration);
+        break;
+      }
       case 'gravity_slide': poseGravitySlide(this.writer, g, this.speed, this.turn); break;
       case 'counter_parry': poseCounterParry(this.writer, t); break;
       case 'wall_shift_flip': poseWallShiftFlip(this.writer, t); break;
@@ -592,6 +628,36 @@ export class NyxAnimator {
       case 'stasis_throw': poseStasisThrow(this.writer, t, g); break;
       case 'hit_stagger': poseHitStagger(this.writer, t); break;
       case 'eden_absorb': poseEdenAbsorb(this.writer, t, g); break;
+    }
+  }
+
+  /**
+   * Muestrea un clip horneado (keyframes de Blender) en el instante `t` como
+   * pose objetivo: interpola linealmente entre los dos keyframes que rodean
+   * a `t` (los clips van a 30 fps, así que el tramo es corto y la persecución
+   * exponencial de `update` suaviza el escalón). `rotations` es frame-major:
+   * índice = (frame * BONE_COUNT + boneIndex) * 3, dos bloques contiguos.
+   */
+  private sampleClip(clip: NyxBakedClip, t: number): void {
+    const times = clip.times;
+    const n = clip.frameCount;
+    let i = 0;
+    while (i < n - 2 && t >= times[i + 1]) i++;
+    const span = times[i + 1] - times[i];
+    const k = span > 1e-6 ? clamp((t - times[i]) / span, 0, 1) : 0;
+    const rot = clip.rotations;
+    const tgt = this.tgt;
+    const stride = BONE_COUNT * 3;
+    const f0 = i * stride;
+    const f1 = f0 + stride;
+    for (let j = 0; j < stride; j++) {
+      tgt[j] = rot[f0 + j] + (rot[f1 + j] - rot[f0 + j]) * k;
+    }
+    const off = clip.hipsOffset;
+    const ho0 = i * 3;
+    const ho1 = ho0 + 3;
+    for (let a = 0; a < 3; a++) {
+      this.tgtPos[a] = off[ho0 + a] + (off[ho1 + a] - off[ho0 + a]) * k;
     }
   }
 
@@ -816,42 +882,6 @@ export class NyxAnimator {
     // Clavículas retraídas: los hombros se alejan del objetivo (perfil de misil)
     this.clavL(0.06 * fly, 0.16 * fly, -0.04 * fly);
     this.clavR(0.06 * fly, 0.16 * fly, -0.04 * fly);
-  }
-
-  // --- kick_flip: voltereta mortal completa tras la patada -------------------
-  // Rebota hacia atrás-arriba con las rodillas al pecho y gira 360° hacia
-  // atrás sobre hips.x. El ángulo de voltereta es continuo (0 → -2π) pero se
-  // escribe normalizado a (-π, π] y la rotación actual se envuelve al
-  // equivalente más cercano al objetivo: el lerp persigue por el camino corto
-  // y al terminar (-2π ≡ 0) abre con elegancia a zero_g_float sin vuelta atrás.
-  private poseKickFlip(t: number, g: number): void {
-    const p = clamp(t / 0.85, 0, 1);
-    const arc = Math.sin(p * Math.PI);
-    const tuck = smooth(0.02, 0.16, t) * (1 - smooth(0.6, 0.85, t));
-    const wob = Math.sin(g * 5.2) * 0.04 * arc;
-
-    let flip = -2 * Math.PI * smooth(0.02, 0.78, t);
-    while (flip <= -Math.PI) flip += 2 * Math.PI;
-    const o = HIPS * 3;
-    while (this.cur[o] - flip > Math.PI) this.cur[o] -= 2 * Math.PI;
-    while (this.cur[o] - flip < -Math.PI) this.cur[o] += 2 * Math.PI;
-
-    this.pos(0, 0.22 * arc, -0.14 * arc);
-    this.p(HIPS, flip, wob, 0);
-    this.p(SPINE, 0.2 * tuck, 0, 0);
-    this.p(CHEST, 0.16 * tuck, -0.15 * tuck, 0);
-    this.p(HEAD, 0.34 * tuck, 0, 0); // barbilla al pecho durante el giro
-    // Brazos ligeramente abiertos en equilibrio
-    this.armL(0.12 + 0.22 * tuck, -0.3 * tuck, -0.82, 0.08, -0.45 * tuck, -0.1);
-    this.armR(0.12 + 0.22 * tuck, -0.25 * tuck, -0.82, 0.08, -0.4 * tuck, -0.1);
-    // Rodillas al pecho
-    this.legL(-1.15, 0.05, 0.08, 1.55);
-    this.legR(-1.15, 0, 0.08, 1.55);
-    // Punteras estiradas en el tuck: la voltereta se lee más rápida y limpia
-    this.footL(-0.55 * tuck, 0, 0.04, -0.4 * tuck);
-    this.footR(-0.55 * tuck, 0, 0.04, -0.4 * tuck);
-    this.clavL(0.05 * tuck, -0.1 * tuck, 0.08 * tuck);
-    this.clavR(0.05 * tuck, -0.1 * tuck, 0.08 * tuck);
   }
 
   // --- land_recover: impacto amortiguado → incorporarse hasta idle ----------

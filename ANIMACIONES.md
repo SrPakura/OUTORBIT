@@ -24,6 +24,10 @@ lo pone `nyx_rigged.glb` y los clips se enlazan por nombre de hueso.
 | Flotación — banco izquierda | `nyx_float_fwd_mir.glb` | 2.57 s | Derivado | Aprobado |
 | Flotación — centrada | `nyx_float_fwd_mid.glb` | 2.57 s | Derivado | Aprobado |
 | Flotación — atrás | `nyx_float_back.glb` | 2.57 s | Derivado | Aprobado |
+| Voltereta — patada simple | `nyx_kick_flip.glb` | 0.87 s | Blender | Aprobado |
+| Voltereta — taladro (2 flips) | `nyx_kick_flip_drill.glb` | 1.33 s | Blender | Aprobado |
+| Patada — lanza (bucle) | `nyx_gravity_kick.glb` | 0.80 s | Blender | Aprobado |
+| Patada — barrena (bucle) | `nyx_spiral_drill_kick.glb` | 0.50 s | Blender | Aprobado |
 
 Los clips de caminar se generan con `scripts/nyx_walk_clips.py` a partir de los
 GLB de `animaciones_generadas/procesadas/`: corrige la altura de la cadera para
@@ -285,7 +289,52 @@ el armature temporal que trae la importación.
 
 ---
 
-## 6. Integración en el juego
+## 6. Volteretas y patadas se hornean desde Blender
+
+`kick_flip` (rebote tras `gravity_kick`, 1 voltereta), `kick_flip_drill`
+(rebote tras `spiral_drill_kick`, 2 volteretas encadenadas en un solo clip),
+`gravity_kick` (bucle de la pose de lanza, 0.8 s) y `spiral_drill_kick`
+(bucle de la barrena, 0.5 s, giro continuo de -2π por vuelta en `hips.z`) ya
+no son poses procedurales: se animan en Blender con
+`scripts/blender_build_kick_flips.py` y `scripts/blender_build_kicks.py` y se
+integran horneadas.
+
+Pipeline:
+
+```
+.blend (nyx_kick_flip{,_drill} / nyx_gravity_kick / nyx_spiral_drill_kick)
+  → public/models/*.glb
+  → node scripts/bake_nyx_clips.mjs
+  → src/game/render/nyxBakedClips.ts (Euler XYZ unwrapped, frame-major)
+  → NyxAnimator.sampleClip() en los 4 estados
+```
+
+Detalles que importan:
+
+- **Las pistas de giro van unwrapped** (volteretas: `hips.x` 0 → -2π/-4π;
+  barrena: `hips.z` 0 → -2π por vuelta). El animador envuelve `cur` hacia
+  `tgt` cada frame para que el lerp persiga por el camino corto, y al cambiar
+  de estado el wrap devuelve el ángulo a su equivalente mod 2π sin giro
+  fantasma de vuelta.
+- **Las patadas son estados sostenidos (INF)**: el clip loopea con
+  `stateTime % duration` mientras dura el vuelo; el controlador solo asegura
+  el estado una vez. Las volteretas son one-shots que caen a `zero_g_float`.
+- **`hipsOffset` es relativo al rest** de `nyx_rigged.glb` (el baker lee la
+  posición de reposo del hueso `hips` del propio GLB).
+- Pelo y mangas vienen keyframed en el clip pero la física de resorte del
+  animador los sobreescribe: el movimiento secundario sigue siendo reactivo.
+- El estado `kick_flip_drill` es nuevo en `NyxAnimState`; el character-sheet
+  genera su botón solo desde `NYX_ANIM_STATES` (más el `<select>` y `ANIM_LIST`
+  estáticos, que se actualizaron a mano).
+- **El bundle del animador hay que reconstruirlo** (`npx esbuild
+  src/game/render/nyxAnimator.ts --bundle --format=esm
+  --outfile=public/nyx-animator-bundle.js`): el character-sheet carga
+  `/nyx-animator-bundle.js`, no el TS. Si no se reconstruye, la hoja muestra
+  las animaciones viejas aunque el juego ya tenga las nuevas.
+
+---
+
+## 7. Integración en el juego
 
 | Pieza | Fichero | Notas |
 |-------|---------|-------|
@@ -336,7 +385,7 @@ abiertas, torso girado. Ahora el lock lleva su propio temporizador
 
 ---
 
-## 7. Lo que queda
+## 8. Lo que queda
 
 - **`nyxAnimator.ts` tiene código muerto.** Los métodos privados `poseIdle`,
   `poseRun`, `poseJumpLand` y `poseLandRecover` (líneas ~599, 619, 656, 861)

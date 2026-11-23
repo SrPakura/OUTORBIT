@@ -1642,7 +1642,9 @@ export class NyxDomeController {
   }
 
   /**
-   * Recuperación tras patada: 1 flip en patada simple, 2 flips en taladro espiral.
+   * Recuperación tras patada: 1 flip en patada simple (clip `nyx_kick_flip`),
+   * 2 flips en taladro espiral (clip `nyx_kick_flip_drill`, que trae los dos
+   * encadenados en una sola reproducción).
    */
   private startKickRecover(flips: 1 | 2): void {
     this.flipsTotal = flips;
@@ -1654,7 +1656,7 @@ export class NyxDomeController {
     this.redirectWindowTimer = 0;
     this.speedAttackKind = null;
     this.mode = 'kick_recover';
-    this.animator.setState('kick_flip');
+    this.animator.setState(flips === 2 ? 'kick_flip_drill' : 'kick_flip');
   }
 
   private impactEnemy(onHitEnemy: HitEnemyCallback | undefined): void {
@@ -1963,14 +1965,16 @@ export class NyxDomeController {
 
   private updateKickRecover(dt: number): void {
     this.recoverElapsed += dt;
-    // Frena suavemente hasta casi 0 mientras reproduce exactamente flipsTotal
-    // volteretas. recoverElapsed es un seguro anti-atasco si isFinished() falla.
+    // Frena suavemente hasta casi 0 mientras reproduce la voltereta. El clip
+    // drill ya encadena los 2 flips, así que una reproducción = flipsTotal.
+    // recoverElapsed es un seguro anti-atasco si isFinished() falla.
     this.velocity.multiplyScalar(Math.exp(-KICK_RECOVER_BRAKE * dt));
+    const st = this.animator.getState();
     const flipDone =
-      (this.animator.getState() === 'kick_flip' && this.animator.isFinished()) ||
+      ((st === 'kick_flip' || st === 'kick_flip_drill') && this.animator.isFinished()) ||
       this.recoverElapsed >= KICK_RECOVER_MAX_TIME_PER_FLIP * this.flipsTotal;
     if (!flipDone) return;
-    this.flipsPlayed++;
+    this.flipsPlayed = st === 'kick_flip_drill' ? this.flipsTotal : this.flipsPlayed + 1;
     if (this.flipsPlayed < this.flipsTotal) {
       this.animator.setState('kick_flip');
     } else {
@@ -2599,8 +2603,9 @@ export class NyxDomeController {
             : this.speedAttackKind === 'gravity_kick'
               ? 'gravity_kick'
               : 'gravity_fall';
-        // Los one-shots de patada se relanzan mientras dure el vuelo.
-        if (this.animator.getState() !== st || this.animator.isFinished()) {
+        // Las patadas son bucles sostenidos (pose de lanza / barrena): se
+        // asegura el estado y el clip loopea mientras dure el vuelo.
+        if (this.animator.getState() !== st) {
           this.animator.setState(st);
         }
         break;
