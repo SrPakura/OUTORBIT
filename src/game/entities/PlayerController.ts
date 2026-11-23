@@ -976,8 +976,7 @@ export class PlayerController {
     this.vertVel = 0;
     this.jumpsUsed = 0;
     this.inFlight = false;
-    this.flightDirected = false;
-    this.flightDest = null;
+    this.clearDirectedFlight();
     this.isSwimming = false;
     this.iceVel.set(0, 0, 0);
   }
@@ -986,6 +985,35 @@ export class PlayerController {
   restoreFullHp(): void {
     this.hp = GAME_CONSTANTS.PLAYER_MAX_HP;
     this.lostInSpace = false;
+  }
+
+  // ------------------------------------------------------------------------
+  // Helpers de estado compartidos (antes eran parejas copiadas por todo el
+  // archivo: un campo olvidado en un reset = bug de estado).
+  // ------------------------------------------------------------------------
+
+  /** Cancela el vuelo dirigido (Gravity Shift): pareja invariante de todo reset de vuelo. */
+  private clearDirectedFlight(): void {
+    this.flightDirected = false;
+    this.flightDest = null;
+  }
+
+  /**
+   * Up radial normalizado desde el centro del planeta hacia el jugador
+   * (actualiza lastUp). Devuelve la distancia al centro del planeta.
+   */
+  private reorientToPlanet(planet: PlanetRuntime): number {
+    this._up.copy(this.pos).sub(planet.centerVec);
+    const upLen = this._up.length();
+    if (upLen > 1e-6) this.lastUp.copy(this._up.divideScalar(upLen));
+    return upLen;
+  }
+
+  /** Lee WASD en ejes de cámara y compone el vector de movimiento en _move. */
+  private readMoveInput(): void {
+    const inputZ = (this.isActionDown('forward') ? 1 : 0) - (this.isActionDown('back') ? 1 : 0);
+    const inputX = (this.isActionDown('right') ? 1 : 0) - (this.isActionDown('left') ? 1 : 0);
+    this._move.set(0, 0, 0).addScaledVector(this._forward, inputZ).addScaledVector(this._right, inputX);
   }
 
   /**
@@ -1007,8 +1035,7 @@ export class PlayerController {
     this.jumpsUsed = 0;
     this.grounded = true;
     this.inFlight = false;
-    this.flightDirected = false;
-    this.flightDest = null;
+    this.clearDirectedFlight();
     this.flightVel.set(0, 0, 0);
     this.anchorBurst.set(0, 0, 0);
     this.iceVel.set(0, 0, 0);
@@ -1191,7 +1218,9 @@ export class PlayerController {
     }
 
     // Deriva espacial: en vuelo dirigido basta con vigilar la distancia.
-    if (this.flightDirected) {
+    // En suelo se está tocando una superficie: el escaneo de los 5 planetas
+    // es innecesario (early-out barato del bucle caliente).
+    if (this.flightDirected || this.grounded) {
       this.nearestSurfaceDist = 0;
       this.lostInSpace = false;
     } else {
@@ -1429,9 +1458,7 @@ export class PlayerController {
 
     // Movimiento tangente (WASD en el marco de la cámara).
     getTangentAxes(this.basisQuat, this.yaw, this._forward, this._right);
-    const inputZ = (this.isActionDown('forward') ? 1 : 0) - (this.isActionDown('back') ? 1 : 0);
-    const inputX = (this.isActionDown('right') ? 1 : 0) - (this.isActionDown('left') ? 1 : 0);
-    this._move.set(0, 0, 0).addScaledVector(this._forward, inputZ).addScaledVector(this._right, inputX);
+    this.readMoveInput();
     this.isMoving = this._move.lengthSq() > 1e-8;
 
     let speed = 0;
@@ -1594,8 +1621,7 @@ export class PlayerController {
       // Salida propulsada: vuelo libre con la inercia del nado.
       this.isSwimming = false;
       this.inFlight = true;
-      this.flightDirected = false;
-      this.flightDest = null;
+      this.clearDirectedFlight();
       this.flightTime = 0;
       this.flightVel.copy(this.swimVel).multiplyScalar(SWIM_EXIT_BOOST);
       return;
@@ -1605,20 +1631,14 @@ export class PlayerController {
     {
       const nearest = findStrongestGravityPlanet(this.pos, this.planets, this.currentPlanet.spec.id);
       this.currentPlanet = nearest;
-      this._up.copy(this.pos).sub(nearest.centerVec);
-      const upLen = this._up.length();
-      if (upLen > 1e-6) {
-        this.lastUp.copy(this._up.divideScalar(upLen));
-      }
+      this.reorientToPlanet(nearest);
     }
 
     // Natación 3D hacia donde mira la cámara.
     this.getCameraOrientation(this._q1);
     this._forward.set(0, 0, -1).applyQuaternion(this._q1);
     this._right.set(1, 0, 0).applyQuaternion(this._q1);
-    const inputZ = (this.isActionDown('forward') ? 1 : 0) - (this.isActionDown('back') ? 1 : 0);
-    const inputX = (this.isActionDown('right') ? 1 : 0) - (this.isActionDown('left') ? 1 : 0);
-    this._move.set(0, 0, 0).addScaledVector(this._forward, inputZ).addScaledVector(this._right, inputX);
+    this.readMoveInput();
     this.isMoving = this._move.lengthSq() > 1e-8;
 
     const boost = this.swimBoostTimer > 0 ? SWIM_BOOST_MUL : 1;
@@ -1636,8 +1656,7 @@ export class PlayerController {
   private enterSwim(): void {
     this.isSwimming = true;
     this.inFlight = false;
-    this.flightDirected = false;
-    this.flightDest = null;
+    this.clearDirectedFlight();
     this.grounded = false;
     this.jumpsUsed = 0;
     this.swimVel.set(0, 0, 0);
@@ -1704,11 +1723,7 @@ export class PlayerController {
       .addScaledVector(this.flightEnd, te * te);
 
     // Up radial respecto al planeta destino: aterrizaje de pie garantizado.
-    this._up.copy(this.pos).sub(target.centerVec);
-    const upLen = this._up.length();
-    if (upLen > 1e-6) {
-      this.lastUp.copy(this._up.divideScalar(upLen));
-    }
+    this.reorientToPlanet(target);
 
     // Cámara 100% libre: el jugador sigue girando el ratón 360º durante el
     // vuelo orbital (el marco tangente se reorienta solo vía alignBasisToUp).
@@ -1734,8 +1749,7 @@ export class PlayerController {
    */
   private stopFlightToFloat(): void {
     if (!this.inFlight) return;
-    this.flightDirected = false;
-    this.flightDest = null;
+    this.clearDirectedFlight();
     this.flightTime = 0;
     this.flightVel.set(0, 0, 0);
   }
@@ -1743,8 +1757,7 @@ export class PlayerController {
   private landOn(target: PlanetRuntime, up: THREE.Vector3): void {
     this.currentPlanet = target;
     this.inFlight = false;
-    this.flightDirected = false;
-    this.flightDest = null;
+    this.clearDirectedFlight();
     this.flightTime = 0;
     this.grounded = true;
     this.vertVel = 0;
@@ -1825,8 +1838,7 @@ export class PlayerController {
     this.onSound?.('alert');
     if (!origin) {
       // Sin origen conocido: vuelo libre de emergencia lejos del planeta.
-      this.flightDirected = false;
-      this.flightDest = null;
+      this.clearDirectedFlight();
       this.flightTime = 0;
       this._v1.copy(this.pos).sub(this.currentPlanet.centerVec).normalize();
       this.flightVel.copy(this._v1).multiplyScalar(40);
@@ -1999,8 +2011,7 @@ export class PlayerController {
     // planeta con mayor atracción, conservando la altura actual.
     if (this.inFlight) {
       this.inFlight = false;
-      this.flightDirected = false;
-      this.flightDest = null;
+      this.clearDirectedFlight();
       this.flightTime = 0;
       this.flightVel.set(0, 0, 0);
       this.currentPlanet = findStrongestGravityPlanet(
@@ -2008,9 +2019,7 @@ export class PlayerController {
         this.planets,
         this.currentPlanet.spec.id
       );
-      this._up.copy(this.pos).sub(this.currentPlanet.centerVec);
-      const upLen = this._up.length();
-      if (upLen > 1e-6) this.lastUp.copy(this._up.divideScalar(upLen));
+      const upLen = this.reorientToPlanet(this.currentPlanet);
       this.altitude = Math.max(
         upLen - this.currentPlanet.spec.radius,
         0
@@ -2157,8 +2166,7 @@ export class PlayerController {
 
     if (this.inFlight) {
       // Vuelo libre: redirección 3D completa de la velocidad de vuelo.
-      this.flightDirected = false;
-      this.flightDest = null;
+      this.clearDirectedFlight();
       this.flightVel.copy(this._v1).multiplyScalar(GRAVITY_DASH_SPEED);
     } else if (this.grounded) {
       // Suelo: dash por el plano tangente (WASD o cámara).
@@ -2196,8 +2204,7 @@ export class PlayerController {
   private launchFreeFlight(): void {
     this.getAimForward(this._v1);
     this.inFlight = true;
-    this.flightDirected = false;
-    this.flightDest = null;
+    this.clearDirectedFlight();
     this.flightTime = 0;
     this.grounded = false;
     this.altitude = 0;
