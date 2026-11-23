@@ -101,6 +101,10 @@
     }
   },
   "levelUp": {
+    "banner": "¡SUBIDA DE NIVEL!",
+    "replaceBanner": "¿POR CUÁL LA CAMBIAS?",
+    "escBack": "[ESC] VOLVER",
+    "chosen": "¡ELEGIDA!",
     "subtitle": "FLUIDO EN CALIENTE · JUEGO EN PAUSA",
     "title": "NIVEL {{n}}",
     "chooseHint": "ELIGE 1 DE 2 CARTAS · [1] IZQUIERDA · [2] DERECHA",

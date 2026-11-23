@@ -1030,6 +1030,142 @@ export class SynthAudio {
     this.tone('square', 2400, 2400, 0.02, 0.35, 0.06);
   }
 
+  // --------------------------------------------------------------------------
+  // Secuencia cinemática de subida de nivel (planeta + cartas + iris)
+  // --------------------------------------------------------------------------
+
+  /** Fase 1 del planeta: chispa del punto blanco (triangle 1480→2960→880 Hz). */
+  playLevelUpSpark(): void {
+    if (!this.audible) return;
+    this.tone('triangle', 1480, 2960, 0.09, 0.26);
+    this.tone('triangle', 2960, 880, 0.2, 0.2, 0.09);
+  }
+
+  /** Fase 2 del planeta: whoosh de acercamiento (sawtooth grave + barrido lowpass). */
+  playLevelUpApproach(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(55, t0);
+    osc.frequency.exponentialRampToValueAtTime(210, t0 + 0.9);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(220, t0);
+    filter.frequency.exponentialRampToValueAtTime(1600, t0 + 0.9);
+    filter.Q.value = 7;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(0.3, t0 + 0.35);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.0);
+    osc.connect(filter).connect(gain).connect(master);
+    osc.start(t0);
+    osc.stop(t0 + 1.05);
+  }
+
+  /** Fase 3 del planeta: latigazo del barrido blanco (ruido + bandpass 3200→240 Hz). */
+  playLevelUpSlash(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    const buffer = this.getNoiseBuffer();
+    if (!ctx || !master || !buffer) return;
+    const t0 = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 1.1;
+    filter.frequency.setValueAtTime(3200, t0);
+    filter.frequency.exponentialRampToValueAtTime(240, t0 + 0.42);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.34, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.46);
+    src.connect(filter).connect(gain).connect(master);
+    src.start(t0);
+    src.stop(t0 + 0.5);
+  }
+
+  /** Impacto de carta: golpe grave + ruido seco. */
+  playCardSlam(): void {
+    if (!this.audible) return;
+    this.tone('sine', 120, 38, 0.16, 0.5);
+    this.noise(0.09, 0.26, 1400);
+  }
+
+  /** Retumbo grave mientras la carta elegida tiembla en el centro. */
+  playCardTremble(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = 46;
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 13;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 16;
+    lfo.connect(lfoGain).connect(osc.frequency);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 220;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(0.2, t0 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.5);
+    osc.connect(filter).connect(gain).connect(master);
+    osc.start(t0);
+    lfo.start(t0);
+    osc.stop(t0 + 0.55);
+    lfo.stop(t0 + 0.55);
+  }
+
+  /** Sello final: latigazo agudo + golpe. */
+  playCardStamp(): void {
+    if (!this.audible) return;
+    this.tone('square', 880, 110, 0.12, 0.18);
+    this.playCardSlam();
+  }
+
+  /** Barrido de tinta / vuelo de carta (ruido + bandpass ascendente 240→2600 Hz). */
+  playInkWipe(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    const buffer = this.getNoiseBuffer();
+    if (!ctx || !master || !buffer) return;
+    const t0 = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 1.1;
+    filter.frequency.setValueAtTime(240, t0);
+    filter.frequency.exponentialRampToValueAtTime(2600, t0 + 0.42);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(0.22, t0 + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.48);
+    src.connect(filter).connect(gain).connect(master);
+    src.start(t0);
+    src.stop(t0 + 0.52);
+  }
+
+  /** Iris de cierre: colapso del círculo + parpadeo final del punto. */
+  playIrisWink(): void {
+    if (!this.audible) return;
+    this.tone('sine', 640, 90, 0.5, 0.24);
+    this.tone('sine', 2200, 2200, 0.03, 0.2, 0.5);
+    this.tone('sine', 2900, 2900, 0.05, 0.16, 0.56);
+  }
+
   /** Eco del arpegio de nivel: delay con realimentación creado una sola vez. */
   private getLevelUpEcho(): DelayNode | null {
     const ctx = this.ctx;

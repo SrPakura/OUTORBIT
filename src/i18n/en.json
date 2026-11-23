@@ -101,6 +101,10 @@
     }
   },
   "levelUp": {
+    "banner": "LEVEL UP!",
+    "replaceBanner": "WHICH ONE DO YOU REPLACE?",
+    "escBack": "[ESC] GO BACK",
+    "chosen": "CHOSEN!",
     "subtitle": "HOT FLUID · GAME PAUSED",
     "title": "LEVEL {{n}}",
     "chooseHint": "CHOOSE 1 OF 2 CARDS · [1] LEFT · [2] RIGHT",

@@ -3,6 +3,7 @@ import {
   ACTIVE_SKILLS_CATALOG,
   DomeProgressionManager,
   type ActiveSkillId,
+  type LevelUpCardOption,
   type PassiveId,
 } from '@/game/dome/DomeProgression';
 import type { EnemyArchetype } from '@/game/dome/DomeCombatSystem';
@@ -14,7 +15,7 @@ import { musicPlayer } from '@/game/audio/MusicPlayer';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
 import { startDomeGameLoop, type DomeLevelUpUiState, type DomeTrainingBridge } from '@/ui/domeGameLoop';
 import DomeHudSketch from '@/ui/DomeHudSketch';
-import FluidLevelUpModal, { type FluidCardOption } from '@/ui/FluidLevelUpModal';
+import DomeLevelUpSequence from '@/ui/DomeLevelUpSequence';
 import DomeBattleReport, { type DomeBattleReportData } from '@/ui/DomeBattleReport';
 import DomePauseModal from '@/ui/DomePauseModal';
 import DomeTrainingPanel, { type TrainingSlotInfo } from '@/ui/DomeTrainingPanel';
@@ -120,7 +121,7 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
   }, [settings]);
 
   const handleSelectCard = useCallback(
-    (option: FluidCardOption, replaceSlotIndex?: 0 | 1 | 2) => {
+    (option: LevelUpCardOption, replaceSlotIndex?: 0 | 1 | 2) => {
       const prog = progressionRef.current;
       const choices = levelUpState.choices;
       if (!prog || !choices) return;
@@ -275,12 +276,14 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
         onRestart={handlePauseRestart}
         onExitToMenu={onExit}
       />
-      <FluidLevelUpModal
+      <DomeLevelUpSequence
+        key={levelUpState.newLevel}
         isOpen={levelUpState.isOpen}
         newLevel={levelUpState.newLevel}
         choices={levelUpState.choices}
         equippedSlots={hud.slots.map((s) => ({ name: s.name, level: s.level }))}
         requiresSlotReplacement={levelUpState.requiresSlotReplacement}
+        audioRef={audioRef}
         onSelect={handleSelectCard}
       />
       {battleReport && (
