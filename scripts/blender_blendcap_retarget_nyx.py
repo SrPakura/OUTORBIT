@@ -117,6 +117,14 @@ def parse_args():
                    help="exporta solo el mejor sub-segmento que cierra en bucle")
     p.add_argument("--loop-min", type=int, default=40,
                    help="duracion minima del bucle en frames (def. 40)")
+    p.add_argument("--loop-window", default="",
+                   help="rango 'A:B' de frames del BVH donde buscar el bucle. "
+                        "Necesario cuando el video mezcla el ciclo con otra "
+                        "accion (p. ej. `run_lean` acaba inclinandose de lado) "
+                        "y el mejor cierre cae fuera del tramo limpio.")
+    p.add_argument("--video", default="",
+                   help="ruta MP4 donde renderizar el clip completo")
+    p.add_argument("--video-view", default="3q", choices=("3q", "side", "front"))
     return p.parse_args(argv)
 
 
@@ -577,6 +585,49 @@ def export_glb(arm, action, path):
     log(f"exportado {os.path.basename(path)} ({os.path.getsize(path)} bytes)")
 
 
+def render_video(arm, action, path, f0, f1, view="3q", res=720, samples=16):
+    """Renderiza el clip a MP4 para revisarlo en movimiento."""
+    import subprocess
+
+    sc = bpy.context.scene
+    arm.animation_data.action = action
+    cam = bpy.data.objects["PreviewCam"]
+    target = bpy.data.objects["PreviewTarget"]
+    if view == "side":
+        cam.location = (3.4, 0.0, 1.05)
+        cam.data.lens = 50.0
+    elif view == "front":
+        cam.location = (0.0, -3.4, 1.05)
+        cam.data.lens = 50.0
+    else:
+        cam.location = (3.1, -1.6, 1.35)
+        cam.data.lens = 33.0
+    target.location = (0.0, 0.0, 0.92)
+
+    sc.render.resolution_x = sc.render.resolution_y = res
+    sc.render.resolution_percentage = 100
+    sc.render.image_settings.file_format = "PNG"
+    sc.eevee.taa_render_samples = samples
+    sc.frame_start = f0
+    sc.frame_end = f1
+    tmp = os.path.join(os.path.dirname(path), "_frames_" + os.path.basename(path)[:-4])
+    os.makedirs(tmp, exist_ok=True)
+    sc.render.filepath = os.path.join(tmp, "f_")
+    bpy.ops.render.render(animation=True)
+
+    subprocess.run([
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-framerate", str(FPS),
+        "-i", os.path.join(tmp, "f_%04d.png"),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20",
+        path,
+    ], check=True)
+    for f in os.listdir(tmp):
+        os.remove(os.path.join(tmp, f))
+    os.rmdir(tmp)
+    log(f"video {os.path.basename(path)} ({f1 - f0 + 1} frames)")
+
+
 def render_still(arm, action, path, frame, view="3q", res=720, samples=32):
     sc = bpy.context.scene
     arm.animation_data.action = action
@@ -638,11 +689,19 @@ def main():
         apply_secondary(frames, head_z)
 
     if args.loop:
-        found = find_loop(frames, args.loop_min)
+        lo, hi = 0, len(frames) - 1
+        if args.loop_window:
+            a, b = (int(x) for x in args.loop_window.split(":"))
+            lo = max(0, a - f0)
+            hi = min(len(frames) - 1, b - f0)
+            log(f"bucle: buscando solo en frames {f0 + lo}..{f0 + hi} del BVH")
+        found = find_loop(frames[lo:hi + 1], args.loop_min)
         if found is None:
             log("AVISO: sin sub-segmento de bucle, se exporta el clip entero")
         else:
             err, i, j = found
+            i += lo
+            j += lo
             log(f"bucle: frames {i}..{j} ({j - i} frames, {(j - i) / FPS:.2f}s), "
                 f"error {math.sqrt(err):.4f}")
             frames = frames[i:j + 1]
@@ -663,6 +722,11 @@ def main():
         for f in [int(x) for x in args.stills.split(",")]:
             render_still(dst, out_act,
                          os.path.join(sdir, f"{args.name}_{f:03d}.png"), f)
+
+    if args.video:
+        os.makedirs(os.path.dirname(args.video) or ".", exist_ok=True)
+        render_video(dst, out_act, args.video, 0, len(frames) - 1,
+                     view=args.video_view)
 
     log("listo")
 
