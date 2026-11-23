@@ -33,6 +33,7 @@ import { DomeRunTracker } from '@/game/dome/DomeRunStats';
 import { DOME_PLAYER_BOUND_RADIUS, type DomeHudState, type SlabCollider, type TestEnemySphere } from '@/game/dome/domeTypes';
 import type { GameSettings } from '@/game/settings';
 import { SynthAudio } from '@/game/audio/SynthAudio';
+import { musicPlayer } from '@/game/audio/MusicPlayer';
 import type { DomeBattleReportData } from '@/ui/DomeBattleReport';
 
 /**
@@ -145,6 +146,19 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   const audio = new SynthAudio();
   audio.setVolumeMultiplier(settingsRef.current.masterVolume);
   audioRef.current = audio;
+  musicPlayer.setVolumeMultiplier(settingsRef.current.masterVolume);
+
+  // Música: la oleada de jefe usa su pista; las básicas y de miniboss rotan
+  // entre las dos restantes para que la repetición no se note.
+  let waveTrackToggle = 0;
+  const syncWaveMusic = (label: string | undefined) => {
+    if (label === 'BOSS') {
+      musicPlayer.play('boss');
+      return;
+    }
+    musicPlayer.play(waveTrackToggle % 2 === 0 ? 'waveA' : 'waveB');
+    waveTrackToggle += 1;
+  };
   // Lector de mando (Gamepad API): se actualiza cada frame en el loop, sin
   // depender del pointer lock, para poder jugar con mando y ratón libre.
   const gamepad = new GamepadInput(settingsRef.current);
@@ -177,10 +191,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     // Campo Gravitacional. El enemigo único lo spawnea el puente de abajo.
     progression.pendingInitialPick = false;
     applyFloorMode('basic');
+    musicPlayer.play('waveA');
   } else {
     waveMgr.startWave(1, activeSlabs);
     runTracker.recordWave(1);
     applyFloorMode(waveMgr.getWaveInfo().floorMode);
+    syncWaveMusic(waveMgr.getWaveInfo().label);
   }
   let nextWaveDelay = 0;
 
@@ -527,6 +543,11 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.repeat) return;
+    // M: silencia SFX y música a la vez (mismo atajo que en la campaña).
+    if (e.code === 'KeyM') {
+      musicPlayer.setMuted(audio.toggleMute());
+      return;
+    }
     // Entrenamiento: F2/Tab muestran u ocultan el panel debug; T recarga
     // Vida + Edén al instante (tecla rápida de recarga).
     if (training && (e.code === 'F2' || e.code === 'Tab')) {
@@ -701,6 +722,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
             waveMgr.startWave(nextWave, activeSlabs);
             runTracker.recordWave(nextWave);
             applyFloorMode(waveMgr.getWaveInfo().floorMode);
+            syncWaveMusic(waveMgr.getWaveInfo().label);
           }
         }
       } else {
@@ -773,6 +795,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       // Entrenamiento: Nyx es inmortal, nunca se muestra el Battle Report.
       if (!training && controller.getHp() <= 0 && !gameOverTriggered) {
         gameOverTriggered = true;
+        musicPlayer.stop();
         if (document.pointerLockElement === canvas) {
           document.exitPointerLock?.();
         }
@@ -829,6 +852,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     window.removeEventListener('resize', onResize);
     controllerRef.current = null;
     audioRef.current = null;
+    musicPlayer.stop();
     progressionRef.current = null;
     trainingBridgeRef.current = null;
     loadedNyx?.dispose();

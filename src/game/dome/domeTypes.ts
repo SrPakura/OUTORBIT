@@ -106,12 +106,6 @@ export interface DomeHudState {
   cameraRollDeg: number;
   /** Rotación acumulada en radianes de los arcos giroscópicos del visor según la velocidad */
   gyroSpinRad: number;
-  /**
-   * Brújula gravitatoria: ángulo en grados (convención CSS rotate, 0° =
-   * derecha, 90° = abajo) del polo "abajo" de la cúpula (-Y global) proyectado
-   * sobre el plano de la cámara. Mantiene la orientación absoluta en la esfera.
-   */
-  gravityCompassDeg: number;
   /** 0..1: destello de recarga de Edén (touch-and-go o recogida de orbes). */
   edenFlash: number;
   /** Radar de enemigos (Tab): true cuando el marcador de puntos rojos está activado */

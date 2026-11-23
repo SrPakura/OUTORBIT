@@ -97,6 +97,7 @@ Arquitectura: sin motor de juegos externo — el motor (física esférica, IA, a
 OUTORBIT/
 ├── base44/                  # Configuración Base44 (entidades, auth)
 ├── public/
+│   ├── audio/               # Música del juego (4 mp3, ver "Música y licencias")
 │   ├── models/              # .glb de Nyx y enemigos (LOCAL, gitignorado)
 │   └── nyx-animator-bundle.js  # Generado por el build (gitignorado)
 ├── scripts/                 # Utilidades de Blender (Python)
@@ -143,7 +144,7 @@ Referencia completa para navegar el código (incluye los módulos extraídos en 
 
 | Archivo | Líneas | Qué hace |
 |---------|--------|----------|
-| `domeTypes.ts` | 145 | Tipos compartidos del modo: `DomeHudState` (incluye brújula gravitatoria y destello de Edén), `SlabCollider`, `SlabRaycastHit`, `TestEnemySphere`, constantes de límites. |
+| `domeTypes.ts` | 139 | Tipos compartidos del modo: `DomeHudState` (incluye destello de Edén), `SlabCollider`, `SlabRaycastHit`, `TestEnemySphere`, constantes de límites. |
 | `NyxDomeController.ts` | 2561 | Controlador de Nyx dentro de la Cúpula: input, acciones, modos de física (flotar/suelo), colisiones con slabs, cámara spring-arm con slerp de horizonte, y físicas de flujo (derrape aéreo, landing slide, ledge glance, touch-and-go). |
 | `DomeWaveManager.ts` | 2069 | Oleadas: arquetipos, spawning, proyectiles, poses de enemigos. Delega la IA de jefes en los módulos `dome*Behavior`. |
 | `domeKronosBehavior.ts` | 497 | **NUEVO (refactor)**: IA del Leviatán Kronos de la Cúpula (contexto `KronosBehaviorContext`). |
@@ -235,7 +236,8 @@ Antes era un único `proceduralModels.ts` de 4.778 líneas; ahora cada familia t
 
 | Archivo | Líneas | Qué hace |
 |---------|--------|----------|
-| `audio/SynthAudio.ts` | 391 | Audio 100% sintetizado con WebAudio (sin assets de sonido). |
+| `audio/SynthAudio.ts` | 540 | Audio 100% sintetizado con WebAudio (sin assets de sonido): disparos, impactos, y las alertas del HUD (vida baja, Edén bajo, subida de nivel, oleada nueva). |
+| `audio/MusicPlayer.ts` | 158 | Reproductor de música con crossfade entre dos elementos `<audio>`, mute global y multiplicador de volumen. Singleton `musicPlayer`. |
 | `input/GamepadInput.ts` | 181 | Gamepad API con mapeo W3C (DualShock 4 y genéricos). |
 
 ### `src/ui/` — pantallas y HUD
@@ -250,7 +252,8 @@ Antes era un único `proceduralModels.ts` de 4.778 líneas; ahora cada familia t
 | `BattleReportScreen.tsx` | 353 | Informe de fin de campaña. |
 | `DomeGameView.tsx` | 293 | Vista del modo Cúpula: React puro (estado, handlers, JSX). El runtime vive en `domeGameLoop.ts`. |
 | `domeGameLoop.ts` | 842 | **NUEVO (refactor)**: runtime del modo Cúpula (`startDomeGameLoop`): renderer, escena, oleadas, input, tick y limpieza. Recibe refs y setters por parámetro y devuelve el dispose. |
-| `DomeHudSketch.tsx` | 620 | HUD del modo Cúpula (dibujado a mano alzada): medidores con alerta crítica, brújula gravitatoria, rayos radiales de velocidad terminal y sheen de recarga. |
+| `DomeHudSketch.tsx` | 477 | HUD del modo Cúpula: compone el HUD yin-yang, el visor central, los slots de habilidad, los rayos radiales de velocidad terminal y el sheen de recarga. |
+| `DomeYinYangHud.tsx` | 572 | **NUEVO**: HUD yin-yang de vida/Edén (canvas WebGL con shader propio) + anillo de EXP de 96 marcas + barra NV./OLEADA. Dispara las alertas sonoras de vida baja, Edén bajo, subida de nivel y oleada nueva. |
 | `DomePauseModal.tsx` | 217 | Pausa del modo Cúpula. |
 | `DomeBattleReport.tsx` | 260 | Informe de combate de la Cúpula (game over + envío de puntuación). |
 | `DomeTrainingPanel.tsx` | 284 | Panel debug de entrenamiento (F2 / Tab). |
@@ -264,6 +267,25 @@ Antes era un único `proceduralModels.ts` de 4.778 líneas; ahora cada familia t
 | `src/i18n/` | `index.ts` (hook `useI18n`) + `es.json` y `en.json` con **paridad exacta de claves** (170). Si tocas UI con traducciones, mantén la paridad. |
 | `src/api/` | `base44Client.js` (cliente Base44) y `leaderboard.ts` (API del leaderboard). |
 | `src/components/` + `src/pages/` + `src/lib/` | Boilerplate de auth de Base44: login, registro, MFA, OAuth, rutas protegidas. |
+
+---
+
+## Música y licencias
+
+Cuatro pistas en `public/audio/` (mp3, ~15 MB en total), servidas como estáticas y reproducidas por `src/game/audio/MusicPlayer.ts` con crossfade de ~1 s entre dos elementos `<audio>`:
+
+| Archivo | Pista original | Cuándo suena |
+|---------|----------------|--------------|
+| `menu.mp3` | OUTORBIT Weightless Piano Solo | Pantalla de título y menús |
+| `wave-nocturnal.mp3` | Nocturnal Acceleration | Oleadas básicas y de miniboss (rota con la siguiente) |
+| `wave-singularity.mp3` | Singularity Rush | Oleadas básicas y de miniboss (rota con la anterior) |
+| `boss.mp3` | Collapse of the Infinite | Oleada de jefe |
+
+Las dos pistas de oleada se alternan en cada oleada nueva para que no se repita la misma melodía dos veces seguidas. El volumen de la música sigue al ajuste `masterVolume` y se silencia con `M` (junto con los SFX). Si el navegador bloquea el autoplay, la pista queda pendiente y arranca en el primer clic o tecla.
+
+### Licencias
+
+Las licencias de estas cuatro pistas son **para siempre**. Además, durante los **próximos 10 meses** están **100 % licenciadas**: son más seguras que nunca y se pueden usar sin ninguna restricción. Pasados esos 10 meses dejan de estar licenciadas, pero existe un **trato de condiciones por el que Google no reclamará** su uso. En resumen: uso perpetuo garantizado, con una ventana de 10 meses de cobertura total y un acuerdo posterior que cubre el resto.
 
 ---
 

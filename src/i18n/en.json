@@ -74,7 +74,7 @@
     "speedAttackControls": "SPEED ATTACK (2 EDEN/S): LEFT CLICK (WITH ENEMY IN SIGHT = KICK/DRILL · NO ENEMY = VOID FALL) · SPACE CANCELS WITH FLIP",
     "gamepadConnected": "GAMEPAD CONNECTED · OPTIONS PAUSE",
     "menuButton": "← MENU",
-    "gravityCompass": "GRAV"
+    "training": "TRAINING"
   },
   "pause": {
     "subtitle": "DOME · FROZEN SIMULATION",

@@ -1,12 +1,18 @@
 import { memo } from 'react';
 import type { DomeHudState } from '@/game/dome/domeTypes';
 import { RETICLE_SIZE_PX } from '@/game/dome/domeTypes';
-import { useI18n, waveLabelKey } from '@/i18n';
+import type { SynthAudio } from '@/game/audio/SynthAudio';
+import { useI18n } from '@/i18n';
+import DomeYinYangHud from '@/ui/DomeYinYangHud';
 
 interface DomeHudSketchProps {
   hud: DomeHudState;
   onExit: () => void;
   hidePointerLockPrompt?: boolean;
+  /** Audio del bucle de juego: alimenta las alertas sonoras del HUD. */
+  audioRef: { current: SynthAudio | null };
+  /** false con la pausa, el level-up o el battle report abiertos. */
+  alertsEnabled: boolean;
 }
 
 const RETICLE_SIZE = RETICLE_SIZE_PX; // 120px en pantalla para enmarcar sin tapar a Nyx
@@ -21,68 +27,13 @@ const CORNER_MASK = [
   'radial-gradient(circle at 100% 100%, black 0%, transparent 44%)',
 ].join(', ');
 
-function Meter({
-  label,
-  value,
-  max,
-  barClass,
-  glow,
-  critical = false,
-  flash = 0,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  barClass: string;
-  glow: string;
-  critical?: boolean;
-  flash?: number;
-}) {
-  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
-  return (
-    <div className="mt-2">
-      <div className="flex items-baseline justify-between text-[9px] font-bold tracking-[0.28em]">
-        <span
-          className={critical ? 'text-rose-300' : 'text-white/55'}
-          style={critical ? { animation: 'domeHudCritical 0.7s ease-in-out infinite' } : undefined}
-        >
-          {label}
-        </span>
-        <span className={`tabular-nums ${critical ? 'text-rose-300' : 'text-white/40'}`}>
-          {Math.max(0, Math.ceil(value))}
-        </span>
-      </div>
-      <div
-        className={`relative mt-1 h-[3px] w-full -skew-x-12 overflow-hidden ${
-          critical ? 'bg-rose-500/25' : 'bg-white/12'
-        }`}
-      >
-        <div
-          className={`h-full transition-[width] duration-150 ${
-            critical ? 'bg-gradient-to-r from-rose-500 to-amber-300' : barClass
-          }`}
-          style={{
-            width: `${pct}%`,
-            boxShadow: critical ? '0 0 10px rgba(244,63,94,0.9)' : glow,
-          }}
-        />
-        {/* Sheen de recarga: destello blanco que barre la barra al recuperar. */}
-        {flash > 0.01 && (
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{
-              opacity: Math.min(1, flash),
-              background:
-                'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.95) 45%, transparent 100%)',
-            }}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketchProps) {
+function DomeHudSketchInner({
+  hud,
+  onExit,
+  hidePointerLockPrompt,
+  audioRef,
+  alertsEnabled,
+}: DomeHudSketchProps) {
   const { t } = useI18n();
   const lock = hud.reticleLockState;
   const isLocked = lock === 'locked';
@@ -111,10 +62,8 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
 
   const isVoidFall = hud.mode === 'speed_attack' && hud.speedAttackKind === 'void_fall';
   const bulletRingRatio = Math.max(0, Math.min(1, hud.bulletTimeRemaining / 2.2));
-  const expPct =
-    hud.expToNext > 0 ? Math.max(0, Math.min(100, (hud.exp / hud.expToNext) * 100)) : 0;
 
-  // --- Alerta crítica de Edén (< 20%): barra y borde del visor en rojo/ámbar.
+  // --- Alerta crítica de Edén (< 20%): borde del visor en cian/violeta.
   const edenPct = hud.maxEden > 0 ? hud.eden / hud.maxEden : 1;
   const edenCritical = edenPct < 0.2;
 
@@ -206,14 +155,14 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
         />
       )}
 
-      {/* 3b. Alerta crítica de Edén (< 20%): borde del visor en rojo/ámbar */}
+      {/* 3b. Alerta crítica de Edén (< 20%): borde del visor en cian/violeta */}
       {edenCritical && (
         <div
           className="pointer-events-none absolute inset-0"
           style={{
             animation: 'domeHudCritical 0.7s ease-in-out infinite',
             boxShadow:
-              'inset 0 0 120px 26px rgba(244,63,94,0.30), inset 0 0 40px 10px rgba(251,191,36,0.22)',
+              'inset 0 0 120px 26px rgba(59,232,255,0.26), inset 0 0 40px 10px rgba(168,85,247,0.24)',
           }}
         />
       )}
@@ -227,33 +176,6 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
               'inset 0 0 180px 40px rgba(34,211,238,0.22), inset 0 0 90px 24px rgba(168,85,247,0.18)',
           }}
         />
-      )}
-
-      {/* 4b. Indicador de oleada arriba al centro */}
-      {hud.waveNumber !== undefined && (
-        <div className="absolute left-1/2 top-4 -translate-x-1/2">
-          <div className="-skew-x-12 border border-white/25 bg-[#090314]/70 px-4 py-1 backdrop-blur-sm">
-            <div className="flex skew-x-12 items-center gap-2.5 text-[10px] font-black tracking-[0.26em]">
-              <span className="text-cyan-300">{t('hud.wave', { n: hud.waveNumber })}</span>
-              <span className="text-white/30">·</span>
-              <span
-                className={
-                  hud.waveLabel === 'BOSS'
-                    ? 'text-rose-400'
-                    : hud.waveLabel === 'MINIBOSS'
-                      ? 'text-amber-300'
-                      : 'text-white/80'
-                }
-              >
-                {(() => {
-                  const key = hud.waveLabel ? waveLabelKey(hud.waveLabel) : null;
-                  if (key) return t(key);
-                  return hud.waveLabel ?? t('enemies.waveBasic');
-                })()}
-              </span>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* 5. Visor central (visor.svg) */}
@@ -441,85 +363,20 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
         </svg>
       )}
 
-      {/* 7. Panel superior izquierdo — nivel, EXP, HP y EDÉN */}
-      <div className="absolute left-5 top-5 w-52">
-        <div className="flex items-baseline gap-2">
-          <span className="text-[10px] font-black tracking-[0.4em] text-white/45">
-            {t('hud.levelPrefix')}
-          </span>
-          <span className="text-2xl font-black italic leading-none tracking-tight text-white">
-            {hud.level}
-          </span>
-        </div>
-        <div className="mt-1.5 h-px w-full -skew-x-12 overflow-hidden bg-white/15">
-          <div
-            className="h-full bg-violet-300/90 transition-[width] duration-150"
-            style={{ width: `${expPct}%` }}
-          />
-        </div>
-
-        <Meter
-          label={t('hud.hp')}
-          value={hud.hp}
-          max={hud.maxHp}
-          barClass="bg-gradient-to-r from-[#ff6b5e] to-[#ff8f7a]"
-          glow="0 0 8px rgba(255,107,94,0.75)"
-        />
-        <Meter
-          label={t('hud.eden')}
-          value={hud.eden}
-          max={hud.maxEden}
-          barClass="bg-gradient-to-r from-cyan-300 to-violet-400"
-          glow="0 0 8px rgba(34,211,238,0.7)"
-          critical={edenCritical}
-          flash={hud.edenFlash}
-        />
-
-        {/* Brújula gravitatoria: indica dónde está el polo "abajo" de la
-            cúpula (-Y global) para no perder la orientación absoluta. */}
-        <div className="mt-2.5 flex items-center gap-2">
-          <svg width="34" height="34" viewBox="0 0 34 34" className="shrink-0 overflow-visible">
-            <circle
-              cx="17"
-              cy="17"
-              r="15"
-              fill="none"
-              stroke="rgba(255,255,255,0.22)"
-              strokeWidth="1"
-            />
-            <circle
-              cx="17"
-              cy="17"
-              r="10.5"
-              fill="none"
-              stroke="rgba(255,255,255,0.12)"
-              strokeWidth="0.6"
-              strokeDasharray="2 3"
-            />
-            <g
-              style={{
-                transform: `rotate(${hud.gravityCompassDeg}deg)`,
-                transformOrigin: '17px 17px',
-              }}
-            >
-              <line
-                x1="17"
-                y1="17"
-                x2="28"
-                y2="17"
-                stroke="#22d3ee"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-              />
-              <polygon points="27,13.6 32,17 27,20.4" fill="#22d3ee" />
-            </g>
-            <circle cx="17" cy="17" r="2" fill="#ffffff" />
-          </svg>
-          <span className="text-[8px] font-bold tracking-[0.24em] text-white/35">
-            {t('hud.gravityCompass')}
-          </span>
-        </div>
-      </div>
+      {/* 7. HUD yin-yang: vida, Edén, EXP, nivel y oleada */}
+      <DomeYinYangHud
+        hp={hud.hp}
+        maxHp={hud.maxHp}
+        eden={hud.eden}
+        maxEden={hud.maxEden}
+        exp={hud.exp}
+        expToNext={hud.expToNext}
+        level={hud.level}
+        waveNumber={hud.waveNumber}
+        waveLabel={hud.waveLabel}
+        audioRef={audioRef}
+        alertsEnabled={alertsEnabled}
+      />
 
       {/* 8. Selector inferior de 3 habilidades */}
       <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 gap-2.5">

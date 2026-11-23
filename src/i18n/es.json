@@ -74,7 +74,7 @@
     "speedAttackControls": "ATAQUE VELOCIDAD (2 EDÉN/S): CLIC IZQ (CON ENEMIGO EN MIRA = PATADA/TALADRO · SIN ENEMIGO = CAÍDA AL VACÍO) · ESPACIO CANCELAR CON FLIP",
     "gamepadConnected": "MANDO CONECTADO · OPTIONS PAUSA",
     "menuButton": "← MENÚ",
-    "gravityCompass": "GRAV"
+    "training": "ENTRENAMIENTO"
   },
   "pause": {
     "subtitle": "CÚPULA · SIMULACIÓN CONGELADA",

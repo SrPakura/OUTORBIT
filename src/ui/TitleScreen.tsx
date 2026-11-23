@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameSettings } from '@/game/settings';
+import { musicPlayer } from '@/game/audio/MusicPlayer';
 import { useI18n } from '@/i18n';
 import { TitleDioramaSandbox } from '@/ui/TitleDioramaSandbox';
 import ControlsModal from '@/ui/ControlsModal';
@@ -50,7 +51,15 @@ export default function TitleScreen({
   // Ajustes en vivo: bindings del sandbox + trama halftone del cosmos.
   useEffect(() => {
     sandboxRef.current?.setSettings(settings);
+    musicPlayer.setVolumeMultiplier(settings.masterVolume);
   }, [settings]);
+
+  // Música del menú: arranca al montar y sobrevive al cambio de pantalla (el
+  // bucle de la Cúpula la sustituye con crossfade). Si el navegador bloquea el
+  // autoplay, el reproductor la reintenta en el primer gesto del usuario.
+  useEffect(() => {
+    musicPlayer.play('menu');
+  }, []);
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden bg-[#05010f]">

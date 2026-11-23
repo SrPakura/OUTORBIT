@@ -426,7 +426,6 @@ export class NyxDomeController {
   private fovPunch = 0; // grados de zoom puntual en el impacto
   private impactFlash = 0; // 0..1 para el HUD
   private gyroSpinRad = 0; // ángulo acumulado de los arcos giroscópicos del visor
-  private gravityCompassDeg = 0; // polo "abajo" de la cúpula proyectado en pantalla
 
   // --- Slerp de nivelación del horizonte al aterrizar (0.45 s ease-out)
   private readonly camUpSmooth = new THREE.Vector3(0, 1, 0);
@@ -871,7 +870,6 @@ export class NyxDomeController {
       impactFlash: this.impactFlash,
       cameraRollDeg: this.cameraRollRad * (180 / Math.PI),
       gyroSpinRad: this.gyroSpinRad,
-      gravityCompassDeg: this.gravityCompassDeg,
       edenFlash: this.edenFlash,
       radarEnabled: this.radarEnabled,
       radarDots: this.radarDots,
@@ -2809,21 +2807,6 @@ export class NyxDomeController {
       camera.up.applyQuaternion(this.quat);
     }
     camera.lookAt(look);
-
-    // --- Brújula gravitatoria: dirección en pantalla del polo "abajo" de la
-    // cúpula (-Y global) proyectada sobre el plano de la cámara. 0° = derecha,
-    // 90° = abajo (convención CSS rotate).
-    this.tmpE.crossVectors(this.camFwd, camUp);
-    if (this.tmpE.lengthSq() > 1e-8) {
-      this.tmpE.normalize();
-      this.tmpB.crossVectors(this.tmpE, this.camFwd).normalize();
-      const compassX = -this.tmpE.y;
-      const compassY = this.tmpB.y;
-      // El roll de cámara gira el mundo en pantalla: se compensa para que la
-      // brújula siga apuntando al polo real.
-      this.gravityCompassDeg =
-        Math.atan2(compassY, compassX) * (180 / Math.PI) - totalRoll * (180 / Math.PI);
-    }
 
     // Frenesí: FOV dinámico con la velocidad + apertura del tirachinas + punch
     // de impacto (zoom corto). Durante el estiramiento el boost por velocidad

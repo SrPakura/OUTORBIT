@@ -10,6 +10,7 @@ import { DomeRunTracker, submitDomeRunToLeaderboard } from '@/game/dome/DomeRunS
 import type { DomeHudState } from '@/game/dome/domeTypes';
 import type { GameSettings } from '@/game/settings';
 import { SynthAudio } from '@/game/audio/SynthAudio';
+import { musicPlayer } from '@/game/audio/MusicPlayer';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
 import { startDomeGameLoop, type DomeLevelUpUiState, type DomeTrainingBridge } from '@/ui/domeGameLoop';
 import DomeHudSketch from '@/ui/DomeHudSketch';
@@ -58,7 +59,6 @@ const INITIAL_HUD: DomeHudState = {
   impactFlash: 0,
   cameraRollDeg: 0,
   gyroSpinRad: 0,
-  gravityCompassDeg: 90,
   edenFlash: 0,
 };
 
@@ -116,6 +116,7 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
   useEffect(() => {
     controllerRef.current?.applySettings(settings);
     audioRef.current?.setVolumeMultiplier(settings.masterVolume);
+    musicPlayer.setVolumeMultiplier(settings.masterVolume);
   }, [settings]);
 
   const handleSelectCard = useCallback(
@@ -246,6 +247,8 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
         hud={hud}
         onExit={onExit}
         hidePointerLockPrompt={levelUpState.isOpen || battleReport !== null || isPauseOpen || (training && debugPanelOpen)}
+        audioRef={audioRef}
+        alertsEnabled={!isPauseOpen && !levelUpState.isOpen && battleReport === null}
       />
       {training && (debugPanelOpen || isPauseOpen) && (
         <DomeTrainingPanel
