@@ -76,6 +76,12 @@ const RUN_SPEED = 7.4;
 const SLIDE_SPEED = 10.0;
 const GROUND_ACCEL_LAMBDA = 10;
 const GROUND_STICK_RANGE = 0.35;
+// Anti-tunneling: ningún sub-paso de integración avanza más de medio radio de
+// Nyx. A 31 m/s (Dash) o 34 m/s (Taladro) un frame de 60 Hz avanza ~0.55 m,
+// más que el radio de la esfera, y podría atravesar un triángulo del iceberg
+// sin llegar a tocarlo.
+const SUBSTEP_MAX_DIST = PLAYER_RADIUS * 0.5; // 0.225 m
+const SUBSTEP_MAX_COUNT = 6;
 const WALL_FLIP_ANGLE = 45 * DEG;
 const LAND_RECOVER_SPEED = 7;
 const JUMP_LAND_SPEED = 2;
@@ -87,6 +93,31 @@ const FLOAT_LAND_MAX_SPEED = 14; // contacto suave en flotación: aterriza
 const FLOAT_LAND_MIN_ALIGN = -0.25;
 const LAND_ALIGN_MIN = 0.35; // pies orientados a la superficie: aterriza
 const WALL_BOUNCE_KEEP = 0.45; // rebote lateral amortiguado al 45%
+
+// --- Rebotes especiales por tipo de impacto
+// Golpe a enemigo: arco acrobático (invierte al 32% + lift hacia arriba).
+const ENEMY_BOUNCE_KEEP = 0.32;
+const ENEMY_BOUNCE_LIFT_K = 0.25; // m/s de lift por m/s de impacto
+const ENEMY_BOUNCE_LIFT_MAX = 7; // tope del impulso ascendente
+const ENEMY_BOUNCE_ROLL = 0.2; // ±rad de Dutch roll cinético por golpe
+// Iceberg inferior de un slab: rebote elástico y despegue limpio de la roca.
+const ICEBERG_BOUNCE_KEEP = 0.55;
+const ICEBERG_BOUNCE_PUSH = 3.5; // m/s extra hacia la normal de la roca
+const ICEBERG_BOUNCE_ROLL = 0.24;
+const ICEBERG_WOBBLE = 0.85;
+// Pared/canto: rebote amortiguado con un empujón hacia arriba para no caer muerto.
+const WALL_BOUNCE_LIFT = 1.5; // m/s hacia this.up tras el golpe
+const WALL_BOUNCE_ROLL = 0.26;
+const WALL_WOBBLE = 0.75;
+// Barrera blanca: impacto masivo contra cristal energético.
+const DOME_BOUNCE_HIT_STOP = 0.065;
+const DOME_BOUNCE_FOV_PUNCH = -14;
+const DOME_BOUNCE_WOBBLE = 1.25;
+const DOME_BOUNCE_ROLL = 0.3;
+// Caída al Vacío: tambaleo extra en vuelo y onda de impacto al estrellarse.
+const VOID_WOBBLE_BONUS = 0.35;
+const VOID_IMPACT_FOV_PUNCH = -10;
+const VOID_IMPACT_WOBBLE = 1.0;
 
 // --- Flotación 0G
 const FLOAT_ACCEL = 13.5;
@@ -190,6 +221,13 @@ const LEDGE_GLANCE_DEPTH = 0.35; // penetración superficial = roce de canto
 const LEDGE_GLANCE_MIN_SPEED = 6;
 const LEDGE_GLANCE_PUSH = 0.6; // separación del canto
 const LEDGE_GLANCE_KEEP = 0.8; // 80% de velocidad conservada
+// --- Bordes de los suelos `oneSidedTop` (tapa pisable + raíz iceberg)
+const LEDGE_TOP_FACE_DOT = 0.35; // n·topDir mínimo para leer el contacto como tapa
+const LEDGE_TOP_PLANE_TOL = 0.15; // margen bajo el plano de la tapa para aterrizar en el borde
+const LEDGE_STICK_TOP_DOT = 0.65; // el sondeo de adherencia solo engancha caras superiores
+const LEDGE_GLANCE_UP_DOT = -0.2; // n·up por encima del cual el roce es de canto superior
+const LEDGE_GLANCE_UP_LIFT = 0.85; // cuánto se levanta el deslizamiento hacia arriba-afuera
+const LEDGE_GLANCE_UP_PUSH = 2.0; // m/s de empuje arriba-afuera del roce de canto
 const TOUCH_GO_EDEN_FRAC = 0.12; // +12% Edén instantáneo al tocar y despegar
 const TOUCH_GO_COOLDOWN = 2.5; // s por slab
 const TOUCH_GO_MIN_IMPACT = 3;
@@ -396,6 +434,7 @@ export class NyxDomeController {
   private wobbleTime = 0; // reloj procedural del tambaleo
   private dashWobbleImpulse = 0; // latigazo elástico del dash (decae exp(-7*dt))
   private impactWobbleImpulse = 0; // tambaleo contundente del impacto
+  private impactRollSign = 1; // alterna el lado del Dutch roll en cada golpe
 
   // --- Scratch (ninguno vive más allá de un helper o de un tramo de update)
   private readonly camFwd = new THREE.Vector3();
@@ -978,10 +1017,23 @@ export class NyxDomeController {
 
     // --- Integración (congelada durante el hit-stop)
     if (!hitStop) {
-      this.nyxRoot.position.addScaledVector(this.velocity, simDt);
-
-      // --- Colisiones con slabs (aterrizaje en cualquier superficie) y cúpula
-      this.resolveGround(slabs);
+      // Anti-tunneling: el avance del frame se divide en N sub-pasos de como
+      // mucho SUBSTEP_MAX_DIST, resolviendo la colisión en cada uno. Así la
+      // esfera nunca avanza más de 0.225 m entre comprobaciones y no
+      // atraviesa triángulos del iceberg en Dash (31 m/s) ni en Taladro
+      // (34 m/s), donde un frame de 60 Hz avanza ~0.55 m.
+      const stepDist = this.velocity.length() * simDt;
+      const subSteps =
+        stepDist > SUBSTEP_MAX_DIST
+          ? Math.min(SUBSTEP_MAX_COUNT, Math.ceil(stepDist / SUBSTEP_MAX_DIST))
+          : 1;
+      const subDt = simDt / subSteps;
+      for (let i = 0; i < subSteps; i++) {
+        this.nyxRoot.position.addScaledVector(this.velocity, subDt);
+        // --- Colisiones con slabs (aterrizaje en cualquier superficie)
+        this.resolveGround(slabs);
+      }
+      // --- Cúpula: una sola comprobación por frame (no depende del avance)
       this.resolveDomeBound();
     }
 
@@ -1594,8 +1646,23 @@ export class NyxDomeController {
     this.lockedEnemy = null;
     this.speedAttackKind = null;
     this.startKickRecover(isDrill ? 2 : 1);
-    // Rebote corto tras conectar: la voltereta frena la inercia.
-    this.velocity.multiplyScalar(-0.3);
+    // Rebote acrobático en arco: invierte el golpe al 32% y suma un impulso
+    // hacia arriba proporcional a la energía cinética del impacto, así la
+    // voltereta sale despegada en vez de frenar en seco.
+    this.velocity.multiplyScalar(-ENEMY_BOUNCE_KEEP);
+    this.velocity.addScaledVector(
+      this.up,
+      Math.min(ENEMY_BOUNCE_LIFT_MAX, impactSpeed * ENEMY_BOUNCE_LIFT_K),
+    );
+    // Dutch roll cinético: alterna el lado en cada golpe para que la voltereta
+    // nunca se sienta repetida.
+    this.impactRollSign = -this.impactRollSign;
+    this.rollImpulse = THREE.MathUtils.clamp(
+      this.rollImpulse + ENEMY_BOUNCE_ROLL * this.impactRollSign,
+      -CAM_ROLL_MAX,
+      CAM_ROLL_MAX,
+    );
+    this.vfx.spawnImpactRing(enemy.position, this.facing);
     this.audio?.playMelee();
   }
 
@@ -1891,9 +1958,28 @@ export class NyxDomeController {
         // Suelos oneSidedTop: solo la cara superior (+Y del slab) es pisable;
         // laterales y parte inferior de roca siempre rebotan.
         let isTopFace = true;
+        // Normal de aterrizaje: la de la tapa cuando el contacto es de borde
+        // superior, para que la arista diagonal no tuerza el aterrizaje.
+        const landNormal = this.tmpB.copy(n);
         if (this.contact.slab?.oneSidedTop) {
-          const topDir = this.tmpA.set(0, 1, 0).applyQuaternion(this.contact.slab.quaternion);
-          isTopFace = n.dot(topDir) > 0.65;
+          const slab = this.contact.slab;
+          const topDir = this.tmpA.set(0, 1, 0).applyQuaternion(slab.quaternion);
+          const topDot = n.dot(topDir);
+          isTopFace = topDot > 0.65;
+          if (topDot > LEDGE_TOP_FACE_DOT) {
+            // Borde superior: si el centro de Nyx está por encima del plano de
+            // la tapa, el roce con la arista cuenta como cara superior
+            // aterrizable (no como pared/iceberg) y se aterriza con `topDir`,
+            // nunca con la normal diagonal de la esquina.
+            const localY = this.tmpC
+              .copy(this.nyxRoot.position)
+              .sub(slab.center)
+              .dot(topDir);
+            if (localY >= slab.halfExtents.y - LEDGE_TOP_PLANE_TOL) {
+              isTopFace = true;
+              landNormal.copy(topDir);
+            }
+          }
         }
         // Aterrizaje real vs choque lateral según el alineamiento de los pies.
         const footAlign = this.up.dot(n);
@@ -1906,8 +1992,8 @@ export class NyxDomeController {
 
         if (canLand) {
           // Aterriza: esfera apoyada sobre la superficie, nunca al centro del slab.
-          this.nyxRoot.position.copy(this.contact.point).addScaledVector(n, PLAYER_RADIUS);
-          this.landOn(n, Math.max(0, -approach));
+          this.nyxRoot.position.copy(this.contact.point).addScaledVector(landNormal, PLAYER_RADIUS);
+          this.landOn(landNormal, Math.max(0, -approach));
         } else {
           // --- Ledge Glance: roce superficial contra el canto de un slab. En
           // vez de comerse un hit_stagger seco de pared, se desvía suave con
@@ -1917,15 +2003,28 @@ export class NyxDomeController {
           const superficial = this.contact.depth < LEDGE_GLANCE_DEPTH;
           const fastEnough = this.velocity.length() > LEDGE_GLANCE_MIN_SPEED;
           if (sideHit && superficial && fastEnough && this.bounceCooldown <= 0) {
+            // Roce de canto: se desliza hacia ARRIBA-AFUERA siguiendo la
+            // esquina (n + up) en vez de rebotar de plano. Así el roce no
+            // corta el vuelo ni se engancha en la arista, y un roce desde
+            // arriba-lado sale limpio por encima del borde.
+            const slide = this.tmpD.copy(n);
+            if (n.dot(this.up) > LEDGE_GLANCE_UP_DOT) {
+              slide.addScaledVector(this.up, LEDGE_GLANCE_UP_LIFT);
+            }
+            if (slide.lengthSq() < 1e-6) slide.copy(n);
+            slide.normalize();
             this.nyxRoot.position
               .copy(this.contact.point)
-              .addScaledVector(n, PLAYER_RADIUS + LEDGE_GLANCE_PUSH);
-            const vn = this.velocity.dot(n);
-            if (vn < 0) this.velocity.addScaledVector(n, -vn * 1.15);
+              .addScaledVector(slide, PLAYER_RADIUS + LEDGE_GLANCE_PUSH);
+            const vn = this.velocity.dot(slide);
+            if (vn < 0) this.velocity.addScaledVector(slide, -vn * 1.15);
+            // Empuje arriba-afuera del roce: la esquina expulsa a Nyx por
+            // encima del borde en vez de frenarla, así el vuelo no se corta.
+            this.velocity.addScaledVector(slide, LEDGE_GLANCE_UP_PUSH);
             this.velocity.multiplyScalar(LEDGE_GLANCE_KEEP);
-            this.vfx.spawnDustBurst(this.nyxRoot.position, n, 'glance');
+            this.vfx.spawnDustBurst(this.nyxRoot.position, slide, 'glance');
             this.rollImpulse = THREE.MathUtils.clamp(
-              this.rollImpulse + n.dot(this.camRight) * 0.1,
+              this.rollImpulse + slide.dot(this.camRight) * 0.1,
               -CAM_ROLL_MAX,
               CAM_ROLL_MAX,
             );
@@ -1938,9 +2037,28 @@ export class NyxDomeController {
           this.nyxRoot.position
             .copy(this.contact.point)
             .addScaledVector(n, PLAYER_RADIUS + 0.08);
+          // Caída al Vacío: el choque lateral también cierra el ataque con la
+          // onda de impacto de caída libre (se lee antes de limpiar el kind).
+          const wasVoidFall =
+            this.mode === 'speed_attack' && this.speedAttackKind === 'void_fall';
+          // Iceberg inferior de un slab flotante (roca viva) vs pared/canto:
+          // el rebote, la sacudida y el VFX son distintos.
+          const icebergHit =
+            this.contact.slab?.oneSidedTop === true &&
+            !isTopFace &&
+            this.up.dot(n) < -0.35;
           const vn = this.velocity.dot(n);
           if (vn < 0) this.velocity.addScaledVector(n, -2 * vn); // reflect
-          this.velocity.multiplyScalar(WALL_BOUNCE_KEEP);
+          if (icebergHit) {
+            // Rebote elástico + empuje de despegue limpio de la roca.
+            this.velocity.multiplyScalar(ICEBERG_BOUNCE_KEEP);
+            this.velocity.addScaledVector(n, ICEBERG_BOUNCE_PUSH);
+          } else {
+            // Pared/canto: rebote amortiguado con un empujón hacia arriba para
+            // no caer muerto tras el golpe.
+            this.velocity.multiplyScalar(WALL_BOUNCE_KEEP);
+            this.velocity.addScaledVector(this.up, WALL_BOUNCE_LIFT);
+          }
           if (this.mode === 'speed_attack') {
             this.lockedEnemy = null;
             this.redirectTargetEnemy = null;
@@ -1951,28 +2069,58 @@ export class NyxDomeController {
           this.groundedSlab = null;
           if (this.bounceCooldown <= 0) {
             this.playOneShot('hit_stagger');
-            this.vfx.spawnBurst(this.nyxRoot.position, n, 0xffc24d, 18);
-            this.shake = Math.max(this.shake, 0.22);
-            // Choque lateral fuerte: mini hit-stop, punch de FOV, flash y un
-            // impulso de Dutch roll que inclina el horizonte hacia fuera.
+            this.shake = Math.max(this.shake, icebergHit ? 0.3 : 0.22);
+            // Choque lateral fuerte: mini hit-stop, punch de FOV y flash.
             this.hitStopTimer = Math.max(this.hitStopTimer, HIT_STOP_KICK);
             this.fovPunch = Math.min(this.fovPunch, FOV_PUNCH_KICK);
             this.impactFlash = Math.max(this.impactFlash, 0.75);
-            this.rollImpulse = THREE.MathUtils.clamp(
-              this.rollImpulse + n.dot(this.camRight) * 0.18,
-              -CAM_ROLL_MAX,
-              CAM_ROLL_MAX,
-            );
+            if (icebergHit) {
+              // Sacudida vertical del rig: se hunde con la roca debajo y se
+              // invierte cuando el iceberg golpea desde arriba.
+              this.landingDip = n.y < 0 ? LANDING_DIP_MAX * 0.9 : -LANDING_DIP_MAX * 0.9;
+              this.rollImpulse = THREE.MathUtils.clamp(
+                this.rollImpulse +
+                  (n.dot(this.camRight) >= 0 ? ICEBERG_BOUNCE_ROLL : -ICEBERG_BOUNCE_ROLL),
+                -CAM_ROLL_MAX,
+                CAM_ROLL_MAX,
+              );
+              this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, ICEBERG_WOBBLE);
+              this.vfx.spawnIcebergImpact(this.nyxRoot.position, n);
+            } else {
+              // Dutch roll fuerte hacia el lado contrario al golpe.
+              this.rollImpulse = THREE.MathUtils.clamp(
+                this.rollImpulse + n.dot(this.camRight) * WALL_BOUNCE_ROLL,
+                -CAM_ROLL_MAX,
+                CAM_ROLL_MAX,
+              );
+              this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, WALL_WOBBLE);
+              this.vfx.spawnDustBurst(this.nyxRoot.position, n, 'glance');
+              this.vfx.spawnBurst(this.nyxRoot.position, n, 0xffc24d, 18);
+            }
             this.bounceCooldown = 0.4;
           }
+          if (wasVoidFall) this.voidFallImpact(n);
         }
         return;
       }
 
-      // Corrección posicional: esfera apoyada sobre la superficie.
-      this.nyxRoot.position.copy(this.contact.point).addScaledVector(n, PLAYER_RADIUS);
+      // Suelos oneSidedTop: si el contacto es con la parte superior —aunque
+      // sea la arista del borde, donde la normal sale diagonal— el marco de
+      // suelo se FIJA al +Y local del slab. Nyx camina plana hasta el último
+      // milímetro del borde y al salirse pasa limpio a floating sin inclinarse
+      // ni engancharse con la arista.
+      let groundN = n;
+      if (this.contact.slab?.oneSidedTop) {
+        const topDir = this.tmpA.set(0, 1, 0).applyQuaternion(this.contact.slab.quaternion);
+        if (n.dot(topDir) > LEDGE_TOP_FACE_DOT) {
+          groundN = topDir;
+        }
+      }
+      // Corrección posicional: esfera apoyada sobre la superficie (en la tapa
+      // se apoya sobre el plano, no sobre la arista diagonal).
+      this.nyxRoot.position.copy(this.contact.point).addScaledVector(groundN, PLAYER_RADIUS);
       if (approach < 0) this.velocity.addScaledVector(n, -approach);
-      this.groundNormal.copy(n);
+      this.groundNormal.copy(groundN);
       // Re-ancla al slab de contacto (puede ser otro suelo al caminar).
       this.groundedSlab = this.contact.slab;
       if (this.contact.slab) {
@@ -1994,28 +2142,40 @@ export class NyxDomeController {
       this.stickHitScratch,
     );
     if (stick) {
-      this.nyxRoot.position.copy(stick.point).addScaledVector(stick.normal, PLAYER_RADIUS);
-      this.groundNormal.copy(stick.normal);
-      // Mantiene el ancla fresca (y la cambia si caminó a otro suelo).
-      this.groundedSlab = stick.slab;
-      if (stick.slab) {
-        this.groundedSlabPrevPos.copy(stick.slab.center);
-        this.groundedSlabPrevQuat.copy(stick.slab.quaternion);
+      // Suelos oneSidedTop: el sondeo solo se engancha a la cara superior. Un
+      // impacto en la cara lateral del iceberg (justo al salir del borde) se
+      // ignora: Nyx pasa limpio a floating en vez de sufrir un tirón.
+      let stickTopFace = true;
+      if (stick.slab?.oneSidedTop) {
+        const topDir = this.tmpB.set(0, 1, 0).applyQuaternion(stick.slab.quaternion);
+        stickTopFace = stick.normal.dot(topDir) > LEDGE_STICK_TOP_DOT;
       }
-    } else {
-      // Te sales del borde: pasas a flotación 0G (no existe caída con gravedad).
-      this.mode = 'floating';
-      this.groundedSlab = null;
-      this.transitionCamUpTimer = 0;
-      this.slideTimer = 0;
-      this.aimForward.copy(this.facing).normalize();
-      this.aimUp.copy(this.up);
-      this.prevAimFwd.copy(this.aimForward);
+      if (stickTopFace) {
+        this.nyxRoot.position.copy(stick.point).addScaledVector(stick.normal, PLAYER_RADIUS);
+        this.groundNormal.copy(stick.normal);
+        // Mantiene el ancla fresca (y la cambia si caminó a otro suelo).
+        this.groundedSlab = stick.slab;
+        if (stick.slab) {
+          this.groundedSlabPrevPos.copy(stick.slab.center);
+          this.groundedSlabPrevQuat.copy(stick.slab.quaternion);
+        }
+        return;
+      }
     }
+
+    // Te sales del borde: pasas a flotación 0G (no existe caída con gravedad).
+    this.mode = 'floating';
+    this.groundedSlab = null;
+    this.transitionCamUpTimer = 0;
+    this.slideTimer = 0;
+    this.aimForward.copy(this.facing).normalize();
+    this.aimUp.copy(this.up);
+    this.prevAimFwd.copy(this.aimForward);
   }
 
   private landOn(normal: THREE.Vector3, impact: number): void {
     const prevMode = this.mode;
+    const prevAttackKind = this.speedAttackKind;
     const angle = Math.acos(THREE.MathUtils.clamp(this.up.dot(normal), -1, 1));
 
     // Horizonte: guarda el up de vuelo y arranca el slerp de nivelación de
@@ -2118,6 +2278,26 @@ export class NyxDomeController {
         this.vfx.spawnEdenPulse(this.nyxRoot.position, normal);
       }
     }
+
+    // --- Onda de impacto de Caída al Vacío: aterrizar viniendo del picado a
+    // velocidad terminal se siente como un meteorito (tambaleo máximo, zoom
+    // punch, hundimiento al tope, anillo violeta/cian y polvo anime).
+    if (prevMode === 'speed_attack' && prevAttackKind === 'void_fall') {
+      this.voidFallImpact(normal);
+    }
+  }
+
+  /**
+   * Onda de impacto de Caída al Vacío: el golpe de gravedad al final del
+   * picado. Se comparte entre el aterrizaje y el choque lateral para que
+   * estrellarse contra un slab o contra una pared se sienta igual de brutal.
+   */
+  private voidFallImpact(normal: THREE.Vector3): void {
+    this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, VOID_IMPACT_WOBBLE);
+    this.fovPunch = Math.min(this.fovPunch, VOID_IMPACT_FOV_PUNCH);
+    this.landingDip = -LANDING_DIP_MAX;
+    this.vfx.spawnVoidImpactRing(this.nyxRoot.position, normal);
+    this.vfx.spawnDustBurst(this.nyxRoot.position, normal, 'land');
   }
 
   private resolveDomeBound(): void {
@@ -2155,6 +2335,18 @@ export class NyxDomeController {
     );
     this.domeBounceFlash = 1;
     this.shake = Math.max(this.shake, 0.35);
+    // Impacto masivo contra cristal energético: hit-stop corto, zoom punch,
+    // flash a tope, tambaleo máximo y Dutch roll lateral proporcional al
+    // ángulo de choque (n es la radial saliente de la cúpula).
+    this.hitStopTimer = Math.max(this.hitStopTimer, DOME_BOUNCE_HIT_STOP);
+    this.fovPunch = Math.min(this.fovPunch, DOME_BOUNCE_FOV_PUNCH);
+    this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, DOME_BOUNCE_WOBBLE);
+    this.impactFlash = 1.0;
+    this.rollImpulse = THREE.MathUtils.clamp(
+      this.rollImpulse + n.dot(this.camRight) * DOME_BOUNCE_ROLL,
+      -CAM_ROLL_MAX,
+      CAM_ROLL_MAX,
+    );
     this.bounceCooldown = 0.6;
     this.audio?.playBounce();
     this.audio?.playHurt();
@@ -2434,7 +2626,10 @@ export class NyxDomeController {
     this.wobbleTime += dt;
     const wt = this.wobbleTime;
     const hoverBase = this.mode === 'floating' ? 0.3 : 0;
-    const g = Math.max(hoverBase, clamp01((speed - 4) / 14));
+    // Caída al Vacío: el picado a velocidad terminal suma un plus de tambaleo
+    // de alta velocidad encima de la fuerza G.
+    const voidBoost = this.speedAttackKind === 'void_fall' ? VOID_WOBBLE_BONUS : 0;
+    const g = Math.max(hoverBase, clamp01((speed - 4) / 14) + voidBoost);
     const dashOsc = Math.sin(wt * 34) * this.dashWobbleImpulse;
     const impactOsc = Math.sin(wt * 26 + 0.6) * this.impactWobbleImpulse;
     this.dashWobbleImpulse *= Math.exp(-7 * dt);

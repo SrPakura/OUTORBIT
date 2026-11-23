@@ -131,6 +131,21 @@ const STYLE_DUST_SLIDE: BurstStyle = {
   alpha: 0.8,
 };
 
+/** Polvo de roca del iceberg inferior: gris frío, pesado y con caída. */
+const STYLE_DUST_ROCK: BurstStyle = {
+  color: 0x8d99ae,
+  count: 14,
+  speedMin: 2.2,
+  speedMax: 5.4,
+  lifeMin: 0.4,
+  lifeMax: 0.85,
+  drag: 3.6,
+  gravity: -1.6,
+  spread: 1,
+  size: 0.5,
+  alpha: 0.9,
+};
+
 const STYLE_WAKE: BurstStyle = {
   color: 0xd9e6ff,
   count: 8,
@@ -448,9 +463,47 @@ export class MotionVfxSystem {
     this.sparks.spawn(position, normal ?? null, STYLE_SPARK);
   }
 
-  /** Anillo expansivo en el punto de rebote contra la barrera blanca. */
+  /**
+   * Rebote contra la barrera blanca: doble anillo (blanco grande + rojo rápido)
+   * y ráfaga de chispas hacia el interior de la cúpula, como cristal energético
+   * que se estrella y se recompone.
+   */
   spawnDomeBounceRing(position: THREE.Vector3, normal: THREE.Vector3): void {
     this.spawnRing(position, normal, 0xffffff, 8, 0.7, 0.9);
+    this.spawnRing(position, normal, 0xff4d6d, 4.5, 0.32, 0.95);
+    STYLE_SPARK.color = 0x9be8ff;
+    STYLE_SPARK.count = 26;
+    this.sparks.spawn(position, normal, STYLE_SPARK);
+  }
+
+  /**
+   * Anillo de impacto de patada/taladro: la onda dorada/blanca que se abre en
+   * el punto exacto donde Nyx conecta, encima de las chispas.
+   */
+  spawnImpactRing(position: THREE.Vector3, normal: THREE.Vector3): void {
+    this.spawnRing(position, normal, 0xffc24d, 4.2, 0.42, 0.95);
+    this.spawnRing(position, normal, 0xffffff, 2.4, 0.3, 0.8);
+  }
+
+  /**
+   * Choque contra el iceberg inferior de un slab: polvo de roca gris, bocanada
+   * anime y chispas frías de pedernal.
+   */
+  spawnIcebergImpact(position: THREE.Vector3, normal: THREE.Vector3): void {
+    this.dust.spawn(position, normal, STYLE_DUST_ROCK);
+    this.dust.spawn(position, normal, STYLE_DUST_LAND);
+    STYLE_SPARK.color = 0xdbeafe;
+    STYLE_SPARK.count = 16;
+    this.sparks.spawn(position, normal, STYLE_SPARK);
+  }
+
+  /**
+   * Onda de impacto de Caída al Vacío: doble anillo violeta/cian que se abre
+   * al estrellarse tras el picado a velocidad terminal.
+   */
+  spawnVoidImpactRing(position: THREE.Vector3, normal: THREE.Vector3): void {
+    this.spawnRing(position, normal, 0xa855f7, 7.5, 0.6, 0.9);
+    this.spawnRing(position, normal, 0x22d3ee, 4.6, 0.42, 0.85);
   }
 
   /**

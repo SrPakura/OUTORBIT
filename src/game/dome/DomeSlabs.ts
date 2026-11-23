@@ -35,6 +35,14 @@ const _meshEdge1 = new THREE.Vector3();
 const _meshCross = new THREE.Vector3();
 const _meshQ = new THREE.Vector3();
 
+/**
+ * Margen de expulsión (m de mundo) cuando el centro de la esfera queda DENTRO
+ * del volumen del iceberg: la separación resultante supera siempre la
+ * superficie, así Nyx nunca queda atrapada dentro de un slab que se le echa
+ * encima.
+ */
+const ICEBERG_EXPEL_MARGIN = 0.06;
+
 /** Punto más cercano en un triángulo 2D (plano XZ local) sin allocations. */
 function closestPointOnTriangle2D(
   px: number,
@@ -287,9 +295,30 @@ function resolveSphereExactMeshDepth(
     if (depthLocal <= 0) return 0;
     _bestNormal.copy(_delta).divideScalar(d);
   } else {
-    // Centro DENTRO de la malla cerrada: expulsa por la normal de la cara.
+    // Centro DENTRO de la malla cerrada (un slab móvil se ha metido encima):
+    // expulsa por la normal de la cara, garantizando que apunte HACIA FUERA
+    // del volumen del iceberg. Una cara con el winding invertido no debe
+    // empujar a Nyx más adentro.
     depthLocal = localRadius + d;
     _bestNormal.copy(_meshNormal);
+    // El centro del slab es el origen local: si la normal de la cara apunta
+    // hacia él, la cara mira hacia dentro y hay que invertirla.
+    if (_bestNormal.dot(_meshClosest) < 0) {
+      _bestNormal.negate();
+    }
+    // Última red: si aun así empuja hacia el centro del slab, se expulsa
+    // radialmente desde el centro hacia la posición de la esfera.
+    if (_bestNormal.dot(_local) < 0) {
+      const lenSq = _local.lengthSq();
+      if (lenSq > 1e-12) {
+        _bestNormal.copy(_local).multiplyScalar(1 / Math.sqrt(lenSq));
+      } else {
+        _bestNormal.set(0, 1, 0);
+      }
+    }
+    // Margen de seguridad (en unidades locales): la esfera sale siempre un
+    // poco más allá de la superficie y nunca queda atrapada en el volumen.
+    depthLocal += ICEBERG_EXPEL_MARGIN / scale;
   }
   // Punto de contacto en local YA escalado para la conversión común a mundo.
   _bestPoint.copy(_meshClosest).multiplyScalar(scale);
