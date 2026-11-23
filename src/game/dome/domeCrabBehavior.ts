@@ -41,7 +41,6 @@ const CRAB_AIR_DAMPING = 3.0; // Fricción del desvío por knockback en vuelo (1
 const CRAB_LEG_WAVE_SPEED = 14.0; // Velocidad del aleteo de patas en vuelo.
 const CRAB_FLIGHT_WOBBLE = 0.12; // Guiñeo ligero del cuerpo en vuelo (rad).
 const CRAB_FLIGHT_WOBBLE_SPEED = 2.7; // Frecuencia del guiñeo de vuelo (rad/s).
-export const CRAB_STAND_HEIGHT = 1.0; // Altura del cuerpo sobre la cara superior del slab (m).
 
 // ============================================================================
 // Tipos, helpers de slab y scratch
@@ -438,7 +437,7 @@ function startCrabJump(
   pickSlabLocalPoint(target, Math.random, targetLocal);
   slabTopPoint(target, targetLocal, _targetPos);
   _slabUp.set(0, 1, 0).applyQuaternion(target.quaternion);
-  _targetPos.addScaledVector(_slabUp, CRAB_STAND_HEIGHT);
+  _targetPos.addScaledVector(_slabUp, internal.standHeight);
   const dist = enemy.position.distanceTo(_targetPos);
   internal.jump = {
     from: enemy.position.clone(),
@@ -485,7 +484,7 @@ function updateCrabJump(
   // Aterrizaje sobre la cara superior del slab destino (sigue su bob).
   slabTopPoint(targetSlab, jump.targetLocal, _targetPos);
   _slabUp.set(0, 1, 0).applyQuaternion(targetSlab.quaternion);
-  _targetPos.addScaledVector(_slabUp, CRAB_STAND_HEIGHT);
+  _targetPos.addScaledVector(_slabUp, internal.standHeight);
 
   // Arco parabólico: línea despegue→aterrizaje más la altura del salto.
   enemy.position.lerpVectors(jump.from, _targetPos, t);
@@ -519,10 +518,12 @@ function updateCrabOnSlab(
     enemy.velocity.multiplyScalar(Math.exp(-CRAB_SKID_DAMPING * dt));
   }
 
-  // Anclaje a la cara superior (+Y local) del slab.
+  // Anclaje a la cara superior (+Y local) del slab: el origen sube la altura
+  // de apoyo medida sobre el modelo ya skinneado, así las almohadillas de las
+  // 5 patas tocan la tapa sin flotar ni hundirse.
   slabTopPoint(slab, internal.slabLocalOffset, _targetPos);
   _slabUp.set(0, 1, 0).applyQuaternion(slab.quaternion);
-  _targetPos.addScaledVector(_slabUp, CRAB_STAND_HEIGHT);
+  _targetPos.addScaledVector(_slabUp, internal.standHeight);
   if (internal.attachBlend < 1) {
     internal.attachBlend = Math.min(1, internal.attachBlend + dt / CRAB_ATTACH_BLEND_TIME);
     const t = internal.attachBlend;

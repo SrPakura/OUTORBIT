@@ -346,6 +346,90 @@ export interface EnemyVisual {
    * vibrante): el caller debe avanzarles `uTime` cada frame.
    */
   animatedMaterials: THREE.ShaderMaterial[];
+  /**
+   * Altura del origen del modelo sobre el suelo (m): `-min.y` medido con el
+   * esqueleto aplicado más la holgura anti z-fighting. El caller coloca el
+   * origen a `suelo + standHeight` para que el punto más bajo del modelo
+   * apoye sobre la superficie sin flotar ni hundirse.
+   */
+  standHeight: number;
+}
+
+/** Holgura anti z-fighting al apoyar el modelo sobre una superficie (m). */
+const GROUND_CLEARANCE = 0.002;
+
+/**
+ * Punto más bajo del modelo con el esqueleto YA aplicado, en espacio local de
+ * `root` (m).
+ *
+ * Los vértices crudos del GLB no sirven para apoyar al enemigo: el hueso
+ * `root` del cangrejo lleva `y = +0.30` y su matriz inversa de bind lo
+ * compensa, así que el mínimo real solo aparece al skinar. Se recorre cada
+ * `SkinnedMesh` con `applyBoneTransform` —la misma transformación que aplica
+ * el vertex shader— y se toma el mínimo de Y; las mallas estáticas usan su
+ * `matrixWorld`. Los contornos de tinta se saltan: comparten geometría con la
+ * carne y se extruyen fuera de la silueta real.
+ *
+ * Debe llamarse sobre un `root` recién instanciado (transform identidad).
+ */
+function measureModelMinY(root: THREE.Object3D): number {
+  root.updateMatrixWorld(true);
+  let minY = Infinity;
+  const vertex = new THREE.Vector3();
+  const skinned = new THREE.Vector3();
+  root.traverse((obj) => {
+    if (obj.name === OUTLINE_MARKER) {
+      return;
+    }
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) {
+      return;
+    }
+    const position = mesh.geometry.getAttribute('position');
+    if (!position) {
+      return;
+    }
+    const skin = obj as THREE.SkinnedMesh;
+    if (skin.isSkinnedMesh) {
+      skin.skeleton.update();
+      skin.updateMatrixWorld(true);
+      for (let i = 0; i < position.count; i++) {
+        vertex.fromBufferAttribute(position, i);
+        skin.applyBoneTransform(i, skinned.copy(vertex));
+        skinned.applyMatrix4(skin.matrixWorld);
+        if (skinned.y < minY) {
+          minY = skinned.y;
+        }
+      }
+      return;
+    }
+    for (let i = 0; i < position.count; i++) {
+      vertex.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+      if (vertex.y < minY) {
+        minY = vertex.y;
+      }
+    }
+  });
+  return minY;
+}
+
+/** Altura de apoyo de un modelo recién instanciado (m): `-min.y` + holgura. */
+export function measureStandHeight(root: THREE.Object3D): number {
+  const minY = measureModelMinY(root);
+  return (Number.isFinite(minY) ? -minY : 0) + GROUND_CLEARANCE;
+}
+
+/** Altura de apoyo por arquetipo: el bind pose es idéntico en cada clon. */
+const standHeightCache = new Map<EnemyArchetype, number>();
+
+function cachedStandHeight(archetype: EnemyArchetype, root: THREE.Object3D): number {
+  const cached = standHeightCache.get(archetype);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const standHeight = measureStandHeight(root);
+  standHeightCache.set(archetype, standHeight);
+  return standHeight;
 }
 
 /** Nombres de material de una malla, concatenados para la detección por nombre. */
@@ -371,6 +455,10 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
   const root = (
     cached.hasSkinnedMesh ? cloneSkinned(cached.scene) : cached.scene.clone(true)
   ) as THREE.Group;
+
+  // Altura de apoyo medida sobre el clon con su esqueleto ya instanciado,
+  // antes de vestir las mallas (los contornos aún no existen).
+  const standHeight = cachedStandHeight(archetype, root);
 
   const starCores: THREE.Object3D[] = [];
   const animatedMaterials: THREE.ShaderMaterial[] = [];
@@ -431,7 +519,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
     }
   }
 
-  return { root, starCores, mixer, animatedMaterials };
+  return { root, starCores, mixer, animatedMaterials, standHeight };
 }
 
 /** Libera las escenas GLB cacheadas (geometrías y materiales originales). */
@@ -458,6 +546,7 @@ export function disposeEnemyModelCache(): void {
   }
   modelCache.clear();
   pendingLoads.clear();
+  standHeightCache.clear();
 }
 
 // ============================================================================

@@ -14,6 +14,7 @@ import {
   collectNecrozmaRig,
   collectSparrowRig,
   instantiateEnemyVisual,
+  measureStandHeight,
   onEnemyModelLoaded,
   preloadEnemyModels,
   STAR_CORE_EMISSIVE,
@@ -36,7 +37,6 @@ import {
 } from './domeKronosBehavior';
 import {
   computeCrabMuzzle,
-  CRAB_STAND_HEIGHT,
   pickCrabSpawnSlab,
   pickSlabLocalPoint,
   slabTopPoint,
@@ -504,6 +504,12 @@ export interface EnemyInternal {
   turretForward: THREE.Vector3;
   /** Cangrejo: id del slab al que está pegado (null = flotación suave). */
   attachedSlabId: string | null;
+  /**
+   * Altura del origen del modelo sobre el suelo (m): `-min.y` medido sobre el
+   * modelo ya instanciado con su esqueleto aplicado. El cangrejo la usa para
+   * apoyar las almohadillas de las 5 patas en la tapa del slab.
+   */
+  standHeight: number;
   /** Cangrejo: offset local (lx, lz) dentro del slab para no salirse del borde. */
   slabLocalOffset: THREE.Vector2;
   /** Cangrejo: progreso 0..1 del aterrizaje en el slab actual. */
@@ -755,6 +761,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       internal.starCores = glbVisual.starCores;
       internal.mixer = glbVisual.mixer;
       internal.isGlb = true;
+      // Altura de apoyo del GLB real: el cangrejo recoloca sus patas sobre la
+      // tapa del slab en el siguiente frame con la medida ya skinneada.
+      internal.standHeight = glbVisual.standHeight;
       // Huesos procedurales del GLB: tentáculos del pulpo, patas y cañón del cangrejo.
       internal.tentacles = collectTentacleBones(glbVisual.root);
       internal.legs = collectLegBones(glbVisual.root);
@@ -793,6 +802,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     let starCores: THREE.Object3D[] = [];
     let mixer: THREE.AnimationMixer | undefined;
     let animatedMaterials: THREE.ShaderMaterial[] = [];
+    let standHeight: number;
 
     if (glbVisual) {
       mesh = glbVisual.root;
@@ -801,6 +811,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       mixer = glbVisual.mixer;
       animatedMaterials = glbVisual.animatedMaterials;
       material = findBodyMaterial(glbVisual.root);
+      standHeight = glbVisual.standHeight;
     } else {
       material = createComicCelMaterial(visual.color, {
         rimColor: visual.rim,
@@ -823,6 +834,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       fallbackMesh.add(star);
       starCores = [star];
       mesh = fallbackMesh;
+      standHeight = measureStandHeight(fallbackMesh);
     }
 
     // Posición de aparición: anillo distribuido + jitter determinista, o la
@@ -847,7 +859,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         pickSlabLocalPoint(slab, rng, slabLocalOffset);
         slabTopPoint(slab, slabLocalOffset, homePos);
         _slabUp.set(0, 1, 0).applyQuaternion(slab.quaternion);
-        homePos.addScaledVector(_slabUp, CRAB_STAND_HEIGHT);
+        homePos.addScaledVector(_slabUp, standHeight);
         attachedSlabId = slab.id;
       }
     }
@@ -889,6 +901,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       turretNode: turretRig?.node ?? null,
       turretForward: turretRig ? turretRig.forward : new THREE.Vector3(0, 0, 1),
       attachedSlabId,
+      standHeight,
       slabLocalOffset,
       attachBlend: attachedSlabId ? 1 : 0,
       attachFrom: homePos.clone(),
