@@ -16,6 +16,7 @@ import { NyxDomeController } from '@/game/dome/NyxDomeController';
 import { startDomeGameLoop, type DomeLevelUpUiState, type DomeTrainingBridge } from '@/ui/domeGameLoop';
 import DomeHudSketch from '@/ui/DomeHudSketch';
 import DomeLevelUpSequence from '@/ui/DomeLevelUpSequence';
+import SettingsScreen from '@/ui/SettingsScreen';
 import DomeBattleReport, { type DomeBattleReportData } from '@/ui/DomeBattleReport';
 import DomePauseModal from '@/ui/DomePauseModal';
 import DomeTrainingPanel, { type TrainingSlotInfo } from '@/ui/DomeTrainingPanel';
@@ -23,6 +24,8 @@ import DomeTrainingPanel, { type TrainingSlotInfo } from '@/ui/DomeTrainingPanel
 interface DomeGameViewProps {
   settings: GameSettings;
   onExit: () => void;
+  /** Aplica y persiste los ajustes al instante (vive en App.tsx). */
+  onUpdateSettings: (settings: GameSettings) => void;
   /**
    * Modo Entrenamiento / Debug: Nyx inmortal, Edén +25/s, sin oleadas
    * automáticas y un único enemigo intercambiable gestionado desde el panel
@@ -63,7 +66,7 @@ const INITIAL_HUD: DomeHudState = {
   edenFlash: 0,
 };
 
-export default function DomeGameView({ settings, onExit, trainingMode }: DomeGameViewProps) {
+export default function DomeGameView({ settings, onExit, onUpdateSettings, trainingMode }: DomeGameViewProps) {
   const training = trainingMode ?? false;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const controllerRef = useRef<NyxDomeController | null>(null);
@@ -91,6 +94,10 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
   const [isPauseOpen, setIsPauseOpen] = useState(false);
   const pauseOpenRef = useRef(false);
   pauseOpenRef.current = isPauseOpen;
+  // Pantalla de ajustes abierta desde la pausa (la pausa sigue debajo).
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpenRef = useRef(false);
+  settingsOpenRef.current = settingsOpen;
   // Recuerda si el jugador ya bloqueó el ratón en esta run: permite abrir la
   // pausa desde pointerlockchange aunque el navegador consuma la tecla ESC.
   const hadPointerLockRef = useRef(false);
@@ -116,8 +123,8 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
 
   useEffect(() => {
     controllerRef.current?.applySettings(settings);
-    audioRef.current?.setVolumeMultiplier(settings.masterVolume);
-    musicPlayer.setVolumeMultiplier(settings.masterVolume);
+    audioRef.current?.setVolumeMultiplier(settings.masterVolume * settings.sfxVolume);
+    musicPlayer.setVolumeMultiplier(settings.masterVolume * settings.musicVolume);
   }, [settings]);
 
   const handleSelectCard = useCallback(
@@ -224,6 +231,7 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
       levelUpOpenRef,
       battleReportOpenRef,
       pauseOpenRef,
+      settingsOpenRef,
       debugPanelOpenRef,
       hadPointerLockRef,
     });
@@ -268,14 +276,22 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
         />
       )}
       <DomePauseModal
-        isOpen={isPauseOpen}
+        isOpen={isPauseOpen && !settingsOpen}
         waveNumber={hud.waveNumber}
         waveLabel={hud.waveLabel}
         level={hud.level}
         onResume={handlePauseResume}
+        onOpenSettings={() => setSettingsOpen(true)}
         onRestart={handlePauseRestart}
         onExitToMenu={onExit}
       />
+      {settingsOpen && (
+        <SettingsScreen
+          settings={settings}
+          onClose={() => setSettingsOpen(false)}
+          onUpdateSettings={onUpdateSettings}
+        />
+      )}
       <DomeLevelUpSequence
         key={levelUpState.newLevel}
         isOpen={levelUpState.isOpen}

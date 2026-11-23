@@ -4,7 +4,7 @@
     "play": "PLAY",
     "training": "Training",
     "trainingDebug": "[Debug]",
-    "controls": "Modify controls",
+    "controls": "Settings",
     "leaderboard": "Leaderboard",
     "nyxLabel": "Nyx:",
     "nyxTagline": "NYX // ZERO-G GRAVITY ROGUELITE",
@@ -12,17 +12,6 @@
     "languageEn": "ENGLISH"
   },
   "controls": {
-    "title": "MODIFY CONTROLS",
-    "subtitle": "Persistent settings · applied to the menu and the game",
-    "restoreDefaults": "RESTORE DEFAULTS",
-    "saveApply": "SAVE & APPLY",
-    "tabKeyboard": "KEYBOARD / MOUSE",
-    "tabGamepad": "GAMEPAD (PS4 / GENERIC)",
-    "mouseSensitivity": "Mouse sensitivity",
-    "fov": "Field of view (FOV)",
-    "volume": "Audio volume",
-    "invertY": "Invert Y axis",
-    "halftone": "Halftone pattern (comic)",
     "keyboardHint": "Sensitivity and the Y axis affect the in-game camera; FOV and the halftone pattern are visible instantly in the diorama and in the game.",
     "keyBindings": "Key bindings",
     "pressKey": "PRESS KEY...",
@@ -83,22 +72,9 @@
     "orbitStable": "STABLE ORBIT",
     "level": "LEVEL {{n}}",
     "resume": "RESUME",
-    "controls": "CONTROLS",
     "restart": "RESTART ORBIT",
     "exit": "EXIT TO TITLE",
-    "controlsSubtitle": "DOME · PILOT MANUAL",
-    "back": "BACK",
-    "controlsList": {
-      "wasd": { "keys": "WASD", "action": "Thrust / walk" },
-      "mouse": { "keys": "MOUSE", "action": "Camera / aim visor" },
-      "leftClick": { "keys": "LEFT CLICK", "action": "Speed Attack / Drill ≥ 14.5 m/s / Throw rock" },
-      "rightClick": { "keys": "RIGHT CLICK", "action": "Dash / Redirection in Bullet Time" },
-      "space": { "keys": "SPACE", "action": "Take off from the ground / Air brake with flips" },
-      "slots": { "keys": "1 / 2 / 3", "action": "Choose slot" },
-      "skill": { "keys": "Q", "action": "Activate skill" },
-      "radar": { "keys": "TAB", "action": "Enemy radar ON/OFF (red dots on screen)" },
-      "pause": { "keys": "ESC / P", "action": "Pause" }
-    }
+    "settings": "SETTINGS"
   },
   "levelUp": {
     "banner": "LEVEL UP!",
@@ -123,6 +99,26 @@
       "activeUpgrade": "UPGRADE +1 LV.",
       "passive": "PASSIVE"
     }
+  },
+  "settings": {
+    "title": "SETTINGS",
+    "subtitle": "CONFIGURATION · APPLIED INSTANTLY",
+    "close": "CLOSE",
+    "tabGeneral": "GENERAL",
+    "tabKeyboard": "KEYBOARD & MOUSE",
+    "tabGamepad": "GAMEPAD",
+    "sectionCamera": "Camera",
+    "sectionAudio": "Audio",
+    "sectionVisual": "Visual",
+    "mouseSensitivity": "Mouse sensitivity",
+    "fov": "Field of view (FOV)",
+    "masterVolume": "Master volume",
+    "musicVolume": "Music volume",
+    "sfxVolume": "Sounds & effects volume",
+    "invertY": "Invert Y axis",
+    "halftone": "Halftone pattern (comic)",
+    "language": "Language",
+    "restoreAll": "RESTORE ALL DEFAULTS"
   },
   "skills": {
     "gravityField": "Gravity Field",

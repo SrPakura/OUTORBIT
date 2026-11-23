@@ -77,6 +77,7 @@ export interface DomeGameLoopParams {
   levelUpOpenRef: { current: boolean };
   battleReportOpenRef: { current: boolean };
   pauseOpenRef: { current: boolean };
+  settingsOpenRef: { current: boolean };
   debugPanelOpenRef: { current: boolean };
   hadPointerLockRef: { current: boolean };
 }
@@ -105,6 +106,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     levelUpOpenRef,
     battleReportOpenRef,
     pauseOpenRef,
+    settingsOpenRef,
     debugPanelOpenRef,
     hadPointerLockRef,
   } = params;
@@ -610,6 +612,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       return;
     }
     if (e.code === 'Escape' || e.code === 'KeyP') {
+      // Con la pantalla de ajustes abierta, ESC la cierra a ella (su propio
+      // listener); el menú de pausa que hay debajo no debe moverse.
+      if (settingsOpenRef.current) return;
       if (levelUpOpenRef.current || battleReportOpenRef.current) return;
       if (pauseOpenRef.current) {
         setIsPauseOpen(false);
@@ -666,7 +671,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     // Círculo (B). El resto de botones los consume el controlador al jugar.
     gamepad.update();
     if (gamepad.justPressedAction('pause')) {
-      if (!levelUpOpenRef.current && !battleReportOpenRef.current) {
+      if (!levelUpOpenRef.current && !battleReportOpenRef.current && !settingsOpenRef.current) {
         if (pauseOpenRef.current) {
           // Reanudar con mando NO captura el ratón: se puede seguir jugando
           // solo con el mando y el puntero libre.
@@ -678,7 +683,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           }
         }
       }
-    } else if (pauseOpenRef.current && gamepad.justPressed(1)) {
+    } else if (pauseOpenRef.current && !settingsOpenRef.current && gamepad.justPressed(1)) {
       setIsPauseOpen(false);
     }
 

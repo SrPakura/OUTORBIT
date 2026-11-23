@@ -80,6 +80,10 @@ export interface GameSettings {
   baseFov: number;
   /** Multiplicador de volumen sobre el volumen base de SynthAudio (0 .. 1.5). */
   masterVolume: number;
+  /** Volumen específico de la música (0 .. 1.5), multiplicado con el general. */
+  musicVolume: number;
+  /** Volumen específico de sonidos y efectos (0 .. 1.5), multiplicado con el general. */
+  sfxVolume: number;
   /** Trama halftone cómic en los materiales cel y en el cielo. */
   halftonesEnabled: boolean;
   /** Tecla primaria de cada acción (valores de `KeyboardEvent.code`). */
@@ -97,6 +101,8 @@ export const SETTINGS_LIMITS = {
   mouseSensitivity: { min: 0.25, max: 2.5 },
   baseFov: { min: 55, max: 85 },
   masterVolume: { min: 0, max: 1.5 },
+  musicVolume: { min: 0, max: 1.5 },
+  sfxVolume: { min: 0, max: 1.5 },
   gamepadSensitivity: { min: 0.5, max: 3.0 },
   gamepadDeadzone: { min: 0.05, max: 0.35 },
 } as const;
@@ -140,6 +146,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
   invertY: false,
   baseFov: 70,
   masterVolume: 1.0,
+  musicVolume: 1.0,
+  sfxVolume: 1.0,
   halftonesEnabled: true,
   bindings: { ...DEFAULT_BINDINGS },
   gamepadSensitivity: 1.4,
@@ -264,6 +272,18 @@ function sanitizeSettings(raw: unknown): GameSettings {
       SETTINGS_LIMITS.masterVolume.min,
       SETTINGS_LIMITS.masterVolume.max,
       DEFAULT_SETTINGS.masterVolume
+    ),
+    musicVolume: clampNumber(
+      source.musicVolume,
+      SETTINGS_LIMITS.musicVolume.min,
+      SETTINGS_LIMITS.musicVolume.max,
+      DEFAULT_SETTINGS.musicVolume
+    ),
+    sfxVolume: clampNumber(
+      source.sfxVolume,
+      SETTINGS_LIMITS.sfxVolume.min,
+      SETTINGS_LIMITS.sfxVolume.max,
+      DEFAULT_SETTINGS.sfxVolume
     ),
     halftonesEnabled:
       typeof source.halftonesEnabled === 'boolean'

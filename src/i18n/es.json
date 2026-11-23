@@ -4,7 +4,7 @@
     "play": "JUGAR",
     "training": "Entrenamiento",
     "trainingDebug": "[Debug]",
-    "controls": "Modificar controles",
+    "controls": "Ajustes",
     "leaderboard": "Leaderboard",
     "nyxLabel": "Nyx:",
     "nyxTagline": "NYX // ZERO-G GRAVITY ROGUELITE",
@@ -12,17 +12,6 @@
     "languageEn": "ENGLISH"
   },
   "controls": {
-    "title": "MODIFICAR CONTROLES",
-    "subtitle": "Ajustes persistentes · se aplican al menú y a la partida",
-    "restoreDefaults": "RESTAURAR DEFECTO",
-    "saveApply": "GUARDAR Y APLICAR",
-    "tabKeyboard": "TECLADO / RATÓN",
-    "tabGamepad": "MANDO (PS4 / GENÉRICO)",
-    "mouseSensitivity": "Sensibilidad del ratón",
-    "fov": "Campo de visión (FOV)",
-    "volume": "Volumen del audio",
-    "invertY": "Invertir eje Y",
-    "halftone": "Trama Halftone (cómic)",
     "keyboardHint": "La sensibilidad y el eje Y afectan a la cámara de la partida; el FOV y la trama halftone se ven al instante en el diorama y en el juego.",
     "keyBindings": "Asignación de teclas",
     "pressKey": "PULSA TECLA...",
@@ -83,22 +72,9 @@
     "orbitStable": "ÓRBITA ESTABLE",
     "level": "NIVEL {{n}}",
     "resume": "REANUDAR",
-    "controls": "CONTROLES",
     "restart": "REINICIAR ÓRBITA",
     "exit": "SALIR AL TÍTULO",
-    "controlsSubtitle": "CÚPULA · MANUAL DE PILOTO",
-    "back": "VOLVER",
-    "controlsList": {
-      "wasd": { "keys": "WASD", "action": "Propulsión / caminar" },
-      "mouse": { "keys": "RATÓN", "action": "Cámara / apuntar visor" },
-      "leftClick": { "keys": "CLIC IZQ.", "action": "Ataque de Velocidad / Taladro ≥ 14.5 m/s / Lanzar roca" },
-      "rightClick": { "keys": "CLIC DER.", "action": "Dash / Redirección en Cámara Lenta" },
-      "space": { "keys": "ESPACIO", "action": "Despegar del suelo / Freno aéreo con flips" },
-      "slots": { "keys": "1 / 2 / 3", "action": "Elegir ranura" },
-      "skill": { "keys": "Q", "action": "Activar habilidad" },
-      "radar": { "keys": "TAB", "action": "Radar de enemigos ON/OFF (puntos rojos en pantalla)" },
-      "pause": { "keys": "ESC / P", "action": "Pausa" }
-    }
+    "settings": "AJUSTES"
   },
   "levelUp": {
     "banner": "¡SUBIDA DE NIVEL!",
@@ -123,6 +99,26 @@
       "activeUpgrade": "MEJORA +1 NV.",
       "passive": "PASIVA"
     }
+  },
+  "settings": {
+    "title": "AJUSTES",
+    "subtitle": "CONFIGURACIÓN · SE APLICA AL INSTANTE",
+    "close": "CERRAR",
+    "tabGeneral": "GENERAL",
+    "tabKeyboard": "TECLADO Y RATÓN",
+    "tabGamepad": "MANDO",
+    "sectionCamera": "Cámara",
+    "sectionAudio": "Audio",
+    "sectionVisual": "Visual",
+    "mouseSensitivity": "Sensibilidad del ratón",
+    "fov": "Campo de visión (FOV)",
+    "masterVolume": "Volumen general",
+    "musicVolume": "Volumen de música",
+    "sfxVolume": "Volumen de sonidos y efectos",
+    "invertY": "Invertir eje Y",
+    "halftone": "Trama halftone (cómic)",
+    "language": "Idioma",
+    "restoreAll": "RESTAURAR TODO POR DEFECTO"
   },
   "skills": {
     "gravityField": "Campo Gravitacional",

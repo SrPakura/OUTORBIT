@@ -3,10 +3,10 @@ import type { GameSettings } from '@/game/settings';
 import { musicPlayer } from '@/game/audio/MusicPlayer';
 import { useI18n } from '@/i18n';
 import { TitleDioramaSandbox } from '@/ui/TitleDioramaSandbox';
-import ControlsModal from '@/ui/ControlsModal';
+import SettingsScreen from '@/ui/SettingsScreen';
 import LeaderboardModal from '@/ui/LeaderboardModal';
 
-type MenuModal = 'controls' | 'leaderboard' | null;
+type MenuModal = 'settings' | 'leaderboard' | null;
 
 interface TitleScreenProps {
   onPlay: () => void;
@@ -51,7 +51,7 @@ export default function TitleScreen({
   // Ajustes en vivo: bindings del sandbox + trama halftone del cosmos.
   useEffect(() => {
     sandboxRef.current?.setSettings(settings);
-    musicPlayer.setVolumeMultiplier(settings.masterVolume);
+    musicPlayer.setVolumeMultiplier(settings.masterVolume * settings.musicVolume);
   }, [settings]);
 
   // Música del menú: arranca al montar y sobrevive al cambio de pantalla (el
@@ -113,7 +113,7 @@ export default function TitleScreen({
 
           <button
             type="button"
-            onClick={() => setModal('controls')}
+            onClick={() => setModal('settings')}
             className="-skew-x-12 cursor-pointer border-2 border-white/80 bg-white/10 px-4 py-2.5 text-left text-white shadow-[5px_5px_0_#000000] backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:bg-white/20 active:translate-y-0"
           >
             <span className="block skew-x-12 text-sm font-black italic uppercase tracking-[0.1em]">
@@ -166,11 +166,11 @@ export default function TitleScreen({
         </p>
       </div>
 
-      {modal === 'controls' && (
-        <ControlsModal
+      {modal === 'settings' && (
+        <SettingsScreen
           settings={settings}
           onClose={() => setModal(null)}
-          onSaveSettings={onUpdateSettings}
+          onUpdateSettings={onUpdateSettings}
         />
       )}
 

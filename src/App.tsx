@@ -158,7 +158,12 @@ export default function App() {
           )}
         </div>
       ) : (
-        <DomeGameView settings={settings} onExit={handleExitToTitle} trainingMode={trainingMode} />
+        <DomeGameView
+          settings={settings}
+          onUpdateSettings={handleUpdateSettings}
+          onExit={handleExitToTitle}
+          trainingMode={trainingMode}
+        />
       )}
     </div>
   );

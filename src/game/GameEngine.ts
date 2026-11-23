@@ -264,7 +264,7 @@ export class GameEngine {
     this.camera.fov = this.baseFov;
     this.camera.updateProjectionMatrix();
     this.player?.applySettings(this.settings);
-    this.audio.setVolumeMultiplier(settings.masterVolume);
+    this.audio.setVolumeMultiplier(settings.masterVolume * settings.sfxVolume);
     setHalftonesEnabled(settings.halftonesEnabled);
     this.emitHud();
   }
