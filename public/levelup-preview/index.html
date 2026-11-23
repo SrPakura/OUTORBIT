@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OUTORBIT // SUBIDA DE NIVEL — Plantilla</title>
+<style>
+  /* ============================================================================
+     SUBIDA DE NIVEL — Pantalla completa (ya no es un modal).
+     Lenguaje visual del CHARACTER SHEET: papel técnico con retícula, tinta,
+     carmesí / cian / dorado, etiquetas mono sesgadas y sombras duras.
+     Las cartas son PLANTILLA: el hueco de icono espera los SVG por habilidad.
+     ============================================================================ */
+
+  :root {
+    --ink: #0b0d12;
+    --ink-soft: #2a2f3d;
+    --paper: #f1f1ed;
+    --panel: #fbfbf8;
+    --grid: rgba(11, 13, 18, 0.065);
+    --grid-fine: rgba(11, 13, 18, 0.03);
+    --crimson: #e11d48;
+    --cyan: #22d3ee;
+    --gold: #fbbf24;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+
+  body {
+    color: var(--ink);
+    font-family: var(--sans);
+    background-color: var(--paper);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+      linear-gradient(var(--grid-fine) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-fine) 1px, transparent 1px);
+    background-size: 96px 96px, 96px 96px, 16px 16px, 16px 16px;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* ------------------------------------------------------------- pantalla */
+
+  .sheet {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 26px 34px 22px;
+    overflow: hidden;
+  }
+
+  /* Barrido de tinta que cubre la pantalla al elegir (salida cómic) */
+  .wipe {
+    position: fixed;
+    inset: -10% -15%;
+    z-index: 40;
+    background: var(--ink);
+    border-right: 10px solid var(--crimson);
+    transform: translateX(-115%) skewX(-10deg);
+    pointer-events: none;
+  }
+  .wipe.is-on { animation: wipeSweep 620ms cubic-bezier(.7, 0, .25, 1) forwards; }
+
+  @keyframes wipeSweep {
+    0%   { transform: translateX(-115%) skewX(-10deg); }
+    46%   { transform: translateX(0) skewX(-10deg); }
+    100% { transform: translateX(115%) skewX(-10deg); }
+  }
+
+  /* Marcas de registro (crosshair) en las 4 esquinas, como plano técnico */
+  .regmark {
+    position: absolute;
+    width: 26px;
+    height: 26px;
+    z-index: 5;
+    pointer-events: none;
+    opacity: 0;
+  }
+  .regmark::before, .regmark::after {
+    content: "";
+    position: absolute;
+    background: var(--ink);
+  }
+  .regmark::before { left: 50%; top: 0; width: 1.5px; height: 100%; transform: translateX(-50%); }
+  .regmark::after  { top: 50%; left: 0; height: 1.5px; width: 100%; transform: translateY(-50%); }
+  .regmark--tl { top: 12px; left: 12px; }
+  .regmark--tr { top: 12px; right: 12px; }
+  .regmark--bl { bottom: 12px; left: 12px; }
+  .regmark--br { bottom: 12px; right: 12px; }
+
+  /* ---------------------------------------------------------------- header */
+
+  .hdr { position: relative; z-index: 2; flex: 0 0 auto; }
+
+  .hdr__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--ink);
+  }
+
+  .hdr__id { display: flex; align-items: center; gap: 8px; }
+
+  .tag {
+    display: inline-block;
+    background: var(--ink);
+    color: #fff;
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.16em;
+    padding: 6px 9px 5px;
+    transform: skewX(-9deg);
+  }
+  .tag--ghost {
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--ink);
+  }
+  .tag--live {
+    background: var(--cyan);
+    color: var(--ink);
+    animation: liveBlink 1.6s steps(2, jump-none) infinite;
+  }
+  @keyframes liveBlink { 50% { opacity: 0.55; } }
+
+  .hdr__meta {
+    font: 700 10px/1 var(--mono);
+    letter-spacing: 0.14em;
+    color: var(--ink-soft);
+  }
+
+  .hdr__title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    margin: 18px 0 10px;
+    font-size: clamp(30px, 4.6vw, 62px);
+    font-weight: 900;
+    letter-spacing: -0.035em;
+    line-height: 0.94;
+    text-transform: uppercase;
+  }
+
+  .hdr__bar {
+    display: inline-block;
+    background: var(--ink);
+    padding: 4px 20px 9px;
+    transform: skewX(-9deg);
+    clip-path: inset(0 100% 0 0);
+  }
+  .hdr__bar > span { display: inline-block; transform: skewX(9deg); color: #fff; }
+  .hdr__bar--accent { box-shadow: 6px 6px 0 var(--crimson); }
+  .hdr__bar--accent > span { color: var(--cyan); }
+
+  .hdr__slash { color: var(--crimson); font-weight: 900; }
+
+  .hdr__vitals {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font: 800 11px/1 var(--mono);
+    letter-spacing: 0.14em;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+  }
+  .hdr__vitals b { color: var(--crimson); }
+
+  .hdr__sub {
+    margin: 0;
+    padding-left: 12px;
+    border-left: 4px solid var(--crimson);
+    font: 700 11px/1.5 var(--mono);
+    letter-spacing: 0.13em;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+  }
+
+  /* ------------------------------------------------------------------ stage */
+
+  .stage {
+    position: relative;
+    z-index: 2;
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    padding: 18px 0;
+  }
+
+  .cards {
+    display: flex;
+    gap: 30px;
+    align-items: stretch;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  /* ------------------------------------------------------------------ card */
+
+  .card {
+    position: relative;
+    width: 296px;
+    max-width: 88vw;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--panel);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 22px 22px;
+    border: 2px solid var(--ink);
+    box-shadow: 7px 7px 0 var(--accent, var(--ink));
+    padding: 40px 16px 16px;
+    cursor: pointer;
+    transition: transform 160ms ease, box-shadow 160ms ease, opacity 260ms ease, filter 260ms ease;
+  }
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 30%, rgba(255,255,255,0.9), rgba(255,255,255,0) 70%);
+    pointer-events: none;
+  }
+  .card:hover {
+    transform: translate(-3px, -3px);
+    box-shadow: 10px 10px 0 var(--accent, var(--ink));
+  }
+  .card:focus-visible { outline: 3px solid var(--cyan); outline-offset: 3px; }
+
+  /* Índice + nombre de panel, solapados al borde superior */
+  .card__label {
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    display: flex;
+    align-items: stretch;
+  }
+  .card__idx {
+    display: flex;
+    align-items: center;
+    padding: 6px 8px 5px;
+    background: var(--ink);
+    color: #fff;
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.08em;
+  }
+  .card__name {
+    display: flex;
+    align-items: center;
+    padding: 6px 10px 5px;
+    background: rgba(255, 255, 255, 0.92);
+    border-right: 1px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    max-width: 210px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Chip de rareza, esquina superior derecha */
+  .card__rarity {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    display: inline-block;
+    background: var(--accent, var(--ink));
+    color: #fff;
+    font: 800 9px/1 var(--mono);
+    letter-spacing: 0.2em;
+    padding: 6px 8px 5px;
+    transform: skewX(-9deg);
+  }
+  .card__rarity > span { display: inline-block; transform: skewX(9deg); }
+
+  /* Hueco de icono: PLANTILLA — aquí irá el SVG propio de cada habilidad */
+  .card__icon {
+    position: relative;
+    width: 104px;
+    height: 104px;
+    margin: 6px auto 14px;
+    border: 2px dashed var(--ink-soft);
+    background: rgba(255, 255, 255, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .card__icon::before, .card__icon::after {
+    content: "";
+    position: absolute;
+    background: var(--grid);
+  }
+  .card__icon::before { left: 50%; top: 0; bottom: 0; width: 1px; }
+  .card__icon::after  { top: 50%; left: 0; right: 0; height: 1px; }
+  .card__icon svg { width: 100%; height: 100%; }
+  .card__icon .icon-ring {
+    position: absolute;
+    inset: 8px;
+    border: 1.5px solid var(--accent, var(--ink));
+    border-right-color: transparent;
+    border-bottom-color: transparent;
+    border-radius: 50%;
+    animation: ringSpin 9s linear infinite;
+  }
+  @keyframes ringSpin { to { transform: rotate(360deg); } }
+  .card__icon .icon-hint {
+    position: relative;
+    z-index: 1;
+    font: 800 9px/1 var(--mono);
+    letter-spacing: 0.18em;
+    color: var(--ink-soft);
+    background: var(--panel);
+    padding: 3px 6px;
+    border: 1px solid var(--ink-soft);
+  }
+
+  .card__kind {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ink);
+    margin-bottom: 8px;
+  }
+  .card__kind::before {
+    content: "";
+    width: 14px;
+    height: 3px;
+    background: var(--accent, var(--crimson));
+    transform: skewX(-24deg);
+  }
+
+  .card__level {
+    font: 800 12px/1 var(--mono);
+    letter-spacing: 0.1em;
+    margin-bottom: 10px;
+  }
+  .card__level .arrow { color: var(--accent, var(--crimson)); }
+
+  .card__cost {
+    display: inline-block;
+    align-self: flex-start;
+    background: var(--ink);
+    color: var(--cyan);
+    font: 800 9px/1 var(--mono);
+    letter-spacing: 0.18em;
+    padding: 5px 8px 4px;
+    margin-bottom: 10px;
+  }
+
+  .card__desc {
+    flex: 1 1 auto;
+    font: 400 11.5px/1.55 var(--sans);
+    color: var(--ink-soft);
+    margin: 0 0 14px;
+    min-height: 70px;
+  }
+
+  /* Hotkey abajo a la derecha */
+  .card__hotkey {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    background: var(--ink);
+    color: #fff;
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.14em;
+    padding: 5px 8px 4px;
+  }
+
+  /* -------------------------------------------------------- card elegida */
+
+  .card.is-chosen {
+    border-color: var(--crimson);
+    box-shadow: 10px 10px 0 var(--crimson);
+    transform: translate(-3px, -3px);
+    z-index: 3;
+  }
+  .card.is-chosen .card__rarity { background: var(--crimson); }
+
+  /* Onda de choque al elegir */
+  .card .shock {
+    position: absolute;
+    inset: 0;
+    border: 3px solid var(--crimson);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .card.is-chosen .shock { animation: shockwave 520ms cubic-bezier(.2, .7, .3, 1) forwards; }
+  @keyframes shockwave {
+    0%   { opacity: 0.9; transform: scale(1); }
+    100% { opacity: 0;   transform: scale(1.35); }
+  }
+
+  /* Sello ELEGIDA */
+  .card .stamp {
+    position: absolute;
+    top: 42%;
+    left: 50%;
+    z-index: 4;
+    background: var(--crimson);
+    color: #fff;
+    font: 900 22px/1 var(--sans);
+    letter-spacing: 0.08em;
+    padding: 10px 18px 12px;
+    border: 3px solid #fff;
+    box-shadow: 5px 5px 0 var(--ink);
+    transform: translate(-50%, -50%) rotate(-7deg) scale(2.6);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .card.is-chosen .stamp { animation: stampSlam 300ms cubic-bezier(.2, 1.4, .4, 1) forwards; }
+  @keyframes stampSlam {
+    0%   { opacity: 0; transform: translate(-50%, -50%) rotate(-7deg) scale(2.6); }
+    55%  { opacity: 1; transform: translate(-50%, -50%) rotate(-7deg) scale(0.94); }
+    100% { opacity: 1; transform: translate(-50%, -50%) rotate(-7deg) scale(1); }
+  }
+
+  .card.is-discarded {
+    opacity: 0.22;
+    filter: grayscale(0.9);
+    transform: translateY(12px);
+    pointer-events: none;
+  }
+
+  /* ---------------------------------------------------------------- footer */
+
+  .ftr {
+    position: relative;
+    z-index: 2;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding-top: 12px;
+    border-top: 2px solid var(--ink);
+  }
+
+  .slots { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .slot {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid var(--ink);
+    background: rgba(255, 255, 255, 0.72);
+    padding: 6px 10px;
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .slot i {
+    width: 9px;
+    height: 9px;
+    background: var(--ink);
+    transform: skewX(-12deg);
+  }
+  .slot--empty { color: var(--ink-soft); border-style: dashed; }
+  .slot--empty i { background: transparent; border: 1px solid var(--ink-soft); }
+
+  .ftr__ctrl { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .btn {
+    background: var(--ink);
+    color: #fff;
+    border: 2px solid var(--ink);
+    box-shadow: 3px 3px 0 var(--crimson);
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    padding: 9px 12px 8px;
+    cursor: pointer;
+    transform: skewX(-9deg);
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+  .btn > span { display: inline-block; transform: skewX(9deg); }
+  .btn:hover { transform: skewX(-9deg) translate(-2px, -2px); box-shadow: 5px 5px 0 var(--crimson); }
+  .btn.is-on { background: var(--cyan); color: var(--ink); box-shadow: 3px 3px 0 var(--ink); }
+
+  .ftr__page {
+    font: 700 10px/1 var(--mono);
+    letter-spacing: 0.14em;
+    color: var(--ink-soft);
+  }
+
+  /* ============================================================ ANIMACIÓN ==
+     Entrada propia (nada que ver con la referencia): el plano se "imprime" —
+     marcas de registro → barras del título que se revelan con clip →
+     cartas que ascienden y aterrizan con su sombra dura, en cascada.
+     ======================================================================== */
+
+  .is-entering .regmark { animation: regDraw 420ms ease-out backwards; }
+  .is-entering .regmark--tr { animation-delay: 70ms; }
+  .is-entering .regmark--bl { animation-delay: 140ms; }
+  .is-entering .regmark--br { animation-delay: 210ms; }
+  @keyframes regDraw {
+    from { opacity: 0; transform: scale(0.3) rotate(45deg); }
+    to   { opacity: 1; transform: scale(1) rotate(0deg); }
+  }
+
+  .is-entering .tag { animation: tagStamp 320ms cubic-bezier(.2, 1.2, .4, 1) backwards; }
+  .is-entering .hdr__id .tag:nth-child(2) { animation-delay: 90ms; }
+  @keyframes tagStamp {
+    from { opacity: 0; transform: skewX(-9deg) translateY(-10px); }
+    to   { opacity: 1; transform: skewX(-9deg) translateY(0); }
+  }
+
+  .is-entering .hdr__bar { animation: barReveal 480ms cubic-bezier(.2, .9, .25, 1) backwards; }
+  .is-entering .hdr__bar--accent { animation-delay: 160ms; }
+  @keyframes barReveal {
+    from { clip-path: inset(0 100% 0 0); }
+    to   { clip-path: inset(0 0 0 0); }
+  }
+
+  .is-entering .hdr__slash,
+  .is-entering .hdr__vitals,
+  .is-entering .hdr__sub { animation: fadeUp 380ms ease-out 340ms backwards; }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .is-entering .card {
+    animation: cardLand 540ms cubic-bezier(.2, 1.1, .3, 1) backwards;
+  }
+  .is-entering .card:nth-child(1) { animation-delay: 300ms; }
+  .is-entering .card:nth-child(2) { animation-delay: 430ms; }
+  .is-entering .card:nth-child(3) { animation-delay: 560ms; }
+  @keyframes cardLand {
+    0% {
+      opacity: 0;
+      transform: translateY(56px);
+      box-shadow: 0 0 0 var(--accent, var(--ink));
+    }
+    70% {
+      opacity: 1;
+      transform: translateY(-7px);
+      box-shadow: 9px 9px 0 var(--accent, var(--ink));
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+      box-shadow: 7px 7px 0 var(--accent, var(--ink));
+    }
+  }
+
+  .is-entering .ftr { animation: fadeUp 420ms ease-out 620ms backwards; }
+
+  /* Respeto por movimiento reducido: sin cascada, todo visible */
+  @media (prefers-reduced-motion: reduce) {
+    .is-entering *, .card, .wipe.is-on { animation-duration: 1ms !important; animation-delay: 0ms !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="wipe" id="wipe"></div>
+
+  <div class="sheet is-entering" id="sheet">
+    <div class="regmark regmark--tl"></div>
+    <div class="regmark regmark--tr"></div>
+    <div class="regmark regmark--bl"></div>
+    <div class="regmark regmark--br"></div>
+
+    <header class="hdr">
+      <div class="hdr__top">
+        <div class="hdr__id">
+          <span class="tag">OUTORBIT</span>
+          <span class="tag tag--ghost">CÚPULA // SECTOR 07</span>
+          <span class="tag tag--live">JUEGO EN PAUSA</span>
+        </div>
+        <div class="hdr__meta">FLUIDO EN CALIENTE · REGISTRO DE ASCENSO</div>
+      </div>
+      <h1 class="hdr__title">
+        <span class="hdr__bar"><span id="title-a">SUBIDA DE</span></span>
+        <span class="hdr__bar hdr__bar--accent"><span id="title-b">NIVEL 03</span></span>
+        <span class="hdr__slash">/</span>
+        <span class="hdr__vitals">VITALS <b>+5%</b> · HP/EDÉN <b>RESTAURADOS</b></span>
+      </h1>
+      <p class="hdr__sub" id="hint">ELIGE 1 DE 2 HABILIDADES · TECLAS [1] [2] · EL JUEGO SE REANUDA AL ELEGIR</p>
+    </header>
+
+    <main class="stage">
+      <div class="cards" id="cards"></div>
+    </main>
+
+    <footer class="ftr">
+      <div class="slots" id="slots"></div>
+      <div class="ftr__ctrl">
+        <button class="btn is-on" id="btn-skills"><span>HABILIDADES · 2 CARTAS</span></button>
+        <button class="btn" id="btn-passives"><span>PASIVAS · 3 CARTAS</span></button>
+        <button class="btn" id="btn-replay"><span>REPETIR [R]</span></button>
+      </div>
+      <div class="ftr__page">HOJA 04/12 · NYX-CORE v1.3</div>
+    </footer>
+  </div>
+
+<script>
+  // ============================================================================
+  // Datos de ejemplo (mismos textos que el catálogo del juego). Las cartas de
+  // habilidad llevarán luego su propio SVG; aquí el icono es un hueco.
+  // ============================================================================
+
+  var MODES = {
+    skills: {
+      level: 3,
+      hint: 'ELIGE 1 DE 2 HABILIDADES · TECLAS [1] [2] · EL JUEGO SE REANUDA AL ELEGIR',
+      cards: [
+        {
+          idx: '01', name: 'CAMPO GRAVITACIONAL', rarity: 'BASE', accent: 'var(--cyan)',
+          kind: 'HABILIDAD NUEVA', level: [0, 1], cost: 8,
+          desc: 'Agarra hasta 2 escombros con estasis y los orbita frente a Nyx; vuelve a pulsar para lanzarlos contra un enemigo. Cada nivel agarra más objetos, más grandes y los lanza con mucha más fuerza.'
+        },
+        {
+          idx: '02', name: 'AGUJERO NEGRO', rarity: 'ÉPICA', accent: 'var(--crimson)',
+          kind: 'HABILIDAD NUEVA', level: [0, 1], cost: 30,
+          desc: 'Lanza una mini-singularidad con disco de acreción que avanza lenta por la cúpula durante 4.5 s, succionando y dañando todo lo que entra en su horizonte de sucesos. Cada nivel amplía el radio de succión y el daño.'
+        }
+      ]
+    },
+    passives: {
+      level: 4,
+      hint: 'ELIGE 1 DE 3 PASIVAS · TECLAS [1] [2] [3] · EL JUEGO SE REANUDA AL ELEGIR',
+      cards: [
+        {
+          idx: '01', name: 'VELOCIDAD (+FUERZA)', rarity: 'PASIVA', accent: 'var(--gold)',
+          kind: 'PASIVA', level: [0, 1], levelLabel: '+20%', cost: null,
+          desc: 'Vuelo un 20% más rápido respecto a la base y, por física, las patadas golpean con más fuerza y penetran más profundo.'
+        },
+        {
+          idx: '02', name: 'REGEN. DE EDÉN', rarity: 'PASIVA', accent: 'var(--cyan)',
+          kind: 'PASIVA', level: [0, 1], levelLabel: '2% / S', cost: null,
+          desc: 'Regenera un 2% de tu barra de Edén por segundo, solo cuando estás quieta.'
+        },
+        {
+          idx: '03', name: 'REGEN. DE VIDA', rarity: 'PASIVA', accent: 'var(--crimson)',
+          kind: 'PASIVA', level: [0, 1], levelLabel: '1% / S', cost: null,
+          desc: 'Regenera un 1% de Vida por segundo, constante incluso moviéndote o peleando.'
+        }
+      ]
+    }
+  };
+
+  var EQUIPPED = [
+    { name: 'EMPUJE', level: 2 },
+    { name: 'POZO DE ATRACCIÓN', level: 1 },
+    null
+  ];
+
+  var mode = 'skills';
+  var locked = false;
+
+  var sheet = document.getElementById('sheet');
+  var cardsEl = document.getElementById('cards');
+  var wipe = document.getElementById('wipe');
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+  function renderSlots() {
+    var el = document.getElementById('slots');
+    el.innerHTML = '';
+    EQUIPPED.forEach(function (s, i) {
+      var d = document.createElement('span');
+      d.className = 'slot' + (s ? '' : ' slot--empty');
+      d.innerHTML = '<i></i>' + (s ? s.name + ' · NV. ' + s.level : 'HUECO ' + (i + 1) + ' · VACÍO');
+      el.appendChild(d);
+    });
+  }
+
+  function renderCards() {
+    var data = MODES[mode];
+    cardsEl.innerHTML = '';
+    document.getElementById('title-b').textContent = 'NIVEL ' + pad2(data.level);
+    document.getElementById('hint').textContent = data.hint;
+
+    data.cards.forEach(function (c, i) {
+      var card = document.createElement('div');
+      card.className = 'card';
+      card.style.setProperty('--accent', c.accent);
+      card.tabIndex = 0;
+
+      var levelText = 'NV. ' + c.level[0] + ' <span class="arrow">→</span> NV. ' + c.level[1] +
+        (c.levelLabel ? ' <span class="arrow">(' + c.levelLabel + ')</span>' : '');
+
+      card.innerHTML =
+        '<div class="card__label"><span class="card__idx">' + c.idx + '</span>' +
+        '<span class="card__name">' + c.name + '</span></div>' +
+        '<span class="card__rarity"><span>' + c.rarity + '</span></span>' +
+        '<div class="card__icon"><div class="icon-ring"></div>' +
+        '<span class="icon-hint">SVG</span></div>' +
+        '<div class="card__kind">' + c.kind + '</div>' +
+        '<div class="card__level">' + levelText + '</div>' +
+        (c.cost != null ? '<span class="card__cost">COSTE: ' + c.cost + ' EDÉN</span>' : '') +
+        '<p class="card__desc">' + c.desc + '</p>' +
+        '<span class="card__hotkey">[' + (i + 1) + ']</span>' +
+        '<div class="shock"></div>' +
+        '<div class="stamp">ELEGIDA</div>';
+
+      card.addEventListener('click', function () { choose(card); });
+      card.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(card); }
+      });
+      cardsEl.appendChild(card);
+    });
+  }
+
+  function replay() {
+    locked = false;
+    sheet.classList.remove('is-leaving');
+    renderCards();
+    // Reinicio de la cascada: forzar reflow para relanzar las keyframes
+    sheet.classList.remove('is-entering');
+    void sheet.offsetWidth;
+    sheet.classList.add('is-entering');
+  }
+
+  function choose(card) {
+    if (locked) return;
+    locked = true;
+    var all = cardsEl.querySelectorAll('.card');
+    all.forEach(function (c) {
+      if (c !== card) c.classList.add('is-discarded');
+    });
+    card.classList.add('is-chosen');
+    // Barrido de tinta tras el sello, como vuelta al juego
+    setTimeout(function () { wipe.classList.add('is-on'); }, 420);
+    setTimeout(replay, 1000);
+  }
+
+  function setMode(next) {
+    if (locked || next === mode) return;
+    mode = next;
+    document.getElementById('btn-skills').classList.toggle('is-on', mode === 'skills');
+    document.getElementById('btn-passives').classList.toggle('is-on', mode === 'passives');
+    replay();
+  }
+
+  document.getElementById('btn-skills').addEventListener('click', function () { setMode('skills'); });
+  document.getElementById('btn-passives').addEventListener('click', function () { setMode('passives'); });
+  document.getElementById('btn-replay').addEventListener('click', replay);
+
+  window.addEventListener('keydown', function (e) {
+    if (e.key === 'r' || e.key === 'R') { replay(); return; }
+    if (e.key === 't' || e.key === 'T') { setMode(mode === 'skills' ? 'passives' : 'skills'); return; }
+    var n = parseInt(e.key, 10);
+    if (n >= 1 && n <= MODES[mode].cards.length) {
+      var card = cardsEl.children[n - 1];
+      if (card) choose(card);
+    }
+  });
+
+  renderSlots();
+  renderCards();
+</script>
+</body>
+</html>
