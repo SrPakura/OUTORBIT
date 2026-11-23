@@ -1208,6 +1208,20 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         }
       }
 
+      // --- Movimiento ANTES del comportamiento: el cangrejo ancla a su suelo
+      // y hereda su traslación/rotación del mismo paso físico, de modo que la
+      // boca del cañón (turretNode) se calcula sobre la pose mundial ACTUAL
+      // justo en el instante del disparo (sin desfase de un frame ni
+      // "efecto Coriolis" sobre suelos móviles/giratorios).
+      const isCrab = enemy.entity.archetype === 'crab_gunner';
+      if (isCrab) {
+        updateCrabEnemy(this, enemy, internal, dt, elapsed, playerPos, activeSlabs);
+      } else if (enemy.entity.archetype === 'kronos_leviathan') {
+        updateKronosMovement(this, enemy, internal, dt, elapsed);
+      } else {
+        this.applyFloatMovement(enemy, internal, dt, elapsed);
+      }
+
       // --- Comportamiento ofensivo por arquetipo (desactivado en modo pasivo) ---
       if (!this.enemiesPassive) {
         this.updateEnemyBehavior(
@@ -1221,16 +1235,6 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           onGolemSmash,
           onSlabSmash,
         );
-      }
-
-      // --- Movimiento: cangrejo pegado a suelos / KRONOS / flotación del resto ---
-      const isCrab = enemy.entity.archetype === 'crab_gunner';
-      if (isCrab) {
-        updateCrabEnemy(this, enemy, internal, dt, elapsed, playerPos, activeSlabs);
-      } else if (enemy.entity.archetype === 'kronos_leviathan') {
-        updateKronosMovement(this, enemy, internal, dt, elapsed);
-      } else {
-        this.applyFloatMovement(enemy, internal, dt, elapsed);
       }
 
       // --- Voladores contra los icebergs: nunca atraviesan los suelos ---

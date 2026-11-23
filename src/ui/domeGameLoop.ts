@@ -557,6 +557,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       return;
     }
     if (pauseOpenRef.current) return;
+    // Tab (Radar de enemigos, fuera de Training Mode): sin preventDefault el
+    // navegador robaría el foco del canvas al pulsarla.
+    if (e.code === 'Tab') e.preventDefault();
     controller?.onKeyDown(e.code);
   };
 

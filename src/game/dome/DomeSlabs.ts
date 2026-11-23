@@ -27,6 +27,13 @@ const _bobAxis = new THREE.Vector3();
 const _rayOrigin = new THREE.Vector3();
 const _rayDir = new THREE.Vector3();
 const _triOut = { x: 0, z: 0, inside: false };
+// Scratch de la colisión/raycast exacto contra la malla del trozo arrancado.
+const _meshClosest = new THREE.Vector3();
+const _meshNormal = new THREE.Vector3();
+const _meshEdge0 = new THREE.Vector3();
+const _meshEdge1 = new THREE.Vector3();
+const _meshCross = new THREE.Vector3();
+const _meshQ = new THREE.Vector3();
 
 /** Punto más cercano en un triángulo 2D (plano XZ local) sin allocations. */
 function closestPointOnTriangle2D(
@@ -112,17 +119,208 @@ function closestPointOnTriangle2D(
 /**
  * Anima el "bob" senoidal de cada slab a lo largo de su eje local +Y y
  * sincroniza `center` y `mesh.position`. Los slabs con `bobAmplitude <= 0`
- * se quedan fijos en `basePos`.
+ * se quedan fijos en `basePos`. Los suelos flotantes con colisión de malla
+ * exacta se saltan: su traslación, bob y giro los gestiona íntegramente
+ * `DomeFloatingSlabManager.update` (evita re-aplicar el bob con un reloj
+ * distinto y desfasar a quien ya se ancló a su pose de este frame).
  */
 export function updateSlabMotion(slabs: SlabCollider[], time: number): void {
   for (const slab of slabs) {
-    if (slab.bobAmplitude <= 0) continue;
+    if (slab.exactMesh || slab.bobAmplitude <= 0) continue;
     _bobAxis.set(0, 1, 0).applyQuaternion(slab.quaternion);
     slab.center
       .copy(slab.basePos)
       .addScaledVector(_bobAxis, Math.sin(time * 0.9 + slab.phase) * slab.bobAmplitude);
     slab.mesh.position.copy(slab.center);
   }
+}
+
+// ============================================================================
+// Colisión exacta esfera/raycast contra la malla del trozo arrancado
+// (tapa + raíz iceberg): los triángulos reales de la geometría visible,
+// escalados por `mesh.scale` durante la transición de entrada/salida.
+// ============================================================================
+
+/**
+ * Punto más cercano de un triángulo (posiciones no indexadas `pos` desde el
+ * offset `i`) al punto `p`, en espacio local sin escala (Ericson, Real-Time
+ * Collision Detection). Sin allocations.
+ */
+function closestPointOnTriangle3D(
+  p: THREE.Vector3,
+  pos: Float32Array,
+  i: number,
+  out: THREE.Vector3,
+): void {
+  const ax = pos[i];
+  const ay = pos[i + 1];
+  const az = pos[i + 2];
+  const bx = pos[i + 3];
+  const by = pos[i + 4];
+  const bz = pos[i + 5];
+  const cx = pos[i + 6];
+  const cy = pos[i + 7];
+  const cz = pos[i + 8];
+
+  const abx = bx - ax;
+  const aby = by - ay;
+  const abz = bz - az;
+  const acx = cx - ax;
+  const acy = cy - ay;
+  const acz = cz - az;
+
+  const apx = p.x - ax;
+  const apy = p.y - ay;
+  const apz = p.z - az;
+  const d1 = abx * apx + aby * apy + abz * apz;
+  const d2 = acx * apx + acy * apy + acz * apz;
+  if (d1 <= 0 && d2 <= 0) {
+    out.set(ax, ay, az);
+    return;
+  }
+
+  const bpx = p.x - bx;
+  const bpy = p.y - by;
+  const bpz = p.z - bz;
+  const d3 = abx * bpx + aby * bpy + abz * bpz;
+  const d4 = acx * bpx + acy * bpy + acz * bpz;
+  if (d3 >= 0 && d4 <= d3) {
+    out.set(bx, by, bz);
+    return;
+  }
+
+  const vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+    const v = d1 / (d1 - d3);
+    out.set(ax + abx * v, ay + aby * v, az + abz * v);
+    return;
+  }
+
+  const cpx = p.x - cx;
+  const cpy = p.y - cy;
+  const cpz = p.z - cz;
+  const d5 = abx * cpx + aby * cpy + abz * cpz;
+  const d6 = acx * cpx + acy * cpy + acz * cpz;
+  if (d6 >= 0 && d5 <= d6) {
+    out.set(cx, cy, cz);
+    return;
+  }
+
+  const vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+    const w = d2 / (d2 - d6);
+    out.set(ax + acx * w, ay + acy * w, az + acz * w);
+    return;
+  }
+
+  const va = d3 * d6 - d5 * d4;
+  if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) {
+    const w = (d4 - d3) / (d4 - d3 + (d5 - d6));
+    out.set(bx + (cx - bx) * w, by + (cy - by) * w, bz + (cz - bz) * w);
+    return;
+  }
+
+  const denom = 1 / (va + vb + vc);
+  const v = vb * denom;
+  const w = vc * denom;
+  out.set(ax + abx * v + acx * w, ay + aby * v + acy * w, az + abz * v + acz * w);
+}
+
+/** Normal por cara (flat shading) del triángulo en `pos` desde el offset `i`. */
+function triangleFaceNormal(pos: Float32Array, i: number, out: THREE.Vector3): void {
+  _meshEdge0.set(pos[i + 3] - pos[i], pos[i + 4] - pos[i + 1], pos[i + 5] - pos[i + 2]);
+  _meshEdge1.set(pos[i + 6] - pos[i], pos[i + 7] - pos[i + 1], pos[i + 8] - pos[i + 2]);
+  out.crossVectors(_meshEdge0, _meshEdge1);
+  const len = out.length();
+  if (len > 1e-12) out.divideScalar(len);
+  else out.set(0, 1, 0);
+}
+
+/**
+ * Colisión esfera-malla exacta contra el trozo arrancado: busca el triángulo
+ * más cercano al centro de la esfera y resuelve el contacto contra sus
+ * caras/aristas/vértices reales (la esfera solo penetra al tocar la
+ * geometría VISIBLE: ni margen extra ni cono/cubo sobredimensionado).
+ * Rellena `_bestNormal` (local) y `_bestPoint` (local ya escalado) y
+ * devuelve la profundidad en unidades de MUNDO (0 = sin contacto).
+ */
+function resolveSphereExactMeshDepth(
+  slab: SlabCollider,
+  position: THREE.Vector3,
+  radius: number,
+): number {
+  const exact = slab.exactMesh!;
+  const scale = slab.mesh.scale.x || 1;
+  _local.copy(position).sub(slab.center).applyQuaternion(slab.invQuaternion);
+  if (scale !== 1) _local.divideScalar(scale);
+  const localRadius = radius / scale;
+
+  // Culling por esfera envolvente local: la mayoría de slabs se descarta aquí.
+  const boundR = exact.boundRadius + localRadius;
+  if (_local.lengthSq() > boundR * boundR) return 0;
+
+  const pos = exact.positions;
+  let bestD2 = Infinity;
+  let bestI = -1;
+  for (let i = 0; i < pos.length; i += 9) {
+    closestPointOnTriangle3D(_local, pos, i, _meshClosest);
+    const dx = _local.x - _meshClosest.x;
+    const dy = _local.y - _meshClosest.y;
+    const dz = _local.z - _meshClosest.z;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      bestI = i;
+    }
+  }
+  if (bestI < 0) return 0;
+
+  closestPointOnTriangle3D(_local, pos, bestI, _meshClosest);
+  triangleFaceNormal(pos, bestI, _meshNormal);
+  const d = Math.sqrt(bestD2);
+  _delta.copy(_local).sub(_meshClosest);
+
+  let depthLocal: number;
+  if (d > 1e-9 && _delta.dot(_meshNormal) >= 0) {
+    // Esfera por fuera de la superficie: contacto clásico punto-más-cercano.
+    depthLocal = localRadius - d;
+    if (depthLocal <= 0) return 0;
+    _bestNormal.copy(_delta).divideScalar(d);
+  } else {
+    // Centro DENTRO de la malla cerrada: expulsa por la normal de la cara.
+    depthLocal = localRadius + d;
+    _bestNormal.copy(_meshNormal);
+  }
+  // Punto de contacto en local YA escalado para la conversión común a mundo.
+  _bestPoint.copy(_meshClosest).multiplyScalar(scale);
+  return depthLocal * scale;
+}
+
+/**
+ * Raycast Möller–Trumbore contra un triángulo de `pos` (offset `i`).
+ * Devuelve la distancia `t` en unidades del parámetro del rayo, o -1.
+ */
+function rayTriangleT(
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
+  pos: Float32Array,
+  i: number,
+): number {
+  _meshEdge0.set(pos[i + 3] - pos[i], pos[i + 4] - pos[i + 1], pos[i + 5] - pos[i + 2]);
+  _meshEdge1.set(pos[i + 6] - pos[i], pos[i + 7] - pos[i + 1], pos[i + 8] - pos[i + 2]);
+  _meshCross.crossVectors(dir, _meshEdge1); // pvec
+  const det = _meshEdge0.dot(_meshCross);
+  if (det > -1e-10 && det < 1e-10) return -1;
+  const invDet = 1 / det;
+  const tx = origin.x - pos[i];
+  const ty = origin.y - pos[i + 1];
+  const tz = origin.z - pos[i + 2];
+  const u = (tx * _meshCross.x + ty * _meshCross.y + tz * _meshCross.z) * invDet;
+  if (u < 0 || u > 1) return -1;
+  _meshQ.set(tx, ty, tz).cross(_meshEdge0); // qvec = tvec × e1
+  const v = (dir.x * _meshQ.x + dir.y * _meshQ.y + dir.z * _meshQ.z) * invDet;
+  if (v < 0 || u + v > 1) return -1;
+  return (_meshEdge1.x * _meshQ.x + _meshEdge1.y * _meshQ.y + _meshEdge1.z * _meshQ.z) * invDet;
 }
 
 /**
@@ -142,6 +340,16 @@ export function resolveSphereSlabCollision(
   let bestSlab: SlabCollider | null = null;
 
   for (const slab of slabs) {
+    // Suelos flotantes arrancados: colisión exacta contra la malla visible
+    // (tapa poligonal + raíz iceberg facetada), nunca un OBB/cono holgado.
+    if (slab.exactMesh) {
+      const depth = resolveSphereExactMeshDepth(slab, position, radius);
+      if (depth > bestDepth) {
+        bestDepth = depth;
+        bestSlab = slab;
+      }
+      continue;
+    }
     _local.copy(position).sub(slab.center).applyQuaternion(slab.invQuaternion);
     const he = slab.halfExtents;
     if (slab.localTriangle2D) {
@@ -152,53 +360,6 @@ export function resolveSphereSlabCollision(
         Math.min(he.y, Math.max(-he.y, _local.y)),
         _triOut.z,
       );
-    } else if (slab.icebergDepth && slab.icebergDepth > 0 && _local.y < -he.y) {
-      // Colisión cónica contra la raíz del iceberg que cuelga bajo -he.y.
-      // El cono interpola de topR en la base (y = -he.y, donde empalma con el
-      // OBB superior) a 0.75 m en la punta (y = -he.y - icebergDepth).
-      const icebergDepth = slab.icebergDepth;
-      const bottomY = -he.y - icebergDepth;
-      const clampedY = Math.max(bottomY, _local.y);
-      const t = Math.min(1, Math.max(0, (-he.y - clampedY) / icebergDepth));
-      const topR = Math.max(he.x, he.z) * 0.95;
-      const botR = Math.max(1.5, topR * 0.35);
-      const rAtY = topR * (1 - t) + botR * t;
-      const radial = Math.hypot(_local.x, _local.z);
-      if (radial <= rAtY && _local.y >= bottomY) {
-        // Centro DENTRO del cono: expulsa hacia fuera por la dirección de
-        // menor penetración (lateral radial o fondo), nunca contra la tapa.
-        const penLateral = rAtY - radial;
-        const penBottom = _local.y - bottomY;
-        if (radial > 1e-6 && penLateral <= penBottom) {
-          const depth = radius + penLateral;
-          if (depth > bestDepth) {
-            bestDepth = depth;
-            bestSlab = slab;
-            const invRadial = 1 / radial;
-            _bestNormal.set(_local.x * invRadial, 0, _local.z * invRadial);
-            _bestPoint.set(
-              _local.x * rAtY * invRadial,
-              _local.y,
-              _local.z * rAtY * invRadial,
-            );
-          }
-        } else {
-          const depth = radius + penBottom;
-          if (depth > bestDepth) {
-            bestDepth = depth;
-            bestSlab = slab;
-            _bestNormal.set(0, -1, 0);
-            _bestPoint.set(_local.x, bottomY, _local.z);
-          }
-        }
-        continue;
-      }
-      if (radial > rAtY && radial > 1e-6) {
-        const s = rAtY / radial;
-        _closest.set(_local.x * s, clampedY, _local.z * s);
-      } else {
-        _closest.set(_local.x, clampedY, _local.z);
-      }
     } else {
       _closest.set(
         Math.min(he.x, Math.max(-he.x, _local.x)),
@@ -278,6 +439,51 @@ export function raycastSlabs(
   let best: SlabRaycastHit | null = null;
 
   for (const slab of slabs) {
+    // Suelos flotantes arrancados: raycast exacto contra los triángulos de
+    // la malla visible (tapa + raíz iceberg), con culling por esfera
+    // envolvente. `t` sale en unidades de distancia de mundo (el escalado
+    // de la transición se compensa al transformar origen y dirección).
+    if (slab.exactMesh) {
+      const exact = slab.exactMesh;
+      const scale = slab.mesh.scale.x || 1;
+      _rayOrigin.copy(origin).sub(slab.center).applyQuaternion(slab.invQuaternion);
+      _rayDir.copy(direction).applyQuaternion(slab.invQuaternion);
+      if (scale !== 1) {
+        _rayOrigin.divideScalar(scale);
+        _rayDir.divideScalar(scale);
+      }
+      // Culling: esfera envolvente local (origen fuera y esfera detrás/lejos).
+      const a = _rayDir.dot(_rayDir);
+      if (a > 1e-12) {
+        const b = 2 * _rayOrigin.dot(_rayDir);
+        const c = _rayOrigin.lengthSq() - exact.boundRadius * exact.boundRadius;
+        const disc = b * b - 4 * a * c;
+        if (disc < 0) continue;
+        const tSphere = (-b - Math.sqrt(disc)) / (2 * a);
+        if (c > 0 && (tSphere < 0 || tSphere > bestT)) continue;
+      }
+      const pos = exact.positions;
+      for (let i = 0; i < pos.length; i += 9) {
+        const t = rayTriangleT(_rayOrigin, _rayDir, pos, i);
+        if (t <= 1e-4 || t >= bestT) continue;
+        bestT = t;
+        if (!best) {
+          best = {
+            slab,
+            point: new THREE.Vector3(),
+            normal: new THREE.Vector3(),
+            distance: t,
+          };
+        }
+        best.slab = slab;
+        best.distance = t;
+        best.point.copy(direction).multiplyScalar(t).add(origin);
+        triangleFaceNormal(pos, i, _meshNormal);
+        best.normal.copy(_meshNormal).applyQuaternion(slab.quaternion);
+      }
+      continue;
+    }
+
     _rayOrigin.copy(origin).sub(slab.center).applyQuaternion(slab.invQuaternion);
     _rayDir.copy(direction).applyQuaternion(slab.invQuaternion);
     const he = slab.halfExtents;

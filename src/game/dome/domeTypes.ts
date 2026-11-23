@@ -11,6 +11,21 @@ export type SpeedAttackKind = 'gravity_kick' | 'spiral_drill_kick' | 'void_fall'
 
 export type ReticleLockState = 'none' | 'can_lock' | 'locked';
 
+/**
+ * Colisión exacta contra la malla del trozo arrancado (tapa + raíz iceberg):
+ * los triángulos no indexados de la geometría local SIN escala (el escalado
+ * en vivo lo aporta `mesh.scale`), el radio de la esfera envolvente local y
+ * el contorno XZ de la tapa superior (polígono `x0, z0, x1, z1, ...`).
+ */
+export interface SlabExactMesh {
+  /** Posiciones de los triángulos (3 vértices × 3 componentes por triángulo). */
+  positions: Float32Array;
+  /** Radio de la esfera envolvente en espacio local sin escala. */
+  boundRadius: number;
+  /** Contorno XZ de la tapa superior pisable (polígono x0, z0, x1, z1, ...). */
+  capContour: Float32Array;
+}
+
 export interface SlabCollider {
   id: string;
   mesh: THREE.Mesh;
@@ -23,8 +38,12 @@ export interface SlabCollider {
   bobAmplitude: number;
   /** Si es true, solo la cara +Y local es pisable (grounded); laterales/fondo rebotan */
   oneSidedTop?: boolean;
-  /** Profundidad de la raíz tipo iceberg bajo -halfExtents.y para colisión cónica */
-  icebergDepth?: number;
+  /**
+   * Colisión 100% fiel a la malla visible (suelos flotantes arrancados): la
+   * esfera y el raycast se resuelven contra los triángulos reales de la tapa
+   * y de la raíz iceberg en vez de contra un OBB/cono sobredimensionado.
+   */
+  exactMesh?: SlabExactMesh;
   /** Triángulo 2D en plano XZ local [ax, az, bx, bz, cx, cz] para colisión triangular exacta */
   localTriangle2D?: readonly [number, number, number, number, number, number];
 }
@@ -87,12 +106,30 @@ export interface DomeHudState {
   cameraRollDeg: number;
   /** Rotación acumulada en radianes de los arcos giroscópicos del visor según la velocidad */
   gyroSpinRad: number;
+  /** Radar de enemigos (Tab): true cuando el marcador de puntos rojos está activado */
+  radarEnabled?: boolean;
+  /**
+   * Puntos rojos del radar: proyección 2D en pantalla de todos los enemigos
+   * vivos. Los que quedan fuera del encuadre van pegados al borde con el
+   * ángulo (`edgeAngleDeg`) apuntando hacia su dirección.
+   */
+  radarDots?: ReadonlyArray<DomeRadarDot>;
 }
 
-/** Radio visual en píxeles de pantalla del octógono exterior de visor.svg (180x180 px total) */
-export const RETICLE_SIZE_PX = 180;
+/** Punto del radar de enemigos proyectado a coordenadas de pantalla 2D. */
+export interface DomeRadarDot {
+  x: number;
+  y: number;
+  /** true = dentro del encuadre; false = pegado al borde de la pantalla */
+  onScreen: boolean;
+  /** Ángulo en grados (espacio de pantalla, Y hacia abajo) hacia el enemigo fuera de encuadre */
+  edgeAngleDeg?: number;
+}
+
+/** Tamaño visual en píxeles de pantalla del visor central (visor.svg) */
+export const RETICLE_SIZE_PX = 120;
 /** Radio lógico en píxeles para poder lockear un enemigo dentro del visor */
-export const RETICLE_LOCK_RADIUS_PX = 105;
+export const RETICLE_LOCK_RADIUS_PX = 62;
 /** Distancia en píxeles (2.5x radio) a la que se rompe el auto-lock si el enemigo escapa */
 export const RETICLE_BREAK_RADIUS_PX = 262;
 

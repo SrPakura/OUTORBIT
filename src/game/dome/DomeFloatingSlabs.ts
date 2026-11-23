@@ -107,7 +107,12 @@ export class DomeFloatingSlabManager {
       const radiusZ = 6 + rand() * 6;
       const thickness = 1.6 + rand() * 1.0;
 
-      const { geometry, halfExtents } = createTornSlabGeometry(seed, radiusX, radiusZ, thickness);
+      const { geometry, halfExtents, boundRadius, capContour } = createTornSlabGeometry(
+        seed,
+        radiusX,
+        radiusZ,
+        thickness
+      );
       this.geometries.push(geometry);
       const material = createP3RTileMaterial();
       this.materials.push(material);
@@ -139,7 +144,14 @@ export class DomeFloatingSlabManager {
         phase: rand() * Math.PI * 2,
         bobAmplitude: 0.22 + rand() * 0.3,
         oneSidedTop: true,
-        icebergDepth: Math.max(2.0, (radiusX + radiusZ) * 0.34 - thickness * 0.5),
+        // Colisión 100% fiel a la malla visible: tapa, laterales y raíz
+        // iceberg exactos (nada de OBB/cono sobredimensionado), más el
+        // polígono de la tapa para anclar enemigos sin salirse de lo visible.
+        exactMesh: {
+          positions: geometry.getAttribute('position').array as Float32Array,
+          boundRadius,
+          capContour,
+        },
       };
 
       this.slabs.push({
@@ -351,7 +363,8 @@ export class DomeFloatingSlabManager {
       slab.collider.invQuaternion.copy(mesh.quaternion).invert();
 
       // Bob suave a lo largo del eje local +Y (misma fórmula que
-      // `updateSlabMotion`, que lo re-aplica a los colliders activos).
+      // `updateSlabMotion`, que ya no re-aplica nada a estos suelos: su
+      // traslación, bob y giro los gestiona íntegramente este update).
       _up.set(0, 1, 0).applyQuaternion(slab.collider.quaternion);
       const bob = Math.sin(elapsed * 0.9 + slab.collider.phase) * slab.collider.bobAmplitude;
       slab.collider.center.copy(slab.collider.basePos).addScaledVector(_up, bob);

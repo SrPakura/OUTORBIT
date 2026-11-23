@@ -4,6 +4,7 @@ import {
   RETICLE_BREAK_RADIUS_PX,
   RETICLE_LOCK_RADIUS_PX,
   type DomeHudState,
+  type DomeRadarDot,
   type NyxMovementMode,
   type ReticleLockState,
   type SlabCollider,
@@ -57,9 +58,11 @@ import type { SynthAudio } from '@/game/audio/SynthAudio';
 // WASD ni clics (aunque te deslices por inercia en 0G), WASD 1.0/s, Dash 3.0
 // de golpe, Ataque 2.0/s.
 //
-// Lock-In del visor: enemigo más cercano al centro de la mira a <= 105 px
-// (can_lock); se rompe a > 262 px o si queda detrás → Cámara Lenta real de
-// 1.25 s (timeScale 0.22) para reaccionar (solo si había enemigo marcado).
+// Lock-In del visor: enemigo más cercano al centro de la mira a <= 62 px y
+// con línea de visión libre (un suelo interponido NO permite can_lock ni
+// locked); se rompe a > 262 px, si queda detrás o si un suelo lo oculta →
+// Cámara Lenta real de 1.25 s (timeScale 0.22) para reaccionar (solo si
+// había enemigo marcado).
 // ============================================================================
 
 const DEG = Math.PI / 180;
@@ -263,6 +266,16 @@ export class NyxDomeController {
   private readonly lockedScreenPos = { x: 0, y: 0 };
   private lockedEnemyScreenPos: { x: number; y: number } | null = null;
 
+  // --- Radar de enemigos (Tab): toggle ON/OFF que proyecta a todos los
+  // enemigos vivos a puntos 2D de pantalla (pegados al borde si quedan
+  // fuera del encuadre, apuntando hacia su dirección).
+  private radarEnabled = false;
+  private readonly radarDots: DomeRadarDot[] = [];
+  private readonly radarDotPool: DomeRadarDot[] = Array.from(
+    { length: 32 },
+    () => ({ x: 0, y: 0, onScreen: true, edgeAngleDeg: 0 }),
+  );
+
   // --- Recursos y progresión
   private hp = 100;
   private maxHp = 100;
@@ -460,6 +473,7 @@ export class NyxDomeController {
     else if (action === 'slot1') this.wantSlot = 1;
     else if (action === 'slot2') this.wantSlot = 2;
     else if (action === 'slot3') this.wantSlot = 3;
+    else if (action === 'radar') this.radarEnabled = !this.radarEnabled;
   }
 
   onKeyUp(code: string): void {
@@ -687,6 +701,8 @@ export class NyxDomeController {
       impactFlash: this.impactFlash,
       cameraRollDeg: this.cameraRollRad * (180 / Math.PI),
       gyroSpinRad: this.gyroSpinRad,
+      radarEnabled: this.radarEnabled,
+      radarDots: this.radarDots,
     };
   }
 
@@ -792,8 +808,10 @@ export class NyxDomeController {
     const hasMoveInput = f !== 0 || r !== 0;
     const sprintHeld = this.isDown('sprint');
 
-    // --- Mira: detección de enemigo en el visor (lock / break)
-    this.updateReticle(camera, enemies);
+    // --- Mira: detección de enemigo en el visor (lock / break) con oclusión
+    // tras suelos, y puntos rojos del radar de enemigos (Tab).
+    this.updateReticle(camera, enemies, slabs);
+    this.updateRadarDots(camera, enemies);
 
     // --- Acciones encoladas por los eventos
     if (this.wantSlot !== null) {
@@ -912,6 +930,7 @@ export class NyxDomeController {
   private updateReticle(
     camera: THREE.PerspectiveCamera,
     enemies: TestEnemySphere[] | undefined,
+    slabs: SlabCollider[],
   ): void {
     this.lockedEnemyScreenPos = null;
     this.lockedEnemyInReticle = false;
@@ -938,15 +957,20 @@ export class NyxDomeController {
       const distPx = onScreen
         ? Math.hypot(this.screenPos.x - cx, this.screenPos.y - cy)
         : Number.POSITIVE_INFINITY;
-      if (onScreen && distPx <= RETICLE_BREAK_RADIUS_PX) {
+      // Oclusión: un suelo interponido entre la cámara y el enemigo rompe el
+      // lock igual que si hubiera salido del visor (no puede seguir locked
+      // un enemigo oculto tras una plataforma).
+      const occluded = this.isEnemyOccluded(this.lockedEnemy, camera, slabs);
+      if (onScreen && distPx <= RETICLE_BREAK_RADIUS_PX && !occluded) {
         this.lockedEnemyInReticle = distPx <= RETICLE_LOCK_RADIUS_PX;
         this.lockedScreenPos.x = this.screenPos.x;
         this.lockedScreenPos.y = this.screenPos.y;
         this.lockedEnemyScreenPos = this.lockedScreenPos;
       } else {
-        // Se sale a > 262 px del centro de la mira o queda detrás: break.
-        // La cámara lenta solo se activa aquí si HAY enemigo marcado
-        // (lockedEnemy !== null, que es quien llega a esta rama).
+        // Se sale a > 262 px del centro de la mira, queda detrás o un suelo
+        // lo oculta: break. La cámara lenta solo se activa aquí si HAY
+        // enemigo marcado (lockedEnemy !== null, que es quien llega a esta
+        // rama).
         this.breakLock(this.mode === 'speed_attack' && this.lockedEnemy !== null);
       }
     }
@@ -956,19 +980,117 @@ export class NyxDomeController {
       return;
     }
 
-    // Sin lock activo: candidato = enemigo más cercano al centro a <= 200 px.
+    // Sin lock activo: candidato = enemigo más cercano al centro a <= 62 px
+    // y con línea de visión libre (los ocultos tras un suelo no entran).
     let best: TestEnemySphere | null = null;
     let bestDist = RETICLE_LOCK_RADIUS_PX;
     for (const enemy of enemies) {
       if (!this.projectToScreen(enemy.position, camera, width, height)) continue;
       const d = Math.hypot(this.screenPos.x - cx, this.screenPos.y - cy);
-      if (d <= bestDist) {
+      if (d <= bestDist && !this.isEnemyOccluded(enemy, camera, slabs)) {
         bestDist = d;
         best = enemy;
       }
     }
     this.candidateEnemy = best;
     this.reticleLockState = best ? 'can_lock' : 'none';
+  }
+
+  /**
+   * ¿Hay un suelo/plataforma activo interponiéndose en la línea de visión
+   * entre la cámara y el enemigo? Raycast segmento-suelo contra los
+   * colliders activos (incluida la malla exacta de los suelos flotantes);
+   * el segmento termina en el borde de la esfera del enemigo, así que un
+   * suelo que apenas roza su silueta no cuenta como oclusión.
+   */
+  private isEnemyOccluded(
+    enemy: TestEnemySphere,
+    camera: THREE.PerspectiveCamera,
+    slabs: SlabCollider[],
+  ): boolean {
+    this.tmpE.subVectors(enemy.position, camera.position);
+    const dist = this.tmpE.length();
+    if (dist < 1e-4) return false;
+    this.tmpE.divideScalar(dist);
+    const reach = Math.max(0.25, dist - enemy.radius);
+    return raycastSlabs(slabs, camera.position, this.tmpE, reach) !== null;
+  }
+
+  /**
+   * Radar de enemigos (Tab, toggle ON/OFF): proyecta la posición 3D de
+   * todos los enemigos vivos a píxeles de pantalla 2D. Los que quedan fuera
+   * del encuadre (o detrás de la cámara) se marcan pegados al borde de la
+   * pantalla apuntando hacia su dirección.
+   */
+  private updateRadarDots(
+    camera: THREE.PerspectiveCamera,
+    enemies: TestEnemySphere[] | undefined,
+  ): void {
+    this.radarDots.length = 0;
+    if (!this.radarEnabled || !enemies) return;
+
+    const width = this.viewportW;
+    const height = this.viewportH;
+    const cx = width * 0.5;
+    const cy = height * 0.5;
+    const margin = 26;
+    const halfW = Math.max(1, cx - margin);
+    const halfH = Math.max(1, cy - margin);
+
+    for (const enemy of enemies) {
+      // Espacio de vista: saber si queda detrás de la cámara y hacia qué
+      // lado de la pantalla está (+X derecha, +Y arriba).
+      this.tmpD.copy(enemy.position).applyMatrix4(camera.matrixWorldInverse);
+      const viewX = this.tmpD.x;
+      const viewY = this.tmpD.y;
+      const behind = this.tmpD.z > -0.1;
+      if (!behind && this.projectToScreen(enemy.position, camera, width, height)) {
+        const sx = this.screenPos.x;
+        const sy = this.screenPos.y;
+        if (sx >= margin && sx <= width - margin && sy >= margin && sy <= height - margin) {
+          this.addRadarDot(sx, sy, true, 0);
+          continue;
+        }
+        // En pantalla pero fuera del margen: al borde según su desvío.
+        this.pushEdgeRadarDot(sx - cx, sy - cy, cx, cy, halfW, halfH);
+      } else {
+        // Detrás de la cámara: dirección desde el espacio de vista (la Y
+        // de pantalla crece hacia abajo).
+        this.pushEdgeRadarDot(viewX, -viewY, cx, cy, halfW, halfH);
+      }
+    }
+  }
+
+  /** Interseca la dirección (dx, dy) con el borde de la pantalla y añade el punto. */
+  private pushEdgeRadarDot(
+    dx: number,
+    dy: number,
+    cx: number,
+    cy: number,
+    halfW: number,
+    halfH: number,
+  ): void {
+    if (Math.abs(dx) < 1e-3 && Math.abs(dy) < 1e-3) dy = -1;
+    const t = Math.min(
+      halfW / Math.max(Math.abs(dx), 1e-3),
+      halfH / Math.max(Math.abs(dy), 1e-3),
+    );
+    this.addRadarDot(cx + dx * t, cy + dy * t, false, Math.atan2(dy, dx) * (180 / Math.PI));
+  }
+
+  /** Añade un punto del radar reutilizando el pool (sin allocations por frame). */
+  private addRadarDot(x: number, y: number, onScreen: boolean, edgeAngleDeg: number): void {
+    const index = this.radarDots.length;
+    let dot = this.radarDotPool[index];
+    if (!dot) {
+      dot = { x: 0, y: 0, onScreen: true, edgeAngleDeg: 0 };
+      this.radarDotPool.push(dot);
+    }
+    dot.x = x;
+    dot.y = y;
+    dot.onScreen = onScreen;
+    dot.edgeAngleDeg = edgeAngleDeg;
+    this.radarDots.push(dot);
   }
 
   /** Proyecta a píxeles de pantalla. false si está detrás de la cámara. */

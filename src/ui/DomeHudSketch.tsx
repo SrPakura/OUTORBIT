@@ -9,7 +9,7 @@ interface DomeHudSketchProps {
   hidePointerLockPrompt?: boolean;
 }
 
-const RETICLE_SIZE = RETICLE_SIZE_PX; // 180px en pantalla para enmarcar sin tapar a Nyx
+const RETICLE_SIZE = RETICLE_SIZE_PX; // 120px en pantalla para enmarcar sin tapar a Nyx
 
 const HALFTONE_MASK =
   'radial-gradient(circle at 50% 50%, transparent 48%, rgba(0,0,0,0.45) 72%, black 96%)';
@@ -336,6 +336,43 @@ function DomeHudSketchInner({ hud, onExit, hidePointerLockPrompt }: DomeHudSketc
         >
           <polygon points="11,1 20,11 11,21 2,11" fill="none" stroke="#ff2a55" strokeWidth="2" />
           <polygon points="11,6 15.5,11 11,16 6.5,11" fill="#ff2a55" />
+        </svg>
+      )}
+
+      {/* 6b. Radar de enemigos (Tab): puntos rojos nítidos proyectados desde
+          su posición 3D; los fuera de encuadre quedan pegados al borde con
+          una flecha apuntando hacia su dirección. */}
+      {(hud.radarDots?.length ?? 0) > 0 && (
+        <svg className="absolute inset-0 h-full w-full">
+          {hud.radarDots!.map((dot, i) =>
+            dot.onScreen ? (
+              <circle
+                key={i}
+                cx={dot.x}
+                cy={dot.y}
+                r={4.5}
+                fill="#ff1f3d"
+                stroke="#ffffff"
+                strokeWidth={1}
+                style={{ filter: 'drop-shadow(0 0 5px rgba(255,31,61,0.9))' }}
+              />
+            ) : (
+              <g
+                key={i}
+                transform={`translate(${dot.x} ${dot.y}) rotate(${dot.edgeAngleDeg ?? 0})`}
+              >
+                <circle
+                  r={4}
+                  fill="#ff1f3d"
+                  stroke="#ffffff"
+                  strokeWidth={1}
+                  style={{ filter: 'drop-shadow(0 0 5px rgba(255,31,61,0.9))' }}
+                />
+                {/* Flecha pegada al borde apuntando hacia el enemigo. */}
+                <polygon points="9,-4 16,0 9,4" fill="#ff1f3d" stroke="#ffffff" strokeWidth={0.8} />
+              </g>
+            ),
+          )}
         </svg>
       )}
 

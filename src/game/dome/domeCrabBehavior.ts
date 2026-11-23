@@ -72,6 +72,8 @@ export function slabTopPoint(slab: SlabCollider, local: THREE.Vector2, out: THRE
 
 /**
  * Offset local (lx, lz) aleatorio dentro de la zona pisable del slab: el
+ * polígono real de la tapa superior si es un suelo flotante arrancado
+ * (colisión exacta: nunca flota en el aire junto al borde visible), el
  * rectángulo OBB con margen, o un punto baricéntrico del triángulo 2D si el
  * slab es un triángulo de la esfera (Miniboss/Boss).
  */
@@ -94,12 +96,101 @@ export function pickSlabLocalPoint(slab: SlabCollider, rng: () => number, out: T
     );
     return;
   }
+  const contour = slab.exactMesh?.capContour;
+  if (contour) {
+    // Muestreo por abanico de triángulos (centro, v[i], v[i+1]) ponderado por
+    // área: el punto cae siempre DENTRO del polígono visible de la tapa.
+    const n = contour.length / 2;
+    let totalArea = 0;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      totalArea +=
+        Math.abs(contour[i * 2] * contour[j * 2 + 1] - contour[j * 2] * contour[i * 2 + 1]) * 0.5;
+    }
+    let pick = rng() * totalArea;
+    let bi = 0;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      const area =
+        Math.abs(contour[i * 2] * contour[j * 2 + 1] - contour[j * 2] * contour[i * 2 + 1]) * 0.5;
+      if (pick <= area) {
+        bi = i;
+        break;
+      }
+      pick -= area;
+    }
+    const bj = (bi + 1) % n;
+    let u = rng();
+    let v = rng();
+    if (u + v > 1) {
+      u = 1 - u;
+      v = 1 - v;
+    }
+    const px = u * contour[bi * 2] + v * contour[bj * 2];
+    const pz = u * contour[bi * 2 + 1] + v * contour[bj * 2 + 1];
+    // Contraído hacia el centroide para respetar el margen del borde.
+    const cx = contourCentroidX(contour);
+    const cz = contourCentroidZ(contour);
+    const s = slab.mesh.scale.x || 1;
+    const margin = CRAB_SLAB_MARGIN / s;
+    out.set(
+      (cx + (px - cx) * contourContraction(cx, cz, px, pz, margin)) * s,
+      (cz + (pz - cz) * contourContraction(cx, cz, px, pz, margin)) * s,
+    );
+    return;
+  }
   const mx = Math.max(0, slab.halfExtents.x - CRAB_SLAB_MARGIN);
   const mz = Math.max(0, slab.halfExtents.z - CRAB_SLAB_MARGIN);
   out.set((rng() * 2 - 1) * mx, (rng() * 2 - 1) * mz);
 }
 
-/** Fija el offset local dentro de los bordes del slab (el knockback desliza). */
+/** Centroide X de los vértices del polígono de la tapa. */
+function contourCentroidX(contour: Float32Array): number {
+  let sum = 0;
+  for (let i = 0; i < contour.length; i += 2) sum += contour[i];
+  return sum / (contour.length / 2);
+}
+
+/** Centroide Z de los vértices del polígono de la tapa. */
+function contourCentroidZ(contour: Float32Array): number {
+  let sum = 0;
+  for (let i = 1; i < contour.length; i += 2) sum += contour[i];
+  return sum / (contour.length / 2);
+}
+
+/**
+ * Factor de contracción hacia el centroide que deja el punto a `margin`
+ * (unidades locales sin escala) del borde a lo largo de su propio rayo.
+ */
+function contourContraction(cx: number, cz: number, px: number, pz: number, margin: number): number {
+  const dx = px - cx;
+  const dz = pz - cz;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 1e-4) return 0;
+  return Math.max(0.1, 1 - margin / dist);
+}
+
+/** ¿Está (x, z) dentro del polígono de la tapa? (test par-impar) */
+function pointInContour(contour: Float32Array, x: number, z: number): boolean {
+  let inside = false;
+  const n = contour.length / 2;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = contour[i * 2];
+    const zi = contour[i * 2 + 1];
+    const xj = contour[j * 2];
+    const zj = contour[j * 2 + 1];
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/**
+ * Fija el offset local dentro de los bordes del slab (el knockback desliza).
+ * En suelos flotantes arrancados: dentro del polígono visible de la tapa,
+ * contraído al borde más cercano si el deslizamiento salió de la tapa.
+ */
 function clampSlabLocalPoint(slab: SlabCollider, local: THREE.Vector2): void {
   const tri = slab.localTriangle2D;
   if (tri) {
@@ -110,6 +201,45 @@ function clampSlabLocalPoint(slab: SlabCollider, local: THREE.Vector2): void {
     if ((s1 < 0 || s2 < 0 || s3 < 0) && (s1 > 0 || s2 > 0 || s3 > 0)) {
       local.set((tri[0] + tri[2] + tri[4]) / 3, (tri[1] + tri[3] + tri[5]) / 3);
     }
+    return;
+  }
+  const contour = slab.exactMesh?.capContour;
+  if (contour) {
+    const s = slab.mesh.scale.x || 1;
+    const ux = local.x / s;
+    const uz = local.y / s;
+    if (pointInContour(contour, ux, uz)) return;
+    // Fuera de la tapa visible: al punto más cercano del borde del polígono,
+    // contraído hacia el centroide para conservar el margen del cangrejo.
+    const n = contour.length / 2;
+    let bestD2 = Infinity;
+    let bx = 0;
+    let bz = 0;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      const ax = contour[i * 2];
+      const az = contour[i * 2 + 1];
+      const bxx = contour[j * 2];
+      const bzz = contour[j * 2 + 1];
+      const ex = bxx - ax;
+      const ez = bzz - az;
+      const lenSq = ex * ex + ez * ez;
+      const t = lenSq > 1e-9 ? Math.min(1, Math.max(0, ((ux - ax) * ex + (uz - az) * ez) / lenSq)) : 0;
+      const qx = ax + ex * t;
+      const qz = az + ez * t;
+      const dx = ux - qx;
+      const dz = uz - qz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        bx = qx;
+        bz = qz;
+      }
+    }
+    const cx = contourCentroidX(contour);
+    const cz = contourCentroidZ(contour);
+    const k = contourContraction(cx, cz, bx, bz, CRAB_SLAB_MARGIN / s);
+    local.set((cx + (bx - cx) * k) * s, (cz + (bz - cz) * k) * s);
     return;
   }
   const mx = Math.max(0, slab.halfExtents.x - CRAB_SLAB_MARGIN);

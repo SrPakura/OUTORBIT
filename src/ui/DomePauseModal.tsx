@@ -25,6 +25,7 @@ const DOME_CONTROL_IDS = [
   'space',
   'slots',
   'skill',
+  'radar',
   'pause',
 ] as const;
 
@@ -39,6 +40,7 @@ const DOME_CONTROL_ACCENTS: Record<DomeControlId, string> = {
   space: '#a855f7',
   slots: '#22d3ee',
   skill: '#a855f7',
+  radar: '#ff1f3d',
   pause: '#ffffff',
 };
 

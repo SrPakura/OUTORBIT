@@ -46,6 +46,7 @@
       "parry": "Parry",
       "stasis": "Estasis",
       "lockOn": "Fijar objetivo",
+      "radar": "Radar de enemigos (Cúpula)",
       "slot1": "Personaje 1",
       "slot2": "Personaje 2",
       "slot3": "Personaje 3"
@@ -94,6 +95,7 @@
       "space": { "keys": "ESPACIO", "action": "Despegar del suelo / Freno aéreo con flips" },
       "slots": { "keys": "1 / 2 / 3", "action": "Elegir ranura" },
       "skill": { "keys": "Q", "action": "Activar habilidad" },
+      "radar": { "keys": "TAB", "action": "Radar de enemigos ON/OFF (puntos rojos en pantalla)" },
       "pause": { "keys": "ESC / P", "action": "Pausa" }
     }
   },

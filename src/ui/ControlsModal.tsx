@@ -28,6 +28,7 @@ const ACTION_LABEL_KEYS: Record<ControlAction, string> = {
   parry: 'controls.actions.parry',
   stasis: 'controls.actions.stasis',
   lockOn: 'controls.actions.lockOn',
+  radar: 'controls.actions.radar',
   slot1: 'controls.actions.slot1',
   slot2: 'controls.actions.slot2',
   slot3: 'controls.actions.slot3',

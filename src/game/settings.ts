@@ -20,6 +20,7 @@ export type ControlAction =
   | 'parry'
   | 'stasis'
   | 'lockOn'
+  | 'radar'
   | 'slot1'
   | 'slot2'
   | 'slot3';
@@ -36,6 +37,7 @@ export const CONTROL_ACTIONS: ControlAction[] = [
   'parry',
   'stasis',
   'lockOn',
+  'radar',
   'slot1',
   'slot2',
   'slot3',
@@ -99,7 +101,7 @@ export const SETTINGS_LIMITS = {
   gamepadDeadzone: { min: 0.05, max: 0.35 },
 } as const;
 
-/** Keybindings por defecto (WASD + Espacio + Shift + E/F/R/Q + 1/2/3). */
+/** Keybindings por defecto (WASD + Espacio + Shift + E/F/R/Q + Tab + 1/2/3). */
 export const DEFAULT_BINDINGS: Record<ControlAction, string> = {
   forward: 'KeyW',
   back: 'KeyS',
@@ -111,6 +113,7 @@ export const DEFAULT_BINDINGS: Record<ControlAction, string> = {
   parry: 'KeyF',
   stasis: 'KeyR',
   lockOn: 'KeyQ',
+  radar: 'Tab',
   slot1: 'Digit1',
   slot2: 'Digit2',
   slot3: 'Digit3',

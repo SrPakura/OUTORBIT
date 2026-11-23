@@ -46,6 +46,7 @@
       "parry": "Parry",
       "stasis": "Stasis",
       "lockOn": "Lock on target",
+      "radar": "Enemy radar (Dome)",
       "slot1": "Character 1",
       "slot2": "Character 2",
       "slot3": "Character 3"
@@ -94,6 +95,7 @@
       "space": { "keys": "SPACE", "action": "Take off from the ground / Air brake with flips" },
       "slots": { "keys": "1 / 2 / 3", "action": "Choose slot" },
       "skill": { "keys": "Q", "action": "Activate skill" },
+      "radar": { "keys": "TAB", "action": "Enemy radar ON/OFF (red dots on screen)" },
       "pause": { "keys": "ESC / P", "action": "Pause" }
     }
   },

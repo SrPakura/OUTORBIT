@@ -303,7 +303,14 @@ export function createTornSlabGeometry(
   radiusX: number,
   radiusZ: number,
   thickness: number
-): { geometry: THREE.BufferGeometry; halfExtents: THREE.Vector3 } {
+): {
+  geometry: THREE.BufferGeometry;
+  halfExtents: THREE.Vector3;
+  /** Radio de la esfera envolvente local (para culling de colisión exacta). */
+  boundRadius: number;
+  /** Contorno XZ de la tapa superior (polígono x0, z0, x1, z1, ...). */
+  capContour: Float32Array;
+} {
   const halfH = thickness * 0.5;
   const topY = halfH;
   const contour = buildContour(seed, radiusX, radiusZ);
@@ -433,13 +440,28 @@ export function createTornSlabGeometry(
 
   // Half extents reales del trozo (incluye el ruido de los laterales). La
   // cara superior del collider queda exactamente en la tapa (Y = +halfH).
+  // boundRadius: esfera envolvente local para el culling de la colisión
+  // exacta contra la malla. capContour: polígono de la tapa pisable.
   let maxX = 0;
   let maxZ = 0;
+  let boundRadiusSq = 0;
   for (let i = 0; i < positions.length; i += 3) {
     maxX = Math.max(maxX, Math.abs(positions[i]));
     maxZ = Math.max(maxZ, Math.abs(positions[i + 2]));
+    boundRadiusSq = Math.max(
+      boundRadiusSq,
+      positions[i] * positions[i] +
+        positions[i + 1] * positions[i + 1] +
+        positions[i + 2] * positions[i + 2]
+    );
   }
   const halfExtents = new THREE.Vector3(maxX, halfH, maxZ);
 
-  return { geometry, halfExtents };
+  const capContour = new Float32Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    capContour[i * 2] = contour[i].x;
+    capContour[i * 2 + 1] = contour[i].z;
+  }
+
+  return { geometry, halfExtents, boundRadius: Math.sqrt(boundRadiusSq), capContour };
 }
