@@ -208,6 +208,7 @@ export class NyxAnimator {
   private fellBack = false;
   private dashDir = 1;
   private firstFrame = true;
+  private suspended = false;
 
   // Parámetros del frame actual
   private speed = 0.85;
@@ -264,6 +265,63 @@ export class NyxAnimator {
   /** true cuando un estado de un solo disparo ya terminó. */
   isFinished(): boolean { return this.stateTime >= DURATION[this.state]; }
 
+  /**
+   * Cede el esqueleto a otro sistema (los clips horneados de la marcha) sin
+   * cortar la pose: `update` deja de escribir huesos hasta que
+   * `adoptCurrentPose` los recupere.
+   */
+  suspend(): void {
+    this.suspended = true;
+  }
+
+  /**
+   * Recupera el esqueleto leyendo la pose que dejó el otro sistema. Esa pose
+   * pasa a ser el punto de partida del lerp, así que el primer frame tras la
+   * adopción no salta: se funde desde donde estaba.
+   */
+  adoptCurrentPose(): void {
+    const bones = this.bones;
+    const cur = this.cur;
+    for (let i = 0; i < BONE_COUNT; i++) {
+      const b = bones[i];
+      if (!b) continue;
+      const o = i * 3;
+      cur[o] = b.rotation.x;
+      cur[o + 1] = b.rotation.y;
+      cur[o + 2] = b.rotation.z;
+    }
+    const hips = bones[HIPS];
+    if (hips) {
+      this.curPos[0] = hips.position.x - this.baseHips[0];
+      this.curPos[1] = hips.position.y - this.baseHips[1];
+      this.curPos[2] = hips.position.z - this.baseHips[2];
+    }
+    // El pelo y las mangas los escribe la física de resorte, no `cur`: se
+    // siembran con la pose adoptada para que no salten al recuperar el control.
+    for (let s = 0; s < 4; s++) {
+      const b = bones[HAIR_1 + s];
+      if (!b) continue;
+      this.hairA[s * 2] = b.rotation.x;
+      this.hairA[s * 2 + 1] = b.rotation.y;
+      this.hairV[s * 2] = 0;
+      this.hairV[s * 2 + 1] = 0;
+    }
+    for (let s = 0; s < 2; s++) {
+      const b = s === 0 ? bones[SLEEVE_L] : bones[SLEEVE_R];
+      if (!b) continue;
+      this.sleeveA[s * 2] = b.rotation.z;
+      this.sleeveA[s * 2 + 1] = b.rotation.y;
+      this.sleeveV[s * 2] = 0;
+      this.sleeveV[s * 2 + 1] = 0;
+    }
+    // Sin acelerómetros heredados: el primer frame no debe disparar el pelo.
+    this.prevSpeed = this.speed;
+    this.prevVVel = this.vVel;
+    this.vAcc = 0;
+    this.speedAcc = 0;
+    this.suspended = false;
+  }
+
   setState(state: NyxAnimState, options?: { dashDir?: -1 | 1; blendDuration?: number }): void {
     const sustained = DURATION[state] === INF;
     if (state === this.state && sustained && !options) return;
@@ -279,6 +337,9 @@ export class NyxAnimator {
   update(dt: number, params?: NyxAnimParams): void {
     if (!(dt > 0)) return;
     if (dt > 0.1) dt = 0.1;
+    // El esqueleto lo manda otro sistema (clips de la marcha): no se escribe
+    // nada hasta que `adoptCurrentPose` devuelva el control.
+    if (this.suspended) return;
 
     if (params) {
       if (params.speed01 !== undefined) this.speed = clamp(params.speed01, 0, 1);

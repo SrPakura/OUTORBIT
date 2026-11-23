@@ -400,6 +400,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       controller = new NyxDomeController(
         nyx.root,
         nyx.animator,
+        nyx.walk,
         vfx,
         settingsRef.current,
         audio,

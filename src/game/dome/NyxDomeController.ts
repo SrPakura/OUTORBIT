@@ -19,6 +19,7 @@ import {
   type SlabContact,
 } from '@/game/dome/DomeSlabs';
 import { NyxAnimator, type NyxAnimParams, type NyxAnimState } from '@/game/render/nyxAnimator';
+import type { NyxWalkPlayer } from '@/game/render/nyxWalkPlayer';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
 import {
   formatKeyCode,
@@ -74,6 +75,11 @@ const GRAVITY = 22; // solo como fuerza de adherencia al suelo
 const WALK_SPEED = 4.2;
 const RUN_SPEED = 7.4;
 const SLIDE_SPEED = 10.0;
+// Banda en la que manda el clip de marcha horneado. Por debajo Nyx está
+// prácticamente parada; por encima entra el ciclo procedural de carrera, que
+// aguanta los 7,4 m/s del sprint sin que el clip de andar patine.
+const WALK_ANIM_MIN_SPEED = 0.9;
+const WALK_ANIM_MAX_SPEED = 5.6;
 const GROUND_ACCEL_LAMBDA = 10;
 const GROUND_STICK_RANGE = 0.35;
 // Anti-tunneling: ningún sub-paso de integración avanza más de medio radio de
@@ -266,6 +272,7 @@ export class NyxDomeController {
   // --- Dependencias
   private readonly nyxRoot: THREE.Group;
   private readonly animator: NyxAnimator;
+  private readonly walk: NyxWalkPlayer | null;
   private readonly vfx: MotionVfxSystem;
   private readonly audio: SynthAudio | undefined;
   private readonly gamepad: GamepadInput | undefined;
@@ -474,6 +481,7 @@ export class NyxDomeController {
   constructor(
     nyxRoot: THREE.Group,
     animator: NyxAnimator,
+    walk: NyxWalkPlayer | null,
     vfx: MotionVfxSystem,
     settings: GameSettings,
     audio?: SynthAudio,
@@ -481,6 +489,7 @@ export class NyxDomeController {
   ) {
     this.nyxRoot = nyxRoot;
     this.animator = animator;
+    this.walk = walk;
     this.vfx = vfx;
     this.audio = audio;
     this.gamepad = gamepad;
@@ -1082,6 +1091,9 @@ export class NyxDomeController {
     _animParams.speed01 = clamp01(speed / RUN_SPEED);
     _animParams.turnRate = this.turnRate;
     _animParams.verticalVel = this.velocity.dot(this.up);
+    // La marcha escribe el esqueleto antes que el animador; mientras está
+    // activa el animador está suspendido y su `update` no toca los huesos.
+    this.walk?.update(simDt, speed);
     this.animator.update(simDt, _animParams);
     this.vfx.update(
       sdt,
@@ -2441,15 +2453,43 @@ export class NyxDomeController {
 
   private updateAnimState(speed: number, hasMoveInput: boolean): void {
     if (this.animLock !== null) {
+      // Un one-shot (aterrizaje, recuperación) manda: la marcha suelta el
+      // esqueleto antes de consultar si el estado ya terminó, porque mientras
+      // está suspendida su `stateTime` no avanza.
+      this.walk?.cancel();
       if (this.animator.isFinished()) this.animLock = null;
       else return;
     }
+    if (this.mode !== 'grounded') this.walk?.cancel();
     switch (this.mode) {
-      case 'grounded':
+      case 'grounded': {
+        const walk = this.walk;
+        if (walk !== null) {
+          const wantsWalk =
+            !this.isSliding &&
+            hasMoveInput &&
+            speed > WALK_ANIM_MIN_SPEED &&
+            speed <= WALK_ANIM_MAX_SPEED;
+          if (wantsWalk) {
+            walk.setMoving(true, speed);
+            return; // el clip manda sobre el esqueleto
+          }
+          if (walk.active) {
+            // Al sprintar o derrapar no se frena: el ciclo procedural entra de
+            // inmediato en vez de reproducir la frenada de la marcha.
+            if (this.isSliding || speed > WALK_ANIM_MAX_SPEED) {
+              walk.cancel();
+            } else {
+              walk.setMoving(false, speed);
+              if (walk.active) return; // todavía reproduciendo la frenada
+            }
+          }
+        }
         if (this.isSliding) this.animator.setState('gravity_slide');
         else if (speed > 0.7 && hasMoveInput) this.animator.setState('run');
         else this.animator.setState('idle');
         break;
+      }
       case 'floating':
         this.animator.setState('zero_g_float');
         break;
@@ -2750,6 +2790,9 @@ export class NyxDomeController {
   }
 
   private playOneShot(state: NyxAnimState): void {
+    // Un one-shot siempre gana: la marcha suelta el esqueleto antes de fijar
+    // el estado, para que el animador lo adopte ya con la pose del clip.
+    this.walk?.cancel();
     this.animator.setState(state);
     this.animLock = state;
   }

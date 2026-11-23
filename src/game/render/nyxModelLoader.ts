@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { NyxAnimator } from '@/game/render/nyxAnimator';
+import { NyxWalkPlayer, type WalkClips } from '@/game/render/nyxWalkPlayer';
 
 // ============================================================================
 // Shader Raven Nebula: piel de NYX como nebulosa viva con estrellas titilantes
@@ -158,8 +159,37 @@ function addSkinnedWhiteOutline(mesh: THREE.SkinnedMesh, thickness: number): voi
 export interface LoadedNyx {
   root: THREE.Group;
   animator: NyxAnimator;
+  /** Marcha con clips horneados; `null` si los GLB no están disponibles. */
+  walk: NyxWalkPlayer | null;
   universeMat: THREE.ShaderMaterial;
   dispose: () => void;
+}
+
+function loadClip(loader: GLTFLoader, url: string): Promise<THREE.AnimationClip> {
+  return loader.loadAsync(url).then((gltf) => {
+    const clip = gltf.animations[0];
+    if (!clip) throw new Error(`sin clip de animación: ${url}`);
+    return clip;
+  });
+}
+
+/**
+ * Carga los tres clips de la marcha (arranque, bucle y frenada). Si alguno
+ * falta, la marcha se desactiva y el juego se queda con el ciclo procedural:
+ * un asset ausente nunca bloquea el arranque de la partida.
+ */
+async function loadWalkClips(loader: GLTFLoader): Promise<WalkClips | null> {
+  try {
+    const [start, loop, end] = await Promise.all([
+      loadClip(loader, '/models/nyx_walk_start.glb'),
+      loadClip(loader, '/models/nyx_walk_loop.glb'),
+      loadClip(loader, '/models/nyx_walk_end.glb'),
+    ]);
+    return { start, loop, end };
+  } catch (error) {
+    console.warn('[nyx] marcha desactivada, se usa el ciclo procedural', error);
+    return null;
+  }
 }
 
 /**
@@ -167,68 +197,64 @@ export interface LoadedNyx {
  * `nyx_eyes` recibe un MeshBasicMaterial oscuro plano; `nyx_body`,
  * `nyx_hair` y `nyx_face` reciben el material de nebulosa y un contorno
  * blanco skinned (grosores 0.015 / 0.011 / 0.008). Devuelve la raíz, el
- * `NyxAnimator` listo para `update(dt)` y el material para avanzar
- * `uniforms.uTime` desde el bucle de render.
+ * `NyxAnimator` listo para `update(dt)`, el reproductor de la marcha y el
+ * material para avanzar `uniforms.uTime` desde el bucle de render.
  */
-export function loadNyxRigged(): Promise<LoadedNyx> {
-  return new Promise((resolve, reject) => {
-    new GLTFLoader().load(
-      '/models/nyx_rigged.glb',
-      (gltf) => {
-        const model = gltf.scene;
+export async function loadNyxRigged(): Promise<LoadedNyx> {
+  const loader = new GLTFLoader();
+  const gltf = await loader.loadAsync('/models/nyx_rigged.glb');
+  const model = gltf.scene;
 
-        const universeMat = new THREE.ShaderMaterial({
-          vertexShader: nyxVert,
-          fragmentShader: nyxFrag,
-          uniforms: {
-            uDeepColor: { value: srgbVec3('#090314') },
-            uNebulaA: { value: srgbVec3('#7e22ce') },
-            uNebulaB: { value: srgbVec3('#06b6d4') },
-            uRimColor: { value: srgbVec3('#f8fafc') },
-            uTime: { value: 0 },
-            uGravityShift: { value: 0 },
-            uSpeed01: { value: 0 },
-          },
-          transparent: true,
-          depthWrite: true,
-        });
-
-        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x0f172a, toneMapped: false });
-
-        model.traverse((obj) => {
-          const mesh = obj as THREE.SkinnedMesh;
-          if (!mesh.isMesh) return;
-          mesh.frustumCulled = false;
-          if (mesh.name === 'nyx_eyes') {
-            mesh.material = eyeMat;
-          } else {
-            mesh.material = universeMat;
-            if (mesh.name === 'nyx_body') addSkinnedWhiteOutline(mesh, 0.015);
-            else if (mesh.name === 'nyx_hair') addSkinnedWhiteOutline(mesh, 0.011);
-            else if (mesh.name === 'nyx_face') addSkinnedWhiteOutline(mesh, 0.008);
-          }
-        });
-
-        const animator = new NyxAnimator(model);
-
-        const dispose = (): void => {
-          const materials = new Set<THREE.Material>();
-          model.traverse((obj) => {
-            const mesh = obj as THREE.Mesh;
-            if (!mesh.isMesh) return;
-            mesh.geometry.dispose();
-            const mat = mesh.material as THREE.Material | THREE.Material[];
-            if (Array.isArray(mat)) mat.forEach((m) => materials.add(m));
-            else materials.add(mat);
-          });
-          materials.forEach((m) => m.dispose());
-          model.removeFromParent();
-        };
-
-        resolve({ root: model, animator, universeMat, dispose });
-      },
-      undefined,
-      reject
-    );
+  const universeMat = new THREE.ShaderMaterial({
+    vertexShader: nyxVert,
+    fragmentShader: nyxFrag,
+    uniforms: {
+      uDeepColor: { value: srgbVec3('#090314') },
+      uNebulaA: { value: srgbVec3('#7e22ce') },
+      uNebulaB: { value: srgbVec3('#06b6d4') },
+      uRimColor: { value: srgbVec3('#f8fafc') },
+      uTime: { value: 0 },
+      uGravityShift: { value: 0 },
+      uSpeed01: { value: 0 },
+    },
+    transparent: true,
+    depthWrite: true,
   });
+
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x0f172a, toneMapped: false });
+
+  model.traverse((obj) => {
+    const mesh = obj as THREE.SkinnedMesh;
+    if (!mesh.isMesh) return;
+    mesh.frustumCulled = false;
+    if (mesh.name === 'nyx_eyes') {
+      mesh.material = eyeMat;
+    } else {
+      mesh.material = universeMat;
+      if (mesh.name === 'nyx_body') addSkinnedWhiteOutline(mesh, 0.015);
+      else if (mesh.name === 'nyx_hair') addSkinnedWhiteOutline(mesh, 0.011);
+      else if (mesh.name === 'nyx_face') addSkinnedWhiteOutline(mesh, 0.008);
+    }
+  });
+
+  const animator = new NyxAnimator(model);
+  const walkClips = await loadWalkClips(loader);
+  const walk = walkClips ? new NyxWalkPlayer(model, animator, walkClips) : null;
+
+  const dispose = (): void => {
+    walk?.dispose();
+    const materials = new Set<THREE.Material>();
+    model.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry.dispose();
+      const mat = mesh.material as THREE.Material | THREE.Material[];
+      if (Array.isArray(mat)) mat.forEach((m) => materials.add(m));
+      else materials.add(mat);
+    });
+    materials.forEach((m) => m.dispose());
+    model.removeFromParent();
+  };
+
+  return { root: model, animator, walk, universeMat, dispose };
 }

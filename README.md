@@ -62,6 +62,7 @@ npm run preview # previsualizar el build de producción
 Detalles del build:
 
 - `npm run build` hace dos cosas: empaqueta `src/game/render/nyxAnimator.ts` con esbuild a `public/nyx-animator-bundle.js` (no trackeado por git) y luego ejecuta `vite build` hacia `dist/`.
+- Los clips de la marcha (`public/models/nyx_walk_{start,loop,end}.glb`) se generan con `python3 scripts/nyx_walk_clips.py` a partir de los GLB de `animaciones_generadas/procesadas/`: corrige la altura de la cadera para que la suela toque el suelo y renombra los clips.
 - Verificación de tipos: `npx tsc --noEmit` (0 errores esperado).
 - Los modelos 3D riggeados (`public/models/nyx_rigged.glb` y `public/models/enemies/`) son assets locales **gitignorados** por política de copyright: el repo no los incluye.
 
