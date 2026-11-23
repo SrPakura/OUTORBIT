@@ -1110,7 +1110,7 @@ export class NyxDomeController {
     this.walk?.update(simDt, speed);
     this.clips.run?.update(simDt, speed);
     this.clips.floatIdle?.update(simDt);
-    this.clips.floatFwd?.update(simDt);
+    this.clips.float?.update(simDt);
     this.animator.update(simDt, _animParams);
     this.vfx.update(
       sdt,
@@ -2494,7 +2494,7 @@ export class NyxDomeController {
     }
     if (this.mode !== 'floating') {
       this.clips.floatIdle?.cancel();
-      this.clips.floatFwd?.cancel();
+      this.clips.float?.cancel();
     }
     switch (this.mode) {
       case 'grounded': {
@@ -2526,10 +2526,19 @@ export class NyxDomeController {
         const run = this.clips.run;
         if (run !== null) {
           if (!this.isSliding && hasMoveInput && speed > WALK_ANIM_MAX_SPEED) {
-            run.setActive(true);
+            run.setMoving(true, speed);
             return;
           }
-          run.cancel();
+          if (run.active) {
+            // Al derrapar no se frena: el ciclo procedural entra de inmediato
+            // en vez de reproducir la frenada de la carrera.
+            if (this.isSliding) {
+              run.cancel();
+            } else {
+              run.setMoving(false, speed);
+              if (run.active) return; // todavía reproduciendo la frenada
+            }
+          }
         }
         if (this.isSliding) this.animator.setState('gravity_slide');
         else if (speed > 0.7 && hasMoveInput) this.animator.setState('run');
@@ -2537,23 +2546,32 @@ export class NyxDomeController {
         break;
       }
       case 'floating': {
-        // En 0G el clip manda: `float_fwd` mientras haya input, `zero_g_float`
-        // cuando se queda a la deriva. Sin GLB se usa el ciclo procedural.
+        // En 0G el clip manda: la flotación direccional mientras haya input,
+        // `zero_g_float` cuando se queda a la deriva. Sin GLB se usa el ciclo
+        // procedural.
         const moving = hasMoveInput && speed > 0.6;
         const idle = this.clips.floatIdle;
-        const fwd = this.clips.floatFwd;
-        if (moving && fwd !== null) {
+        const float = this.clips.float;
+        if (moving && float !== null) {
+          // El cuerpo mira siempre al aim de cámara, así que el banco sigue a
+          // la componente lateral de la velocidad y no al vector completo:
+          // avanzando recto va centrada, desplazándose de lado se inclina.
+          const forward = this.velocity.dot(this.facing);
+          const lateral = this.velocity.dot(
+            this.tmpE.crossVectors(this.up, this.facing),
+          );
           idle?.cancel();
-          fwd.setActive(true);
+          float.setDirection(forward, lateral);
+          float.setActive(true);
           return;
         }
         if (!moving && idle !== null) {
-          fwd?.cancel();
+          float?.cancel();
           idle.setActive(true);
           return;
         }
         idle?.cancel();
-        fwd?.cancel();
+        float?.cancel();
         this.animator.setState('zero_g_float');
         break;
       }
@@ -2859,7 +2877,7 @@ export class NyxDomeController {
     this.walk?.cancel();
     this.clips.run?.cancel();
     this.clips.floatIdle?.cancel();
-    this.clips.floatFwd?.cancel();
+    this.clips.float?.cancel();
     this.animator.setState(state);
     this.animLock = state;
     // Los estados sostenidos no terminan solos: se les pone un tope para que el

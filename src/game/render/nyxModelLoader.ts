@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { NyxAnimator } from '@/game/render/nyxAnimator';
 import { NyxWalkPlayer, type WalkClips } from '@/game/render/nyxWalkPlayer';
+import { NyxRunPlayer, type RunClips } from '@/game/render/nyxRunPlayer';
+import { NyxFloatPlayer, type FloatClips } from '@/game/render/nyxFloatPlayer';
 import { NyxLoopPlayer } from '@/game/render/nyxLoopPlayer';
 
 // ============================================================================
@@ -160,12 +162,12 @@ function addSkinnedWhiteOutline(mesh: THREE.SkinnedMesh, thickness: number): voi
 export interface NyxClips {
   /** Marcha con clips horneados; `null` si los GLB no están disponibles. */
   walk: NyxWalkPlayer | null;
-  /** Carrera (BlendCap `run_lean`); `null` si falta el GLB. */
-  run: NyxLoopPlayer | null;
+  /** Carrera con clips horneados; `null` si los GLB no están disponibles. */
+  run: NyxRunPlayer | null;
   /** Flotación en 0G sin input (BlendCap `zero_g_float`). */
   floatIdle: NyxLoopPlayer | null;
-  /** Flotación en 0G avanzando (BlendCap `float_fwd`). */
-  floatFwd: NyxLoopPlayer | null;
+  /** Flotación en 0G con input, direccional (banco derecha/izquierda/centro/atrás). */
+  float: NyxFloatPlayer | null;
 }
 
 export interface LoadedNyx {
@@ -199,6 +201,46 @@ async function loadWalkClips(loader: GLTFLoader): Promise<WalkClips | null> {
     return { start, loop, end };
   } catch (error) {
     console.warn('[nyx] marcha desactivada, se usa el ciclo procedural', error);
+    return null;
+  }
+}
+
+/**
+ * Carga los tres clips de la carrera (arranque, bucle y frenada). Igual que la
+ * marcha, un asset ausente no bloquea la partida: se devuelve `null` y el
+ * estado cae al ciclo procedural.
+ */
+async function loadRunClips(loader: GLTFLoader): Promise<RunClips | null> {
+  try {
+    const [start, loop, end] = await Promise.all([
+      loadClip(loader, '/models/nyx_run_start.glb'),
+      loadClip(loader, '/models/nyx_run_loop.glb'),
+      loadClip(loader, '/models/nyx_run_end.glb'),
+    ]);
+    return { start, loop, end };
+  } catch (error) {
+    console.warn('[nyx] carrera desactivada, se usa el ciclo procedural', error);
+    return null;
+  }
+}
+
+/**
+ * Carga los cuatro clips de la flotación direccional. Salen del mismo base, así
+ * que comparten duración y fase y se pueden mezclar sin saltos. Si falta
+ * cualquiera de ellos se desactiva la flotación con clip y el estado cae al
+ * ciclo procedural, igual que la marcha y la carrera.
+ */
+async function loadFloatClips(loader: GLTFLoader): Promise<FloatClips | null> {
+  try {
+    const [fwd, mir, mid, back] = await Promise.all([
+      loadClip(loader, '/models/nyx_float_fwd.glb'),
+      loadClip(loader, '/models/nyx_float_fwd_mir.glb'),
+      loadClip(loader, '/models/nyx_float_fwd_mid.glb'),
+      loadClip(loader, '/models/nyx_float_back.glb'),
+    ]);
+    return { fwd, mir, mid, back };
+  } catch (error) {
+    console.warn('[nyx] flotación direccional desactivada, se usa el ciclo procedural', error);
     return null;
   }
 }
@@ -268,45 +310,30 @@ export async function loadNyxRigged(): Promise<LoadedNyx> {
   const animator = new NyxAnimator(model);
   const walkClips = await loadWalkClips(loader);
   const walk = walkClips ? new NyxWalkPlayer(model, animator, walkClips) : null;
+  const runClips = await loadRunClips(loader);
+  const run = runClips ? new NyxRunPlayer(model, animator, runClips) : null;
 
-  // Los tres clips de BlendCap llegan ya recortados al tramo que cierra en
-  // bucle. La carrera va por velocidad; las dos flotaciones son movimientos
-  // lentos sin cadencia que escalar, así que van a ritmo fijo.
-  const [runClip, floatIdleClip, floatFwdClip] = await Promise.all([
-    loadLoopClip(loader, '/models/nyx_run_loop.glb', 'carrera'),
+  // La flotación sin input es un movimiento lento sin cadencia que escalar, así
+  // que va a ritmo fijo. La direccional mezcla cuatro clips en un solo mixer.
+  const [floatIdleClip, floatClips] = await Promise.all([
     loadLoopClip(loader, '/models/nyx_zero_g_float.glb', 'flotación 0G'),
-    loadLoopClip(loader, '/models/nyx_float_fwd.glb', 'flotación avanzando'),
+    loadFloatClips(loader),
   ]);
 
   const clips: NyxClips = {
     walk,
-    // El clip de carrera sale del de caminar acelerado 1,7x: 1,40 s por ciclo.
-    // A los 7,4 m/s del juego el ritmo exacto sería 4,6 y el ciclo se quedaría
-    // en 0,30 s, ilegible; con 0,28 se queda entre 0,9 y 1,25, así que la
-    // zancada se lee entera. El precio es deslizamiento de pies, asumido igual
-    // que en la marcha.
-    run: runClip
-      ? new NyxLoopPlayer(model, animator, runClip, {
-          groundSpeed: 1.6,
-          cadenceScale: 0.28,
-          minRate: 0.9,
-          maxRate: 1.25,
-          blend: 0.16,
-        })
-      : null,
+    run,
     floatIdle: floatIdleClip
       ? new NyxLoopPlayer(model, animator, floatIdleClip, { blend: 0.3 })
       : null,
-    floatFwd: floatFwdClip
-      ? new NyxLoopPlayer(model, animator, floatFwdClip, { blend: 0.3 })
-      : null,
+    float: floatClips ? new NyxFloatPlayer(model, animator, floatClips) : null,
   };
 
   const dispose = (): void => {
     walk?.dispose();
     clips.run?.dispose();
     clips.floatIdle?.dispose();
-    clips.floatFwd?.dispose();
+    clips.float?.dispose();
     const materials = new Set<THREE.Material>();
     model.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
