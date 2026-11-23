@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '@/i18n';
 
 // ============================================================================
-// Sección 4.3 del diseño — Subida de Nivel "En Caliente" (UI de 2 Cartas de
+// Sección 4.3 del diseño — Subida de Nivel "En Caliente" (UI de Cartas de
 // Fluido): pausa visual con desenfoque cósmico, canvas de fluido líquido
-// violeta/cian/carmesí que envuelve las 2 cartas y se disuelve (~450ms),
-// elección por clic o teclado [1]/[2] y selector rápido de hueco si los
+// violeta/cian/carmesí que envuelve las cartas y se disuelve (~450ms),
+// elección por clic o teclado [1]..[N] y selector rápido de hueco si los
 // 3 huecos de habilidad están llenos.
 // ============================================================================
 
@@ -25,7 +25,7 @@ export interface FluidCardOption {
 export interface FluidLevelUpModalProps {
   isOpen: boolean;
   newLevel: number;
-  choices: [FluidCardOption, FluidCardOption] | null;
+  choices: FluidCardOption[] | null;
   equippedSlots: Array<{ name: string | null; level: number }>;
   requiresSlotReplacement: boolean;
   onSelect: (option: FluidCardOption, replaceSlotIndex?: 0 | 1 | 2) => void;
@@ -128,7 +128,7 @@ function FluidCard({
   onChoose,
 }: {
   option: FluidCardOption;
-  hotkey: '1' | '2';
+  hotkey: string;
   disabled: boolean;
   onChoose: () => void;
 }) {
@@ -273,7 +273,7 @@ export function FluidLevelUpModal({
     setPendingOption(null);
   };
 
-  // Teclado: [1]/[2] elige carta · con hueco pendiente [1]/[2]/[3] elige hueco
+  // Teclado: [1]..[N] elige carta · con hueco pendiente [1]/[2]/[3] elige hueco
   useEffect(() => {
     if (!isOpen || !choices) return;
     const onKey = (e: KeyboardEvent) => {
@@ -287,8 +287,10 @@ export function FluidLevelUpModal({
         else if (e.key === '3') confirmSlot(2);
         return;
       }
-      if (e.key === '1') chooseCard(choices[0]);
-      else if (e.key === '2') chooseCard(choices[1]);
+      const idx = Number(e.key) - 1;
+      if (Number.isInteger(idx) && idx >= 0 && idx < choices.length) {
+        chooseCard(choices[idx]);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -296,7 +298,6 @@ export function FluidLevelUpModal({
   }, [isOpen, choices, pendingOption, requiresSlotReplacement, onSelect]);
 
   if (!isOpen || !choices) return null;
-  const [left, right] = choices;
 
   return (
     <div className="pointer-events-auto fixed inset-0 z-50 flex select-none flex-col items-center justify-center overflow-hidden bg-[#040510]/85 font-mono text-white backdrop-blur-md">
@@ -330,18 +331,15 @@ export function FluidLevelUpModal({
           style={{ animation: 'fluidDissolve 450ms ease-out 120ms forwards' }}
         />
         <div className="relative flex gap-6">
-          <FluidCard
-            option={left}
-            hotkey="1"
-            disabled={pendingOption != null}
-            onChoose={() => chooseCard(left)}
-          />
-          <FluidCard
-            option={right}
-            hotkey="2"
-            disabled={pendingOption != null}
-            onChoose={() => chooseCard(right)}
-          />
+          {choices.map((option, i) => (
+            <FluidCard
+              key={option.id}
+              option={option}
+              hotkey={String(i + 1)}
+              disabled={pendingOption != null}
+              onChoose={() => chooseCard(option)}
+            />
+          ))}
         </div>
       </div>
 

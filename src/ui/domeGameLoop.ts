@@ -21,7 +21,6 @@ import { GamepadInput } from '@/game/input/GamepadInput';
 import {
   ACTIVE_SKILLS_CATALOG,
   DomeProgressionManager,
-  PASSIVES_CATALOG,
   type ActiveSkillId,
   type LevelUpCardOption,
   type PassiveId,
@@ -55,7 +54,7 @@ export interface DomeTrainingBridge {
 export interface DomeLevelUpUiState {
   isOpen: boolean;
   newLevel: number;
-  choices: [LevelUpCardOption, LevelUpCardOption] | null;
+  choices: LevelUpCardOption[] | null;
   requiresSlotReplacement: boolean;
 }
 
@@ -295,7 +294,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         );
       },
       setPassiveLevel: (id, level) => {
-        progression.passives[id] = Math.min(PASSIVES_CATALOG[id].maxLevel, Math.max(0, level));
+        // Via pública: marca modifiersDirty para que getModifiers() refleje
+        // el cambio (escribir progression.passives a mano no invalida el cache).
+        progression.setPassiveLevel(id, level);
       },
       refillResources: () => {
         controller?.restoreResources(progression.maxHp, progression.maxEden);

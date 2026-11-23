@@ -1,12 +1,12 @@
 // ============================================================================
 // DomeProgression — Progresión en caliente de la Cúpula.
 //
-// Curva de EXP (Nv N -> N+1 requiere 0.5 x N enemigos), escalado x1.1 de
-// HP/Edén máximos por nivel, 3 huecos de habilidad, 3 pasivas (Nv máx. 3) y
-// el generador de cartas de la UI de subida de nivel (2 cartas):
+// Curva de EXP (Nv N -> N+1 requiere 0.5 x N enemigos), escalado x1.05 de
+// HP/Edén máximos por nivel (con curación completa), 3 huecos de habilidad,
+// 3 pasivas (Nv máx. 3) y el generador de cartas de la UI de subida de nivel:
 //   - Nivel 1: Carta 1 fija (Campo Gravitacional, BASE) + 1 aleatoria.
 //   - Niveles impares (3, 5, 7...): habilidad nueva o mejora +1 de equipada.
-//   - Niveles pares (2, 4, 6...): 2 pasivas (fallback a activas si todo
+//   - Niveles pares (2, 4, 6...): las 3 pasivas (fallback a activas si todo
 //     está al Nv 3).
 // ============================================================================
 
@@ -309,8 +309,8 @@ export class DomeProgressionManager {
 
   /**
    * Suma EXP (en "enemigos básicos": 1.0 = un enemigo). Devuelve `true` si
-   * subió al menos un nivel. Cada subida multiplica HP/Edén máximos por 1.1
-   * (curando/rellenando el incremento) y la curva pide `0.5 x nivel` enemigos.
+   * subió al menos un nivel. Cada subida multiplica HP/Edén máximos por 1.05
+   * (curando/rellenando hasta el tope) y la curva pide `0.5 x nivel` enemigos.
    */
   addExp(amount: number): boolean {
     if (amount <= 0) return false;
@@ -319,12 +319,10 @@ export class DomeProgressionManager {
     while (this.exp >= this.expToNext) {
       this.exp -= this.expToNext;
       this.level += 1;
-      const hpInc = this.maxHp * 0.1;
-      const edenInc = this.maxEden * 0.1;
-      this.maxHp += hpInc;
-      this.hp = Math.min(this.maxHp, this.hp + hpInc);
-      this.maxEden += edenInc;
-      this.eden = Math.min(this.maxEden, this.eden + edenInc);
+      this.maxHp *= 1.05;
+      this.maxEden *= 1.05;
+      this.hp = this.maxHp;
+      this.eden = this.maxEden;
       this.expToNext = 0.5 * this.level;
       leveledUp = true;
     }
@@ -342,14 +340,15 @@ export class DomeProgressionManager {
   }
 
   /**
-   * Genera las 2 cartas de la UI de subida al nivel `forLevel`:
+   * Genera las cartas de la UI de subida al nivel `forLevel`:
    *  - Nivel 1: Carta 1 SIEMPRE Campo Gravitacional (BASE); Carta 2 aleatoria.
-   *  - Impares (3, 5, 7...): habilidad nueva (hueco libre o reemplazo) o
-   *    mejora +1 de una equipada (implosion queda excluida: maxLevel 1).
-   *  - Pares (2, 4, 6...): 2 pasivas que no estén al Nv 3; si todas lo están,
-   *    fallback a mejoras/habilidades activas.
+   *  - Impares (3, 5, 7...): 2 cartas de habilidad nueva (hueco libre o
+   *    reemplazo) o mejora +1 de una equipada (implosion queda excluida:
+   *    maxLevel 1).
+   *  - Pares (2, 4, 6...): las 3 pasivas que no estén al Nv 3; si todas lo
+   *    están, fallback a mejoras/habilidades activas.
    */
-  generateLevelUpChoices(forLevel: number): [LevelUpCardOption, LevelUpCardOption] {
+  generateLevelUpChoices(forLevel: number): LevelUpCardOption[] {
     if (forLevel <= 1) {
       const second = pickRandom(ACTIVE_SKILL_IDS.filter((id) => id !== 'gravity_field'));
       return [this.buildNewSkillCard('gravity_field'), this.buildNewSkillCard(second)];
@@ -360,15 +359,17 @@ export class DomeProgressionManager {
       if (activePool.length >= 2) return pickTwoDistinct(activePool);
       const combined = [...activePool, ...this.buildPassiveOptionPool()];
       if (combined.length >= 2) return pickTwoDistinct(combined);
+      if (combined.length === 1) return combined;
     } else {
       const passivePool = this.buildPassiveOptionPool();
-      if (passivePool.length >= 2) return pickTwoDistinct(passivePool);
-      const combined = [...passivePool, ...this.buildActiveOptionPool()];
-      if (combined.length >= 2) return pickTwoDistinct(combined);
+      if (passivePool.length > 0) return passivePool;
+      const activePool = this.buildActiveOptionPool();
+      if (activePool.length >= 2) return pickTwoDistinct(activePool);
+      if (activePool.length === 1) return activePool;
     }
 
     // Caso degenerado (todo maximizado): duplicamos una carta pasiva tope
-    // para que la UI de 2 cartas siga teniendo sentido.
+    // para que la UI siga teniendo sentido.
     const fallback = this.buildPassiveCard('eden_regen');
     return [fallback, { ...fallback, id: `${fallback.id}:dup` }];
   }
