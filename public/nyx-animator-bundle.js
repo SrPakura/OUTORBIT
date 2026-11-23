@@ -973,6 +973,13 @@ var NyxAnimator = class {
     return this.stateTime >= DURATION[this.state];
   }
   /**
+   * true si el estado es sostenido (duración INF): no "termina" nunca por sí
+   * solo. Quien lo dispare como one-shot tiene que ponerle su propio tope.
+   */
+  isSustained(state) {
+    return DURATION[state] === INF;
+  }
+  /**
    * Cede el esqueleto a otro sistema (los clips horneados de la marcha) sin
    * cortar la pose: `update` deja de escribir huesos hasta que
    * `adoptCurrentPose` los recupere.

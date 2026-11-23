@@ -96,6 +96,12 @@ const LAND_RECOVER_SPEED = 7;
 const JUMP_LAND_SPEED = 2;
 const FLOAT_ENTRY_OFFSET = 0.65;
 const FLOAT_ENTRY_SPEED = 3.0;
+/**
+ * Tope (s) de un one-shot cuyo estado es sostenido (`stasis_cast`,
+ * `eden_absorb`): su duración es INF, así que sin este límite el `animLock`
+ * no se soltaría nunca y Nyx se quedaría congelada en la pose de casteo.
+ */
+const SUSTAINED_ONESHOT_HOLD = 0.9;
 // Aterrizaje real vs choque lateral (hit_stagger) según el alineamiento de
 // los pies con la normal de la superficie.
 const FLOAT_LAND_MAX_SPEED = 14; // contacto suave en flotación: aterriza
@@ -339,6 +345,8 @@ export class NyxDomeController {
   private bounceCooldown = 0;
   private bulletTimeTimer = 0;
   private animLock: NyxAnimState | null = null;
+  /** Segundos que le quedan al `animLock` cuando el estado es sostenido. */
+  private animLockTimer = 0;
 
   // --- Ataque de velocidad / lock-in
   private attackElapsed = 0; // tiempo llevado en speed_attack
@@ -1059,7 +1067,7 @@ export class NyxDomeController {
     this.updateOrientation(simDt, speed);
 
     // --- Animación, acelerómetro y recursos
-    this.updateAnimState(speed, hasMoveInput);
+    this.updateAnimState(speed, hasMoveInput, simDt);
     this.updateEden(simDt, hasMoveInput);
 
     // --- Giroscopio del visor: los arcos giran según la velocidad real
@@ -2460,15 +2468,25 @@ export class NyxDomeController {
     this.nyxRoot.quaternion.slerp(this.quat, 1 - Math.exp(-14 * dt));
   }
 
-  private updateAnimState(speed: number, hasMoveInput: boolean): void {
+  private updateAnimState(speed: number, hasMoveInput: boolean, dt: number): void {
     if (this.animLock !== null) {
       // Un one-shot (aterrizaje, recuperación) manda: la marcha suelta el
       // esqueleto antes de consultar si el estado ya terminó, porque mientras
       // está suspendida su `stateTime` no avanza.
       this.walk?.cancel();
       this.clips.run?.cancel();
-      if (this.animator.isFinished()) this.animLock = null;
-      else return;
+      if (this.animLockTimer > 0) {
+        // One-shot sostenido (`stasis_cast`, `eden_absorb`): su duración es
+        // INF, así que `isFinished` no llegaría nunca y el animador se quedaría
+        // congelado en la pose de casteo. Se suelta al agotar el tope.
+        this.animLockTimer -= dt;
+        if (this.animLockTimer > 0) return;
+        this.animLock = null;
+      } else if (this.animator.isFinished()) {
+        this.animLock = null;
+      } else {
+        return;
+      }
     }
     if (this.mode !== 'grounded') {
       this.walk?.cancel();
@@ -2844,6 +2862,9 @@ export class NyxDomeController {
     this.clips.floatFwd?.cancel();
     this.animator.setState(state);
     this.animLock = state;
+    // Los estados sostenidos no terminan solos: se les pone un tope para que el
+    // animador recupere el esqueleto en vez de quedarse clavado en la pose.
+    this.animLockTimer = this.animator.isSustained(state) ? SUSTAINED_ONESHOT_HOLD : 0;
   }
 
   /** Arranca el tirachinas de cámara (contracción + estiramiento elástico). */

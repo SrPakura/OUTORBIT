@@ -84,6 +84,18 @@ BONE_MAP = [
     ("RightToe",     None,            None,       "toe_R",      None,         None),
 ]
 
+# Tope de apertura lateral de los brazos, en grados respecto al plano sagital
+# (el que contiene adelante/atras y arriba/abajo). BlendCap lee los brazos
+# desde una camara frontal y confunde el balanceo lateral con el vaiven de
+# carrera: medido sobre `run_lean`, la mano llegaba a abrirse 33 grados y el
+# clip se veia "daleado", con los brazos abiertos en vez de bombeando al frente.
+# El clamp recorta solo la componente lateral y renormaliza, asi que la fase y
+# la amplitud del braceo se conservan.
+ARM_SPLAY_LIMIT_DEG = {
+    "upperArm_L": 14.0, "upperArm_R": 14.0,
+    "forearm_L": 12.0, "forearm_R": 12.0,
+}
+
 # Motion secundario: el pelo y las mangas no vienen en el BVH, se generan a
 # partir de la aceleracion de la cabeza.
 HAIR_TRAIL_DEG = 14.0
@@ -233,6 +245,28 @@ def nyx_rest_dir(dst, name, child):
     return v.normalized()
 
 
+def clamp_arm_splay(name, v):
+    """Recorta la apertura lateral de un brazo hasta `ARM_SPLAY_LIMIT_DEG`.
+
+    El personaje mira a -Y en el mundo de Blender, asi que X es siempre el eje
+    lateral y el plano sagital es YZ. Si el angulo que abre `v` respecto a ese
+    plano pasa del tope, se reduce su componente X y se renormaliza: la
+    direccion adelante/arriba se mantiene intacta.
+    """
+    limit = ARM_SPLAY_LIMIT_DEG.get(name)
+    if limit is None:
+        return v
+    sagittal = math.hypot(v.y, v.z)
+    if sagittal < 1e-6:
+        return v
+    max_rad = math.radians(limit)
+    if math.atan2(abs(v.x), sagittal) <= max_rad:
+        return v
+    out = v.copy()
+    out.x = math.copysign(math.tan(max_rad) * sagittal, v.x)
+    return out.normalized()
+
+
 def frame_from(d1, d2):
     """Base ortonormal con d1 como eje X y d2 fijando el plano del twist."""
     x = d1.normalized()
@@ -303,12 +337,13 @@ def retarget(src, dst):
             row = mapped.get(name)
             if row is not None:
                 s, s_child, s_grand, _, _, _ = row
-                want = bone_dir(src, s, s_child, posed=True)
+                want = clamp_arm_splay(name, bone_dir(src, s, s_child, posed=True))
                 rest_frame = dst_frame_rest[name]
                 src_frame = None
                 if rest_frame is not None:
-                    src_frame = frame_from(
-                        want, bone_dir(src, s_child, s_grand, posed=True))
+                    twist = clamp_arm_splay(
+                        s_child, bone_dir(src, s_child, s_grand, posed=True))
+                    src_frame = frame_from(want, twist)
                 if src_frame is not None:
                     world = (src_frame @ rest_frame.transposed()
                              @ dst_rest[name].to_matrix()).to_quaternion()
@@ -458,7 +493,7 @@ def verify(src, dst, frames):
         for s, s_child, _, n, _, _ in BONE_MAP:
             if s not in src.pose.bones or n not in dst.pose.bones:
                 continue
-            want = bone_dir(src, s, s_child, posed=True)
+            want = clamp_arm_splay(n, bone_dir(src, s, s_child, posed=True))
             got = nyx_mesh_dir(dst, n, rest[n])
             err = math.degrees(want.angle(got))
             worst = max(worst, err)
