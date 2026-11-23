@@ -20,7 +20,7 @@ import { DomePickupManager } from '@/game/dome/DomePickups';
 import { DomeSkillExecutor, type SkillTargetEnemy } from '@/game/dome/DomeSkills';
 import { DomeCombatSystem, THORNS_DAMAGE_TO_NYX, type EnemyArchetype } from '@/game/dome/DomeCombatSystem';
 import { DomeRunTracker, submitDomeRunToLeaderboard } from '@/game/dome/DomeRunStats';
-import { DOME_PLAYER_BOUND_RADIUS, type DomeHudState, type SlabCollider } from '@/game/dome/domeTypes';
+import { DOME_PLAYER_BOUND_RADIUS, type DomeHudState, type SlabCollider, type TestEnemySphere } from '@/game/dome/domeTypes';
 import type { GameSettings } from '@/game/settings';
 import { SynthAudio } from '@/game/audio/SynthAudio';
 import DomeHudSketch from '@/ui/DomeHudSketch';
@@ -272,7 +272,15 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
       }
     };
 
-    let activeSlabs: SlabCollider[] = [];
+    // Arrays persistentes del bucle caliente: se rellenan in-place cada frame
+    // (cero allocations; antes eran spreads y filters nuevos por frame).
+    const activeSlabs: SlabCollider[] = [];
+    const refillActiveSlabs = () => {
+      activeSlabs.length = 0;
+      for (const slab of floatingSlabs.getActiveColliders()) activeSlabs.push(slab);
+      for (const slab of sphereTiles.getActiveColliders()) activeSlabs.push(slab);
+    };
+    const activeEnemies: ManagedWaveEnemy[] = [];
     if (training) {
       // Modo Entrenamiento: sin oleadas automáticas ni elección inicial de
       // cartas; suelos básicos para el Cangrejo Artillero y los escombros del
@@ -422,6 +430,73 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
       }
     };
 
+    // --- Callbacks estables del waveMgr: cero closures nuevas por frame ---
+    const onWavePlayerHit = (dmg: number) => applyDamageToNyx(dmg);
+    const onOctopusInk = () => combat.applyOctopusInkAttack();
+    // Manotazo brutal del Gólem: daño + empuje con hit_stagger.
+    // (Los Anillos de Contención de KRONOS lo reutilizan con daño 0 y
+    // un empuje radial más fuerte hacia la Barrera Blanca.)
+    const onGolemSmash = (dmg: number, pushDir: THREE.Vector3, pushSpeed?: number) => {
+      applyDamageToNyx(dmg);
+      controller?.applySmashKnockback(pushDir, pushSpeed ?? 22);
+    };
+    // El manotazo rompe un suelo flotante: se destroza y suelta
+    // escombros agarrables por el Campo Gravitacional.
+    const onSlabSmash = (slab: SlabCollider) => {
+      const shattered = floatingSlabs.shatterSlab(slab.id);
+      if (shattered) {
+        skillExecutor.spawnSlabDebris(shattered.center, 4);
+      }
+    };
+    // Impacto de Nyx contra un enemigo (patada/taladro): aplica el daño
+    // cinético del DomeCombatSystem. Event-driven, no cada frame.
+    const onControllerHitEnemy = (
+      enemy: TestEnemySphere,
+      hitDir: THREE.Vector3,
+      isDrill: boolean,
+      impactSpeed?: number,
+    ) => {
+      waveMgr.onHitEnemy(enemy, hitDir, isDrill, impactSpeed);
+      const managed = waveMgr.getActiveEnemies().find((e) => e.id === enemy.id);
+      if (managed && managed.entity.alive) {
+        const res = combat.computeKineticImpact(
+          managed.entity,
+          impactSpeed ?? 14,
+          progression.getModifiers().forceMultiplier,
+          isDrill,
+        );
+        // Pinchos del Necrozma: el golpe queda mitigado y Nyx recibe
+        // daño de represalia (la repulsión la da el recoilBounce).
+        if (res.reason === 'thorns_repel') {
+          applyDamageToNyx(THORNS_DAMAGE_TO_NYX);
+        }
+        runTracker.recordDamage(res.damage);
+        if (managed.entity.hp <= 0 || res.killed) {
+          killWaveEnemy(managed, false);
+        }
+      }
+    };
+
+    // --- Payload persistente de syncProgression (cero objetos por frame) ---
+    const syncPayload: Parameters<NyxDomeController['syncProgression']>[0] = {
+      level: 1,
+      exp: 0,
+      expToNext: 1,
+      maxHp: 100,
+      maxEden: 100,
+      speedMultiplier: 1,
+      edenRegenFrac: 0,
+      hpRegenFrac: 0,
+      inkOverlayIntensity: 0,
+      waveNumber: undefined,
+      waveLabel: undefined,
+      slots: [
+        { name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
+        { name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
+        { name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
+      ],
+    };
+
     loadNyxRigged()
       .then((nyx) => {
         if (disposed) {
@@ -440,6 +515,7 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
           audio,
           gamepad,
         );
+        controller.setViewportSize(window.innerWidth, window.innerHeight);
         controller.onDomeBounceDamage = () => {
           combat.applyDomeBarrierDamageToNyx();
         };
@@ -607,6 +683,7 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight, false);
+      controller?.setViewportSize(window.innerWidth, window.innerHeight);
     };
 
     canvas.addEventListener('click', onCanvasClick);
@@ -682,7 +759,7 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
         // reciclados re-entren desde fuera del campo de visión del jugador.
         floatingSlabs.update(worldDt, elapsed, camera.position, controller.getAimForward());
         sphereTiles.update(worldDt, elapsed);
-        activeSlabs = [...floatingSlabs.getActiveColliders(), ...sphereTiles.getActiveColliders()];
+        refillActiveSlabs();
 
         const { didEnemyEvadeDash } = waveMgr.update(
           worldDt,
@@ -691,29 +768,16 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
           controller.getLockedEnemy(),
           controller.getAttackAccelTime(),
           activeSlabs,
-          (dmg) => applyDamageToNyx(dmg),
-          () => combat.applyOctopusInkAttack(),
-          // Manotazo brutal del Gólem: daño + empuje con hit_stagger.
-          // (Los Anillos de Contención de KRONOS lo reutilizan con daño 0 y
-          // un empuje radial más fuerte hacia la Barrera Blanca.)
-          (dmg, pushDir, pushSpeed) => {
-            applyDamageToNyx(dmg);
-            controller?.applySmashKnockback(pushDir, pushSpeed ?? 22);
-          },
-          // El manotazo rompe un suelo flotante: se destroza y suelta
-          // escombros agarrables por el Campo Gravitacional.
-          (slab) => {
-            const shattered = floatingSlabs.shatterSlab(slab.id);
-            if (shattered) {
-              skillExecutor.spawnSlabDebris(shattered.center, 4);
-            }
-          },
+          onWavePlayerHit,
+          onOctopusInk,
+          onGolemSmash,
+          onSlabSmash,
         );
         if (didEnemyEvadeDash) {
           controller.notifyEnemyEvaded();
         }
 
-        const activeEnemies = waveMgr.getActiveEnemies();
+        waveMgr.fillActiveEnemies(activeEnemies);
 
         // Regla de Barrera Blanca para enemigos
         for (const enemy of activeEnemies) {
@@ -728,10 +792,10 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
         // Avance automático al completar oleada. En Entrenamiento no existen
         // oleadas: el enemigo único reaparece al instante con la vida llena.
         if (training) {
-          if (waveMgr.getActiveEnemies().length === 0) {
+          if (waveMgr.getActiveEnemyCount() === 0) {
             spawnTrainingEnemy();
           }
-        } else if (waveMgr.getActiveEnemies().length === 0) {
+        } else if (waveMgr.getActiveEnemyCount() === 0) {
           if (nextWaveDelay <= 0) nextWaveDelay = 1.6;
           else {
             nextWaveDelay -= worldDt;
@@ -749,7 +813,7 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
         // Actualizar habilidades activas (rocas orbitando frente a Nyx, agujero negro, ondas, pozo)
         skillExecutor.update(
           worldDt,
-          waveMgr.getActiveEnemies(),
+          activeEnemies,
           handleSkillDamageEnemy,
           controller.getPosition(),
           controller.getAimForward(),
@@ -774,67 +838,36 @@ export default function DomeGameView({ settings, onExit, trainingMode }: DomeGam
         }
 
         const waveInfo = waveMgr.getWaveInfo();
-        // Sincronizar estadísticas/slots con NyxDomeController
-        controller.syncProgression({
-          level: progression.level,
-          exp: progression.exp,
-          expToNext: progression.expToNext,
-          maxHp: progression.maxHp,
-          maxEden: progression.maxEden,
-          speedMultiplier: mods.speedMultiplier,
-          edenRegenFrac: mods.edenRegenPctPerSec,
-          hpRegenFrac: mods.hpRegenPctPerSec,
-          inkOverlayIntensity: playerStatus.inkIntensity,
-          waveNumber: training ? undefined : waveInfo.wave,
-          waveLabel: training ? undefined : waveInfo.label,
-          slots: [
-            {
-              name: progression.slots[0].skillId ? ACTIVE_SKILLS_CATALOG[progression.slots[0].skillId].name : null,
-              level: progression.slots[0].level,
-              cooldownRemaining: progression.slots[0].cooldownRemaining,
-              maxCooldown: progression.slots[0].maxCooldown,
-            },
-            {
-              name: progression.slots[1].skillId ? ACTIVE_SKILLS_CATALOG[progression.slots[1].skillId].name : null,
-              level: progression.slots[1].level,
-              cooldownRemaining: progression.slots[1].cooldownRemaining,
-              maxCooldown: progression.slots[1].maxCooldown,
-            },
-            {
-              name: progression.slots[2].skillId ? ACTIVE_SKILLS_CATALOG[progression.slots[2].skillId].name : null,
-              level: progression.slots[2].level,
-              cooldownRemaining: progression.slots[2].cooldownRemaining,
-              maxCooldown: progression.slots[2].maxCooldown,
-            },
-          ],
-        });
+        // Sincronizar estadísticas/slots con NyxDomeController (payload
+        // persistente mutado in-place: cero objetos nuevos por frame).
+        syncPayload.level = progression.level;
+        syncPayload.exp = progression.exp;
+        syncPayload.expToNext = progression.expToNext;
+        syncPayload.maxHp = progression.maxHp;
+        syncPayload.maxEden = progression.maxEden;
+        syncPayload.speedMultiplier = mods.speedMultiplier;
+        syncPayload.edenRegenFrac = mods.edenRegenPctPerSec;
+        syncPayload.hpRegenFrac = mods.hpRegenPctPerSec;
+        syncPayload.inkOverlayIntensity = playerStatus.inkIntensity;
+        syncPayload.waveNumber = training ? undefined : waveInfo.wave;
+        syncPayload.waveLabel = training ? undefined : waveInfo.label;
+        for (let i = 0; i < 3; i++) {
+          const slot = progression.slots[i];
+          syncPayload.slots[i].name = slot.skillId
+            ? ACTIVE_SKILLS_CATALOG[slot.skillId].name
+            : null;
+          syncPayload.slots[i].level = slot.level;
+          syncPayload.slots[i].cooldownRemaining = slot.cooldownRemaining;
+          syncPayload.slots[i].maxCooldown = slot.maxCooldown;
+        }
+        controller.syncProgression(syncPayload);
 
         controller.update(
           effRawDt,
           activeSlabs,
           camera,
-          waveMgr.getActiveEnemies(),
-          (enemy, hitDir, isDrill, impactSpeed) => {
-            waveMgr.onHitEnemy(enemy, hitDir, isDrill, impactSpeed);
-            const managed = waveMgr.getActiveEnemies().find((e) => e.id === enemy.id);
-            if (managed && managed.entity.alive) {
-              const res = combat.computeKineticImpact(
-                managed.entity,
-                impactSpeed ?? 14,
-                mods.forceMultiplier,
-                isDrill,
-              );
-              // Pinchos del Necrozma: el golpe queda mitigado y Nyx recibe
-              // daño de represalia (la repulsión la da el recoilBounce).
-              if (res.reason === 'thorns_repel') {
-                applyDamageToNyx(THORNS_DAMAGE_TO_NYX);
-              }
-              runTracker.recordDamage(res.damage);
-              if (managed.entity.hp <= 0 || res.killed) {
-                killWaveEnemy(managed, false);
-              }
-            }
-          },
+          activeEnemies,
+          onControllerHitEnemy,
         );
 
         runTracker.tick(worldDt);

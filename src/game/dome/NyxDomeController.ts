@@ -16,7 +16,7 @@ import {
   updateSlabMotion,
   type SlabContact,
 } from '@/game/dome/DomeSlabs';
-import { NyxAnimator, type NyxAnimState } from '@/game/render/nyxAnimator';
+import { NyxAnimator, type NyxAnimParams, type NyxAnimState } from '@/game/render/nyxAnimator';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
 import {
   formatKeyCode,
@@ -168,6 +168,16 @@ type HitEnemyCallback = (
 function clamp01(x: number): number {
   return Math.min(1, Math.max(0, x));
 }
+
+// Scratch del bucle caliente: gravedad del pelo y params del animador se
+// reutilizan cada frame en lugar de crear array/objeto literales nuevos.
+const _hairGravityLocal: [number, number, number] = [0, 0, 0];
+const _animParams: NyxAnimParams = {
+  speed01: 0,
+  turnRate: 0,
+  verticalVel: 0,
+  hairGravityLocal: _hairGravityLocal,
+};
 
 export class NyxDomeController {
   // --- Dependencias
@@ -464,6 +474,17 @@ export class NyxDomeController {
       this.dashHeld = false;
     }
   }
+
+  /**
+   * Tamaño del viewport en píxeles CSS: lo refresca la vista en cada resize
+   * para que la mira no consulte window.innerWidth/innerHeight cada frame.
+   */
+  setViewportSize(width: number, height: number): void {
+    this.viewportW = width;
+    this.viewportH = height;
+  }
+  private viewportW = window.innerWidth;
+  private viewportH = window.innerHeight;
 
   /**
    * Entrada del mando (Gamepad API estándar, DualShock 4 / genérico). NO
@@ -841,12 +862,13 @@ export class NyxDomeController {
 
     // --- Animador y VFX
     const hairG = this.mode === 'grounded' ? -1 : -0.25;
-    this.animator.update(simDt, {
-      speed01: clamp01(speed / RUN_SPEED),
-      turnRate: this.turnRate,
-      verticalVel: this.velocity.dot(this.up),
-      hairGravityLocal: [0, hairG, 0],
-    });
+    _hairGravityLocal[0] = 0;
+    _hairGravityLocal[1] = hairG;
+    _hairGravityLocal[2] = 0;
+    _animParams.speed01 = clamp01(speed / RUN_SPEED);
+    _animParams.turnRate = this.turnRate;
+    _animParams.verticalVel = this.velocity.dot(this.up);
+    this.animator.update(simDt, _animParams);
     this.vfx.update(
       sdt,
       this.nyxRoot.position,
@@ -906,8 +928,8 @@ export class NyxDomeController {
       return;
     }
 
-    const width = window.innerWidth;
-    const height = window.innerHeight;
+    const width = this.viewportW;
+    const height = this.viewportH;
     const cx = width * 0.5;
     const cy = height * 0.5;
 

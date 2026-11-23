@@ -1158,18 +1158,48 @@ export class DomeWaveManager {
   // -------------------------------------------------------------------------
 
   getWaveInfo(): WaveInfo {
+    // Objeto persistente (solo lectura): el bucle de juego lo consulta cada
+    // frame sin generar basura.
     const plan = getWavePlan(Math.max(1, this.currentWave));
-    return {
-      wave: this.currentWave,
-      label: plan.label,
-      floorMode: plan.floorMode,
-      remaining: this.getActiveEnemies().length,
-    };
+    this.waveInfoCache.wave = this.currentWave;
+    this.waveInfoCache.label = plan.label;
+    this.waveInfoCache.floorMode = plan.floorMode;
+    this.waveInfoCache.remaining = this.getActiveEnemyCount();
+    return this.waveInfoCache;
   }
 
   getActiveEnemies(): ManagedWaveEnemy[] {
     return this.enemies.filter((e) => e.entity.alive);
   }
+
+  /** Nº de enemigos vivos sin asignar un array nuevo (bucle caliente). */
+  getActiveEnemyCount(): number {
+    let count = 0;
+    for (const enemy of this.enemies) {
+      if (enemy.entity.alive) count++;
+    }
+    return count;
+  }
+
+  /**
+   * Rellena `out` con los enemigos vivos (vaciándolo antes) y lo devuelve.
+   * Versión sin allocations de getActiveEnemies para el bucle de juego.
+   */
+  fillActiveEnemies(out: ManagedWaveEnemy[]): ManagedWaveEnemy[] {
+    out.length = 0;
+    for (const enemy of this.enemies) {
+      if (enemy.entity.alive) out.push(enemy);
+    }
+    return out;
+  }
+
+  /** Cache de getWaveInfo: los consumidores solo leen, nunca mutan. */
+  private readonly waveInfoCache: WaveInfo = {
+    wave: 1,
+    label: '',
+    floorMode: 'basic',
+    remaining: 0,
+  };
 
   // -------------------------------------------------------------------------
   // Modo Entrenamiento / Debug
@@ -1315,8 +1345,11 @@ export class DomeWaveManager {
     this.waveTime += dt;
     const lockedId = lockedEnemy?.id ?? null;
 
-    // Copia: killEnemy puede mutar this.enemies durante el bucle.
-    for (const enemy of [...this.enemies]) {
+    // Iteración hacia atrás por índice: killEnemy hace splice de this.enemies
+    // durante el bucle y así los índices pendientes no se desplazan (cero
+    // allocations, antes era `[...this.enemies]` cada frame).
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const enemy = this.enemies[i];
       const internal = this.internals.get(enemy.id);
       if (!internal) {
         continue;

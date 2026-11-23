@@ -20,6 +20,11 @@ export interface SkillTargetEnemy {
   mesh: THREE.Object3D;
 }
 
+/**
+ * Daña a un enemigo con un impulso cinético. El vector `impulse` solo es
+ * válido DURANTE la llamada (puede ser un scratch reutilizado): consumirlo
+ * de forma síncrona, nunca almacenarlo.
+ */
 export type DamageEnemyFn = (
   enemy: SkillTargetEnemy,
   amount: number,
@@ -76,6 +81,10 @@ const DEBRIS_DRIFT_DAMPING = 0.8;
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
+/** Impulso reutilizado en los callbacks de daño (ver contrato de DamageEnemyFn). */
+const _impulse = new THREE.Vector3();
+/** Impulso nulo de las habilidades sin empuje (implosión). */
+const _zeroImpulse = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
 function nearestEnemy(
@@ -210,6 +219,8 @@ export class DomeSkillExecutor {
   private readonly projectiles: ProjectileState[] = [];
   private readonly waves: ExpandingWave[] = [];
   private readonly wells: AttractionWellState[] = [];
+  /** Ids vivos del frame actual (updateWells): Set persistente sin GC. */
+  private readonly wellAliveIds = new Set<string>();
   private readonly blackHoles: BlackHoleState[] = [];
   private readonly implosions: FadingVfx[] = [];
   private readonly halos: FadingVfx[] = [];
@@ -570,7 +581,8 @@ export class DomeSkillExecutor {
       if (dist > radius || dist < 1e-4) continue;
       _v1.divideScalar(dist).multiplyScalar(force);
       _v1.y += force * 0.25;
-      ctx.onDamageEnemy(enemy, damage, _v1.clone());
+      _impulse.copy(_v1);
+      ctx.onDamageEnemy(enemy, damage, _impulse);
     }
 
     // El propio suelo flotante también se aleja... si no estás apoyada en él.
@@ -719,7 +731,7 @@ export class DomeSkillExecutor {
     if (target === null) return { triggered: false };
 
     this.spawnImplosion(target.position);
-    ctx.onDamageEnemy(target, IMPLOSION_DAMAGE, new THREE.Vector3(0, 0, 0), true);
+    ctx.onDamageEnemy(target, IMPLOSION_DAMAGE, _zeroImpulse, true);
     return { triggered: true, animOverride: 'eden_absorb' };
   }
 
@@ -798,8 +810,8 @@ export class DomeSkillExecutor {
         if (p.hitIds.has(enemy.id)) continue;
         if (p.mesh.position.distanceTo(enemy.position) <= enemy.radius + p.hitRadius) {
           p.hitIds.add(enemy.id);
-          const impulse = _v3.copy(p.velocity).normalize().multiplyScalar(9).clone();
-          onDamageEnemy(enemy, p.damage, impulse);
+          _impulse.copy(p.velocity).normalize().multiplyScalar(9);
+          onDamageEnemy(enemy, p.damage, _impulse);
           if (!p.pierce) {
             killed = true;
             break;
@@ -838,7 +850,12 @@ export class DomeSkillExecutor {
     onDamageEnemy: DamageEnemyFn
   ): void {
     if (this.wells.length === 0) return;
-    const aliveIds = new Set(enemies.map((enemy) => enemy.id));
+    // Set persistente reutilizado cada frame (antes: new Set(map()) por frame).
+    const aliveIds = this.wellAliveIds;
+    aliveIds.clear();
+    for (const enemy of enemies) {
+      aliveIds.add(enemy.id);
+    }
 
     for (let i = this.wells.length - 1; i >= 0; i--) {
       const well = this.wells[i];
@@ -861,18 +878,18 @@ export class DomeSkillExecutor {
             onDamageEnemy(
               well.enemyA,
               damage,
-              _v2.subVectors(well.enemyB.position, well.enemyA.position)
+              _impulse
+                .subVectors(well.enemyB.position, well.enemyA.position)
                 .normalize()
                 .multiplyScalar(10)
-                .clone()
             );
             onDamageEnemy(
               well.enemyB,
               damage,
-              _v2.subVectors(well.enemyA.position, well.enemyB.position)
+              _impulse
+                .subVectors(well.enemyA.position, well.enemyB.position)
                 .normalize()
                 .multiplyScalar(10)
-                .clone()
             );
             _v3.addVectors(well.enemyA.position, well.enemyB.position).multiplyScalar(0.5);
             this.spawnExpandingWave(_v3, 3, 0.35, this.flashMaterial);
@@ -898,10 +915,10 @@ export class DomeSkillExecutor {
             onDamageEnemy(
               well.crushTarget,
               damage,
-              _v2.subVectors(well.slabA.center, well.crushTarget.position)
+              _impulse
+                .subVectors(well.slabA.center, well.crushTarget.position)
                 .normalize()
                 .multiplyScalar(8)
-                .clone()
             );
             this.spawnExpandingWave(well.crushTarget.position, 2.5, 0.3, this.flashMaterial);
           }
@@ -914,10 +931,10 @@ export class DomeSkillExecutor {
             onDamageEnemy(
               well.crushTarget,
               damage,
-              _v2.subVectors(well.slabB.center, well.crushTarget.position)
+              _impulse
+                .subVectors(well.slabB.center, well.crushTarget.position)
                 .normalize()
                 .multiplyScalar(8)
-                .clone()
             );
             this.spawnExpandingWave(well.crushTarget.position, 2.5, 0.3, this.flashMaterial);
           }
@@ -969,10 +986,10 @@ export class DomeSkillExecutor {
             onDamageEnemy(
               enemy,
               5 + bh.level * 2,
-              _v2.subVectors(bh.group.position, enemy.position)
+              _impulse
+                .subVectors(bh.group.position, enemy.position)
                 .normalize()
                 .multiplyScalar(6)
-                .clone()
             );
           }
         }

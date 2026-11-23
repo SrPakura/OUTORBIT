@@ -328,6 +328,7 @@ export class DomeProgressionManager {
       this.expToNext = 0.5 * this.level;
       leveledUp = true;
     }
+    if (leveledUp) this.modifiersDirty = true;
     return leveledUp;
   }
 
@@ -381,6 +382,7 @@ export class DomeProgressionManager {
       if (option.passiveId !== undefined) {
         const def = PASSIVES_CATALOG[option.passiveId];
         this.passives[option.passiveId] = Math.min(def.maxLevel, Math.max(0, option.nextLevel));
+        this.modifiersDirty = true;
       }
     } else if (option.skillId !== undefined) {
       if (option.kind === 'active_upgrade') {
@@ -411,24 +413,51 @@ export class DomeProgressionManager {
   /**
    * Modificadores derivados de nivel + pasivas. El magnetismo de partículas
    * escala con el nivel (a Nv 1 apenas atraen; a niveles altos vuelan a Nyx).
+   *
+   * Devuelve SIEMPRE el mismo objeto (recomputado in-place solo cuando cambia
+   * el nivel o una pasiva): el bucle de juego lo consulta cada frame sin
+   * generar basura. No mutar el resultado.
    */
   getModifiers(): DomeModifiers {
+    if (this.modifiersDirty) {
+      this.recomputeModifiers();
+      this.modifiersDirty = false;
+    }
+    return this.modifiersCache;
+  }
+
+  /** Nivel de una pasiva (vía pública que invalida el cache de modificadores). */
+  setPassiveLevel(id: PassiveId, level: number): void {
+    this.passives[id] = Math.min(PASSIVES_CATALOG[id].maxLevel, Math.max(0, level));
+    this.modifiersDirty = true;
+  }
+
+  private readonly modifiersCache: DomeModifiers = {
+    speedMultiplier: 1,
+    forceMultiplier: 1,
+    edenRegenPctPerSec: BASE_EDEN_REGEN_PCT_PER_SEC,
+    hpRegenPctPerSec: 0,
+    magnetRadius: 6.5,
+    magnetSpeed: 17,
+  };
+  private modifiersDirty = true;
+
+  private recomputeModifiers(): void {
     const speedLvl = this.passives.speed_force;
     const speedBonus = speedLvl > 0 ? PASSIVES_CATALOG.speed_force.levels[speedLvl - 1].value : 0;
     const edenLvl = this.passives.eden_regen;
     const hpLvl = this.passives.hp_regen;
-    return {
-      speedMultiplier: 1 + speedBonus,
-      // Por física, más velocidad = más fuerza/penetración de patadas.
-      forceMultiplier: 1 + speedBonus,
-      edenRegenPctPerSec:
-        edenLvl > 0
-          ? PASSIVES_CATALOG.eden_regen.levels[edenLvl - 1].value
-          : BASE_EDEN_REGEN_PCT_PER_SEC,
-      hpRegenPctPerSec: hpLvl > 0 ? PASSIVES_CATALOG.hp_regen.levels[hpLvl - 1].value : 0,
-      magnetRadius: 4 + this.level * 2.5,
-      magnetSpeed: 10 + this.level * 7,
-    };
+    const cache = this.modifiersCache;
+    cache.speedMultiplier = 1 + speedBonus;
+    // Por física, más velocidad = más fuerza/penetración de patadas.
+    cache.forceMultiplier = 1 + speedBonus;
+    cache.edenRegenPctPerSec =
+      edenLvl > 0
+        ? PASSIVES_CATALOG.eden_regen.levels[edenLvl - 1].value
+        : BASE_EDEN_REGEN_PCT_PER_SEC;
+    cache.hpRegenPctPerSec = hpLvl > 0 ? PASSIVES_CATALOG.hp_regen.levels[hpLvl - 1].value : 0;
+    cache.magnetRadius = 4 + this.level * 2.5;
+    cache.magnetSpeed = 10 + this.level * 7;
   }
 
   // ------------------------------------------------------------------

@@ -28,6 +28,9 @@ function srgbVec3(hex: string): THREE.Vector3 {
   );
 }
 
+/** Dirección fija de la cámara del diorama (plano 3/4, constante cada frame). */
+const TITLE_CAM_DIR = new THREE.Vector3(0.30, 0.14, 1.0).normalize();
+
 // ---------------------------------------------------------------------------
 // Fondo limpio crepuscular (azul noche / cobalto -> naranja cálido abajo)
 // ---------------------------------------------------------------------------
@@ -453,8 +456,7 @@ export class TitleDioramaSandbox {
     this.universeMat.uniforms.uTime.value = t;
 
     // Cámara fija cercana en plano 3/4 sin control de ratón (3.85 m de distancia)
-    const camDir = new THREE.Vector3(0.30, 0.14, 1.0).normalize();
-    this.camera.position.copy(this.center).addScaledVector(camDir, 3.85);
+    this.camera.position.copy(this.center).addScaledVector(TITLE_CAM_DIR, 3.85);
     this.camera.lookAt(this.center);
 
     // Rotación orgánica lenta en los 3 ejes: máx. 20° por minuto
