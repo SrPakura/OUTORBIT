@@ -302,16 +302,20 @@ integran horneadas.
 Pipeline:
 
 ```
-.blend (nyx_kick_flip{,_drill} / nyx_gravity_kick / nyx_spiral_drill_kick)
+.blend (nyx_kick_flip{,_drill} / nyx_gravity_kick / nyx_spiral_drill_kick /
+        nyx_zero_g_float)
   → public/models/*.glb
   → node scripts/bake_nyx_clips.mjs
   → src/game/render/nyxBakedClips.ts (Euler XYZ unwrapped, frame-major)
-  → NyxAnimator.sampleClip() en los 4 estados
+  → NyxAnimator.sampleClip() en los 5 estados
 ```
 
 Detalles que importan:
 
-- **Las pistas de giro van unwrapped** (volteretas: `hips.x` 0 → -2π/-4π;
+- **`zero_g_float` también va horneado** (desde la hornada del float de
+  BlendCap, 2.63 s, 80 frames): el estado loopea el clip y la vieja pose
+  procedural `poseZeroGFloat` quedó retirada del animador. El cierre del
+  bucle es de 0.07 rad y el muelle de suavizado lo absorbe.- **Las pistas de giro van unwrapped** (volteretas: `hips.x` 0 → -2π/-4π;
   barrena: `hips.z` 0 → -2π por vuelta). El animador envuelve `cur` hacia
   `tgt` cada frame para que el lerp persiga por el camino corto, y al cambiar
   de estado el wrap devuelve el ángulo a su equivalente mod 2π sin giro

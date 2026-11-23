@@ -459,8 +459,8 @@ export class TitleDioramaSandbox {
     this.camera.position.copy(this.center).addScaledVector(TITLE_CAM_DIR, 3.85);
     this.camera.lookAt(this.center);
 
-    // Rotación orgánica lenta en los 3 ejes: máx. 20° por minuto
-    const maxRadPerSec = (20 * Math.PI) / (180 * 60);
+    // Rotación orgánica en los 3 ejes: máx. 180° por minuto (9x más viva)
+    const maxRadPerSec = (180 * Math.PI) / (180 * 60);
     const vx = (0.55 * Math.sin(t * 0.11 + 0.4) + 0.45 * Math.cos(t * 0.23 + 1.7)) * maxRadPerSec;
     const vy = (0.55 * Math.sin(t * 0.09 + 2.1) + 0.45 * Math.cos(t * 0.19 + 0.5)) * maxRadPerSec;
     const vz = (0.55 * Math.sin(t * 0.13 + 3.8) + 0.45 * Math.cos(t * 0.27 + 2.9)) * maxRadPerSec;

@@ -166,6 +166,7 @@ const CLIPS = [
   ['KICK_FLIP_DRILL_CLIP', 'nyx_kick_flip_drill.glb'],
   ['GRAVITY_KICK_LOOP', 'nyx_gravity_kick.glb'],
   ['SPIRAL_DRILL_KICK_LOOP', 'nyx_spiral_drill_kick.glb'],
+  ['ZERO_G_FLOAT_LOOP', 'nyx_zero_g_float.glb'],
 ];
 
 const baked = CLIPS.map(([name, file]) => ({ name, file, clip: bakeClip(path.join(ROOT, 'public/models', file)) }));

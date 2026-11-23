@@ -3,6 +3,7 @@ import type { GameSettings } from '@/game/settings';
 import { musicPlayer } from '@/game/audio/MusicPlayer';
 import { useI18n } from '@/i18n';
 import { TitleDioramaSandbox } from '@/ui/TitleDioramaSandbox';
+import FluidInkButton from '@/ui/FluidInkButton';
 import SettingsScreen from '@/ui/SettingsScreen';
 import LeaderboardModal from '@/ui/LeaderboardModal';
 
@@ -12,15 +13,17 @@ interface TitleScreenProps {
   onPlay: () => void;
   /** Modo Entrenamiento / Debug: cúpula con panel de pruebas (F2 / Tab). */
   onPlayTraining?: () => void;
-  /** Ajustes persistentes (Controles) compartidos con el GameEngine. */
+  /** Ajustes persistentes compartidos con el GameEngine. */
   settings: GameSettings;
   onUpdateSettings: (settings: GameSettings) => void;
 }
 
 /**
- * Portada de OUTORBIT: blade astral diagonal con shader líquido, logotipo 3D
- * extruido con shader propio, diorama de gravedad cero sobre el cosmos y los
- * dos modales funcionales (Controles y Leaderboard).
+ * Portada de OUTORBIT: diorama de gravedad cero con Nyx flotando (float de
+ * Blender) a la derecha y, a la izquierda, un panel de papel con el mismo ADN
+ * visual que la pausa/ajustes/subida de nivel: rejilla, tinta, sombras duras
+ * y chips sesgados. Los botones son FluidInkButton: cápsulas de tinta viva
+ * con borde líquido que ondula, se imanta al cursor y vibra al pulsar.
  */
 export default function TitleScreen({
   onPlay,
@@ -70,101 +73,61 @@ export default function TitleScreen({
         aria-hidden="true"
       />
 
-      {/* --- Logotipo 2D limpio y pila de menú dentro del blade izquierdo --- */}
-      <div className="absolute left-[3.5%] top-[14%] z-10 flex w-[25%] min-w-[230px] max-w-[380px] flex-col gap-7">
+      {/* --- Panel de papel de la izquierda: logo + botones de tinta viva --- */}
+      <aside className="title-panel">
+        <div className="title-panel__grid" />
+        <div className="title-panel__burst" />
+
         <header className="select-none">
-          <div className="mb-1.5 flex items-center gap-2">
-            <span className="-skew-x-12 bg-white px-2 py-0.5 text-[10px] font-black tracking-[0.2em] text-[#090314]">
-              {t('menu.tagline')}
-            </span>
-            <span className="h-[2px] flex-1 bg-gradient-to-r from-cyan-400/80 to-transparent" />
+          <div className="mb-2 flex items-center gap-2">
+            <span className="title-tag">{t('menu.tagline')}</span>
+            <span className="title-tag__line" />
           </div>
-          <h1 className="-skew-x-12 text-5xl font-black italic tracking-[-0.03em] text-white drop-shadow-[4px_4px_0_#e11d48] sm:text-6xl">
-            OUT<span className="text-cyan-300">ORBIT</span>
+          <h1 className="title-logo">
+            OUT<span className="title-logo__accent">ORBIT</span>
           </h1>
         </header>
 
-        <nav className="flex flex-col gap-3">
-          <button
-            type="button"
+        <nav className="mt-8 flex flex-col gap-4">
+          <FluidInkButton
+            label={t('menu.play')}
+            stops={['#e11d48', '#f43f5e', '#fb923c', '#fbbf24']}
+            vbHeight={116}
             onClick={onPlay}
-            className="group relative -skew-x-12 cursor-pointer border-2 border-white px-6 py-3.5 text-left shadow-[6px_6px_0_#000000] transition-transform hover:-translate-y-0.5 active:translate-y-0 active:shadow-[3px_3px_0_#000000]"
-            style={{
-              backgroundImage: 'linear-gradient(100deg, #7e22ce 0%, #e11d48 55%, #f43f5e 100%)',
-            }}
-          >
-            <span className="block skew-x-12 text-2xl font-black italic tracking-[0.18em] text-white">
-              {t('menu.play')}
-            </span>
-          </button>
-
+          />
           {onPlayTraining && (
-            <button
-              type="button"
+            <FluidInkButton
+              label={t('menu.training')}
+              hint={t('menu.trainingDebug')}
+              stops={['#22d3ee', '#38bdf8', '#6366f1', '#4f46e5']}
               onClick={onPlayTraining}
-              className="-skew-x-12 cursor-pointer border-2 border-cyan-300/40 bg-[#090314]/70 px-4 py-2 text-left text-white/75 shadow-[4px_4px_0_#000000] backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:text-white active:translate-y-0"
-            >
-              <span className="block skew-x-12 text-xs font-black italic uppercase tracking-[0.14em]">
-                {t('menu.training')}{' '}
-                <span className="text-amber-300/90">{t('menu.trainingDebug')}</span>
-              </span>
-            </button>
+            />
           )}
-
-          <button
-            type="button"
+          <FluidInkButton
+            label={t('menu.controls')}
+            stops={['#a855f7', '#8b5cf6', '#6366f1', '#22d3ee']}
             onClick={() => setModal('settings')}
-            className="-skew-x-12 cursor-pointer border-2 border-white/80 bg-white/10 px-4 py-2.5 text-left text-white shadow-[5px_5px_0_#000000] backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:bg-white/20 active:translate-y-0"
-          >
-            <span className="block skew-x-12 text-sm font-black italic uppercase tracking-[0.1em]">
-              {t('menu.controls')}
-            </span>
-          </button>
-
-          <button
-            type="button"
+          />
+          <FluidInkButton
+            label={t('menu.leaderboard')}
+            stops={['#fbbf24', '#f59e0b', '#f43f5e', '#e11d48']}
             onClick={() => setModal('leaderboard')}
-            className="-skew-x-12 cursor-pointer border-2 border-white/80 bg-white/10 px-4 py-2.5 text-left text-white shadow-[5px_5px_0_#000000] backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 hover:bg-white/20 active:translate-y-0"
-          >
-            <span className="block skew-x-12 text-sm font-black italic uppercase tracking-[0.1em]">
-              {t('menu.leaderboard')}
-            </span>
-          </button>
+          />
         </nav>
-      </div>
 
-      {/* --- Selector de idioma abajo a la izquierda --- */}
-      <div className="absolute bottom-4 left-4 z-10 flex flex-col items-start gap-1.5">
-        <button
-          type="button"
-          onClick={toggleLanguage}
-          aria-label="Toggle language / Cambiar idioma"
-          className="-skew-x-12 cursor-pointer border-2 border-white/80 bg-[#090314]/80 px-1 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-white shadow-[4px_4px_0_#000000] backdrop-blur-sm transition-all hover:-translate-y-0.5 hover:border-cyan-300 active:translate-y-0"
-        >
-          <span
-            className={`skew-x-12 px-2 py-0.5 transition-colors ${
-              language === 'es' ? 'text-cyan-300' : 'text-white/40 hover:text-white/70'
-            }`}
-          >
-            {t('menu.languageEs')}
-          </span>
-          <span className="skew-x-12 text-white/30">/</span>
-          <span
-            className={`skew-x-12 px-2 py-0.5 transition-colors ${
-              language === 'en' ? 'text-cyan-300' : 'text-white/40 hover:text-white/70'
-            }`}
-          >
-            {t('menu.languageEn')}
-          </span>
-        </button>
-      </div>
-
-      {/* --- Etiqueta minimalista de Nyx --- */}
-      <div className="absolute bottom-14 right-4 z-10 flex flex-col items-end gap-2">
-        <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-200/70">
-          {t('menu.nyxTagline')}
-        </p>
-      </div>
+        <div className="mt-auto pt-8">
+          <FluidInkButton
+            label={language === 'es' ? 'ESPAÑOL' : 'ENGLISH'}
+            hint={language === 'es' ? 'EN' : 'ES'}
+            stops={['#0b0d12', '#1e293b', '#0e7490', '#22d3ee']}
+            vbHeight={72}
+            cornerRadius={20}
+            amplitude={3}
+            ariaLabel="Toggle language / Cambiar idioma"
+            onClick={toggleLanguage}
+          />
+        </div>
+      </aside>
 
       {modal === 'settings' && (
         <SettingsScreen
@@ -175,6 +138,76 @@ export default function TitleScreen({
       )}
 
       {modal === 'leaderboard' && <LeaderboardModal onClose={() => setModal(null)} />}
+
+      <style>{`
+        .title-panel {
+          position: relative;
+          z-index: 10;
+          display: flex;
+          flex-direction: column;
+          height: 100vh;
+          width: clamp(320px, 30vw, 460px);
+          padding: 7vh 3.2vw 4.5vh max(3.2vw, 26px);
+          background-color: #f1f1ed;
+          border-right: 3px solid #0b0d12;
+          box-shadow: 10px 0 0 #e11d48;
+          color: #0b0d12;
+          font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+          -webkit-font-smoothing: antialiased;
+          overflow-y: auto;
+        }
+        .title-panel__grid {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          background-image:
+            linear-gradient(rgba(11,13,18,0.06) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(11,13,18,0.06) 1px, transparent 1px);
+          background-size: 96px 96px;
+        }
+        .title-panel__burst {
+          position: absolute;
+          left: 50%;
+          top: 12%;
+          width: 90vmin;
+          height: 90vmin;
+          transform: translate(-50%, -50%);
+          pointer-events: none;
+          background-image: radial-gradient(rgba(11,13,18,0.1) 2px, transparent 2.2px);
+          background-size: 14px 14px;
+          -webkit-mask-image: radial-gradient(circle, #000 0%, transparent 60%);
+          mask-image: radial-gradient(circle, #000 0%, transparent 60%);
+        }
+
+        .title-tag {
+          background: #0b0d12;
+          color: #22d3ee;
+          font: 800 10px/1 ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+          letter-spacing: 0.2em;
+          padding: 6px 10px 5px;
+          transform: skewX(-8deg);
+        }
+        .title-tag__line {
+          height: 3px;
+          flex: 1;
+          background: #e11d48;
+          transform: skewY(-1deg);
+        }
+        .title-logo {
+          margin: 0;
+          font-size: clamp(52px, 4.6vw, 76px);
+          font-weight: 900;
+          font-style: italic;
+          letter-spacing: -0.04em;
+          line-height: 0.9;
+          color: #0b0d12;
+          text-shadow: 5px 5px 0 #e11d48;
+        }
+        .title-logo__accent {
+          color: #e11d48;
+          text-shadow: 5px 5px 0 #0b0d12;
+        }
+      `}</style>
     </div>
   );
 }

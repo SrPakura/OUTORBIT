@@ -10,6 +10,7 @@ import {
   KICK_FLIP_CLIP,
   KICK_FLIP_DRILL_CLIP,
   SPIRAL_DRILL_KICK_LOOP,
+  ZERO_G_FLOAT_LOOP,
   type NyxBakedClip,
 } from './nyxBakedClips';
 import {
@@ -19,7 +20,6 @@ import {
   poseGravityFall,
   poseVictoryFloat,
   poseWallShiftFlip,
-  poseZeroGFloat,
 } from './nyxAnimsTraversal';
 import {
   poseAirDash,
@@ -588,7 +588,12 @@ export class NyxAnimator {
       case 'run': poseRun(this.writer, g, this.runPhase, this.speed, this.turn); break;
       case 'jump_land': poseJumpLand(this.writer, t); break;
       case 'land_recover': poseLandRecover(this.writer, t); break;
-      case 'zero_g_float': poseZeroGFloat(this.writer, g); break;
+      case 'zero_g_float': {
+        // Bucle de la flotación 0G de Blender (2.63 s): la vieja pose
+        // procedural queda retirada.
+        this.sampleClip(ZERO_G_FLOAT_LOOP, t % ZERO_G_FLOAT_LOOP.duration);
+        break;
+      }
       case 'gravity_fall': poseGravityFall(this.writer, g, this.vVel, this.hasVVel); break;
       case 'air_dash': poseAirDash(this.writer, t, g, this.dashDir); break;
       case 'gravity_kick': {
