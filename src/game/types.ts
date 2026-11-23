@@ -174,7 +174,7 @@ export type PropKind =
   | 'giant_flower'
   | 'glow_mushroom'
   | 'rock'
-  // --- Ciudad Sandbox (estilo Gravity Rush × OUTORBIT) ---
+  // --- Ciudad Sandbox (estilo OUTORBIT) ---
   | 'city_house'
   | 'city_shop'
   | 'street_lamp'
@@ -340,38 +340,6 @@ export interface AnchorNodeSpec {
 
 export type SandboxChallengeKind = 'race' | 'targets';
 
-export type CityDistrictId =
-  | 'pillar'
-  | 'auldnoir'
-  | 'pleajeune'
-  | 'endestria'
-  | 'vendecentre';
-
-/** Caja sólida orientable (OBB) de la ciudad Hekseville plana/multinivel. */
-export interface CityBoxCollider {
-  id: string;
-  district: CityDistrictId;
-  cx: number;
-  cy: number;
-  cz: number;
-  hx: number;
-  hy: number;
-  hz: number;
-  yaw: number;
-  passableUnderground?: boolean;
-}
-
-/** Cilindro vertical sólido (Pilar Central del Mundo). */
-export interface CityCylinderCollider {
-  id: string;
-  district: CityDistrictId;
-  cx: number;
-  cy: number;
-  cz: number;
-  radius: number;
-  halfHeight: number;
-}
-
 export interface SandboxChallengeCheckpoint {
   planetId: string;
   sphericalDir: [number, number, number];
@@ -419,8 +387,6 @@ export interface GalaxySpec {
   props?: PropSpec[];
   /** Activa mecánicas de patio de recreo Sandbox (sin game over frustrante). */
   isSandbox?: boolean;
-  /** Ciudad plana multinivel estilo Gravity Rush (sin planetas esféricos). */
-  isFlatCity?: boolean;
   collectibles?: CollectibleSpec[];
   anchorNodes?: AnchorNodeSpec[];
   challenges?: SandboxChallengeSpec[];
@@ -538,10 +504,8 @@ export interface HudSnapshot {
   tutorialLessons?: string[];
   /** El tutorial activo ya cumplió su meta (tarjeta de victoria del HUD). */
   tutorialCompleted?: boolean;
-  /** Modo Sandbox activo (Hekseville Cósmica). */
+  /** Modo Sandbox activo. */
   isSandbox?: boolean;
-  isFlatCity?: boolean;
-  gravityUpMode?: 'normal' | 'wall' | 'ceiling' | 'flight';
   sandboxCoins?: number;
   sandboxCoinsTotal?: number;
   sandboxOrbs?: number;

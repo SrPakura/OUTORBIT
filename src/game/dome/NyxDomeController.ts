@@ -284,7 +284,7 @@ export class NyxDomeController {
   private domeBounceFlash = 0;
   private shake = 0;
 
-  // --- Dirección de cámara arcade (Gravity Rush x Persona 5)
+  // --- Dirección de cámara arcade (estilo Persona 5)
   private camDist = CAM_DISTANCE; // muelle de distancia de cámara (tirachinas)
   private lookLift = 0; // subida del look en patada / caída al vacío
   private landingDip = 0; // hundimiento vertical del look al aterrizar

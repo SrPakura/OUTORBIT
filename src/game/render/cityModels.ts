@@ -8,7 +8,7 @@ import {
 } from './toonMaterials';
 
 // ============================================================================
-// Ciudad Sandbox (estilo Gravity Rush × OUTORBIT)
+// Ciudad Sandbox (estilo OUTORBIT)
 // Props urbanos y objetos del modo Sandbox, todos con el look cómic cel-shaded:
 // 3 bandas + halftone + sombra índigo (0x161b33) + contornos de tinta negra.
 // ============================================================================

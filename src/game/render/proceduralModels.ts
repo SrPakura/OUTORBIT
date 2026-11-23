@@ -1594,7 +1594,7 @@ export function buildPropMesh(kind: PropKind): THREE.Group {
       return buildGlowMushroom();
     case 'rock':
       return buildRock();
-    // --- Ciudad Sandbox (estilo Gravity Rush × OUTORBIT) ---
+    // --- Ciudad Sandbox (estilo OUTORBIT) ---
     case 'city_house':
     case 'city_shop':
     case 'street_lamp':

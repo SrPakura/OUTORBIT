@@ -366,7 +366,7 @@ function makeRng(seed: number): () => number {
 }
 
 // ---------------------------------------------------------------------------
-// Aspecto provisional por arquetipo (hasta los GLBs de Nevi)
+// Aspecto provisional por arquetipo (hasta los GLBs finales)
 // ---------------------------------------------------------------------------
 
 interface ArchetypeVisual {

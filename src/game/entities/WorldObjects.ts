@@ -1161,7 +1161,7 @@ const PROP_COLLIDER_BLUEPRINTS: Partial<Record<PropKind, PropColliderBlueprint>>
   torii_gate: { radius: 0.3, height: 3.6, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 1.5 },
   vine_arch: { radius: 0.5, height: 3.7, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 1.6 },
   rock: { radius: 0.55, height: 0.5, capRadius: 0.5, capY: 0.45, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
-  // --- Ciudad Sandbox (Gravity Rush × OUTORBIT) ---
+  // --- Ciudad Sandbox (OUTORBIT) ---
   city_house: { radius: 2.05, height: 5.25, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
   city_shop: { radius: 2.0, height: 3.1, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },
   street_lamp: { radius: 0.24, height: 3.9, capRadius: 0, capY: 0, bounceImpulse: 0, softFoliage: false, stealthBush: false, twinPillarOffset: 0 },

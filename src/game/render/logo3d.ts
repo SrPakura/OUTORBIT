@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { addComicOutline } from './toonMaterials';
 
 // ============================================================================
-// Logotipo 3D "OUTORBIT" — identidad Cosmic Nebula (Persona 5 x Hades x Gravity Rush)
+// Logotipo 3D "OUTORBIT" — identidad Cosmic Nebula (Persona 5 x Hades)
 // ============================================================================
 //
 // Glifos vectoriales extruidos a mano (THREE.Shape + ExtrudeGeometry) con

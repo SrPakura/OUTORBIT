@@ -71,7 +71,7 @@ export default function GameHUD({
     : -1;
   const hasNextTutorial =
     tutorialIndex >= 0 && tutorialIndex < TUTORIAL_SPECS.length - 1;
-  // MODO SANDBOX (Hekseville Cósmica): contadores de coleccionables, reto
+  // MODO SANDBOX: contadores de coleccionables, reto
   // activo, aviso de anclaje y popup cómic. Todo el bloque queda inerte si
   // `isSandbox` no es true, así el HUD de tutoriales y campaña no cambia.
   const isSandbox = snapshot.isSandbox === true;
@@ -81,26 +81,6 @@ export default function GameHUD({
   const challengeProgressRatio = sandboxChallenge
     ? Math.min(1, Math.max(0, sandboxChallenge.progress / Math.max(1, sandboxChallenge.total)))
     : 0;
-  // EXPLORACIÓN PURA (Hekseville plana): mientras la ciudad no tenga nada
-  // contabilizado (0 monedas, 0 orbes, 0 retos) el HUD se limpia —sin píldora
-  // de 0/0— y la barra superior pasa a una tarjeta compacta de ciudad. Los
-  // tutoriales y el sandbox con progreso conservan el HUD normal.
-  const isFlatCity = snapshot.isFlatCity === true;
-  const pureExploration =
-    isFlatCity &&
-    (snapshot.sandboxCoinsTotal ?? 0) === 0 &&
-    (snapshot.sandboxOrbsTotal ?? 0) === 0 &&
-    (snapshot.sandboxChallengesTotal ?? 0) === 0;
-  // Badge cómic del eje de gravedad activo (solo en exploración pura).
-  const gravityMode = snapshot.gravityUpMode ?? 'normal';
-  const gravityBadge =
-    gravityMode === 'wall'
-      ? { label: 'GRAVEDAD: PARED', color: '#22d3ee' }
-      : gravityMode === 'ceiling'
-        ? { label: 'GRAVEDAD: INVERTIDA', color: '#e879f9' }
-        : gravityMode === 'flight'
-          ? { label: 'GRAVEDAD: VUELO', color: '#a78bfa' }
-          : null;
 
   return (
     <div className="pointer-events-none fixed inset-0 select-none font-sans text-slate-100">
@@ -185,26 +165,12 @@ export default function GameHUD({
       <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-4">
         <div className="rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-2 shadow-[4px_4px_0_#000]">
           <p className="text-[10px] font-bold tracking-[0.25em] text-violet-300">
-            {pureExploration ? 'DISTRITO' : 'PLANETA'}
+            PLANETA
           </p>
           <p className="text-sm font-black">{snapshot.activePlanetName}</p>
         </div>
 
         <div className="max-w-md flex-1 rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-2 shadow-[4px_4px_0_#000]">
-          {pureExploration ? (
-            <div className="flex items-center gap-3">
-              <span className="h-8 w-1.5 shrink-0 rounded-full bg-gradient-to-b from-cyan-300 via-violet-400 to-fuchsia-400" />
-              <div className="min-w-0">
-                <p className="text-[11px] font-black tracking-[0.24em] text-cyan-300">
-                  HEKSEVILLE · MODO EXPLORACIÓN
-                </p>
-                <p className="mt-0.5 truncate text-[10px] font-semibold tracking-[0.14em] text-slate-300">
-                  {snapshot.levelTitle}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <>
               <p className="mb-1 text-[10px] font-bold tracking-[0.25em] text-violet-300">
                 OBJETIVOS — {snapshot.levelTitle}
               </p>
@@ -223,8 +189,6 @@ export default function GameHUD({
                   </li>
                 ))}
               </ul>
-            </>
-          )}
         </div>
 
         <div className="rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-2 text-right shadow-[4px_4px_0_#000]">
@@ -408,10 +372,8 @@ export default function GameHUD({
       )}
 
       {/* --- MODO SANDBOX: píldora cómic de coleccionables (monedas, orbes y
-          retos) justo bajo el botón M: AUDIO, alineada con el reloj. En la
-          exploración pura de Hekseville (todo a 0) se oculta: el usuario
-          quiere explorar limpio antes de que aparezca el progreso. --- */}
-      {isSandbox && !pureExploration && (
+          retos) justo bajo el botón M: AUDIO, alineada con el reloj. --- */}
+      {isSandbox && (
         <div
           className={`absolute right-4 flex items-center gap-3 rounded-full border-2 border-black bg-[#160b2e]/90 px-4 py-1.5 shadow-[4px_4px_0_#000] ${
             onToggleMute ? 'top-[122px]' : 'top-[84px]'
@@ -547,19 +509,6 @@ export default function GameHUD({
 
         {/* --- Badges de estado --- */}
         <div className="flex flex-wrap gap-2">
-          {pureExploration && gravityBadge && (
-            <span
-              className="inline-block -skew-x-6 rounded-lg border-2 border-black px-3 py-1 shadow-[3px_3px_0_#000]"
-              style={{
-                backgroundColor: gravityBadge.color,
-                boxShadow: `3px 3px 0 #000, 0 0 16px ${gravityBadge.color}99`,
-              }}
-            >
-              <span className="inline-block skew-x-6 text-[10px] font-black tracking-[0.2em] text-[#0b0b14]">
-                {gravityBadge.label}
-              </span>
-            </span>
-          )}
           {snapshot.isDisguised && (
             <span className="rounded-lg border-2 border-black bg-violet-500/90 px-3 py-1 text-[10px] font-black tracking-[0.2em] text-white shadow-[3px_3px_0_#000]">
               DISFRAZADO
@@ -631,33 +580,6 @@ export default function GameHUD({
 
       {/* --- Esquina inferior derecha: guía de controles --- */}
       <div className="absolute bottom-14 right-4 rounded-lg border-2 border-black bg-[#160b2e]/85 px-4 py-3 text-[10px] font-semibold leading-relaxed text-slate-300 shadow-[4px_4px_0_#000]">
-        {isFlatCity ? (
-          <>
-            <p>
-              <span className="text-yellow-300">WASD</span> Mover ·{' '}
-              <span className="text-yellow-300">ESPACIO</span> Salto / Restablecer gravedad (
-              <span className="text-cyan-300">-Y</span>)
-            </p>
-            <p>
-              <span className="text-yellow-300">CLIC DER</span> Apuntar superficie y{' '}
-              <span className="italic text-violet-300">Gravity Shift</span>
-            </p>
-            <p>
-              <span className="text-yellow-300">E</span> Hablar con ciudadanos
-            </p>
-            <p>
-              <span className="text-yellow-300">SHIFT</span> Sprint ·{' '}
-              <span className="text-yellow-300">R/C</span> Capturar Estasis
-            </p>
-            <p>
-              <span className="text-yellow-300">1/2/3</span> Escuadrón ·{' '}
-              <span className="text-yellow-300">RUEDA</span> Zoom ·{' '}
-              <span className="text-yellow-300">M</span> Audio{' '}
-              {snapshot.muted ? '(silenciado)' : '(activado)'}
-            </p>
-          </>
-        ) : (
-          <>
             <p>
               <span className="text-yellow-300">WASD</span> Mover ·{' '}
               <span className="text-yellow-300">ESPACIO</span> Salto/Ancla
@@ -688,8 +610,6 @@ export default function GameHUD({
               <span className="text-yellow-300">M</span> Audio{' '}
               {snapshot.muted ? '(silenciado)' : '(activado)'}
             </p>
-          </>
-        )}
       </div>
 
       {/* --- Prompt contextual de interacción --- */}

@@ -17,7 +17,7 @@ import {
 } from '../render/cityModels';
 
 // ============================================================================
-// Modo Sandbox (Hekseville Cósmica) — Monedas, orbes, anclas y micro-retos.
+// Modo Sandbox — Monedas, orbes, anclas y micro-retos.
 //
 // Diseño de rendimiento: `update()` NO aloja memoria. Todos los vectores,
 // cuaterniones, strings de popup y objetos de marcador/HUD se preasignan en

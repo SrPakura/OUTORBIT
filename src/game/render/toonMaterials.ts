@@ -14,9 +14,9 @@ const globalShaderState = {
 
 /**
  * Uniforms compartidos por TODOS los materiales cel del juego (sol, halftone y
- * reloj). La librería de materiales de Hekseville reutiliza `uSunDir` y
+ * reloj). Los materiales cel del juego reutilizan `uSunDir` y
  * `uHalftoneEnabled` para que el ajuste de halftones y la dirección del sol
- * sean globales; su `uTime` es propio (lo avanza `chunkMatLib.update`).
+ * sean globales.
  */
 export const sharedShaderState = globalShaderState;
 

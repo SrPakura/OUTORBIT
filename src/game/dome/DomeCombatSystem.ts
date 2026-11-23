@@ -9,7 +9,7 @@ import { DOME_PLAYER_BOUND_RADIUS } from './domeTypes';
 // cuyo grosor (`fleshThickness`, 0..100) define cuánta fuerza cinética hace
 // falta para atravesarla. El sistema es agnóstico del modelo 3D: solo habla
 // de posiciones, radios y estados, así que sirve igual con las esferas de
-// prueba actuales que con los modelos Nevi/Jefes que lleguen después.
+// prueba actuales que con los modelos de Jefes que lleguen después.
 // ============================================================================
 
 export type EnemyArchetype =
@@ -29,7 +29,7 @@ export interface DomeEnemyEntity {
   position: THREE.Vector3;
   velocity: THREE.Vector3;
   radius: number;
-  /** Mesh/Grupo real (esfera de prueba, GLB de Nevi, etc.). Solo para VFX/lock-on. */
+  /** Mesh/Grupo real (esfera de prueba, GLB de enemigo, etc.). Solo para VFX/lock-on. */
   mesh: THREE.Object3D;
   hp: number;
   maxHp: number;
@@ -156,7 +156,7 @@ export const DOME_ENEMY_ARCHETYPES: Record<EnemyArchetype, EnemyArchetypeStats> 
 
 /**
  * Fábrica desacoplada: crea un `DomeEnemyEntity` desde un arquetipo y cualquier
- * `THREE.Object3D` (esfera de prueba hoy, GLB de Nevi/Jefe mañana).
+ * `THREE.Object3D` (esfera de prueba hoy, GLB de enemigo/Jefe mañana).
  */
 export function createDomeEnemyEntity(
   id: string,
