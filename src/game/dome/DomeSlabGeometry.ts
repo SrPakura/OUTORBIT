@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mulberry32 } from '../render/meshFactory';
 
 // ============================================================================
 // Geometría y material de los suelos arrancados de la cúpula (estética Persona
@@ -7,20 +8,10 @@ import * as THREE from 'three';
 // como un bloque de suelo arrancado por una explosión.
 // ============================================================================
 
-/**
- * PRNG determinista (mulberry32). Todas las perturbaciones de la geometría y
- * del pool de suelos son reproducibles a partir de una seed.
- */
-export function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// PRNG determinista reexportado desde meshFactory (DomeFloatingSlabs lo
+// consume desde aquí): todas las perturbaciones de la geometría y del pool
+// de suelos son reproducibles a partir de una seed.
+export { mulberry32 };
 
 /** Hash entero 3D -> [0, 1). Base del value-noise determinista. */
 function hash3(ix: number, iy: number, iz: number, seed: number): number {

@@ -1,11 +1,7 @@
 import * as THREE from 'three';
 import type { PropKind } from '../types';
-import {
-  addComicOutline,
-  createComicCelMaterial,
-  createToonMaterial,
-  type ComicCelOptions,
-} from './toonMaterials';
+import { addComicOutline, createComicCelMaterial } from './toonMaterials';
+import { celMesh, glowMesh, toonMesh } from './meshFactory';
 
 // ============================================================================
 // Ciudad Sandbox (estilo OUTORBIT)
@@ -26,39 +22,6 @@ export type CityPropKind = Extract<
   | 'comic_billboard'
   | 'fountain'
 >;
-
-// ============================================================================
-// Utilidades (mismas convenciones que proceduralModels.ts)
-// ============================================================================
-
-/** Mesh cel-shaded con contorno cómic en un solo paso. */
-function celMesh(
-  geometry: THREE.BufferGeometry,
-  color: string | number,
-  outlineThickness: number,
-  options?: ComicCelOptions
-): THREE.Mesh {
-  const mesh = new THREE.Mesh(geometry, createComicCelMaterial(color, options));
-  addComicOutline(mesh, outlineThickness);
-  return mesh;
-}
-
-/** Mesh toon (API del Hito 1) con contorno cómic en un solo paso. */
-function toonMesh(
-  geometry: THREE.BufferGeometry,
-  color: string | number,
-  outlineThickness: number,
-  emissive?: string | number
-): THREE.Mesh {
-  const mesh = new THREE.Mesh(geometry, createToonMaterial(color, emissive));
-  addComicOutline(mesh, outlineThickness);
-  return mesh;
-}
-
-/** Pieza autoiluminada (neón, cristal luminoso, agua mágica): sin sombreado. */
-function glowMesh(geometry: THREE.BufferGeometry, color: string | number): THREE.Mesh {
-  return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color }));
-}
 
 // ============================================================================
 // PROPS URBANOS

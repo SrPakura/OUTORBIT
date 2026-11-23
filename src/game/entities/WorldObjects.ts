@@ -19,6 +19,7 @@ import type {
   WorldObjectSpec,
 } from '../types';
 import { addComicOutline, createComicCelMaterial, createToonMaterial } from '../render/toonMaterials';
+import { makeSeededRandom } from '../render/meshFactory';
 import {
   buildBeaconBeam,
   buildBreakableWallMesh,
@@ -585,15 +586,6 @@ const _propR = new THREE.Vector3();
 const _propQ = new THREE.Vector3();
 // HITO 4: scratch del producto cruzado del giro enemigo (banking de voladores).
 const _animDelta = new THREE.Vector3();
-
-/** PRNG determinista para los spawns dinámicos de la adaptación. */
-function makeSeededRandom(seed: number): () => number {
-  let state = (seed >>> 0) || 1;
-  return () => {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    return state / 0xffffffff;
-  };
-}
 
 // ============================================================================
 // Lock-On (Hito 3A): guardias, barriles y generadores fijables

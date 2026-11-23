@@ -10,30 +10,20 @@ import {
 } from '../types';
 import { orientObjectOnSphere } from '../math/spherical';
 import { getPlanetTerrainOffset } from '../math/terrain';
-import { addComicOutline, createComicCelMaterial, createToonMaterial, type ComicCelOptions } from './toonMaterials';
+import { createToonMaterial } from './toonMaterials';
+import {
+  additiveGlowMaterial,
+  celMesh,
+  hashString,
+  lighten,
+  makeSeededRandom,
+  toonMesh,
+} from './meshFactory';
 import { buildCityPropMesh } from './cityModels';
 
 // ============================================================================
 // Utilidades
 // ============================================================================
-
-/** PRNG determinista (LCG) para que cada planeta/objeto sea siempre igual. */
-function makeSeededRandom(seed: number): () => number {
-  let state = seed >>> 0 || 1;
-  return () => {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    return state / 0xffffffff;
-  };
-}
-
-function hashString(str: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
 
 const _dir = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
@@ -52,18 +42,6 @@ function placeOnSphere(
   obj.position.copy(center).addScaledVector(_dir, altitude);
   _alignQuat.setFromUnitVectors(_up, _dir);
   obj.quaternion.copy(_alignQuat);
-}
-
-/** Mesh toon con contorno cómic en un solo paso. */
-function toonMesh(
-  geometry: THREE.BufferGeometry,
-  color: string | number,
-  outlineThickness: number,
-  emissive?: string | number
-): THREE.Mesh {
-  const mesh = new THREE.Mesh(geometry, createToonMaterial(color, emissive));
-  addComicOutline(mesh, outlineThickness);
-  return mesh;
 }
 
 // ============================================================================
@@ -351,13 +329,7 @@ function buildCharacterSkinExtras(
       // Filo brillante aditivo: destello de kunai al girar la mano.
       const sheen = new THREE.Mesh(
         new THREE.BoxGeometry(0.012, 0.2, 0.012),
-        new THREE.MeshBasicMaterial({
-          color: 0xffffff,
-          transparent: true,
-          opacity: 0.85,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
+        additiveGlowMaterial(0xffffff, 0.85, { depthWrite: false })
       );
       sheen.position.set(0.035, 0.2, 0.02);
       kunai.add(sheen);
@@ -366,13 +338,7 @@ function buildCharacterSkinExtras(
       rightArm.add(kunai);
       const aura = new THREE.Mesh(
         new THREE.SphereGeometry(0.09, 8, 6),
-        new THREE.MeshBasicMaterial({
-          color: 0xf97316,
-          transparent: true,
-          opacity: 0.5,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
+        additiveGlowMaterial(0xf97316, 0.5, { depthWrite: false })
       );
       aura.position.set(0, -0.36, 0.1);
       rightArm.add(aura);
@@ -485,13 +451,7 @@ function buildCharacterSkinExtras(
       group.add(thruster);
       const flame = new THREE.Mesh(
         new THREE.ConeGeometry(0.09, 0.5, 8),
-        new THREE.MeshBasicMaterial({
-          color: 0x22d3ee,
-          transparent: true,
-          opacity: 0.85,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
+        additiveGlowMaterial(0x22d3ee, 0.85, { depthWrite: false })
       );
       flame.name = side < 0 ? 'flameL' : 'flameR';
       flame.rotation.x = Math.PI - 0.35;
@@ -538,13 +498,7 @@ function buildCharacterSkinExtras(
     // (visible solo durante el doble salto/natación).
     const glideAura = new THREE.Mesh(
       new THREE.SphereGeometry(0.85, 16, 12),
-      new THREE.MeshBasicMaterial({
-        color: 0x22d3ee,
-        transparent: true,
-        opacity: 0.16,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
+      additiveGlowMaterial(0x22d3ee, 0.16, { depthWrite: false })
     );
     glideAura.name = 'glideAura';
     glideAura.position.y = 0.7;
@@ -1090,13 +1044,7 @@ function buildGlowMushroom(): THREE.Group {
   mushroom.add(cap);
   const glow = new THREE.Mesh(
     new THREE.SphereGeometry(0.78, 12, 10),
-    new THREE.MeshBasicMaterial({
-      color: 0xa5f3fc,
-      transparent: true,
-      opacity: 0.4,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
+    additiveGlowMaterial(0xa5f3fc, 0.4, { depthWrite: false })
   );
   glow.position.y = 1.32;
   glow.scale.set(1, 0.55, 1);
@@ -1489,27 +1437,14 @@ function buildHoloPillar(): THREE.Group {
   // Haz de proyección cian translúcido.
   const beam = new THREE.Mesh(
     new THREE.CylinderGeometry(0.05, 0.3, 0.9, 8, 1, true),
-    new THREE.MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.25,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
+    additiveGlowMaterial(0x22d3ee, 0.25, { doubleSide: true, depthWrite: false })
   );
   beam.position.y = 1.6;
   pillar.add(beam);
   // Prisma holográfico flotante cian.
   const holo = new THREE.Mesh(
     new THREE.OctahedronGeometry(0.34, 0),
-    new THREE.MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.7,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
+    additiveGlowMaterial(0x22d3ee, 0.7, { depthWrite: false })
   );
   holo.name = 'holoPrism';
   holo.position.y = 2.15;
@@ -1518,13 +1453,7 @@ function buildHoloPillar(): THREE.Group {
   // Anillo de luz magenta orbitando el prisma.
   const ring = new THREE.Mesh(
     new THREE.TorusGeometry(0.5, 0.045, 8, 24),
-    new THREE.MeshBasicMaterial({
-      color: 0xe879f9,
-      transparent: true,
-      opacity: 0.75,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
+    additiveGlowMaterial(0xe879f9, 0.75, { depthWrite: false })
   );
   ring.name = 'holoRing';
   ring.rotation.x = Math.PI / 2;
@@ -2017,13 +1946,7 @@ export function buildGuardModel(): THREE.Group {
     baton.add(tip);
     const tipGlow = new THREE.Mesh(
       new THREE.SphereGeometry(0.11, 8, 6),
-      new THREE.MeshBasicMaterial({
-        color: 0xf87171,
-        transparent: true,
-        opacity: 0.5,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
+      additiveGlowMaterial(0xf87171, 0.5, { depthWrite: false })
     );
     tipGlow.position.y = 0.4;
     baton.add(tipGlow);
@@ -2178,13 +2101,7 @@ export function buildOfficerModel(): THREE.Group {
     baton.add(tip);
     const tipGlow = new THREE.Mesh(
       new THREE.SphereGeometry(0.11, 8, 6),
-      new THREE.MeshBasicMaterial({
-        color: 0xfbbf24,
-        transparent: true,
-        opacity: 0.5,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
+      additiveGlowMaterial(0xfbbf24, 0.5, { depthWrite: false })
     );
     tipGlow.position.y = 0.46;
     baton.add(tipGlow);
@@ -2242,26 +2159,13 @@ function buildThrusterGlow(color: number, radius: number, length: number): THREE
   thruster.name = 'thrusterGlow';
   const cone = new THREE.Mesh(
     new THREE.ConeGeometry(radius, length, 12, 1, true),
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.38,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
+    additiveGlowMaterial(color, 0.38, { doubleSide: true, depthWrite: false })
   );
   cone.position.y = -length / 2 - 0.18;
   thruster.add(cone);
   const core = new THREE.Mesh(
     new THREE.SphereGeometry(radius * 0.55, 10, 8),
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.75,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
+    additiveGlowMaterial(color, 0.75, { depthWrite: false })
   );
   core.position.y = -0.28;
   thruster.add(core);
@@ -2487,13 +2391,7 @@ export function buildBruteModel(): THREE.Group {
     maceHead.position.y = 0.95;
     mace.add(maceHead);
     // Arcos eléctricos aditivos sobre la cabeza de la maza.
-    const arcMaterial = new THREE.MeshBasicMaterial({
-      color: 0xf97316,
-      transparent: true,
-      opacity: 0.7,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
+    const arcMaterial = additiveGlowMaterial(0xf97316, 0.7, { depthWrite: false });
     const arcGeometry = new THREE.TorusGeometry(0.3, 0.035, 6, 14, Math.PI * 1.2);
     for (let i = 0; i < 2; i++) {
       const arc = new THREE.Mesh(arcGeometry, arcMaterial);
@@ -2504,13 +2402,7 @@ export function buildBruteModel(): THREE.Group {
     }
     const maceGlow = new THREE.Mesh(
       new THREE.SphereGeometry(0.14, 8, 6),
-      new THREE.MeshBasicMaterial({
-        color: 0xf97316,
-        transparent: true,
-        opacity: 0.55,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
+      additiveGlowMaterial(0xf97316, 0.55, { depthWrite: false })
     );
     maceGlow.position.y = 0.95;
     mace.add(maceGlow);
@@ -2967,13 +2859,7 @@ export function buildWaspModel(): THREE.Group {
   abdomen.add(stinger);
   const stingerGlow = new THREE.Mesh(
     new THREE.ConeGeometry(0.1, 0.4, 8),
-    new THREE.MeshBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.55,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
+    additiveGlowMaterial(0x22d3ee, 0.55, { depthWrite: false })
   );
   stingerGlow.rotation.x = -Math.PI / 2;
   stingerGlow.position.z = -0.9;
@@ -3025,13 +2911,7 @@ export function buildWaspModel(): THREE.Group {
     side: THREE.DoubleSide,
     depthWrite: false,
   });
-  const wingVeinMaterial = new THREE.MeshBasicMaterial({
-    color: 0x22d3ee,
-    transparent: true,
-    opacity: 0.7,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-  });
+  const wingVeinMaterial = additiveGlowMaterial(0x22d3ee, 0.7, { depthWrite: false });
   const wingDefs: Array<[string, number, number, number, number]> = [
     // [nombre, lado, z de raíz, largo, ancho]
     ['wingL', -1, 0.18, 0.85, 0.3],
@@ -3218,13 +3098,7 @@ export function buildSamuraiModel(isOfficer = false): THREE.Group {
     // Filo luminoso: destello aditivo a lo largo del corte.
     const edgeGlow = new THREE.Mesh(
       new THREE.BoxGeometry(0.012, 0.72, 0.024),
-      new THREE.MeshBasicMaterial({
-        color: 0xe0f2fe,
-        transparent: true,
-        opacity: 0.85,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
+      additiveGlowMaterial(0xe0f2fe, 0.85, { depthWrite: false })
     );
     edgeGlow.position.set(0.055, 0.54, 0);
     edgeGlow.rotation.z = -0.08;
@@ -3520,13 +3394,7 @@ export function buildCyberGuardModel(isOfficer = false): THREE.Group {
     if (isOfficer) {
       const holo = new THREE.Mesh(
         new THREE.BoxGeometry(0.36, 0.13, 0.32),
-        new THREE.MeshBasicMaterial({
-          color: 0xe879f9,
-          transparent: true,
-          opacity: 0.5,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
+        additiveGlowMaterial(0xe879f9, 0.5, { depthWrite: false })
       );
       holo.position.set(0, 0.3, 0);
       arm.add(holo);
@@ -3622,13 +3490,7 @@ export function buildCyberGuardModel(isOfficer = false): THREE.Group {
     bannerPivot.add(pole);
     const pennant = new THREE.Mesh(
       new THREE.BoxGeometry(0.42, 0.3, 0.02),
-      new THREE.MeshBasicMaterial({
-        color: 0xe879f9,
-        transparent: true,
-        opacity: 0.75,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
+      additiveGlowMaterial(0xe879f9, 0.75, { depthWrite: false })
     );
     pennant.position.set(0.12, 1.28, 0);
     bannerPivot.add(pennant);
@@ -3648,13 +3510,7 @@ export function buildCyberGuardModel(isOfficer = false): THREE.Group {
     pod.add(podEye);
     const podRing = new THREE.Mesh(
       new THREE.TorusGeometry(0.19, 0.02, 6, 16),
-      new THREE.MeshBasicMaterial({
-        color: 0xe879f9,
-        transparent: true,
-        opacity: 0.7,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
+      additiveGlowMaterial(0xe879f9, 0.7, { depthWrite: false })
     );
     podRing.rotation.x = Math.PI / 2;
     pod.add(podRing);
@@ -4086,14 +3942,7 @@ export function buildKronosModel(): {
   }
 
   // Anillo/escudo de energía: su color cambia según la postura de la red MLP.
-  const ringMaterial = new THREE.MeshBasicMaterial({
-    color: 0xf97316,
-    transparent: true,
-    opacity: 0.55,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
+  const ringMaterial = additiveGlowMaterial(0xf97316, 0.55, { doubleSide: true, depthWrite: false });
   const ring = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.07, 10, 40), ringMaterial);
   ring.name = 'energyRing';
   ring.rotation.x = Math.PI / 2;
@@ -4146,23 +3995,6 @@ export function buildDisguiseOverlay(): THREE.Group {
 // ============================================================================
 
 const _structDir = new THREE.Vector3();
-
-/** Mesh cel de 3 bandas con contorno cómic fino (tinta limpia). */
-function celMesh(
-  geometry: THREE.BufferGeometry,
-  color: string | number,
-  outlineThickness: number,
-  options?: ComicCelOptions
-): THREE.Mesh {
-  const mesh = new THREE.Mesh(geometry, createComicCelMaterial(color, options));
-  addComicOutline(mesh, outlineThickness);
-  return mesh;
-}
-
-/** Color de acento: mismo tono, más luminoso (bandas, barandillas, remates). */
-function lighten(color: string | number, amount = 0.18): number {
-  return new THREE.Color(color).offsetHSL(0, 0.04, amount).getHex();
-}
 
 /** Cimiento que baja 2 m bajo la superficie: ancla visual sobre la esfera curva. */
 const FOUNDATION_DEPTH = 2.0;
@@ -4357,13 +4189,7 @@ function buildPlatformMesh(
   const glowColor = lighten(color, 0.25);
   const edge = new THREE.Mesh(
     new THREE.TorusGeometry(halfX * 0.98, 0.14, 8, 32),
-    new THREE.MeshBasicMaterial({
-      color: glowColor,
-      transparent: true,
-      opacity: 0.75,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
+    additiveGlowMaterial(glowColor, 0.75, { depthWrite: false })
   );
   edge.rotation.x = Math.PI / 2;
   edge.position.y = heightY + 0.05;
@@ -4372,13 +4198,7 @@ function buildPlatformMesh(
   // Emisor antigravitatorio colgante.
   const emitter = new THREE.Mesh(
     new THREE.CylinderGeometry(0.28, 0.55, 1.6, 8),
-    new THREE.MeshBasicMaterial({
-      color: glowColor,
-      transparent: true,
-      opacity: 0.85,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
+    additiveGlowMaterial(glowColor, 0.85, { depthWrite: false })
   );
   emitter.position.y = -0.9;
   group.add(emitter);
@@ -4547,14 +4367,7 @@ export function buildInterceptorBelt(planetRadius: number): {
 export function buildBeaconBeam(color: string, height = 16): THREE.Mesh {
   const beam = new THREE.Mesh(
     new THREE.CylinderGeometry(0.38, 0.6, height, 10, 1, true),
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.32,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
+    additiveGlowMaterial(color, 0.32, { doubleSide: true, depthWrite: false })
   );
   beam.name = 'beaconBeam';
   beam.position.y = height / 2;
@@ -4562,26 +4375,14 @@ export function buildBeaconBeam(color: string, height = 16): THREE.Mesh {
   // Núcleo interior más brillante.
   const core = new THREE.Mesh(
     new THREE.CylinderGeometry(0.16, 0.24, height, 8, 1, true),
-    new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.45,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
+    additiveGlowMaterial(0xffffff, 0.45, { depthWrite: false })
   );
   beam.add(core);
 
   // Halo en la base.
   const halo = new THREE.Mesh(
     new THREE.TorusGeometry(1.05, 0.16, 8, 28),
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.7,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
+    additiveGlowMaterial(color, 0.7, { depthWrite: false })
   );
   halo.rotation.x = Math.PI / 2;
   halo.position.y = -height / 2 + 0.06;
@@ -4723,14 +4524,7 @@ export function buildLockedGateMesh(
 
   // Barrera energética naranja-roja: reja vertical que llena el hueco y baja
   // al suelo (o desaparece) al abrirse la compuerta.
-  const barrierMaterial = new THREE.MeshBasicMaterial({
-    color: 0xf97316,
-    transparent: true,
-    opacity: 0.55,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
+  const barrierMaterial = additiveGlowMaterial(0xf97316, 0.55, { doubleSide: true, depthWrite: false });
   const openingHeight = Math.max(heightY - 1.0, 0.6);
   const barrier = new THREE.Mesh(
     new THREE.BoxGeometry(openingHalfX * 2, openingHeight, 0.12),
@@ -4851,13 +4645,7 @@ export function buildBreakableWallMesh(
 
   // Grietas luminosas naranjas/doradas en ambas caras: patrón determinista
   // de segmentos finos que converge hacia el centro (punto de quiebre).
-  const crackMaterial = new THREE.MeshBasicMaterial({
-    color: 0xfbbf24,
-    transparent: true,
-    opacity: 0.9,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-  });
+  const crackMaterial = additiveGlowMaterial(0xfbbf24, 0.9, { depthWrite: false });
   const faceZ = halfZ + 0.03;
   const crackGeometry = new THREE.BoxGeometry(1, 0.075, 0.03);
   const random = makeSeededRandom(hashString('breakable-wall'));
