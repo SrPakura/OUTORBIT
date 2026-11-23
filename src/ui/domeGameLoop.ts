@@ -305,14 +305,16 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   }
 
   const killWaveEnemy = (enemy: ManagedWaveEnemy, viaBarrier: boolean) => {
-    if (!enemy.entity.alive) return;
+    // El combate (impacto cinético, barrera) ya puso `entity.alive = false`
+    // antes de llegar aquí: la idempotencia la marca killEnemy (true sólo la
+    // primera vez), no el flag de vida.
+    if (!waveMgr.killEnemy(enemy)) return;
     pickups.spawnFromEnemy(enemy.position, enemy.entity.expValue, 6);
     runTracker.recordKill({
       isElite: enemy.entity.isElite,
       isBoss: enemy.entity.isBoss,
     });
     if (viaBarrier) runTracker.recordBarrierKill();
-    waveMgr.killEnemy(enemy);
   };
 
   const handleSkillDamageEnemy = (

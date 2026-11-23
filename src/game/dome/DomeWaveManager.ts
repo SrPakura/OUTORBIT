@@ -1107,11 +1107,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
    * Con `withVfx` la malla no desaparece de golpe: queda en `dying` vibrando
    * `DEATH_SHAKE_TIME` y luego se infla y estalla. El enemigo sale de
    * `enemies` al instante, así que la lógica de juego no cambia.
+   *
+   * Devuelve true sólo la primera vez (el caller lo usa para soltar la EXP
+   * una única vez aunque el combate ya hubiera marcado `entity.alive = false`).
    */
-  killEnemy(enemy: ManagedWaveEnemy, withVfx = true): void {
+  killEnemy(enemy: ManagedWaveEnemy, withVfx = true): boolean {
     const internal = this.internals.get(enemy.id);
     if (!internal) {
-      return;
+      return false;
     }
     enemy.entity.alive = false;
     enemy.entity.hp = 0;
@@ -1133,10 +1136,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         materials,
         exploded: false,
       });
-      return;
+      return true;
     }
     this.scene.remove(enemy.mesh);
     for (const material of materials) material.dispose();
+    return true;
   }
 
   /** Materiales propios de la instancia (se liberan al terminar la muerte). */
