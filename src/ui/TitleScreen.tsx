@@ -114,7 +114,6 @@ export default function TitleScreen({
           {onPlayTraining && (
             <FluidInkButton
               label={t('menu.training')}
-              hint={t('menu.trainingDebug')}
               stops={MENU_STOPS}
               vbHeight={72}
               labelFontSize="0.75rem"

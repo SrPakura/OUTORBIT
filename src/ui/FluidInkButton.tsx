@@ -343,9 +343,9 @@ export default function FluidInkButton({
           inset: 0;
           display: flex;
           align-items: center;
-          justify-content: space-between;
+          justify-content: center;
           gap: 10px;
-          padding: 0 9%;
+          padding: 0 12%;
           cursor: pointer;
           border: none;
           background: transparent;
