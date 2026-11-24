@@ -446,6 +446,13 @@ export class NyxDomeController {
   private impactFlash = 0; // 0..1 para el HUD
   private gyroSpinRad = 0; // ángulo acumulado de los arcos giroscópicos del visor
 
+  // --- Cámara de rebote (Sentadilla Cinética): anclada en el impacto
+  // mientras Nyx no salga del radio del punto de contacto.
+  private bounceCamHold = false;
+  private bounceCamBlend = 0; // 0 = seguimiento normal, 1 = anclada
+  private readonly bounceCamImpact = new THREE.Vector3();
+  private readonly bounceCamPos = new THREE.Vector3();
+
   // --- Slerp de nivelación del horizonte al aterrizar (0.45 s ease-out)
   private readonly camUpSmooth = new THREE.Vector3(0, 1, 0);
   private readonly transitionFromUp = new THREE.Vector3(0, 1, 0);
@@ -2119,13 +2126,9 @@ export class NyxDomeController {
       this.kineticHitScratch,
     );
     if (!hit) return;
-    // Solo superficies NO pisables (pared/canto/raíz): la tapa superior
-    // aterriza, no rebota. La normal debe mirar hacia Nyx (de frente).
-    const slab = hit.slab;
-    if (slab.oneSidedTop) {
-      const topDot = hit.normal.dot(this.tmpC.set(0, 1, 0).applyQuaternion(slab.quaternion));
-      if (topDot > 0.65) return;
-    }
+    // Cualquier cara del slab vale (lisa, canto o raíz iceberg): si el
+    // jugador adjudica, el rebote gana al aterrizaje. La normal debe mirar
+    // hacia Nyx (de frente, no un roce tangencial de refilón).
     if (hit.normal.dot(this.camFwd) > -0.2) return;
     // Margen de aproximación: sin tiempo para orientar y curvar, no se ofrece.
     if (hit.distance / speed < KINETIC_BOUNCE.MIN_APPROACH_TIME) return;
@@ -2167,8 +2170,21 @@ export class NyxDomeController {
     this.playOneShot('kinetic_squat');
     this.vfx.spawnDustBurst(this.nyxRoot.position, this.contact.normal, 'land');
     this.audio?.playLand();
-    // Amortiguación limpia: tambaleo de compresión sin hit-stagger ni daño.
-    this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, 0.55);
+    // Impacto frenético: micro hit-stop + shake + zoom puntual + tambaleo de
+    // compresión (sin hit_stagger ni daño: la amortiguación es limpia).
+    this.hitStopTimer = Math.max(this.hitStopTimer, 0.05);
+    this.shake = Math.max(this.shake, 0.42);
+    this.fovPunch = Math.min(this.fovPunch, -8);
+    this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, 0.95);
+    this.rollImpulse = THREE.MathUtils.clamp(
+      this.rollImpulse + (Math.random() * 2 - 1) * 0.12,
+      -CAM_ROLL_MAX,
+      CAM_ROLL_MAX,
+    );
+    // Cámara de rebote: anclada donde estaba, mirando a Nyx hacer la
+    // sentadilla y girar; vuelve a seguirla al salir del radio del impacto.
+    this.bounceCamHold = true;
+    this.bounceCamImpact.copy(this.contact.point);
   }
 
   /**
@@ -2190,6 +2206,15 @@ export class NyxDomeController {
     this.aimUp.normalize();
     this.facing.copy(kb.exitDir);
     this.startCamTug();
+    // Salida frenética: latigazo de tambaleo + roll aleatorio + zoom-out
+    // puntual sobre el tirachinas del despegue.
+    this.dashWobbleImpulse = Math.max(this.dashWobbleImpulse, 1.2);
+    this.rollImpulse = THREE.MathUtils.clamp(
+      this.rollImpulse + (Math.random() * 2 - 1) * 0.16,
+      -CAM_ROLL_MAX,
+      CAM_ROLL_MAX,
+    );
+    this.fovPunch = Math.max(this.fovPunch, 7);
     this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
     this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
     this.audio?.playGravityShift();
@@ -2248,6 +2273,15 @@ export class NyxDomeController {
       }
 
       if (this.mode !== 'grounded') {
+        // --- Rebote ADJUDICADO: el jugador apuntó a esta superficie y pulsó
+        // el Clic Derecho (estrella azul brillante). El contacto dispara la
+        // sentadilla SIEMPRE — también en la cara lisa de la tapa: el rebote
+        // pedido gana al aterrizaje. La velocidad mínima se validó al
+        // adjudicar. Coste 0 de Edén: intrínseca.
+        if (this.kinetic.phase === 'committed' && this.bounceCooldown <= 0) {
+          this.beginKineticSquat(this.velocity.length());
+          return;
+        }
         // Suelos oneSidedTop: solo la cara superior (+Y del slab) es pisable;
         // laterales y parte inferior de roca siempre rebotan.
         let isTopFace = true;
@@ -2290,8 +2324,8 @@ export class NyxDomeController {
           // conserva intacta: cero teletransporte hacia dentro de la
           // plataforma, se posa donde ha tocado de verdad.
           this.nyxRoot.position.addScaledVector(landNormal, this.contact.depth);
-          // Si el rebote estaba adjudicado y resulta que la cara era
-          // pisable, gana el aterrizaje (la adjudicación se cancela).
+          // Si el rebote estaba adjudicado pero el antirrebote lo bloqueó,
+          // gana el aterrizaje (la adjudicación se cancela).
           if (this.kinetic.phase === 'committed') this.kinetic.reset();
           this.landOn(landNormal, Math.max(0, -approach));
         } else {
@@ -2302,18 +2336,9 @@ export class NyxDomeController {
             !isTopFace &&
             this.up.dot(n) < -0.35;
 
-          // --- Sentadilla Cinética ADJUDICADA: el jugador apuntó a esta
-          // pared y pulsó el Clic Derecho (estrella azul brillante). El
-          // contacto con cualquier superficie no pisable dispara la
-          // sentadilla SIEMPRE: la velocidad mínima se validó al adjudicar.
-          // Coste 0 de Edén: intrínseca.
-          const impactSpeed = this.velocity.length();
-          if (this.kinetic.phase === 'committed' && this.bounceCooldown <= 0) {
-            this.beginKineticSquat(impactSpeed);
-            return;
-          }
           // El contacto se resuelve por otra vía (roce, rebote): la
-          // adjudicación de la sentadilla, si estaba pendiente, se cancela.
+          // adjudicación de la sentadilla, si seguía pendiente (antirrebote),
+          // se cancela.
           if (this.kinetic.phase === 'committed') this.kinetic.reset();
 
           // --- Corner correction a baja velocidad: rozar una esquina o
@@ -3151,6 +3176,34 @@ export class NyxDomeController {
       camPos.x += (Math.random() * 2 - 1) * jitter;
       camPos.y += (Math.random() * 2 - 1) * jitter;
       camPos.z += (Math.random() * 2 - 1) * jitter;
+    }
+
+    // --- Cámara de rebote (Sentadilla Cinética): al contactar, la cámara
+    // se ANCLA donde estaba y mira a Nyx — se la ve comprimirse en la
+    // sentadilla, girar los pies a la pared y salir disparada — y cuando
+    // sale del radio del punto de impacto vuelve a seguirla con un blend
+    // elástico (entra rápido, suelta suave: latigazo de recuperación).
+    if (this.bounceCamHold) {
+      if (this.bounceCamBlend < 0.001) this.bounceCamPos.copy(camera.position);
+      const outOfRadius =
+        this.nyxRoot.position.distanceTo(this.bounceCamImpact) >=
+        KINETIC_BOUNCE.BOUNCE_CAM_RADIUS;
+      const blendTarget = outOfRadius ? 0 : 1;
+      const blendLambda = blendTarget > this.bounceCamBlend ? 16 : 5;
+      this.bounceCamBlend +=
+        (blendTarget - this.bounceCamBlend) * (1 - Math.exp(-blendLambda * dt));
+      if (outOfRadius && this.bounceCamBlend < 0.01) {
+        this.bounceCamBlend = 0;
+        this.bounceCamHold = false;
+      }
+      if (this.bounceCamBlend > 0.001) {
+        const b = this.bounceCamBlend;
+        camPos.lerp(this.bounceCamPos, b);
+        this.tmpB
+          .copy(this.nyxRoot.position)
+          .addScaledVector(this.up, 0.9);
+        look.lerp(this.tmpB, b);
+      }
     }
     camera.position.copy(camPos);
     camera.up.copy(camUp);

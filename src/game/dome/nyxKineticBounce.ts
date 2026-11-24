@@ -5,16 +5,17 @@ import * as THREE from 'three';
 // ============================================================================
 //
 // Mecánica intrínseca de NYX (NO es una habilidad activa), 100% OPTATIVA:
-// cuando el visor apunta a una pared (cualquier superficie NO pisable: canto
-// de la tapa, raíz iceberg, lateral de un suelo) a velocidad >= TRIGGER_SPEED
-// (12 m/s: ~1 s de WASD en flotación) y con margen de aproximación
-// suficiente, la estrella del visor se pone AZUL CLARITO (disponible). El
-// jugador la ADJUDICA con el Clic Derecho (el del dash): la estrella pasa a
-// AZUL BRILLANTE, Nyx se orienta, curva su vector hacia el punto de impacto
-// óptimo (perpendicular a la pared = animación limpia y rebote máximo) y al
-// contacto absorbe en sentadilla y sale disparada en la dirección reflejada
-// conservando TODO el impulso. Sin velocidad mínima el Clic Derecho hace el
-// dash normal: el botón nunca se siente muerto.
+// cuando el visor apunta a una superficie de suelo (cara lisa de la tapa,
+// canto, raíz iceberg — cualquier cara de un slab) a velocidad >=
+// TRIGGER_SPEED (12 m/s: ~1 s de WASD en flotación) y con margen de
+// aproximación suficiente, la estrella del visor se pone AZUL CLARITO
+// (disponible). El jugador la ADJUDICA con el Clic Derecho (el del dash):
+// la estrella pasa a AZUL BRILLANTE, Nyx se orienta, curva su vector hacia
+// el punto de impacto óptimo (perpendicular a la superficie = animación
+// limpia y rebote máximo) y al contacto absorbe en sentadilla y sale
+// disparada en la dirección reflejada conservando TODO el impulso. Sin
+// velocidad mínima el Clic Derecho hace el dash normal: el botón nunca se
+// siente muerto.
 //
 // Lore mecánico: Nyx altera de forma natural la gravedad local junto con su
 // propia composición de cosmos, absorbiendo el impacto sin daño físico ni
@@ -122,6 +123,12 @@ export const KINETIC_BOUNCE = {
    * máximo y animación más limpia.
    */
   HOMING_FINAL_DIST: 4.0,
+  /**
+   * m de la cámara de rebote: al contactar, la cámara se ancla donde estaba
+   * y mira a Nyx (se la ve hacer la sentadilla y girar); al salir de este
+   * radio del punto de impacto, vuelve a seguirla con un blend elástico.
+   */
+  BOUNCE_CAM_RADIUS: 5.0,
   /** s de compresión de la sentadilla (fase squat). */
   SQUAT_DURATION: 0.16,
   /** s de impulso de salida (fase launch). */
