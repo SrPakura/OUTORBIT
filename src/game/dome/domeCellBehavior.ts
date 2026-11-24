@@ -109,10 +109,18 @@ const CELL_COVER_MIN_RADIUS = 3.0;
 const CELL_SEPARATION_DIST = 2.4;
 /** Fuerza del empuje de separación entre células. */
 const CELL_SEPARATION_STRENGTH = 8.0;
-/** Radio XZ de contención dentro de la arena (m). */
+/** Radio XZ de contención suave dentro de la arena (m). */
 const CELL_ARENA_KEEP_RADIUS = 70.0;
 /** Tirón hacia el centro al superar la contención (m/s). */
 const CELL_ARENA_KEEP_PULL = 9.0;
+/**
+ * Contención dura 3D (m): la célula JAMÁS roza la Barrera Blanca (muerte
+ * instantánea a 88.6 m). Los suelos a la deriva salen de la cúpula y un
+ * escondite tras ellos no puede arrastrarla a una muerte tonta.
+ */
+const CELL_ARENA_HARD_R = 80.0;
+/** Los escondites deben quedar dentro de la zona de juego (m del centro). */
+const CELL_COVER_MAX_ARENA_R = 66.0;
 /** Velocidad de deriva del ángulo de órbita (rad/s). */
 const CELL_ORBIT_DRIFT = 0.16;
 /** Separación angular entre slots del abanico trasero (rad). */
@@ -337,13 +345,24 @@ const _childOffset = new THREE.Vector3();
 const _flat = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
 
-/** Contención suave: la célula no se aleja del centro de la arena. */
+/** Contención: tirón suave por XZ y tope duro 3D lejos de la barrera. */
 function keepInsideArena(enemy: ManagedWaveEnemy, dt: number): void {
   _flat.set(enemy.position.x, 0, enemy.position.z);
   const flat = _flat.length();
   if (flat > CELL_ARENA_KEEP_RADIUS) {
     _flat.divideScalar(flat);
     enemy.position.addScaledVector(_flat, -CELL_ARENA_KEEP_PULL * dt);
+  }
+  // Tope duro: nunca más allá de CELL_ARENA_HARD_R del centro, y sin
+  // velocidad radial hacia fuera (la barrera mata al instante).
+  const r = enemy.position.length();
+  if (r > CELL_ARENA_HARD_R) {
+    enemy.position.multiplyScalar(CELL_ARENA_HARD_R / r);
+    _flat.copy(enemy.position).divideScalar(CELL_ARENA_HARD_R);
+    const outward = enemy.velocity.dot(_flat);
+    if (outward > 0) {
+      enemy.velocity.addScaledVector(_flat, -outward);
+    }
   }
 }
 
@@ -411,6 +430,11 @@ function findCoverPoint(
         .divideScalar(d)
         .multiplyScalar(slab.halfExtents.length() + CELL_COVER_MARGIN)
         .add(slab.center);
+      // Escondite dentro de la zona de juego: los suelos a la deriva hacia
+      // la Barrera Blanca no valen (la cobarde no se suicida).
+      if (_hideDir.lengthSq() > CELL_COVER_MAX_ARENA_R * CELL_COVER_MAX_ARENA_R) {
+        continue;
+      }
       if (_hideDir.distanceTo(playerPos) < CELL_HIDE_MIN_PLAYER_DIST) {
         continue;
       }
@@ -435,6 +459,9 @@ function findCoverPoint(
       .divideScalar(d)
       .multiplyScalar(other.radius + CELL_COVER_MARGIN)
       .add(other.position);
+    if (_hideDir.lengthSq() > CELL_COVER_MAX_ARENA_R * CELL_COVER_MAX_ARENA_R) {
+      continue;
+    }
     if (_hideDir.distanceTo(playerPos) < CELL_HIDE_MIN_PLAYER_DIST) {
       continue;
     }
@@ -491,7 +518,13 @@ function biasTowardCover(
     for (const slab of activeSlabs) {
       _coverDir.subVectors(slab.center, cellPos);
       const coverDist = _coverDir.length();
-      if (coverDist > 1e-4 && coverDist < 20.0) {
+      // Cobertura de huida dentro de la zona de juego (nada de slabs que
+      // derivan hacia la Barrera Blanca).
+      if (
+        coverDist > 1e-4 &&
+        coverDist < 20.0 &&
+        slab.center.lengthSq() < CELL_COVER_MAX_ARENA_R * CELL_COVER_MAX_ARENA_R
+      ) {
         const score = 1.0 - coverDist / 20.0;
         if (score > bestSlabScore) {
           bestSlabScore = score;
