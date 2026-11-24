@@ -3024,7 +3024,12 @@ export class NyxDomeController {
     // --- Offset over-the-shoulder: al apuntar en flotación Nyx queda abajo-
     // izquierda del visor y la estrella de 4 puntas queda 100% libre.
     const isAttack = this.mode === 'speed_attack' && this.speedAttackKind !== null;
-    const isAim = this.mode === 'floating' || this.mode === 'dashing';
+    // El flip de frenado (kick_recover) conserva el encuadre de apuntado:
+    // sin esto la cámara recentraba y Nyx tapaba la estrella del visor.
+    const isAim =
+      this.mode === 'floating' ||
+      this.mode === 'dashing' ||
+      this.mode === 'kick_recover';
     const fastAttack = isAttack && speed >= 14;
     let offsetRightTarget = 0;
     let offsetUpTarget = 0;
