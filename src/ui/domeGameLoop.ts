@@ -370,7 +370,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           ? skillImpulseDir.copy(impulse).multiplyScalar(1 / impulseLen)
           : null,
         Math.min(1.3, 0.45 + impulseLen / 22 + amount * 0.004),
+        enemy.radius,
       );
+      // Juice de cámara: tambaleo + zoom puntual escalado con el impulso y
+      // el daño de la skill (el agujero negro pega más fuerte que un tick
+      // de pozo), con el mismo throttle que los picos.
+      controller?.punchCamera(Math.min(1.3, 0.35 + impulseLen / 26 + amount * 0.003));
     }
 
     enemy.entity.position.copy(enemy.position);
@@ -423,6 +428,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       enemy.position,
       hitDir,
       Math.min(1.3, Math.max(0.4, (impactSpeed ?? 14) / 26)) * (isDrill ? 1.2 : 1),
+      enemy.radius,
     );
     const managed = waveMgr.getActiveEnemies().find((e) => e.id === enemy.id);
     if (managed && managed.entity.alive) {

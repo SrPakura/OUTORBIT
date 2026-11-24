@@ -6,13 +6,15 @@ import * as THREE from 'three';
 // Puerto 3D de la referencia impacto_y_explosión.html, adaptado al combate de
 // la cúpula para que RESPONDA al golpe, la velocidad y la habilidad:
 //
-// - `spawnComicHit(pos, normal, intensity)`: patada/taladro contra un enemigo
-//   o daño de habilidad con impulso. Destello estrella + picos rombo whose
-//   cantidad, largo y velocidad escalan con `intensity` (velocidad de impacto
-//   o magnitud del impulso de la skill), sesgados hacia `normal`.
-// - `spawnComicExplosion(pos, radius)`: muerte de enemigo. Humo rosa cel-shaded
-//   (atlas de 8 frames pre-renderizados con halftone, erosión y tinta) +
-//   estrella grande + andanada de picos ×1.5 escalada por el radio del bicho.
+// - `spawnComicHit(pos, normal, intensity, enemyRadius)`: patada/taladro
+//   contra un enemigo o daño de habilidad con impulso. Destello estrella +
+//   picos rombo whose cantidad, largo y velocidad escalan con `intensity`
+//   (velocidad de impacto o magnitud del impulso de la skill) y con el radio
+//   de la hitbox del bicho, sesgados hacia `normal`.
+// - `spawnComicExplosion(pos, radius)`: muerte de enemigo. Nube de vacío
+//   cel-shaded (atlas de 8 frames con halftone, erosión y tinta en paleta
+//   violeta espacial) que respira ~2.6 s y, justo antes de disiparse, suelta
+//   una andanada de cachitos + estrella grande + picos en paleta de vacío.
 //
 // Optimización (mismo contrato que MotionVfx: CERO allocations por frame):
 // - Picos: TODOS los rombos viven en un único BufferGeometry (una draw call);
@@ -27,18 +29,25 @@ import * as THREE from 'three';
 //   cel, agujero de erosión— viene horneada por frame).
 // ============================================================================
 
-const MAX_SHARDS = 96;
+const MAX_SHARDS = 128;
 const MAX_STARS = 6;
 const MAX_SMOKES = 4;
 
 const SMOKE_FRAMES = 8;
 const SMOKE_FRAME_SIZE = 160;
-const SMOKE_LIFETIME = 0.66; // 40 frames de la referencia a ~60 fps
+// La nube de vacío respira lenta: expansión por gravedad durante ~2.6 s
+// antes de erosionarse y soltar los cachitos finales.
+const SMOKE_LIFETIME = 2.6;
+// Momento de la vida del humo en el que estallan los cachitos (0..1).
+const SMOKE_DEBRIS_P = 0.8;
 
-// Paleta de materia oscura de la referencia.
+// Paleta de materia oscura de la referencia (golpes).
 const COLOR_RED = 0xff1e42;
 const COLOR_WHITE = 0xf8fafc;
 const COLOR_INK = 0x09070d;
+// Paleta de vacío/gravedad (explosiones): violeta espacial + brillo cian.
+const COLOR_VOID = 0x7c3aed;
+const COLOR_GLOW = 0x8ff5ff;
 
 const _shardDir = new THREE.Vector3();
 const _shardRight = new THREE.Vector3();
@@ -87,14 +96,17 @@ export class ComicImpactVfxSystem {
   private readonly starLife: Float32Array;
   private readonly starMaxLife: Float32Array;
   private readonly starMaxScale: Float32Array;
+  private readonly starEndColor: number[] = [];
   private readonly starTextures: THREE.Texture[];
   private starCursor = 0;
 
-  // --- Humo rosa cel-shaded (atlas de frames)
+  // --- Nube de vacío cel-shaded (atlas de frames)
   private readonly smokes: THREE.Sprite[] = [];
   private readonly smokeTextures: THREE.Texture[] = [];
   private readonly smokeLife: Float32Array;
   private readonly smokeMaxLife: Float32Array;
+  private readonly smokeRadius: Float32Array;
+  private readonly smokeDebrisDone: boolean[] = [];
   private smokeCursor = 0;
 
   constructor(scene: THREE.Scene) {
@@ -143,6 +155,7 @@ export class ComicImpactVfxSystem {
     this.starMaxLife = new Float32Array(MAX_STARS);
     this.starMaxScale = new Float32Array(MAX_STARS);
     for (let i = 0; i < MAX_STARS; i++) {
+      this.starEndColor.push(COLOR_RED);
       const star = new THREE.Sprite(
         new THREE.SpriteMaterial({
           map: this.starTextures[i % 2],
@@ -156,12 +169,14 @@ export class ComicImpactVfxSystem {
       scene.add(star);
     }
 
-    // --- Humo: atlas pre-renderizado; cada sprite clona la textura para
-    // animar su `offset` de frame de forma independiente.
+    // --- Nube de vacío: atlas pre-renderizado; cada sprite clona la textura
+    // para animar su `offset` de frame de forma independiente.
     const atlas = ComicImpactVfxSystem.createSmokeAtlas();
     this.smokeLife = new Float32Array(MAX_SMOKES);
     this.smokeMaxLife = new Float32Array(MAX_SMOKES);
+    this.smokeRadius = new Float32Array(MAX_SMOKES);
     for (let i = 0; i < MAX_SMOKES; i++) {
+      this.smokeDebrisDone.push(false);
       const texture = atlas.clone();
       texture.needsUpdate = true;
       this.smokeTextures.push(texture);
@@ -186,27 +201,37 @@ export class ComicImpactVfxSystem {
   /**
    * Impacto de golpe/taladro/habilidad sobre un enemigo: estrella de cómic +
    * picos rojos/blancos/tinta que salen sesgados hacia `normal`, con cantidad,
-   * largo y velocidad proporcionales a `intensity` (0.35..1.3).
+   * largo y velocidad proporcionales a `intensity` (0.35..1.3) y al radio de
+   * la hitbox del enemigo (`enemyRadius`, en m): un golpe al KRONOS lee el
+   * doble de grande que el mismo golpe a una mariposa.
    */
-  spawnComicHit(position: THREE.Vector3, normal: THREE.Vector3 | null, intensity: number): void {
+  spawnComicHit(
+    position: THREE.Vector3,
+    normal: THREE.Vector3 | null,
+    intensity: number,
+    enemyRadius = 1.6,
+  ): void {
     const clamped = Math.max(0.35, Math.min(1.3, intensity));
-    this.spawnStar(position, 0, 1.5 + clamped * 1.3, 0.1);
-    const count = 10 + Math.round(clamped * 10);
+    const sizeScale = 0.8 + enemyRadius * 0.38;
+    this.spawnStar(position, 0, (2.3 + clamped * 2.0) * sizeScale, 0.1);
+    const count = 12 + Math.round(clamped * 10 + enemyRadius * 2);
     for (let i = 0; i < count; i++) {
-      this.spawnShard(position, normal, clamped, 1.0);
+      this.spawnShard(position, normal, clamped, 1.3 * sizeScale, false);
     }
   }
 
   /**
-   * Explosión de muerte de enemigo: humo rosa cel-shaded + estrella grande de
-   * 10 puntas + andanada de picos ×1.5, todo escalado por el radio del bicho.
+   * Explosión de muerte de enemigo: nube de vacío violeta cel-shaded que
+   * respira lenta, estrella grande de 10 puntas y andanada de picos en
+   * paleta espacial, todo escalado por el radio del bicho. Justo antes de
+   * disiparse, la nube suelta unos cachitos finales (ver updateSmokes).
    */
   spawnComicExplosion(position: THREE.Vector3, radius: number): void {
     this.spawnSmoke(position, radius);
-    this.spawnStar(position, 1, 2.2 + radius * 1.7, 0.15);
-    const count = 24 + Math.floor(Math.random() * 8);
+    this.spawnStar(position, 1, 2.6 + radius * 1.9, 0.18, COLOR_VOID);
+    const count = 18 + Math.floor(radius * 5 + Math.random() * 8);
     for (let i = 0; i < count; i++) {
-      this.spawnShard(position, null, 1.3, 1.55);
+      this.spawnShard(position, null, 1.3, 1.55, true);
     }
   }
 
@@ -215,6 +240,7 @@ export class ComicImpactVfxSystem {
     normal: THREE.Vector3 | null,
     intensity: number,
     factor: number,
+    voidPalette: boolean,
   ): void {
     const idx = this.shardCursor;
     this.shardCursor = (this.shardCursor + 1) % MAX_SHARDS;
@@ -252,9 +278,22 @@ export class ComicImpactVfxSystem {
     this.shardLife[idx] = life;
     this.shardMaxLife[idx] = life;
 
-    // Mezcla de tinta cómic: rojo dominante, blanco y tinta de contraste.
+    // Mezcla de tinta: golpes en paleta cómic (rojo dominante), explosiones
+    // y cachitos en paleta de vacío (violeta + brillo cian + tinta).
     const roll = Math.random();
-    _tmpColor.setHex(roll > 0.25 ? COLOR_RED : roll > 0.12 ? COLOR_WHITE : COLOR_INK);
+    _tmpColor.setHex(
+      voidPalette
+        ? roll > 0.42
+          ? COLOR_VOID
+          : roll > 0.2
+            ? COLOR_GLOW
+            : COLOR_INK
+        : roll > 0.25
+          ? COLOR_RED
+          : roll > 0.12
+            ? COLOR_WHITE
+            : COLOR_INK,
+    );
     for (let v = 0; v < 4; v++) {
       const c = (idx * 4 + v) * 3;
       this.shardColors[c] = _tmpColor.r;
@@ -263,7 +302,13 @@ export class ComicImpactVfxSystem {
     }
   }
 
-  private spawnStar(position: THREE.Vector3, textureIndex: number, maxScale: number, lifetime: number): void {
+  private spawnStar(
+    position: THREE.Vector3,
+    textureIndex: number,
+    maxScale: number,
+    lifetime: number,
+    endColor = COLOR_RED,
+  ): void {
     const idx = this.starCursor;
     this.starCursor = (this.starCursor + 1) % MAX_STARS;
     const star = this.stars[idx];
@@ -276,6 +321,7 @@ export class ComicImpactVfxSystem {
     this.starLife[idx] = lifetime;
     this.starMaxLife[idx] = lifetime;
     this.starMaxScale[idx] = maxScale;
+    this.starEndColor[idx] = endColor;
   }
 
   private spawnSmoke(position: THREE.Vector3, radius: number): void {
@@ -289,6 +335,8 @@ export class ComicImpactVfxSystem {
     smoke.visible = true;
     this.smokeLife[idx] = SMOKE_LIFETIME;
     this.smokeMaxLife[idx] = SMOKE_LIFETIME;
+    this.smokeRadius[idx] = radius;
+    this.smokeDebrisDone[idx] = false;
   }
 
   // ------------------------------------------------------------------
@@ -380,9 +428,10 @@ export class ComicImpactVfxSystem {
         continue;
       }
       const p = 1 - this.starLife[i] / this.starMaxLife[i];
-      // Abre y cierra en sin(p): blanca la primera mitad, roja después.
+      // Abre y cierra en sin(p): blanca la primera mitad, después el color
+      // final del destello (rojo en golpes, violeta en explosiones).
       star.scale.setScalar(Math.max(0.01, this.starMaxScale[i] * Math.sin(p * Math.PI)));
-      star.material.color.setHex(p < 0.5 ? COLOR_WHITE : COLOR_RED);
+      star.material.color.setHex(p < 0.5 ? COLOR_WHITE : this.starEndColor[i]);
     }
   }
 
@@ -400,6 +449,16 @@ export class ComicImpactVfxSystem {
       const frame = Math.min(SMOKE_FRAMES - 1, Math.floor(p * SMOKE_FRAMES));
       this.smokeTextures[i].offset.x = frame / SMOKE_FRAMES;
       smoke.material.opacity = p > 0.72 ? 1 - (p - 0.72) / 0.28 : 1;
+      // Cachitos finales: justo antes de disiparse, la nube de vacío se
+      // desmorona en una andanada de fragmentos violetas/cian.
+      if (!this.smokeDebrisDone[i] && p >= SMOKE_DEBRIS_P) {
+        this.smokeDebrisDone[i] = true;
+        const radius = this.smokeRadius[i];
+        const count = 8 + Math.floor(radius * 3);
+        for (let s = 0; s < count; s++) {
+          this.spawnShard(smoke.position, null, 0.6, 0.45 + radius * 0.16, true);
+        }
+      }
     }
   }
 
@@ -443,8 +502,8 @@ export class ComicImpactVfxSystem {
   }
 
   /**
-   * Atlas del humo rosa: SMOKE_FRAMES evoluciones de la nube cel-shaded
-   * (sombra de tinta desplazada, cuerpo rosa plano, trama halftone, banda
+   * Atlas de la nube de vacío: SMOKE_FRAMES evoluciones de la nube cel-shaded
+   * (sombra de tinta desplazada, cuerpo violeta plano, trama halftone, banda
    * interior y agujero de erosión que crece), horneadas de una vez.
    */
   private static createSmokeAtlas(): THREE.Texture {
@@ -468,7 +527,7 @@ export class ComicImpactVfxSystem {
     const pctx = patternCanvas.getContext('2d');
     let halftone: CanvasPattern | null = null;
     if (pctx) {
-      pctx.fillStyle = 'rgba(225, 29, 72, 0.38)';
+      pctx.fillStyle = 'rgba(139, 92, 246, 0.38)';
       pctx.beginPath();
       pctx.arc(3, 3, 1.7, 0, Math.PI * 2);
       pctx.fill();
@@ -529,9 +588,9 @@ export class ComicImpactVfxSystem {
         ctx.fillStyle = '#09070d';
         ctx.fill('evenodd');
 
-        // 2. Cuerpo rosa plano (blanco el primer instante).
+        // 2. Cuerpo violeta plano (blanco el primer instante).
         tracePath(0, 0, 1);
-        ctx.fillStyle = p < 0.14 ? '#fff1f2' : '#fda4af';
+        ctx.fillStyle = p < 0.14 ? '#f5f2ff' : '#6d54c8';
         ctx.fill('evenodd');
 
         // 3. Trama halftone sobre el humo.
@@ -555,7 +614,7 @@ export class ComicImpactVfxSystem {
             else ctx.lineTo(px, py);
           }
           ctx.closePath();
-          ctx.fillStyle = p < 0.25 ? '#ffffff' : '#fecdd3';
+          ctx.fillStyle = p < 0.25 ? '#ffffff' : '#b9a7f2';
           ctx.fill();
         }
 

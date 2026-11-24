@@ -1467,6 +1467,19 @@ export class NyxDomeController {
     return this.darkRings;
   }
 
+  /**
+   * Juice de cámara para impactos externos (daño de skills): tambaleo +
+   * zoom puntual + flash de impacto, escalados por `strength` (0..1.3).
+   * El golpe cinético no lo necesita: ya tiene el suyo propio por velocidad.
+   */
+  punchCamera(strength: number): void {
+    const s = Math.max(0, Math.min(1.3, strength));
+    if (s <= 0) return;
+    this.shake = Math.max(this.shake, 0.2 * s);
+    this.fovPunch = Math.min(this.fovPunch, Math.max(FOV_PUNCH_CAP, -5 * s));
+    this.impactFlash = Math.max(this.impactFlash, Math.min(0.6, 0.45 * s));
+  }
+
   /** Proyecta a píxeles de pantalla. false si está detrás de la cámara. */
   private projectToScreen(
     worldPos: THREE.Vector3,
@@ -1840,7 +1853,7 @@ export class NyxDomeController {
     const kineticMult = Math.max(0.6, Math.pow(impactSpeed / 14, 1.35));
     onHitEnemy?.(enemy, this.tmpE.copy(this.facing), isDrill, impactSpeed);
     this.vfx.spawnBurst(enemy.position, this.facing, 0xffc24d, 30);
-    this.shake = Math.max(this.shake, 0.28 * kineticMult);
+    this.shake = Math.max(this.shake, 0.34 * kineticMult);
     // Hit-Stop + FOV Punch + flash de impacto: el taladro pega más fuerte.
     this.hitStopTimer = Math.max(
       this.hitStopTimer,
