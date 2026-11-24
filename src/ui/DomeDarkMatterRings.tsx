@@ -7,7 +7,7 @@ import type { NyxDomeController } from '@/game/dome/NyxDomeController';
 // ============================================================================
 // Dibuja en un canvas 2D propio (con bucle rAF independiente) los aros que
 // NyxDomeController proyecta cada frame para los enemigos LEJOS: un aro
-// inestable de tinta blanca de tamaño FIJO (65 px de diámetro, clamp
+// inestable de tinta blanca de tamaño FIJO (60 px de diámetro, clamp
 // estricto también en los picos) que desaparece al acercarse por debajo
 // del umbral de visibilidad. Al vivir fuera de React (sin estado, sin
 // re-render), el coste por frame es solo el trazado de los polígonos de

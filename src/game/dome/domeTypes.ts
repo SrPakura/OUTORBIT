@@ -176,7 +176,7 @@ export const RETICLE_BREAK_RADIUS_PX = 262;
 export const VISOR_CIRCLE_RADIUS_PX = RETICLE_SIZE_PX * (216 / 512); // ≈ 50.6 px
 
 /** Tamaño FIJO del aro en pantalla (diámetro base, sin picos), esté donde esté el enemigo. */
-export const DARK_RING_FIXED_DIAMETER_PX = 65;
+export const DARK_RING_FIXED_DIAMETER_PX = 60;
 /**
  * Tamaño proporcional por debajo del cual el aro se OCULTA: la visibilidad
  * sigue la regla proporcional (55 px a 22 m → 70 px a 60 m), pero el dibujo
@@ -194,6 +194,8 @@ export const DARK_RING_MAX_SPIKE_RADIUS_PX = 41;
 export const DARK_RING_NEAR_DIST_M = 22;
 /** Distancia (m) a partir de la cual el tamaño proporcional satura. */
 export const DARK_RING_FAR_DIST_M = 60;
+/** Distancia (m) MÁS ALLÁ de la cual el aro se OCULTA (enemigo fuera de banda). */
+export const DARK_RING_FAR_HIDE_DIST_M = 80;
 
 export const DOME_ARENA_RADIUS = 90;
 export const DOME_PLAYER_BOUND_RADIUS = 88.6;

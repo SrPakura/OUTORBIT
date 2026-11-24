@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   DARK_RING_FAR_DIST_M,
+  DARK_RING_FAR_HIDE_DIST_M,
   DARK_RING_FIXED_DIAMETER_PX,
   DARK_RING_HIDE_BELOW_SIZE_PX,
   DARK_RING_MAX_DIAMETER_PX,
@@ -1417,13 +1418,21 @@ export class NyxDomeController {
     for (const enemy of enemies) {
       if (!this.projectToScreen(enemy.position, camera, width, height)) continue;
       const dist = camera.position.distanceTo(enemy.position);
-      if (dist <= hideDist) continue;
+      // Banda de visibilidad: se oculta al acercarse (cuando el tamaño
+      // proporcional "debería" bajar del umbral cercano) y también MÁS ALLÁ
+      // de DARK_RING_FAR_HIDE_DIST_M (enemigo fuera de banda).
+      if (dist <= hideDist || dist >= DARK_RING_FAR_HIDE_DIST_M) continue;
 
       // Escalado proporcional (solo visibilidad): t = 0 en el umbral cercano,
       // t = 1 a partir de DARK_RING_FAR_DIST_M.
       const t = Math.min(1, (dist - DARK_RING_NEAR_DIST_M) / range);
-      // Fundido de entrada en los primeros 2.5 m sobre el punto de ocultación.
-      const alpha = Math.min(1, (dist - hideDist) / 2.5);
+      // Fundido de entrada en los primeros 2.5 m sobre el punto de ocultación
+      // y de salida en los últimos 2.5 m antes del límite lejano.
+      const alpha = Math.min(
+        (dist - hideDist) / 2.5,
+        (DARK_RING_FAR_HIDE_DIST_M - dist) / 2.5,
+        1,
+      );
 
       const index = this.darkRings.length;
       let ring = this.darkRingPool[index];
