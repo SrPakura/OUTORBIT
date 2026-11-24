@@ -2231,13 +2231,13 @@ export class NyxDomeController {
             !isTopFace &&
             this.up.dot(n) < -0.35;
 
-          // --- Sentadilla Cinética: impacto de pared/canto a velocidad de
-          // taladro (>= umbral drill) con componente normal real. En vez del
-          // rebote amortiguado, Nyx absorbe en sentadilla y sale con TODO el
-          // impulso en la dirección reflejada. Coste 0 de Edén: intrínseca.
+          // --- Sentadilla Cinética: impacto contra cualquier superficie no
+          // pisable (pared, canto o raíz iceberg) a velocidad de taladro
+          // (>= umbral drill) con componente normal real. En vez del rebote
+          // amortiguado, Nyx absorbe en sentadilla y sale con TODO el impulso
+          // en la dirección reflejada. Coste 0 de Edén: intrínseca.
           const impactSpeed = this.velocity.length();
           if (
-            !icebergHit &&
             this.bounceCooldown <= 0 &&
             -approach >= KINETIC_BOUNCE.MIN_NORMAL_IMPACT &&
             impactSpeed >= KINETIC_BOUNCE.TRIGGER_SPEED

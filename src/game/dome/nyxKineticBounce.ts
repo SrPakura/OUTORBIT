@@ -5,12 +5,13 @@ import * as THREE from 'three';
 // ============================================================================
 //
 // Mecánica intrínseca de NYX (NO es una habilidad activa): cuando se desplaza
-// hacia una pared a una velocidad de impacto igual o superior al umbral del
-// taladro espiral (el punto en el que una patada normal se transforma en
-// `spiral_drill_kick`), en lugar del rebote estándar amortiguado Nyx orienta
-// los pies hacia la normal de la pared, absorbe el impacto en una sentadilla
-// redirigiendo su energía cinética y sale disparada en la dirección opuesta
-// conservando TODO el impulso acumulado.
+// hacia una pared (cualquier superficie NO pisable: canto de la tapa, raíz
+// iceberg, lateral de un suelo) a una velocidad de impacto igual o superior
+// al umbral del taladro espiral (el punto en el que una patada normal se
+// transforma en `spiral_drill_kick`), en lugar del rebote estándar amortiguado
+// Nyx orienta los pies hacia la normal de la pared, absorbe el impacto en una
+// sentadilla redirigiendo su energía cinética y sale disparada en la
+// dirección opuesta conservando TODO el impulso acumulado.
 //
 // Lore mecánico: Nyx altera de forma natural la gravedad local junto con su
 // propia composición de cosmos, absorbiendo el impacto sin daño físico ni
