@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import {
-  DARK_RING_FIXED_DIAMETER_PX,
-  DARK_RING_HIDE_DIST_M,
-  DARK_RING_SHOW_DIST_M,
+  DARK_RING_APPEAR_RADIUS_PX,
+  DARK_RING_PADDING_PX,
   DOME_PLAYER_BOUND_RADIUS,
   RETICLE_BREAK_RADIUS_PX,
   RETICLE_LOCK_RADIUS_PX,
@@ -398,14 +397,14 @@ export class NyxDomeController {
     () => ({ x: 0, y: 0, onScreen: true, edgeAngleDeg: 0 }),
   );
 
-  // --- Aro de Materia Oscura: marcador pasivo de enemigos lejanos. El
-  // tamaño en pantalla es FIJO (60 px de diámetro); la visibilidad es una
-  // banda directa en metros (25..85 m): fuera de ella, oculto (el lock-in
-  // manda cerca y el enemigo lejísimo no aporta).
+  // --- Aro de Materia Oscura: marcador pasivo que ABRAZA la hitbox
+  // proyectada del enemigo (+5 px de padding por lado). Aparece con
+  // opacidad fluyendo al 30-40% cuando el enemigo está lejos (aro <= 109 px
+  // de radio); cerca manda el lock-in. Con Tab (radar), todos a tope.
   private readonly darkRings: DomeDarkRing[] = [];
   private readonly darkRingPool: DomeDarkRing[] = Array.from(
     { length: 16 },
-    () => ({ x: 0, y: 0, radius: 0, alpha: 1, t: 0, phase: 0 }),
+    () => ({ x: 0, y: 0, radius: 0, alpha: 1, pulse: true, t: 0, phase: 0 }),
   );
 
   // --- Recursos y progresión
@@ -1385,15 +1384,15 @@ export class NyxDomeController {
 
   /**
    * Aro de Materia Oscura (pasivo, sin Tab): proyecta cada enemigo vivo a
-   * pantalla y le asigna un aro de tamaño FIJO (60 px de diámetro). La
-   * visibilidad es una banda directa en METROS: solo se dibuja para enemigos
-   * a entre DARK_RING_SHOW_DIST_M y DARK_RING_HIDE_DIST_M de Nyx (más cerca
-   * manda el lock-in del visor; más lejos, el enemigo está al otro lado de
-   * la cúpula), con fundidos de 2.5 m en ambos bordes. `t` (0..1) lleva la
-   * posición dentro de la banda para que la intensidad de las espinas escale
-   * con la distancia en el overlay. Sin raycast de oclusión: es un "sentido"
-   * de materia oscura y atraviesa suelos, lo que lo hace útil justo cuando
-   * el enemigo no se ve.
+   * pantalla y le asigna un aro que ABRAZA su hitbox: el radio es el círculo
+   * 3D de la hitbox proyectado a píxeles (centro y punto a un radio hacia la
+   * derecha de cámara) + DARK_RING_PADDING_PX por lado, así que crece al
+   * acercarse y encoge al alejarse como la propia silueta. Aparece de forma
+   * pasiva (opacidad fluyendo al 30-40% en el overlay) solo mientras ese
+   * radio no supere DARK_RING_APPEAR_RADIUS_PX: más cerca el enemigo se ve
+   * por sí solo y manda el lock-in. Con el radar de Tab activo el umbral se
+   * ignora y todos los aros salen a opacidad total del tirón. Sin raycast de
+   * oclusión: es un "sentido" de materia oscura y atraviesa suelos.
    */
   private updateDarkMatterRings(
     camera: THREE.PerspectiveCamera,
@@ -1404,35 +1403,42 @@ export class NyxDomeController {
 
     const width = this.viewportW;
     const height = this.viewportH;
-    const bandRange = DARK_RING_HIDE_DIST_M - DARK_RING_SHOW_DIST_M;
+    const radar = this.radarEnabled;
 
     for (const enemy of enemies) {
       if (!this.projectToScreen(enemy.position, camera, width, height)) continue;
-      const dist = camera.position.distanceTo(enemy.position);
-      // Banda de visibilidad en metros: fuera de ella, oculto.
-      if (dist <= DARK_RING_SHOW_DIST_M || dist >= DARK_RING_HIDE_DIST_M) continue;
+      const cx = this.screenPos.x;
+      const cy = this.screenPos.y;
 
-      // t: posición proporcional dentro de la banda (alimenta las espinas).
-      const t = Math.min(1, (dist - DARK_RING_SHOW_DIST_M) / bandRange);
-      // Fundidos de 2.5 m en ambos bordes de la banda.
-      const alpha = Math.min(
-        (dist - DARK_RING_SHOW_DIST_M) / 2.5,
-        (DARK_RING_HIDE_DIST_M - dist) / 2.5,
-        1,
-      );
+      // Radio proyectado de la hitbox: distancia en px entre el centro
+      // proyectado y un punto desplazado un radio hacia la derecha de
+      // cámara (columna 0 de la matriz de mundo de la cámara).
+      this.tmpB.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+      this.tmpA.copy(enemy.position).addScaledVector(this.tmpB, enemy.radius);
+      if (!this.projectToScreen(this.tmpA, camera, width, height)) continue;
+      const hitboxPx = Math.hypot(this.screenPos.x - cx, this.screenPos.y - cy);
+      const ringRadius = hitboxPx + DARK_RING_PADDING_PX * 2;
+
+      // Cerca (aro mayor que el umbral) el enemigo se ve por sí solo: manda
+      // el lock-in. Con Tab el umbral se ignora (todos del tirón).
+      if (!radar && ringRadius > DARK_RING_APPEAR_RADIUS_PX) continue;
 
       const index = this.darkRings.length;
       let ring = this.darkRingPool[index];
       if (!ring) {
-        ring = { x: 0, y: 0, radius: 0, alpha: 1, t: 0, phase: 0 };
+        ring = { x: 0, y: 0, radius: 0, alpha: 1, pulse: true, t: 0, phase: 0 };
         this.darkRingPool.push(ring);
       }
-      ring.x = this.screenPos.x;
-      ring.y = this.screenPos.y;
-      // Tamaño FIJO: el dibujo no encoge con la aproximación.
-      ring.radius = DARK_RING_FIXED_DIAMETER_PX * 0.5;
-      ring.alpha = alpha;
-      ring.t = t;
+      ring.x = cx;
+      ring.y = cy;
+      ring.radius = ringRadius;
+      // Fundido en la banda de 12 px antes del umbral; con Tab, opacidad total.
+      ring.alpha = radar
+        ? 1
+        : Math.min(1, (DARK_RING_APPEAR_RADIUS_PX - ringRadius) / 12);
+      ring.pulse = !radar;
+      // t: 1 = enemigo pequeño en pantalla (lejos), 0 = al borde del umbral.
+      ring.t = Math.min(1, Math.max(0, 1 - ringRadius / DARK_RING_APPEAR_RADIUS_PX));
       // Fase estable por enemigo: el ruido de cada aro es independiente y
       // no "salta" entre frames ni al reciclar slots del pool.
       let hash = 0;

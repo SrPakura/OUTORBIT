@@ -1,17 +1,16 @@
 import { useEffect, useRef } from 'react';
-import { DARK_RING_MAX_SPIKE_RADIUS_PX } from '@/game/dome/domeTypes';
 import type { NyxDomeController } from '@/game/dome/NyxDomeController';
 
 // ============================================================================
 // DomeDarkMatterRings — overlay 2D de los aros de materia oscura
 // ============================================================================
 // Dibuja en un canvas 2D propio (con bucle rAF independiente) los aros que
-// NyxDomeController proyecta cada frame para los enemigos LEJOS: un aro
-// inestable de tinta blanca de tamaño FIJO (60 px de diámetro, clamp
-// estricto también en los picos) que desaparece al acercarse por debajo
-// del umbral de visibilidad. Al vivir fuera de React (sin estado, sin
-// re-render), el coste por frame es solo el trazado de los polígonos de
-// los enemigos visibles.
+// NyxDomeController proyecta cada frame: un aro inestable de tinta blanca
+// que ABRAZA la hitbox proyectada del enemigo (+5 px de padding por lado),
+// con la opacidad fluyendo entre el 30% y el 40% en estado pasivo (parpadeo
+// sutil que no distrae) y a tope cuando el radar de Tab los fuerza. Al
+// vivir fuera de React (sin estado, sin re-render), el coste por frame es
+// solo el trazado de los polígonos de los enemigos visibles.
 //
 // Ruido "oscuro" portado de la referencia encontrar_enemigos.html: armónicos
 // disonantes + espina cúbica + jitter por vértice, generado en unidades de
@@ -55,6 +54,7 @@ interface RingShape {
   y: number;
   radius: number;
   alpha: number;
+  pulse: boolean;
   t: number;
   phase: number;
 }
@@ -62,10 +62,9 @@ interface RingShape {
 /**
  * Traza el polígono del aro en el contexto, escalado de la referencia (radio
  * 133) al radio real. `tOffset` desfasa el ruido (eco) y `dir` invierte el
- * giro para que el eco contrarrote. CLAMP ESTRICTO del radio dibujado: nunca
- * por debajo del 72% del radio base (el aro no "encoge" visualmente) y
- * nunca por encima de DARK_RING_MAX_SPIKE_RADIUS_PX, de modo que ni los
- * picos más largos superan el tamaño máximo absoluto en pantalla.
+ * giro para que el eco contrarrote. Clamp RELATIVO al radio del aro: nunca
+ * por debajo del 72% (el aro no "encoge" visualmente) ni por encima del
+ * 135% (los picos más largos no desbordan la silueta en pantalla).
  */
 function traceRingPath(
   ctx: CanvasRenderingContext2D,
@@ -83,7 +82,7 @@ function traceRingPath(
   const cx = ring.x;
   const cy = ring.y;
   const minPx = ring.radius * 0.72;
-  const maxPx = Math.max(minPx + 1, DARK_RING_MAX_SPIKE_RADIUS_PX);
+  const maxPx = ring.radius * 1.35;
   ctx.beginPath();
   for (let i = 0; i < vertices; i++) {
     const baseAngle = (i / vertices) * Math.PI * 2;
@@ -145,6 +144,7 @@ function DomeDarkMatterRings({ controllerRef }: DomeDarkMatterRingsProps) {
     let last = performance.now();
     let noiseTime = 0;
     let rotation = 0;
+    let pulseTime = 0;
     let hadContent = false;
 
     const draw = () => {
@@ -154,6 +154,7 @@ function DomeDarkMatterRings({ controllerRef }: DomeDarkMatterRingsProps) {
       last = now;
       noiseTime += dt * TIME_SPEED;
       rotation += dt * ROT_SPEED;
+      pulseTime += dt;
 
       const controller = controllerRef.current;
       const rings = controller?.getDarkMatterRings();
@@ -173,13 +174,18 @@ function DomeDarkMatterRings({ controllerRef }: DomeDarkMatterRingsProps) {
         const ring = rings![i];
         if (ring.alpha <= 0.01) continue;
         const strokeScale = Math.max(0.8, Math.min(1.2, ring.radius / REF_RADIUS));
-        // Intensidad de las espinas proporcional a la distancia DENTRO del
-        // rango acotado: t=0 (cerca) espinas contenidas, t=1 (lejos) máxima
-        // agresividad — sin romper el tope absoluto del clamp.
+        // Intensidad de las espinas: t=1 (enemigo pequeño en pantalla, lejos)
+        // espinas agresivas; t=0 (al borde del umbral) contenidas.
         const spike = 0.85 + 0.4 * ring.t;
+        // Opacidad: en estado pasivo fluye entre el 30% y el 40% (parpadeo
+        // sutil con fase propia por aro); con Tab (pulse=false), del tirón.
+        const pulseAlpha = ring.pulse
+          ? 0.35 + 0.05 * Math.sin(pulseTime * 9.4 + ring.phase)
+          : 1;
+        const baseAlpha = Math.max(0, Math.min(1, ring.alpha * pulseAlpha));
 
         // --- Anillo principal agresivo: halo ancho tenue + trazo blanco.
-        ctx.globalAlpha = ring.alpha;
+        ctx.globalAlpha = baseAlpha;
         traceRingPath(ctx, ring, noiseTime, rotation, RING_VERTICES, 1, spike, 1.6, 0.55, 0);
         ctx.lineJoin = 'miter';
         ctx.miterLimit = 10;
@@ -191,7 +197,7 @@ function DomeDarkMatterRings({ controllerRef }: DomeDarkMatterRingsProps) {
         ctx.stroke();
 
         // --- Eco inestable: 88% del radio, contrarrotando, más nervioso.
-        ctx.globalAlpha = ring.alpha * 0.45;
+        ctx.globalAlpha = baseAlpha * 0.45;
         traceRingPath(
           ctx,
           ring,

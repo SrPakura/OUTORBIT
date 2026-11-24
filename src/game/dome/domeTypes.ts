@@ -139,27 +139,37 @@ export interface DomeRadarDot {
 }
 
 /**
- * Aro de Materia Oscura: marcador de enemigo lejano proyectado a pantalla.
- * El aro es 2D, se mueve con la cámara según distancia y ángulo. Su tamaño
- * está ACOTADO en pantalla: el diámetro base escala proporcionalmente con
- * la distancia dentro de [DARK_RING_MIN_DIAMETER_PX, DARK_RING_MAX_DIAMETER_PX]
- * (nunca crece sin límite con la perspectiva 3D) y los picos más largos no
- * pueden superar DARK_RING_MAX_SPIKE_RADIUS_PX de radio (~70 px absolutos).
- * Solo se ve más allá de DARK_RING_NEAR_DIST_M; al acercarse, desaparece y
- * el lock-in toma el relevo. No requiere pulsar Tab.
+ * Aro de Materia Oscura: marcador de enemigo proyectado a pantalla que
+ * ABRAZA la hitbox: su radio es el círculo 3D de la hitbox proyectado a
+ * píxeles + DARK_RING_PADDING_PX por lado, así que rodea la silueta del
+ * enemigo a cualquier distancia (crece al acercarte y encoge al alejarte,
+ * exactamente como la hitbox proyectada).
  */
 export interface DomeDarkRing {
   x: number;
   y: number;
-  /** Radio base del aro en píxeles de pantalla (sin picos), ya acotado. */
+  /** Radio del aro en píxeles: hitbox proyectada + padding por lado. */
   radius: number;
-  /** 0..1: fundido de entrada/salida cerca del umbral de distancia. */
+  /** 0..1: factor de visibilidad (fundido cerca del umbral; 1 con Tab). */
   alpha: number;
-  /** 0..1: posición proporcional dentro del rango [min, max] de tamaño. */
+  /** true = opacidad fluyendo entre 30% y 40% (aparición pasiva). */
+  pulse: boolean;
+  /** 0..1: enemigo pequeño en pantalla (lejos) = 1, al borde del umbral = 0. */
   t: number;
   /** Fase estable por enemigo (hash del id) para que el ruido no "salte". */
   phase: number;
 }
+
+/** Padding del aro alrededor de la hitbox proyectada, por lado (px). */
+export const DARK_RING_PADDING_PX = 5;
+/**
+ * Umbral de aparición pasiva (px de radio): el aro solo se dibuja mientras
+ * su radio no supere este valor — más cerca, el enemigo se ve por sí solo y
+ * manda el lock-in del visor. 109 px = Gólem (hitbox de 3.2 m) proyectado a
+ * 25 m + padding. Con Tab (radar) el umbral se ignora: todos los aros
+ * aparecen a opacidad total independientemente de la distancia.
+ */
+export const DARK_RING_APPEAR_RADIUS_PX = 109;
 
 /** Tamaño visual en píxeles de pantalla del visor central (visor.svg) */
 export const RETICLE_SIZE_PX = 120;
@@ -174,19 +184,6 @@ export const RETICLE_BREAK_RADIUS_PX = 262;
  * RETICLE_SIZE_PX.
  */
 export const VISOR_CIRCLE_RADIUS_PX = RETICLE_SIZE_PX * (216 / 512); // ≈ 50.6 px
-
-/** Tamaño FIJO del aro en pantalla (diámetro base, sin picos), esté donde esté el enemigo. */
-export const DARK_RING_FIXED_DIAMETER_PX = 60;
-/**
- * Banda de visibilidad en METROS: el aro se dibuja solo para enemigos cuya
- * distancia a Nyx cae dentro de (SHOW, HIDE), con fundidos de 2.5 m en los
- * bordes. Más cerca manda el lock-in del visor; más lejos, el enemigo está
- * al otro lado de la cúpula y no aporta.
- */
-export const DARK_RING_SHOW_DIST_M = 25;
-export const DARK_RING_HIDE_DIST_M = 85;
-/** Tope ABSOLUTO de radio con los picos más largos (82 px de diámetro total). */
-export const DARK_RING_MAX_SPIKE_RADIUS_PX = 41;
 
 export const DOME_ARENA_RADIUS = 90;
 export const DOME_PLAYER_BOUND_RADIUS = 88.6;
