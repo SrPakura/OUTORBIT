@@ -1,19 +1,22 @@
 // ============================================================================
-// DOME CRAB BEHAVIOR — IA del Cangrejo Cañón (modo Cúpula)
+// DOME CRAB BEHAVIOR — IA del Cangrejo Artillero (modo Cúpula)
 // ============================================================================
-// Comportamiento del cangrejo extraído de DomeWaveManager (P6): la FSM de
+// Comportamiento del cangrejo (rediseño de enemigos_base.md §7.1): la FSM de
 // suelos flotantes (agarre, salto parabólico entre slabs, aterrizaje suave y
-// deslizamiento por knockback), la torreta que rastrea a Nyx, el guiñeo de
-// vuelo y el aleteo procedural de patas. Incluye los helpers de colocación
-// sobre slabs compartidos con el spawn del manager.
+// deslizamiento por knockback con RNG determinista de oleada) más la FSM de
+// combate completa: rayo láser continuo telegrafiado con velocidad angular
+// real y fuego amigo (física honesta, cero homing), ráfaga parryable de 3
+// proyectiles rectos y protocolo kamikaze con guarda anti-patada y
+// detonación rompesuelos. Incluye el guiñeo de vuelo y el aleteo
+// procedural de patas para el GLB sin clips.
 //
-// Solo updateCrabEnemy necesita contexto (flotación compartida); el resto
-// son funciones puras sobre el estado del enemigo. Scratch de módulo: cero
-// allocations por frame.
+// La FSM de combate recibe un `CrabBehaviorContext` (el propio manager) con
+// el pool de proyectiles, el raycast del haz, el hilo/aro telegraphs, etc.
+// Scratch de módulo: cero allocations por frame.
 // ============================================================================
 
 import * as THREE from 'three';
-import type { SlabCollider } from './domeTypes';
+import { DOME_PLAYER_BOUND_RADIUS, type SlabCollider } from './domeTypes';
 import { lookAtQuat } from './domeEnemyOrient';
 import type { EnemyInternal, ManagedWaveEnemy } from './DomeWaveManager';
 
@@ -41,6 +44,52 @@ const CRAB_AIR_DAMPING = 3.0; // Fricción del desvío por knockback en vuelo (1
 const CRAB_LEG_WAVE_SPEED = 14.0; // Velocidad del aleteo de patas en vuelo.
 const CRAB_FLIGHT_WOBBLE = 0.12; // Guiñeo ligero del cuerpo en vuelo (rad).
 const CRAB_FLIGHT_WOBBLE_SPEED = 2.7; // Frecuencia del guiñeo de vuelo (rad/s).
+
+// ============================================================================
+// Cangrejo Artillero — FSM de combate del rediseño (enemigos_base.md §7.1)
+// "IA perfecta (física honesta, cero homing) vs jugador frenético".
+// ============================================================================
+
+/** Estado de la máquina de ataques del cangrejo. */
+export type CrabAttackState = 'idle' | 'laser_aim' | 'laser_fire' | 'burst' | 'kamikaze_prime';
+
+// --- Ataque 1: Rayo Láser Continuo (dist > 7 m) ---
+export const CRAB_LASER_DPS = 20.0; // 20*dt continuos a Nyx y a cualquier enemigo.
+const CRAB_LASER_MIN_DIST = 7.0;
+const CRAB_LASER_AIM_SEC = 2.0; // Telegraph completo.
+const CRAB_LASER_AIM_TRACK_SEC = 1.65; // Primeros 1.65 s persigue; luego sella.
+const CRAB_LASER_AIM_TURN_RATE = 1.8; // Velocidad angular máx. de rastreo (rad/s).
+const CRAB_LASER_LEAD_SEC = 0.25; // Predicción ligera durante el rastreo.
+const CRAB_LASER_FIRE_SEC = 2.0; // Haz grueso continuo.
+const CRAB_LASER_FIRE_TURN_RATE = 0.45; // Barrido con inercia (rad/s).
+const CRAB_LASER_COOLDOWN = 6.0; // Escalable con speedMult.
+const CRAB_LASER_AIM_BLINK_HZ = 14.0; // Parpadeo blanco/rojo del sellado final.
+const CRAB_LASER_HIT_RADIUS = 1.7; // Cuerpo de Nyx contra el haz (m).
+export const CRAB_LASER_BEAM_FF_MARGIN = 0.45; // Margen del haz contra enemigos (m).
+
+// --- Ataque 2: Ráfaga Láser de Corta Distancia (5 < dist <= 7 m) ---
+const CRAB_BURST_MAX_DIST = 7.0;
+const CRAB_BURST_TELEGRAPH_SEC = 0.25; // Chispazo en las 3 pinzas del cañón.
+const CRAB_BURST_SHOT_INTERVAL = 0.10; // Separación entre los 3 disparos (s).
+const CRAB_BURST_TOTAL_SEC = CRAB_BURST_TELEGRAPH_SEC + 2 * CRAB_BURST_SHOT_INTERVAL;
+const CRAB_BURST_SHOT_SPEED = 36.0; // Proyectiles rectos, sin homing en vuelo.
+const CRAB_BURST_SHOT_DAMAGE = 2; // 2 HP por disparo (6 HP máx.), parryables.
+const CRAB_BURST_COOLDOWN = 3.0;
+
+// --- Ataque 3: Protocolo Kamikaze (dist <= 5 m) ---
+export const CRAB_KAMIKAZE_RADIUS = 10.0; // Radio de la detonación (m).
+const CRAB_KAMIKAZE_TRIGGER_DIST = 5.0;
+const CRAB_KAMIKAZE_ARM_SEC = 0.25; // Tiempo dentro de 5 m para cebarse.
+const CRAB_KAMIKAZE_PRIME_SEC = 1.1; // Cebado: punto de no retorno.
+const CRAB_KAMIKAZE_RUN_SPEED = 6.5; // Carrera por su slab persiguiendo a Nyx.
+export const CRAB_KAMIKAZE_SWELL = 0.35; // Hinchado del cuerpo (mesh.scale).
+const CRAB_POST_KICK_GRACE = 0.75; // Guardia anti-patada tras impacto melee.
+const CRAB_KAMIKAZE_RETRY_SEC = 0.15; // Reintento cuando la guardia bloquea.
+
+// Duraciones de los clips one-shot del cangrejo (re-explosión del flinch/land).
+export const CRAB_HIT_CLIP_SEC = 0.2;
+export const CRAB_JUMP_LAND_CLIP_SEC = 0.35;
+
 
 // ============================================================================
 // Tipos, helpers de slab y scratch
@@ -359,10 +408,18 @@ const _muzzlePos = new THREE.Vector3();
 const _muzzleDir = new THREE.Vector3();
 const _legWaveQuat = new THREE.Quaternion();
 const _legWaveAxis = new THREE.Vector3(1, 0, 0);
+// Scratch de la FSM de combate (cero allocations por frame).
+const _leadPos = new THREE.Vector3();
+const _turretDir = new THREE.Vector3();
+const _aimTarget = new THREE.Vector3();
+const _segClosest = new THREE.Vector3();
+const _segPoint = new THREE.Vector3();
+const _ringUp = new THREE.Vector3();
 
 // ============================================================================
 // Contexto compartido con el DomeWaveManager
 // ============================================================================
+
 export interface CrabBehaviorContext {
   /** Flotación con muelle hacia homePos (vive en el manager). */
   applyFloatMovement(
@@ -370,6 +427,66 @@ export interface CrabBehaviorContext {
     internal: EnemyInternal,
     dt: number,
     elapsed: number,
+  ): void;
+  /** Multiplicador de velocidad de la oleada (escalado de cooldowns). */
+  readonly speedMult: number;
+  /** Proyectil del pool hacia Nyx o con dirección sellada (sin homing). */
+  fireProjectile(
+    enemy: ManagedWaveEnemy,
+    playerPos: THREE.Vector3,
+    kind: 'dark' | 'ink' | 'laser',
+    damage: number,
+    speed: number,
+    spreadRad?: number,
+    origin?: THREE.Vector3,
+    dirOverride?: THREE.Vector3,
+  ): void;
+  /**
+   * Distancia mundo del haz láser desde `origin` por `dir`: hasta chocar con
+   * un slab o cruzar la esfera de la Barrera Blanca (clamp a `maxDist`).
+   */
+  raycastCrabLaser(
+    activeSlabs: SlabCollider[] | undefined,
+    origin: THREE.Vector3,
+    dir: THREE.Vector3,
+    maxDist: number,
+  ): number;
+  /** Hilo fino de puntería (fire=false) o haz grueso (fire=true) del láser. */
+  showCrabLaser(
+    enemyId: string,
+    fire: boolean,
+    from: THREE.Vector3,
+    dir: THREE.Vector3,
+    dist: number,
+    blinkWhite: boolean,
+  ): void;
+  /** Oculta el hilo/haz del cangrejo (fin del ataque o muerte). */
+  hideCrabLaser(enemyId: string): void;
+  /** Aro de peligro proyectado sobre la tapa del slab durante el cebado. */
+  showCrabDangerRing(
+    enemyId: string,
+    pos: THREE.Vector3,
+    up: THREE.Vector3,
+    radius: number,
+    pulse: number,
+  ): void;
+  hideCrabDangerRing(enemyId: string): void;
+  /** Fuego amigo: CRAB_LASER_DPS*dt a todo enemigo vivo que cruce el haz. */
+  applyCrabLaserFF(
+    ownerId: string,
+    from: THREE.Vector3,
+    dir: THREE.Vector3,
+    dist: number,
+    dt: number,
+  ): void;
+  /** Detonación kamikaze: anillos a Nyx, fuego amigo y slab roto. */
+  detonateCrabKamikaze(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    playerPos: THREE.Vector3,
+    activeSlabs: SlabCollider[] | undefined,
+    onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
+    onSlabSmash?: (slab: SlabCollider) => void,
   ): void;
 }
 
@@ -394,19 +511,24 @@ export function updateCrabEnemy(
 
   if (internal.jump) {
     updateCrabJump(enemy, internal, dt, activeSlabs);
-    flapCrabLegs(enemy, internal, elapsed);
+    if (!internal.mixer) {
+      flapCrabLegs(enemy, internal, elapsed);
+    }
     return;
   }
 
   if (internal.attachedSlabId && slab) {
-    updateCrabOnSlab(enemy, internal, slab, dt, playerPos);
+    updateCrabOnSlab(ctx, enemy, internal, slab, dt, playerPos);
     return;
   }
 
   // Sin slab: flotación suave + guiñeo de vuelo + agarre de suelos cercanos.
   ctx.applyFloatMovement(enemy, internal, dt, elapsed);
   orientCrabInFlight(enemy, dt, elapsed, playerPos);
-  flapCrabLegs(enemy, internal, elapsed);
+  // Con clips embebidos el aleteo de patas lo anima el GLB (crab_jump_*).
+  if (!internal.mixer) {
+    flapCrabLegs(enemy, internal, elapsed);
+  }
   if (activeSlabs && activeSlabs.length > 0) {
     const target = pickCrabJumpSlab(activeSlabs, null, enemy.position);
     if (target && enemy.position.distanceTo(target.center) <= CRAB_GRAB_RANGE) {
@@ -434,7 +556,8 @@ function startCrabJump(
     return null;
   }
   const targetLocal = new THREE.Vector2();
-  pickSlabLocalPoint(target, Math.random, targetLocal);
+  // RNG determinista de la oleada (coordinación §7.1: sin Math.random).
+  pickSlabLocalPoint(target, internal.rng ?? Math.random, targetLocal);
   slabTopPoint(target, targetLocal, _targetPos);
   _slabUp.set(0, 1, 0).applyQuaternion(target.quaternion);
   _targetPos.addScaledVector(_slabUp, internal.standHeight);
@@ -498,17 +621,34 @@ function updateCrabJump(
     internal.slabLocalOffset.copy(jump.targetLocal);
     internal.attachBlend = 0;
     internal.attachFrom.copy(enemy.position);
+    // El clip crab_jump_land (one-shot 0.35 s) arranca en el impacto exacto.
+    internal.crabLandTimer = CRAB_JUMP_LAND_CLIP_SEC;
   }
 }
 
 /** Cangrejo pegado a su slab: anclaje, deslizamiento por knockback y apuntado. */
 function updateCrabOnSlab(
+  ctx: CrabBehaviorContext,
   enemy: ManagedWaveEnemy,
   internal: EnemyInternal,
   slab: SlabCollider,
   dt: number,
   playerPos: THREE.Vector3,
 ): void {
+  // Protocolo Kamikaze: corre por su slab persiguiendo a Nyx hasta el borde.
+  if (internal.crabState === 'kamikaze_prime') {
+    _slabUp.set(0, 1, 0).applyQuaternion(slab.quaternion);
+    _aimDir.subVectors(playerPos, enemy.position);
+    _aimDir.addScaledVector(_slabUp, -_aimDir.dot(_slabUp));
+    if (_aimDir.lengthSq() > 1e-4) {
+      _aimDir.normalize();
+      const speed = CRAB_KAMIKAZE_RUN_SPEED * ctx.speedMult;
+      _localOffset.copy(_aimDir).applyQuaternion(slab.invQuaternion);
+      internal.slabLocalOffset.x += _localOffset.x * speed * dt;
+      internal.slabLocalOffset.y += _localOffset.z * speed * dt;
+    }
+  }
+
   // El knockback desliza el offset local, fijado dentro de los bordes.
   if (enemy.velocity.lengthSq() > 1e-6) {
     _localOffset.copy(enemy.velocity).applyQuaternion(slab.invQuaternion);
@@ -516,6 +656,8 @@ function updateCrabOnSlab(
     internal.slabLocalOffset.y += _localOffset.z * dt;
     clampSlabLocalPoint(slab, internal.slabLocalOffset);
     enemy.velocity.multiplyScalar(Math.exp(-CRAB_SKID_DAMPING * dt));
+  } else if (internal.crabState === 'kamikaze_prime') {
+    clampSlabLocalPoint(slab, internal.slabLocalOffset);
   }
 
   // Anclaje a la cara superior (+Y local) del slab: el origen sube la altura
@@ -546,8 +688,11 @@ function updateCrabOnSlab(
     }
   }
 
-  // El cañón apunta fino hacia Nyx por encima del giro del cuerpo.
-  aimCrabTurret(internal, dt, playerPos);
+  // El cañón apunta fino hacia Nyx solo en reposo (sin clips en el GLB): en
+  // los estados de ataque lo gobierna la FSM con límites de velocidad angular.
+  if (internal.crabState === 'idle' && !internal.mixer) {
+    aimCrabTurret(internal, dt, playerPos);
+  }
 }
 
 /** Boca del cañón en espacio mundo (hueso `turret` o mesh `detail_cannon`). */
@@ -618,5 +763,297 @@ function flapCrabLegs(enemy: ManagedWaveEnemy, internal: EnemyInternal, elapsed:
       Math.sin(elapsed * CRAB_LEG_WAVE_SPEED + enemy.phase + i * 0.8) * leg.amplitude,
     );
     leg.bone.quaternion.copy(leg.rest).multiply(_legWaveQuat);
+  }
+}
+
+// ============================================================================
+// FSM de combate del Cangrejo Artillero (rediseño §7.1)
+// ============================================================================
+
+/** Alcance del haz: la esfera de la Barrera Blanca la corta, no el vacío. */
+const CRAB_LASER_RANGE = DOME_PLAYER_BOUND_RADIUS;
+const CRAB_BURST_SHOTS = 3;
+
+/**
+ * Devuelve el cangrejo a reposo y apaga sus visuales de ataque. Sirve tanto al
+ * cancelar por salto como al reset ofensivo del Modo Entrenamiento.
+ */
+export function resetCrabAttack(ctx: CrabBehaviorContext, enemy: ManagedWaveEnemy, internal: EnemyInternal): void {
+  ctx.hideCrabLaser(enemy.id);
+  ctx.hideCrabDangerRing(enemy.id);
+  internal.crabState = 'idle';
+  internal.crabTimer = 0;
+  internal.crabBurstShotsLeft = 0;
+  internal.crabSwell = 0;
+  enemy.attackTimer = Math.max(enemy.attackTimer, 0.85);
+}
+
+/** Dirección de disparo actual del cañón en espacio mundo. */
+function crabTurretWorldDir(internal: EnemyInternal, out: THREE.Vector3): boolean {
+  const node = internal.turretNode;
+  if (!node) {
+    return false;
+  }
+  node.updateWorldMatrix(true, false);
+  node.getWorldQuaternion(_turretWorldQuat);
+  out.copy(internal.turretForward).applyQuaternion(_turretWorldQuat);
+  return true;
+}
+
+/**
+ * Gira el hueso `turret` hacia `targetPos` con velocidad angular máxima
+ * real `maxRadPerSec` (física honesta: sin slerp exponencial engañoso). El
+ * código rota el hueso por encima del AnimationMixer si hubiera clips.
+ * Devuelve el ángulo restante (rad) cuando ya está alineado (~0).
+ */
+function aimCrabTurretLimited(
+  internal: EnemyInternal,
+  targetPos: THREE.Vector3,
+  maxRadPerSec: number,
+  dt: number,
+): number {
+  const node = internal.turretNode;
+  if (!node) {
+    return 0;
+  }
+  node.updateWorldMatrix(true, false);
+  node.getWorldPosition(_muzzlePos);
+  _lookDir.subVectors(targetPos, _muzzlePos);
+  if (_lookDir.lengthSq() < 1e-6) {
+    return 0;
+  }
+  _lookDir.normalize();
+  crabTurretWorldDir(internal, _turretDir);
+  const angle = Math.acos(THREE.MathUtils.clamp(_turretDir.dot(_lookDir), -1, 1));
+  if (angle < 1e-4) {
+    return 0;
+  }
+  // Orientación mundial deseada -> espacio local del hueso.
+  _targetQuat.setFromUnitVectors(internal.turretForward, _lookDir);
+  const parent = node.parent;
+  if (parent) {
+    parent.getWorldQuaternion(_invQuat).invert();
+    _targetQuat.premultiply(_invQuat);
+  }
+  node.quaternion.slerp(_targetQuat, Math.min(1, (maxRadPerSec * dt) / angle));
+  return angle;
+}
+
+/**
+ * Distancia² mínima de `point` al segmento `a -> a + unit*len` (raycast de
+ * contacto del haz láser contra Nyx y contra otros enemigos). Reutilizable
+ * por el manager para el fuego amigo del rayo.
+ */
+export function crabLaserContactDistanceSq(
+  point: THREE.Vector3,
+  a: THREE.Vector3,
+  unit: THREE.Vector3,
+  len: number,
+): number {
+  _segPoint.subVectors(point, a);
+  const t = THREE.MathUtils.clamp(_segPoint.dot(unit), 0, len);
+  _segClosest.copy(a).addScaledVector(unit, t);
+  return _segClosest.distanceToSquared(point);
+}
+
+/** Hilo rojo fino del telegraph: la línea exacta por donde saldrá el rayo. */
+function showCrabAimLine(
+  ctx: CrabBehaviorContext,
+  internal: EnemyInternal,
+  enemyId: string,
+  activeSlabs: SlabCollider[] | undefined,
+  sealed: boolean,
+): void {
+  if (!computeCrabMuzzle(internal, _muzzlePos) || !crabTurretWorldDir(internal, _turretDir)) {
+    return;
+  }
+  const dist = ctx.raycastCrabLaser(activeSlabs, _muzzlePos, _turretDir, CRAB_LASER_RANGE);
+  // Últimos 0.35 s: el hilo sellado parpadea blanco/rojo a 14 Hz.
+  const blinkWhite = sealed && Math.floor(internal.crabTimer * CRAB_LASER_AIM_BLINK_HZ) % 2 === 0;
+  ctx.showCrabLaser(enemyId, false, _muzzlePos, _turretDir, dist, blinkWhite);
+}
+
+/**
+ * Máquina de estados de los 3 ataques del Cangrejo Artillero:
+ *  1. Rayo Láser Continuo (dist > 7 m): telegraph de 2.0 s con rastreo a
+ *     1.8 rad/s (lead 0.25 s) que se sella los últimos 0.35 s, haz grueso de
+ *     2.0 s que barre con inercia (0.45 rad/s) y daña todo lo que cruza.
+ *  2. Ráfaga Láser (5 < dist <= 7 m): 3 proyectiles rectos de 36 m/s sin
+ *     homing (parryables), intervalo 0.10 s, la torreta rota a 6 rad/s.
+ *  3. Protocolo Kamikaze (dist <= 5 m): guarda anti-patada 0.75 s + acumular
+ *     0.25 s de proximidad; cebado de 1.1 s punto de no retorno corriendo
+ *     por su slab a 6.5 m/s y detonación de radio 10 m.
+ */
+export function updateCrabAttack(
+  ctx: CrabBehaviorContext,
+  enemy: ManagedWaveEnemy,
+  internal: EnemyInternal,
+  dt: number,
+  playerPos: THREE.Vector3,
+  playerVel: THREE.Vector3,
+  playerKickAnim: boolean,
+  activeSlabs: SlabCollider[] | undefined,
+  onPlayerHit: (damage: number) => void,
+  onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
+  onSlabSmash?: (slab: SlabCollider) => void,
+): void {
+  // Guardia anti-patada (0.75 s tras impacto melee) y clip de aterrizaje.
+  if (internal.crabPostKickGrace > 0) {
+    internal.crabPostKickGrace = Math.max(0, internal.crabPostKickGrace - dt);
+  }
+  if (internal.crabLandTimer > 0) {
+    internal.crabLandTimer = Math.max(0, internal.crabLandTimer - dt);
+  }
+
+  // En pleno salto entre suelos el ataque es imposible: cancela y aguanta.
+  if (internal.jump) {
+    if (internal.crabState !== 'idle') {
+      resetCrabAttack(ctx, enemy, internal);
+    }
+    enemy.attackTimer = Math.max(enemy.attackTimer, 0.35);
+    return;
+  }
+
+  switch (internal.crabState) {
+    case 'laser_aim': {
+      internal.crabTimer += dt;
+      // primeros 1.65 s: rastreo honesto con lead ligero; luego congelado.
+      if (internal.crabTimer <= CRAB_LASER_AIM_TRACK_SEC) {
+        _leadPos.copy(playerPos).addScaledVector(playerVel, CRAB_LASER_LEAD_SEC);
+        aimCrabTurretLimited(internal, _leadPos, CRAB_LASER_AIM_TURN_RATE, dt);
+      }
+      showCrabAimLine(ctx, internal, enemy.id, activeSlabs, internal.crabTimer > CRAB_LASER_AIM_TRACK_SEC);
+      if (internal.crabTimer >= CRAB_LASER_AIM_SEC) {
+        internal.crabState = 'laser_fire';
+        internal.crabTimer = 0;
+      }
+      return;
+    }
+
+    case 'laser_fire': {
+      internal.crabTimer += dt;
+      // Barrido con inercia: la manguera a alta presión sigue muy despacio,
+      // para que Nyx pueda arrastrar el rayo contra otros enemigos.
+      aimCrabTurretLimited(internal, playerPos, CRAB_LASER_FIRE_TURN_RATE, dt);
+      if (computeCrabMuzzle(internal, _muzzlePos) && crabTurretWorldDir(internal, _muzzleDir)) {
+        const dist = ctx.raycastCrabLaser(activeSlabs, _muzzlePos, _muzzleDir, CRAB_LASER_RANGE);
+        ctx.showCrabLaser(enemy.id, true, _muzzlePos, _muzzleDir, dist, false);
+        // 20*dt continuos mientras el cuerpo de Nyx cruce el haz...
+        if (
+          crabLaserContactDistanceSq(playerPos, _muzzlePos, _muzzleDir, dist) <=
+          CRAB_LASER_HIT_RADIUS * CRAB_LASER_HIT_RADIUS
+        ) {
+          onPlayerHit(CRAB_LASER_DPS * dt);
+        }
+        // ...y fuego amigo a CUALQUIER otro enemigo del trayecto.
+        ctx.applyCrabLaserFF(enemy.id, _muzzlePos, _muzzleDir, dist, dt);
+      }
+      if (internal.crabTimer >= CRAB_LASER_FIRE_SEC) {
+        ctx.hideCrabLaser(enemy.id);
+        internal.crabState = 'idle';
+        internal.crabTimer = 0;
+        enemy.attackTimer = CRAB_LASER_COOLDOWN / ctx.speedMult;
+      }
+      return;
+    }
+
+    case 'burst': {
+      internal.crabTimer += dt;
+      // La torreta rota rápido (6 rad/s) entre tiro y tiro.
+      aimCrabTurretLimited(internal, playerPos, CRAB_TURRET_TURN_RATE, dt);
+      const shotsFired = CRAB_BURST_SHOTS - internal.crabBurstShotsLeft;
+      const nextShotAt = CRAB_BURST_TELEGRAPH_SEC + shotsFired * CRAB_BURST_SHOT_INTERVAL;
+      if (internal.crabBurstShotsLeft > 0 && internal.crabTimer >= nextShotAt) {
+        internal.crabBurstShotsLeft--;
+        if (computeCrabMuzzle(internal, _muzzlePos) && crabTurretWorldDir(internal, _muzzleDir)) {
+          // Proyectil recto según la orientación ACTUAL: cero homing vuelo.
+          ctx.fireProjectile(
+            enemy,
+            playerPos,
+            'laser',
+            CRAB_BURST_SHOT_DAMAGE,
+            CRAB_BURST_SHOT_SPEED,
+            0,
+            _muzzlePos,
+            _muzzleDir,
+          );
+        }
+      }
+      if (internal.crabTimer >= CRAB_BURST_TOTAL_SEC) {
+        internal.crabState = 'idle';
+        internal.crabTimer = 0;
+        enemy.attackTimer = CRAB_BURST_COOLDOWN / ctx.speedMult;
+      }
+      return;
+    }
+
+    case 'kamikaze_prime': {
+      internal.crabTimer += dt;
+      const t01 = Math.min(1, internal.crabTimer / CRAB_KAMIKAZE_PRIME_SEC);
+      // Aro de peligro sobre la tapa del slab, pulsando cada vez más rápido.
+      const slab =
+        activeSlabs && internal.attachedSlabId
+          ? findSlabById(activeSlabs, internal.attachedSlabId)
+          : null;
+      _ringUp.set(0, 1, 0);
+      if (slab) {
+        _ringUp.applyQuaternion(slab.quaternion);
+        _targetPos.copy(enemy.position).addScaledVector(_ringUp, -(internal.standHeight - 0.12));
+      } else {
+        _targetPos.copy(enemy.position).addScaledVector(_ringUp, -0.4);
+      }
+      const pulse = 0.5 + 0.5 * Math.sin(internal.crabTimer * (16 + 44 * t01));
+      ctx.showCrabDangerRing(enemy.id, _targetPos, _ringUp, CRAB_KAMIKAZE_RADIUS, pulse);
+      // El cuerpo se hincha por pulsos (mesh.scale lo compone el manager).
+      internal.crabSwell = CRAB_KAMIKAZE_SWELL * t01 * (0.85 + 0.15 * Math.sin(internal.crabTimer * 26));
+      if (internal.crabTimer >= CRAB_KAMIKAZE_PRIME_SEC) {
+        ctx.hideCrabDangerRing(enemy.id);
+        internal.crabSwell = 0;
+        // Punto de no retorno: detona aunque Nyx haya huido.
+        ctx.detonateCrabKamikaze(enemy, internal, playerPos, activeSlabs, onGolemSmash, onSlabSmash);
+      }
+      return;
+    }
+
+    case 'idle':
+    default: {
+      // Acumula proximidad para el kamikaze (anti "rozar en dash a 30 m/s").
+      const dist = enemy.position.distanceTo(playerPos);
+      if (dist <= CRAB_KAMIKAZE_TRIGGER_DIST) {
+        internal.crabProxTimer += dt;
+      } else {
+        internal.crabProxTimer = Math.max(0, internal.crabProxTimer - dt * 4);
+      }
+      if (enemy.attackTimer > 0) {
+        return;
+      }
+      if (dist <= CRAB_KAMIKAZE_TRIGGER_DIST) {
+        // Guardia anti-patada: nada de kamikaze tras un impacto melee de Nyx
+        // ni mientras ella siga en rebote/animación de patada.
+        const kickLock = internal.crabPostKickGrace > 0 || playerKickAnim;
+        if (!kickLock && internal.crabProxTimer >= CRAB_KAMIKAZE_ARM_SEC) {
+          internal.crabState = 'kamikaze_prime';
+          internal.crabTimer = 0;
+        } else {
+          enemy.attackTimer = CRAB_KAMIKAZE_RETRY_SEC;
+        }
+      } else if (dist <= CRAB_BURST_MAX_DIST) {
+        if (internal.turretNode) {
+          internal.crabState = 'burst';
+          internal.crabTimer = 0;
+          internal.crabBurstShotsLeft = CRAB_BURST_SHOTS;
+        } else {
+          enemy.attackTimer = 1.0;
+        }
+      } else if (dist > CRAB_LASER_MIN_DIST) {
+        if (internal.turretNode) {
+          internal.crabState = 'laser_aim';
+          internal.crabTimer = 0;
+        } else {
+          enemy.attackTimer = 1.0;
+        }
+      }
+      return;
+    }
   }
 }

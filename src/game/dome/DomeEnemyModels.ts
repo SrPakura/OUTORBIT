@@ -38,8 +38,8 @@ export const ENEMY_MODEL_COLORS: Record<EnemyArchetype, EnemyModelPalette> = {
 };
 
 // --- Núcleos star_core: dorado con brillo intenso y borde dorado cálido ---
-const STAR_CORE_COLOR = 0xffcc33;
-const STAR_CORE_RIM = 0xfff3b0;
+export const STAR_CORE_COLOR = 0xffcc33;
+export const STAR_CORE_RIM = 0xfff3b0;
 export const STAR_CORE_EMISSIVE = 1.45;
 const STAR_CORE_OUTLINE_THICKNESS = 0.035;
 const STAR_CORE_INK = 0xffe58f;
@@ -581,7 +581,10 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
     }
     // Solo arranca en reposo el clip de idle; el resto los activa la IA.
     const idle =
-      actions.get('cell_idle_float') ?? actions.values().next().value ?? null;
+      actions.get('cell_idle_float') ??
+      actions.get('crab_idle_breathe') ??
+      actions.values().next().value ??
+      null;
     if (idle) {
       idle.play();
     }

@@ -800,6 +800,16 @@ export class NyxDomeController {
     return this.mode === 'dashing';
   }
 
+  /**
+   * True mientras Nyx está en plena animación de patada o en su rebote de
+   * frenado (speed_attack / kick_recover). El Cangrejo Artillero lo usa como
+   * guardia anti-patada: el protocolo kamikaze nunca se activa mientras Nyx
+   * esté golpeando/rebotando, aunque esté a menos de 5 m.
+   */
+  isPlayerInKickAnim(): boolean {
+    return this.mode === 'speed_attack' || this.mode === 'kick_recover';
+  }
+
   getHp(): number {
     return this.hp;
   }

@@ -166,6 +166,17 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     vfx.spawnEnemyExplosion(position, radius, color);
     comicVfx.spawnComicExplosion(position, radius);
   };
+  // Muerte por daño interno de la IA (fuego amigo del láser del cangrejo o
+  // detonación kamikaze): suelta la EXP restante (25 % en la autoinmolación)
+  // y contabiliza la kill igual que una patada de Nyx.
+  waveMgr.onInternalKill = (enemy) => {
+    pickups.spawnFromEnemy(enemy.position, enemy.entity.expValue, 6);
+    runTracker.recordKill({
+      isElite: enemy.entity.isElite,
+      isBoss: enemy.entity.isBoss,
+    });
+    controller?.punchCamera(0.75);
+  };
   const audio = new SynthAudio();
   audio.setVolumeMultiplier(settingsRef.current.masterVolume);
   audioRef.current = audio;
@@ -800,6 +811,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         controller.getVelocity(),
         controller.getAimForward(),
         controller.isPlayerDashing(),
+        controller.isPlayerInKickAnim(),
         activeSlabs,
         onWavePlayerHit,
         onOctopusInk,

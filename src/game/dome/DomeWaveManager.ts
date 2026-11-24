@@ -1,7 +1,12 @@
 import * as THREE from 'three';
 import { addComicOutline, createComicCelMaterial } from '@/game/render/toonMaterials';
-import type { SlabCollider, TestEnemySphere } from './domeTypes';
-import { resolveSphereSlabCollision, type SlabContact } from './DomeSlabs';
+import {
+  DOME_PLAYER_BOUND_RADIUS,
+  type SlabCollider,
+  type SlabRaycastHit,
+  type TestEnemySphere,
+} from './domeTypes';
+import { resolveSphereSlabCollision, raycastSlabs, type SlabContact } from './DomeSlabs';
 import {
   createDomeEnemyEntity,
   DOME_ENEMY_ARCHETYPES,
@@ -20,7 +25,9 @@ import {
   onEnemyModelLoaded,
   preloadEnemyModels,
   setEnemyInkScale,
+  STAR_CORE_COLOR,
   STAR_CORE_EMISSIVE,
+  STAR_CORE_RIM,
   type EnemyBone,
   type GolemRig,
   type KronosRig,
@@ -39,11 +46,18 @@ import {
   type KronosRing,
 } from './domeKronosBehavior';
 import {
-  computeCrabMuzzle,
+  crabLaserContactDistanceSq,
+  CRAB_HIT_CLIP_SEC,
+  CRAB_KAMIKAZE_RADIUS,
+  CRAB_LASER_BEAM_FF_MARGIN,
+  CRAB_LASER_DPS,
   pickCrabSpawnSlab,
   pickSlabLocalPoint,
+  resetCrabAttack,
   slabTopPoint,
+  updateCrabAttack,
   updateCrabEnemy,
+  type CrabAttackState,
   type CrabBehaviorContext,
   type CrabJump,
 } from './domeCrabBehavior';
@@ -205,8 +219,27 @@ const OCTOPUS_INK_UP = 0.35; // Elevación del manto sobre el centro.
 // --- Cangrejo Artillero: spawn sobre suelos + salto entre ellos ---
 const CRAB_LEG_WAVE_AMPLITUDE = 0.3; // Amplitud del aleteo de patas (rad).
 
+// --- Cangrejo Artillero (rediseño §7.1): visuales y detonación ---
+// Hilo de puntería / haz del rayo: cilindro unitario alargado por escala.
+const CRAB_LASER_POOL_SIZE = 8;
+const CRAB_LASER_AIM_RADIUS = 0.06; // Hilo fino rojo del telegraph (m).
+const CRAB_LASER_FIRE_RADIUS = 0.42; // Haz grueso del disparo activo (m).
+// Aro de peligro del cebado kamikaze sobre la tapa del slab.
+const CRAB_DANGER_RING_POOL_SIZE = 8;
+const CRAB_LASER_AIM_COLOR = 0xff1622;
+const CRAB_LASER_FIRE_COLOR = 0xff5a2a;
+// Detonación kamikaze: anillos de daño (0-3 / 3.1-5 / 5.1-10 m).
+const CRAB_KAMIKAZE_BANDS: ReadonlyArray<readonly [number, number]> = [
+  [50, 32],
+  [35, 24],
+  [20, 16],
+];
+const CRAB_KAMIKAZE_EXPLODE_COLOR = 0xff5a2a;
+
 // --- Voladores contra icebergs (activeSlabs): nunca atraviesan los suelos ---
 const SLAB_BOUNCE_RESTITUTION = 0.35; // Rebote suave de la velocidad contra la normal.
+/** Radio² de la Barrera Blanca: el haz del cangrejo muere al cruzarla. */
+const DOME_BARRIER_RADIUS_SQ = DOME_PLAYER_BOUND_RADIUS * DOME_PLAYER_BOUND_RADIUS;
 
 // --- Scratch vectors a nivel de módulo: sin allocations por frame --- 
 const _toHome = new THREE.Vector3();
@@ -496,6 +529,36 @@ function collectLegBones(root: THREE.Object3D): TentacleBone[] {
   return legs;
 }
 
+/** Materiales cel de las mallas `star_core` (parpadeo rojo del kamikaze). */
+function collectStarMaterials(root: THREE.Object3D): THREE.ShaderMaterial[] {
+  const materials: THREE.ShaderMaterial[] = [];
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.name.includes('star_core')) {
+      return;
+    }
+    if (mesh.material instanceof THREE.ShaderMaterial) {
+      materials.push(mesh.material);
+    }
+  });
+  return materials;
+}
+
+/** Material cel del cañón del cangrejo (mesh `detail_cannon`). */
+function findCannonMaterial(root: THREE.Object3D): THREE.ShaderMaterial | null {
+  let found: THREE.ShaderMaterial | null = null;
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (found || !mesh.isMesh || !mesh.name.startsWith('detail_cannon')) {
+      return;
+    }
+    if (mesh.material instanceof THREE.ShaderMaterial) {
+      found = mesh.material;
+    }
+  });
+  return found;
+}
+
 export interface EnemyInternal {
   enemy: ManagedWaveEnemy;
   material: THREE.ShaderMaterial | null;
@@ -529,6 +592,28 @@ export interface EnemyInternal {
   attachFrom: THREE.Vector3;
   /** Cangrejo: salto en curso entre suelos (null = pegado o flotando). */
   jump: CrabJump | null;
+  /** RNG determinista de la oleada (salto y desfases, sin Math.random). */
+  rng: () => number;
+  /** Cangrejo: estado de la FSM de combate del rediseño. */
+  crabState: CrabAttackState;
+  /** Cangrejo: segundos dentro del estado actual de la FSM. */
+  crabTimer: number;
+  /** Cangrejo: guardia anti-patada tras impacto melee (0.75 s). */
+  crabPostKickGrace: number;
+  /** Cangrejo: tiempo acumulado a menos de 5 m de Nyx (arma el kamikaze). */
+  crabProxTimer: number;
+  /** Cangrejo: disparos pendientes de la ráfaga de corta distancia. */
+  crabBurstShotsLeft: number;
+  /** Cangrejo: hinchado del cuerpo durante el cebado (suma a mesh.scale). */
+  crabSwell: number;
+  /** Cangrejo: segundos restantes del clip crab_jump_land en el impacto. */
+  crabLandTimer: number;
+  /** Cangrejo: segundos restantes del flinch crab_hit. */
+  crabHitTimer: number;
+  /** Materiales cel de los star_core (parpadeo rojo del kamikaze). */
+  starMaterials: THREE.ShaderMaterial[];
+  /** Cangrejo: material cel del cañón (chispazo/carga del telegraph). */
+  cannonMaterial: THREE.ShaderMaterial | null;
   /** Ave: huesos del GLB para aleteo, cuello/cabeza, cola y jaw. */
   sparrowRig: SparrowRig | null;
   /** Ave: fase integrada del aleteo (la velocidad cambia sin saltos). */
@@ -664,10 +749,28 @@ function findBodyMaterial(root: THREE.Object3D): THREE.ShaderMaterial | null {
 interface WaveProjectile {
   mesh: THREE.Mesh;
   active: boolean;
-  kind: 'dark' | 'ink';
+  kind: 'dark' | 'ink' | 'laser';
   damage: number;
   velocity: THREE.Vector3;
   life: number;
+}
+
+/**
+ * Hilo/haz láser del Cangrejo Artillero (pool por id de enemigo): un cilindro
+ * unitario que escala su alto a la distancia del rayo y apunta con su +Y.
+ */
+interface CrabLaserBeam {
+  mesh: THREE.Mesh;
+  material: THREE.MeshBasicMaterial;
+  /** Id del dueño mientras esté en pantalla (null = libre del pool). */
+  ownerId: string | null;
+}
+
+/** Aro de peligro del cebado kamikaze proyectado sobre la tapa del slab. */
+interface CrabDangerRing {
+  mesh: THREE.Mesh;
+  material: THREE.MeshBasicMaterial;
+  ownerId: string | null;
 }
 
 
@@ -693,6 +796,22 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   readonly kronosRings: KronosRing[] = [];
   private readonly kronosRingGeometry = new THREE.TorusGeometry(1, 0.07, 8, 48);
   private readonly kronosRingMaterial: THREE.ShaderMaterial;
+  /** Hilos/haces láser de los cangrejos (pool fijo, uno por atacante). */
+  private readonly crabLasers: CrabLaserBeam[] = [];
+  private readonly crabLaserGeometry = new THREE.CylinderGeometry(1, 1, 1, 10, 1, true);
+  /** Aros de peligro del cebado kamikaze (pool fijo, uno por cangrejo). */
+  private readonly crabDangerRings: CrabDangerRing[] = [];
+  private readonly crabDangerRingGeometry = new THREE.RingGeometry(0.92, 1, 64);
+  /** Proyectil láser de la ráfaga corta: perla roja brillante parryable. */
+  private readonly laserProjectileMaterial: THREE.ShaderMaterial;
+  /** Raycast del haz láser contra los suelos (resultado reutilizado; el
+   * raycast solo lo ESCRIBE y aquí solo se lee `.distance`). */
+  private readonly _crabLaserHit = {
+    slab: null as SlabCollider | null,
+    point: new THREE.Vector3(),
+    normal: new THREE.Vector3(),
+    distance: 0,
+  };
 
   /** Enemigos vibrando/estallando (fuera ya de `enemies`). */
   private readonly dying: DyingEnemy[] = [];
@@ -701,6 +820,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
    * juego lo usa para la ráfaga de chispas y el anillo de la explosión.
    */
   onEnemyExplode?: (position: THREE.Vector3, radius: number, color: number) => void;
+  /**
+   * Se dispara cuando un enemigo muere por daño interno de la IA (fuego
+   * amigo del láser del cangrejo, detonación kamikaze): el game loop suelta
+   * su EXP (reducida si procede) y contabiliza la kill.
+   */
+  onInternalKill?: (enemy: ManagedWaveEnemy) => void;
 
   private currentWave = 0;
   private waveTime = 0;
@@ -727,6 +852,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       rimColor: 0x4a2a6a,
       rimStrength: 0.8,
       emissiveBoost: 0.2,
+    });
+    // Ráfaga de corta distancia del cangrejo: perla roja muy brillante.
+    this.laserProjectileMaterial = createComicCelMaterial(0xff2233, {
+      rimColor: 0xffd9d9,
+      rimStrength: 1.0,
+      emissiveBoost: 1.3,
     });
 
     // Anillos de Contención de KRONOS: ondas expansivas azul eléctrico brillante.
@@ -765,6 +896,41 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         radius: 1,
         pushed: false,
       });
+    }
+
+    // Haz láser del cangrejo: cilindro alargable con material aditivo propio
+    // (el parpadeo blanco/rojo del sellado es por instancia, no compartido).
+    for (let i = 0; i < CRAB_LASER_POOL_SIZE; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: CRAB_LASER_AIM_COLOR,
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(this.crabLaserGeometry, material);
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      this.scene.add(mesh);
+      this.crabLasers.push({ mesh, material, ownerId: null });
+    }
+
+    // Aro de peligro del kamikaze: anillo plano rojo sobre la tapa del slab.
+    for (let i = 0; i < CRAB_DANGER_RING_POOL_SIZE; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xff2211,
+        transparent: true,
+        opacity: 0.5,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(this.crabDangerRingGeometry, material);
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      this.scene.add(mesh);
+      this.crabDangerRings.push({ mesh, material, ownerId: null });
     }
   }
 
@@ -838,6 +1004,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       // Huesos procedurales del GLB: tentáculos del pulpo, patas y cañón del cangrejo.
       internal.tentacles = collectTentacleBones(glbVisual.root);
       internal.legs = collectLegBones(glbVisual.root);
+      internal.starMaterials = collectStarMaterials(glbVisual.root);
+      internal.cannonMaterial = findCannonMaterial(glbVisual.root);
       const turretRig = findTurretRig(glbVisual.root);
       internal.turretNode = turretRig?.node ?? null;
       if (turretRig) {
@@ -962,7 +1130,10 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       phase: rng() * Math.PI * 2,
       dashTimer: 0,
       dashSign: index % 2 === 0 ? 1 : -1,
-      attackTimer: 1.2 + rng() * 1.8,
+      // Cangrejo Artillero: desfase del primer láser 1.0–3.5 s con el RNG
+      // determinista de la oleada (coordinación: nada de rayos sincronizados).
+      attackTimer:
+        archetype === 'crab_gunner' ? 1.0 + rng() * 2.5 : 1.2 + rng() * 1.8,
     };
 
     this.enemies.push(enemy);
@@ -1015,6 +1186,17 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       chargeSpeed: 0,
       chargeDamage: 0,
       chargeDir: new THREE.Vector3(),
+      rng,
+      crabState: 'idle',
+      crabTimer: 0,
+      crabPostKickGrace: 0,
+      crabProxTimer: 0,
+      crabBurstShotsLeft: 0,
+      crabSwell: 0,
+      crabLandTimer: 0,
+      crabHitTimer: 0,
+      starMaterials: collectStarMaterials(mesh),
+      cannonMaterial: findCannonMaterial(mesh),
       cellState: 'seek',
       cellTimer: 0,
       cellLungeDir: new THREE.Vector3(),
@@ -1129,6 +1311,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal.burstShotsLeft = 0;
     internal.golemPhase = 'idle';
     internal.golemTimer = 0;
+    if (internal.enemy.entity.archetype === 'crab_gunner') {
+      resetCrabAttack(this, internal.enemy, internal);
+      internal.crabPostKickGrace = 0;
+      internal.crabProxTimer = 0;
+      internal.crabHitTimer = 0;
+    }
     if (internal.kronosState === 'coil' && internal.kronosFleshRestore > 0) {
       internal.enemy.entity.fleshThickness = internal.kronosFleshRestore;
       internal.kronosFleshRestore = 0;
@@ -1192,6 +1380,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
     // Un golpe interrumpe la embestida en curso.
     internal.chargeTimer = 0;
+    // Cangrejo Artillero: guardia anti-patada (0.75 s sin kamikaze tras el
+    // impacto) + flinch de crab_hit si el golpe no lo mata.
+    if (internal.enemy.entity.archetype === 'crab_gunner' && internal.enemy.entity.alive) {
+      internal.crabPostKickGrace = 0.75;
+      internal.crabHitTimer = CRAB_HIT_CLIP_SEC;
+    }
     // Célula Abisal: flinch de cell_hit (la FSM ya corta la duplicación por
     // el pico de hitFlash).
     if (internal.enemy.entity.archetype === 'abyssal_cell' && internal.actions) {
@@ -1216,6 +1410,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     enemy.entity.alive = false;
     enemy.entity.hp = 0;
+    this.hideCrabLaser(enemy.id);
+    this.hideCrabDangerRing(enemy.id);
     this.internals.delete(enemy.id);
     const idx = this.enemies.indexOf(enemy);
     if (idx >= 0) {
@@ -1331,6 +1527,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     playerVel: THREE.Vector3,
     playerAimForward: THREE.Vector3,
     playerDashing: boolean,
+    playerKickAnim: boolean,
     activeSlabs: SlabCollider[] | undefined,
     onPlayerHit: (damage: number) => void,
     onOctopusInk: () => void,
@@ -1365,9 +1562,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       if (!internal) {
         continue;
       }
-      // Limpieza defensiva: si el DomeCombatSystem ya lo mató, lo retiramos.
+      // Limpieza: enemigo marcado como muerto (fuego amigo del láser o
+      // kamikaze del cangrejo). Se retira AQUÍ, sobre el índice actual, para
+      // no desplazar posiciones dentro del bucle hacia atrás.
       if (!enemy.entity.alive) {
-        this.killEnemy(enemy);
+        this.slainByEnemy(enemy);
         continue;
       }
 
@@ -1483,6 +1682,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           internal,
           dt,
           playerPos,
+          playerVel,
+          playerKickAnim,
           activeSlabs,
           onPlayerHit,
           onOctopusInk,
@@ -1526,6 +1727,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         updateKronosPose(this, enemy, internal, dt, elapsed, playerPos);
       } else if (enemy.entity.archetype === 'abyssal_cell') {
         this.updateCellPose(enemy, internal, dt, elapsed);
+      } else if (isCrab) {
+        this.updateCrabPose(enemy, internal, dt, elapsed);
       }
 
       enemy.entity.position.copy(enemy.position);
@@ -1533,7 +1736,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
 
       // --- Flash de impacto + vibración de energía descontrolada + pinchos ---
       const flash = enemy.hitFlash;
-      const baseScale = 1 + flash * HIT_FLASH_SCALE;
+      // El cangrejo en cebado kamikaze se hincha por pulsos además del flash.
+      const baseScale = 1 + flash * HIT_FLASH_SCALE + internal.crabSwell;
       enemy.mesh.scale.set(
         baseScale + Math.sin(elapsed * 27 + enemy.phase) * 0.026,
         baseScale + Math.cos(elapsed * 31 + enemy.phase) * 0.026,
@@ -1573,6 +1777,19 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.kronosRings.length = 0;
     this.kronosRingGeometry.dispose();
     this.kronosRingMaterial.dispose();
+    for (const beam of this.crabLasers) {
+      this.scene.remove(beam.mesh);
+      beam.material.dispose();
+    }
+    this.crabLasers.length = 0;
+    this.crabLaserGeometry.dispose();
+    for (const ring of this.crabDangerRings) {
+      this.scene.remove(ring.mesh);
+      ring.material.dispose();
+    }
+    this.crabDangerRings.length = 0;
+    this.crabDangerRingGeometry.dispose();
+    this.laserProjectileMaterial.dispose();
     for (const visual of Object.values(this.visuals)) {
       visual.geometry.dispose();
     }
@@ -1589,6 +1806,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal: EnemyInternal,
     dt: number,
     playerPos: THREE.Vector3,
+    playerVel: THREE.Vector3,
+    playerKickAnim: boolean,
     activeSlabs: SlabCollider[] | undefined,
     onPlayerHit: (damage: number) => void,
     onOctopusInk: () => void,
@@ -1611,6 +1830,25 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       const vulnerable = (enemy.entity.vulnerableTimer ?? 0) > 0;
       const near = enemy.position.distanceTo(playerPos) < NECROZMA_SPIKES_RANGE;
       enemy.entity.spikesActive = near && !vulnerable;
+    }
+
+    // Cangrejo Artillero: FSM de sus 3 ataques del rediseño (rayo láser
+    // continuo con fuego amigo, ráfaga parryable y protocolo kamikaze).
+    if (archetype === 'crab_gunner') {
+      updateCrabAttack(
+        this,
+        enemy,
+        internal,
+        dt,
+        playerPos,
+        playerVel,
+        playerKickAnim,
+        activeSlabs,
+        onPlayerHit,
+        onGolemSmash,
+        onSlabSmash,
+      );
+      return;
     }
 
     // Gólem Rompesuelos: máquina de estados del manotazo brutal.
@@ -1654,21 +1892,6 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     const mult = this.speedMult;
 
     switch (archetype) {
-      case 'crab_gunner':
-        // Torreta: dispara esferas oscuras lentas desde la boca del cañón.
-        // En pleno salto entre suelos aguanta el disparo hasta aterrizar.
-        if (internal.jump) {
-          enemy.attackTimer = 0.35;
-          break;
-        }
-        if (computeCrabMuzzle(internal, _muzzlePos)) {
-          this.fireProjectile(enemy, playerPos, 'dark', 8, 10 * mult, 0, _muzzlePos);
-        } else {
-          this.fireProjectile(enemy, playerPos, 'dark', 8, 10 * mult);
-        }
-        enemy.attackTimer = 2.8 / mult;
-        break;
-
       case 'spiral_octopus': {
         // Chorro de tinta desde el frente del manto: mancha la pantalla de Nyx.
         _muzzleDir.subVectors(playerPos, enemy.position);
@@ -1877,6 +2100,338 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   }
 
   // -------------------------------------------------------------------------
+  // Cangrejo Artillero: contexto de combate del rediseño (§7.1)
+  // Pool de hilos/haces láser, aros de peligro, fuego amigo, detonación
+  // kamikaze y cableado FSM -> clips GLB (crossfades al estilo de la célula).
+  // -------------------------------------------------------------------------
+
+  /** Entrada libre del pool (o la propia del dueño) para un haz/aro. */
+  private acquireCrabSlot<T extends { ownerId: string | null }>(slots: T[], ownerId: string): T | null {
+    for (const slot of slots) {
+      if (slot.ownerId === ownerId) {
+        return slot;
+      }
+    }
+    for (const slot of slots) {
+      if (slot.ownerId === null) {
+        slot.ownerId = ownerId;
+        return slot;
+      }
+    }
+    return null;
+  }
+
+  raycastCrabLaser(
+    activeSlabs: SlabCollider[] | undefined,
+    origin: THREE.Vector3,
+    dir: THREE.Vector3,
+    maxDist: number,
+  ): number {
+    let dist = maxDist;
+    // Choque contra un slab: el haz se corta donde impacta la malla real.
+    const hit =
+      activeSlabs && activeSlabs.length > 0
+        ? raycastSlabs(activeSlabs, origin, dir, dist, this._crabLaserHit as SlabRaycastHit)
+        : null;
+    if (hit) {
+      dist = Math.min(dist, hit.distance);
+    }
+    // Cruce de la esfera de la Barrera Blanca (88.6 m): el haz muere ahí.
+    const b = 2 * origin.dot(dir);
+    const c = origin.lengthSq() - DOME_BARRIER_RADIUS_SQ;
+    if (c < 0) {
+      // Origen dentro de la cúpula: primera intersección saliendo.
+      const t = -b * 0.5;
+      if (t > 0) {
+        dist = Math.min(dist, t);
+      }
+    } else {
+      // Origen fuera (casi imposible): solución entrante si apunta adentro.
+      const disc = b * b - 4 * c;
+      if (disc >= 0) {
+        const t = (-b - Math.sqrt(disc)) * 0.5;
+        if (t > 0) {
+          dist = Math.min(dist, t);
+        }
+      }
+    }
+    return Math.max(0.5, dist);
+  }
+
+  showCrabLaser(
+    enemyId: string,
+    fire: boolean,
+    from: THREE.Vector3,
+    dir: THREE.Vector3,
+    dist: number,
+    blinkWhite: boolean,
+  ): void {
+    const slot = this.acquireCrabSlot(this.crabLasers, enemyId);
+    if (!slot) {
+      return;
+    }
+    const radius = fire ? CRAB_LASER_FIRE_RADIUS : CRAB_LASER_AIM_RADIUS;
+    slot.mesh.visible = true;
+    slot.mesh.scale.set(radius, Math.max(0.1, dist), radius);
+    slot.mesh.position.copy(from).addScaledVector(dir, dist * 0.5);
+    _muzzleDir.set(0, 1, 0);
+    slot.mesh.quaternion.setFromUnitVectors(_muzzleDir, dir);
+    slot.material.color.setHex(
+      fire ? CRAB_LASER_FIRE_COLOR : blinkWhite ? 0xffffff : CRAB_LASER_AIM_COLOR,
+    );
+    slot.material.opacity = fire ? 0.85 : blinkWhite ? 0.95 : 0.55;
+  }
+
+  hideCrabLaser(enemyId: string): void {
+    for (const slot of this.crabLasers) {
+      if (slot.ownerId === enemyId) {
+        slot.mesh.visible = false;
+        slot.ownerId = null;
+      }
+    }
+  }
+
+  showCrabDangerRing(
+    enemyId: string,
+    pos: THREE.Vector3,
+    up: THREE.Vector3,
+    radius: number,
+    pulse: number,
+  ): void {
+    const slot = this.acquireCrabSlot(this.crabDangerRings, enemyId);
+    if (!slot) {
+      return;
+    }
+    slot.mesh.visible = true;
+    slot.mesh.scale.setScalar(radius);
+    slot.mesh.position.copy(pos);
+    _muzzleDir.set(0, 0, 1);
+    slot.mesh.quaternion.setFromUnitVectors(_muzzleDir, up);
+    slot.material.opacity = 0.25 + 0.45 * pulse * pulse;
+  }
+
+  hideCrabDangerRing(enemyId: string): void {
+    for (const slot of this.crabDangerRings) {
+      if (slot.ownerId === enemyId) {
+        slot.mesh.visible = false;
+        slot.ownerId = null;
+      }
+    }
+  }
+
+  /** Fuego amigo del rayo: 20*dt a todo enemigo vivo que cruce el haz. */
+  applyCrabLaserFF(
+    ownerId: string,
+    from: THREE.Vector3,
+    dir: THREE.Vector3,
+    dist: number,
+    dt: number,
+  ): void {
+    const damage = CRAB_LASER_DPS * dt;
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const other = this.enemies[i];
+      if (other.id === ownerId || !other.entity.alive) {
+        continue;
+      }
+      const reach = other.radius + CRAB_LASER_BEAM_FF_MARGIN;
+      if (crabLaserContactDistanceSq(other.position, from, dir, dist) > reach * reach) {
+        continue;
+      }
+      // El láser quema la carne amortiguadora y daña directo.
+      other.entity.fleshThickness = Math.max(0, other.entity.fleshThickness - damage * 0.25);
+      other.entity.hp -= damage;
+      other.hitFlash = Math.max(other.hitFlash, 0.35);
+      other.entity.hitFlash = other.hitFlash;
+      if (other.entity.hp <= 0) {
+        other.entity.alive = false; // La fase defensiva del bucle lo retira.
+      }
+    }
+  }
+
+  /** Muerte por daño interno de la IA: EXP y contabilidad del game loop. */
+  private slainByEnemy(enemy: ManagedWaveEnemy): void {
+    if (this.killEnemy(enemy)) {
+      this.onInternalKill?.(enemy);
+    }
+  }
+
+  /** Anillo de daño/empuje de la detonación según la distancia al epicentro. */
+  private static kamikazeBand(dist: number): readonly [number, number] {
+    if (dist <= 3.0) {
+      return CRAB_KAMIKAZE_BANDS[0];
+    }
+    return dist <= 5.0 ? CRAB_KAMIKAZE_BANDS[1] : CRAB_KAMIKAZE_BANDS[2];
+  }
+
+  /**
+   * Detonación del protocolo kamikaze: anillos de daño/empuje a Nyx (con
+   * hit_stagger vía onGolemSmash), fuego amigo a los enemigos en 10 m
+   * (mismos anillos), rotura del slab donde detona (escombros agarrables
+   * vía onSlabSmash, mecánica compartida con el Gólem) y autoinmolación:
+   * el cangrejo muere al instante soltando solo un 25% de su EXP.
+   */
+  detonateCrabKamikaze(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    playerPos: THREE.Vector3,
+    activeSlabs: SlabCollider[] | undefined,
+    onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
+    onSlabSmash?: (slab: SlabCollider) => void,
+  ): void {
+    const blast = enemy.position;
+    enemy.entity.expValue *= 0.25; // Autoinmolación: solo un 25% de orbes.
+    enemy.entity.alive = false;
+
+    // Anillos a Nyx: 50/35/20 daño + 32/24/16 m/s de empuje y descontrol.
+    const distNyx = blast.distanceTo(playerPos);
+    if (distNyx <= CRAB_KAMIKAZE_RADIUS) {
+      const [damage, push] = DomeWaveManager.kamikazeBand(distNyx);
+      _aimDir.subVectors(playerPos, blast);
+      if (_aimDir.lengthSq() < 1e-4) {
+        _aimDir.set(0, 1, 0);
+      } else {
+        _aimDir.normalize();
+      }
+      onGolemSmash?.(damage, _aimDir, push);
+    }
+
+    // Fuego amigo: la explosión también daña a los otros enemigos en 10 m.
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const other = this.enemies[i];
+      if (other === enemy || !other.entity.alive) {
+        continue;
+      }
+      const dist = other.position.distanceTo(blast);
+      if (dist > CRAB_KAMIKAZE_RADIUS) {
+        continue;
+      }
+      const [damage, push] = DomeWaveManager.kamikazeBand(dist);
+      other.entity.fleshThickness = Math.max(0, other.entity.fleshThickness - damage * 0.5);
+      other.entity.hp -= damage;
+      other.hitFlash = 1;
+      other.entity.hitFlash = 1;
+      _aimDir.subVectors(other.position, blast);
+      if (_aimDir.lengthSq() < 1e-4) {
+        _aimDir.set(0, 1, 0);
+      } else {
+        _aimDir.normalize();
+      }
+      other.velocity.addScaledVector(_aimDir, push);
+      if (other.entity.hp <= 0) {
+        other.entity.alive = false; // La fase defensiva del bucle lo retira.
+      }
+    }
+
+    // Rompesuelos: el slab donde detona se destroza (el suyo si está pegado,
+    // si no el más cercano dentro del radio de la explosión).
+    if (onSlabSmash && activeSlabs && activeSlabs.length > 0) {
+      let target: SlabCollider | null = null;
+      if (internal.attachedSlabId) {
+        for (const slab of activeSlabs) {
+          if (slab.id === internal.attachedSlabId) {
+            target = slab;
+            break;
+          }
+        }
+      }
+      if (!target) {
+        let bestDist = CRAB_KAMIKAZE_RADIUS;
+        for (const slab of activeSlabs) {
+          const d = slab.center.distanceTo(blast);
+          if (d < bestDist) {
+            target = slab;
+            bestDist = d;
+          }
+        }
+      }
+      if (target) {
+        onSlabSmash(target);
+      }
+    }
+
+    // Estallido visible + muerte instantánea con la EXP ya reducida.
+    this.hideCrabLaser(enemy.id);
+    this.hideCrabDangerRing(enemy.id);
+    this.onEnemyExplode?.(blast, CRAB_KAMIKAZE_RADIUS, CRAB_KAMIKAZE_EXPLODE_COLOR);
+    this.slainByEnemy(enemy);
+  }
+
+  /**
+   * Cangrejo Artillero: crossfade del clip FSM -> GLB (al estilo de la célula
+   * abisal) más los fx de estado que viven fuera de la FSM: star_core rojo
+   * incandescente durante el cebado kamikaze y carga del cañón en el
+   * telegraph de la ráfaga y el sellado del láser.
+   */
+  private updateCrabPose(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    elapsed: number,
+  ): void {
+    // star_core: parpadeo frenético rojo incandescente al cebarse (el clip
+    // kamikaze nunca debe tocar su escala; el brillo es material).
+    const prime = internal.crabState === 'kamikaze_prime';
+    for (const material of internal.starMaterials) {
+      if (prime) {
+        const t01 = Math.min(1, internal.crabTimer / 1.1);
+        material.uniforms.uColor.value.setHex(0xff2214);
+        material.uniforms.uRimColor.value.setHex(0xff5533);
+        material.uniforms.uEmissiveBoost.value =
+          0.8 + Math.abs(Math.sin(elapsed * (26 + 62 * t01))) * (0.9 + 2.4 * t01);
+      } else {
+        material.uniforms.uColor.value.setHex(STAR_CORE_COLOR);
+        material.uniforms.uRimColor.value.setHex(STAR_CORE_RIM);
+        material.uniforms.uEmissiveBoost.value = STAR_CORE_EMISSIVE;
+      }
+    }
+
+    // Cañón: chispazo en la ráfaga y carga creciente en el sellado del láser.
+    const cannon = internal.cannonMaterial;
+    if (cannon) {
+      let boost = 0;
+      if (internal.crabState === 'laser_aim' && internal.crabTimer > 1.65) {
+        boost = 0.6 + Math.sin(internal.crabTimer * 40) * 0.45;
+      } else if (internal.crabState === 'burst' && internal.crabTimer < 0.25) {
+        boost = 0.4 + Math.abs(Math.sin(internal.crabTimer * 30)) * 1.1;
+      } else if (internal.crabState === 'laser_fire') {
+        boost = 1.35;
+      }
+      cannon.uniforms.uEmissiveBoost.value = boost;
+    }
+
+    if (internal.crabHitTimer > 0) {
+      internal.crabHitTimer = Math.max(0, internal.crabHitTimer - dt);
+    }
+
+    // Cableado de los 10 clips: solo si el GLB trae clips (mixer presente).
+    if (!internal.mixer) {
+      return;
+    }
+    let clipName: string;
+    if (internal.crabHitTimer > 0) {
+      clipName = 'crab_hit';
+    } else if (internal.crabState === 'kamikaze_prime') {
+      clipName = 'crab_kamikaze_prime';
+    } else if (internal.crabState === 'laser_aim') {
+      clipName = 'crab_laser_charge';
+    } else if (internal.crabState === 'laser_fire') {
+      clipName = 'crab_laser_fire_loop';
+    } else if (internal.crabState === 'burst') {
+      clipName = 'crab_burst_shoot';
+    } else if (internal.jump) {
+      // Despegue (0.25 s) -> pataleo en el aire hasta aterrizar.
+      clipName = internal.jump.time <= 0.25 ? 'crab_jump_launch' : 'crab_jump_air_loop';
+    } else if (internal.crabLandTimer > 0) {
+      clipName = 'crab_jump_land';
+    } else if (enemy.velocity.lengthSq() > 9) {
+      clipName = 'crab_scuttle_loop'; // Deslizándose por knockback.
+    } else {
+      clipName = 'crab_idle_breathe';
+    }
+    this.crossfadeEnemyAction(internal, clipName, 0.12);
+  }
+
+  // -------------------------------------------------------------------------
   // Leviatán KRONOS: serpenteo con huesos + 3 patrones de ataque (sección 6.4)
   // -------------------------------------------------------------------------
 
@@ -1918,7 +2473,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   fireProjectile(
     enemy: ManagedWaveEnemy,
     playerPos: THREE.Vector3,
-    kind: 'dark' | 'ink',
+    kind: 'dark' | 'ink' | 'laser',
     damage: number,
     speed: number,
     spreadRad = 0,
@@ -1955,7 +2510,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     projectile.damage = damage;
     projectile.life = PROJECTILE_LIFE_SEC;
     projectile.velocity.copy(_shotDir).multiplyScalar(speed);
-    projectile.mesh.material = kind === 'ink' ? this.inkProjectileMaterial : this.darkProjectileMaterial;
+    projectile.mesh.material =
+      kind === 'ink'
+        ? this.inkProjectileMaterial
+        : kind === 'laser'
+          ? this.laserProjectileMaterial
+          : this.darkProjectileMaterial;
+    // Perla láser algo menor que la esfera oscura estándar del pool.
+    projectile.mesh.scale.setScalar(kind === 'laser' ? 0.55 : 1);
     projectile.mesh.position.copy(from).addScaledVector(
       _shotDir,
       origin ? 0.35 : enemy.radius + 0.6,
@@ -2117,11 +2679,15 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           break;
       }
     }
-    this.crossfadeCellAction(internal, clipName);
+    this.crossfadeEnemyAction(internal, clipName, 0.12);
   }
 
-  /** Crossfade suave entre clips de la célula (solo cuando cambia de clip). */
-  private crossfadeCellAction(internal: EnemyInternal, clipName: string): void {
+  /** Crossfade suave entre clips de un enemigo (solo cuando cambia de clip). */
+  private crossfadeEnemyAction(
+    internal: EnemyInternal,
+    clipName: string,
+    fadeSec: number,
+  ): void {
     const actions = internal.actions;
     if (!actions) {
       return;
@@ -2131,11 +2697,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       return;
     }
     const prev = internal.currentClipAction;
-    next.reset();
-    next.fadeIn(0.12).play();
     if (prev) {
-      prev.fadeOut(0.12);
+      prev.fadeOut(fadeSec);
     }
+    next.reset();
+    next.fadeIn(fadeSec).play();
     internal.currentClipAction = next;
   }
 
