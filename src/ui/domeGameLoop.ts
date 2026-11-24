@@ -851,7 +851,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       );
 
       // VFX cómic de materia oscura (picos, estrellas, humo).
-      comicVfx.update(worldDt, camera.position);
+      comicVfx.update(worldDt, camera);
 
       // Motor gravitacional: el viento sigue la velocidad real de Nyx (30
       // m/s = tope de dash/taladro) y el zumbido grave acompaña a las rocas

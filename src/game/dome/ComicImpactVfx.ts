@@ -11,10 +11,9 @@ import * as THREE from 'three';
 //   picos rombo whose cantidad, largo y velocidad escalan con `intensity`
 //   (velocidad de impacto o magnitud del impulso de la skill) y con el radio
 //   de la hitbox del bicho, sesgados hacia `normal`.
-// - `spawnComicExplosion(pos, radius)`: muerte de enemigo. Nube de vacío
-//   cel-shaded (atlas de 8 frames con halftone, erosión y tinta en paleta
-//   violeta espacial) que respira ~2.6 s y, justo antes de disiparse, suelta
-//   una andanada de cachitos + estrella grande + picos en paleta de vacío.
+// - `spawnComicExplosion(pos, radius)`: muerte de enemigo (0.8 s): ráfaga de
+//   estrella + picos de nebulosa durante 0.6 s y, al apagarse, la nube de
+//   vacío con el shader del enemigo hace su puff final 0.2 soltando cachitos.
 //
 // Optimización (mismo contrato que MotionVfx: CERO allocations por frame):
 // - Picos: TODOS los rombos viven en un único BufferGeometry (una draw call);
@@ -26,22 +25,19 @@ import * as THREE from 'three';
 //   de pantalla (explosiones), elegido por el atributo aVoid por vértice.
 // - Estrellas: pool de sprites con 2 texturas canvas pre-generadas (7 y 10
 //   puntas, relleno blanco + contorno de tinta).
-// - Humo: pool de 4 sprites que comparten imagen de atlas y animan el frame
-//   con `texture.offset` (la nube entera —sombras de tinta, halftone, banda
-//   cel, agujero de erosión— viene horneada por frame).
+// - Nube de vacío: pool de 4 quads billboard con el shader de nebulosa del
+//   enemigo; silueta, erosión, banda cel y entintado son procedurales en GPU
+//   (sin canvas ni atlas horneado).
 // ============================================================================
 
 const MAX_SHARDS = 128;
 const MAX_STARS = 6;
 const MAX_SMOKES = 4;
 
-const SMOKE_FRAMES = 8;
-const SMOKE_FRAME_SIZE = 160;
-// La nube de vacío respira lenta: expansión por gravedad durante ~1.3 s
-// antes de erosionarse y soltar los cachitos finales.
-const SMOKE_LIFETIME = 1.3;
-// Momento de la vida del humo en el que estallan los cachitos (0..1).
-const SMOKE_DEBRIS_P = 0.8;
+// Explosión de muerte: ráfaga de estrella + picos durante 0.6 s y, al
+// terminar, la nube de vacío hace su puff final 0.2 s (total 0.8 s).
+const EXPLOSION_BURST_SEC = 0.6;
+const SMOKE_LIFETIME = 0.2;
 
 // Paleta de materia oscura de la referencia (golpes).
 const COLOR_RED = 0xff1e42;
@@ -69,13 +65,9 @@ const SHARD_VERT = /* glsl */ `
   }
 `;
 
-const SHARD_FRAG = /* glsl */ `
-  uniform float uTime;
-  uniform vec3 uColorA;
-  uniform vec3 uColorB;
-  varying vec3 vColor;
-  varying float vVoid;
-
+// Funciones de ruido compartidas por los picos y la nube de vacío (mismas
+// que la carne del enemigo: hash → value noise → FBM + capa de estrellas).
+const NOISE_GLSL = /* glsl */ `
   float hash21( vec2 p ) {
     p = fract( p * vec2( 234.34, 435.345 ) );
     p += dot( p, p + 34.23 );
@@ -107,6 +99,15 @@ const SHARD_FRAG = /* glsl */ `
     float tw = 0.6 + 0.4 * sin( uTime * speed + h * 40.0 );
     return smoothstep( mix( 0.05, 0.16, fract( h * 19.3 ) ), 0.0, d ) * tw;
   }
+`;
+
+const SHARD_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform vec3 uColorA;
+  uniform vec3 uColorB;
+  varying vec3 vColor;
+  varying float vVoid;
+  ${NOISE_GLSL}
   void main() {
     // Picos de golpe: color plano de paleta cómic.
     if ( vVoid < 0.5 ) {
@@ -130,29 +131,89 @@ const SHARD_FRAG = /* glsl */ `
   }
 `;
 
+// Nube de vacío de la muerte: la antigua nube de atlas de canvas, ahora
+// enteramente procedural en el shader — silueta ruidosa que se expande,
+// agujero de erosión central, banda cel, entintado exterior y nebulosa del
+// enemigo (FBM + estrellas en espacio de pantalla) como cuerpo.
+const CLOUD_VERT = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+  }
+`;
+
+const CLOUD_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform float uProgress; // 0..1 vida de la nube
+  uniform float uSeed;
+  uniform vec3 uColorA;
+  uniform vec3 uColorB;
+  uniform vec3 uRimColor;
+  varying vec2 vUv;
+  ${NOISE_GLSL}
+  void main() {
+    vec2 p = vUv - 0.5;
+    float dist = length( p ) * 2.0; // 0 en el centro, 1 en el borde del quad
+    vec2 dir = normalize( p );
+
+    // Expansión de la referencia: abre rápido y frena (gravedad).
+    float expansion = 1.0 - pow( 1.0 - uProgress, 4.0 );
+    float radius = 0.78 * expansion;
+
+    // Silueta con ruido angular continuo (fbm sobre el círculo unitario).
+    float n1 = fbm( dir * 2.4 + vec2( uSeed, uSeed * 1.7 ) + uProgress * 0.9 );
+    float edge = radius * ( 0.62 + max( 0.25, n1 ) * 0.5 );
+    float body = 1.0 - smoothstep( edge - 0.05, edge, dist );
+
+    // Agujero de erosión central que crece hacia el final.
+    float holeP = clamp( ( uProgress - 0.24 ) / 0.76, 0.0, 1.0 );
+    float holeR = radius * pow( holeP, 1.1 ) * 0.92;
+    float n2 = fbm( dir * 3.1 - vec2( uSeed * 1.3, uSeed ) + uProgress * 1.2 );
+    float holeEdge = holeR * ( 0.65 + max( 0.0, n2 ) * 0.55 );
+    float hole = smoothstep( holeEdge - 0.05, holeEdge, dist ); // 1 fuera
+
+    float mask = body * hole;
+    if ( mask < 0.01 ) discard;
+
+    // Nebulosa del enemigo en espacio de pantalla.
+    vec2 uv = gl_FragCoord.xy * 0.0048;
+    vec2 drift = vec2( uTime * 0.045, -uTime * 0.03 );
+    float m1 = fbm( uv * 1.6 + drift );
+    float m2 = fbm( uv * 2.5 - drift * 1.3 + m1 * 0.9 );
+    vec3 col = vec3( 0.02, 0.008, 0.035 );
+    col = mix( col, uColorA * 0.48, smoothstep( 0.36, 0.80, m1 ) );
+    col = mix( col, uColorB * 0.62, smoothstep( 0.48, 0.88, m2 ) );
+    float stars = starLayer( uv + drift * 0.35, 14.0, 2.6 ) * 1.3
+                + starLayer( uv - drift * 0.22, 24.0, 3.8 ) * 1.6;
+    col += mix( vec3( 1.0 ), uRimColor, 0.3 ) * stars;
+
+    // Banda cel interior más clara (primer instante casi blanca).
+    float band = 1.0 - smoothstep( edge * 0.62 - 0.05, edge * 0.62, dist );
+    vec3 bandCol = uProgress < 0.14 ? vec3( 0.96, 0.95, 1.0 ) : uRimColor;
+    col = mix( col, mix( col * 1.45, bandCol, 0.35 ), band * 0.5 * ( 1.0 - uProgress * 0.5 ) );
+
+    // Entintado exterior grueso (tinta de la firma cel-shaded).
+    float ink = smoothstep( edge - 0.11, edge - 0.05, dist ) * body;
+    col = mix( col, vec3( 0.035, 0.027, 0.05 ), ink );
+
+    // Disipación final.
+    float fade = uProgress > 0.72 ? 1.0 - ( uProgress - 0.72 ) / 0.28 : 1.0;
+    gl_FragColor = vec4( col, mask * fade );
+  }
+`;
+
 const _shardDir = new THREE.Vector3();
 const _shardRight = new THREE.Vector3();
 const _shardView = new THREE.Vector3();
 const _tmpColor = new THREE.Color();
 
-interface SmokeLobe {
-  angle: number;
-  force: number;
-  width: number;
-}
-
-/** Ruido angular del humo (puerto de NubeHumoRosa.ruidoHumo). */
-function smokeNoise(angle: number, t: number, seed: number, lobes: SmokeLobe[]): number {
-  let val =
-    Math.sin(angle * 5 + seed) * 0.35 +
-    Math.cos(angle * 11 - seed * 1.7 + t) * 0.25 +
-    Math.sin(angle * 19 + t * 1.4) * 0.15;
-  for (const lob of lobes) {
-    const diff = Math.atan2(Math.sin(angle - lob.angle), Math.cos(angle - lob.angle));
-    const bell = Math.exp(-(diff * diff) * lob.width);
-    val += bell * lob.force;
-  }
-  return val;
+/** Nube de vacío diferida: espera a que la ráfaga se apague para nacer. */
+interface PendingCloud {
+  pos: THREE.Vector3;
+  radius: number;
+  timer: number;
+  active: boolean;
 }
 
 export class ComicImpactVfxSystem {
@@ -183,14 +244,18 @@ export class ComicImpactVfxSystem {
   private readonly starTextures: THREE.Texture[];
   private starCursor = 0;
 
-  // --- Nube de vacío cel-shaded (atlas de frames)
-  private readonly smokes: THREE.Sprite[] = [];
-  private readonly smokeTextures: THREE.Texture[] = [];
+  // --- Nube de vacío (quads con shader de nebulosa, billboard a cámara)
+  private readonly smokes: THREE.Mesh[] = [];
+  private readonly smokeMaterials: THREE.ShaderMaterial[] = [];
+  private readonly smokeGeometry: THREE.PlaneGeometry;
   private readonly smokeLife: Float32Array;
   private readonly smokeMaxLife: Float32Array;
   private readonly smokeRadius: Float32Array;
-  private readonly smokeDebrisDone: boolean[] = [];
   private smokeCursor = 0;
+
+  // --- Nubes de vacío diferidas (la ráfaga termina y entonces nace la nube)
+  private readonly pendingClouds: PendingCloud[] = [];
+  private pendingCloudCursor = 0;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -263,28 +328,43 @@ export class ComicImpactVfxSystem {
       scene.add(star);
     }
 
-    // --- Nube de vacío: atlas pre-renderizado; cada sprite clona la textura
-    // para animar su `offset` de frame de forma independiente.
-    const atlas = ComicImpactVfxSystem.createSmokeAtlas();
+    // --- Nube de vacío: quads que miran a cámara con el shader de nebulosa
+    // del enemigo (silueta, erosión, banda cel y entintado procedurales).
+    this.smokeGeometry = new THREE.PlaneGeometry(1, 1);
     this.smokeLife = new Float32Array(MAX_SMOKES);
     this.smokeMaxLife = new Float32Array(MAX_SMOKES);
     this.smokeRadius = new Float32Array(MAX_SMOKES);
     for (let i = 0; i < MAX_SMOKES; i++) {
-      this.smokeDebrisDone.push(false);
-      const texture = atlas.clone();
-      texture.needsUpdate = true;
-      this.smokeTextures.push(texture);
-      const smoke = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: texture,
-          transparent: true,
-          depthWrite: false,
-        }),
-      );
+      const material = new THREE.ShaderMaterial({
+        vertexShader: CLOUD_VERT,
+        fragmentShader: CLOUD_FRAG,
+        uniforms: {
+          uTime: { value: 0 },
+          uProgress: { value: 0 },
+          uSeed: { value: Math.random() * 100 },
+          uColorA: { value: new THREE.Color(0x8b5cf6) },
+          uColorB: { value: new THREE.Color(0x4c1d95) },
+          uRimColor: { value: new THREE.Color(0xb9a7f2) },
+        },
+        transparent: true,
+        depthWrite: false,
+      });
+      this.smokeMaterials.push(material);
+      const smoke = new THREE.Mesh(this.smokeGeometry, material);
       smoke.visible = false;
       smoke.frustumCulled = false;
       this.smokes.push(smoke);
       scene.add(smoke);
+    }
+
+    // --- Nubes diferidas: pool fijo, cero allocations por explosión.
+    for (let i = 0; i < MAX_SMOKES; i++) {
+      this.pendingClouds.push({
+        pos: new THREE.Vector3(),
+        radius: 1,
+        timer: 0,
+        active: false,
+      });
     }
   }
 
@@ -315,18 +395,24 @@ export class ComicImpactVfxSystem {
   }
 
   /**
-   * Explosión de muerte de enemigo: nube de vacío violeta cel-shaded que
-   * respira lenta, estrella grande de 10 puntas y andanada de picos en
-   * paleta espacial, todo escalado por el radio del bicho. Justo antes de
-   * disiparse, la nube suelta unos cachitos finales (ver updateSmokes).
+   * Explosión de muerte de enemigo (total 0.8 s): ráfaga de estrella grande
+   * de 10 puntas + andanada de picos de nebulosa durante 0.6 s y, al
+   * terminar, la nube de vacío hace su puff final 0.2 s soltando los
+   * cachitos. Todo escalado por el radio del bicho.
    */
   spawnComicExplosion(position: THREE.Vector3, radius: number): void {
-    this.spawnSmoke(position, radius);
     this.spawnStar(position, 1, 2.6 + radius * 1.9, 0.18, COLOR_VOID);
     const count = 18 + Math.floor(radius * 5 + Math.random() * 8);
     for (let i = 0; i < count; i++) {
-      this.spawnShard(position, null, 1.3, 1.55, true);
+      this.spawnShard(position, null, 1.3, 1.55, true, 1.6);
     }
+    // La nube final va diferida: aparece cuando la ráfaga se apaga.
+    const pending = this.pendingClouds[this.pendingCloudCursor];
+    this.pendingCloudCursor = (this.pendingCloudCursor + 1) % this.pendingClouds.length;
+    pending.pos.copy(position);
+    pending.radius = radius;
+    pending.timer = EXPLOSION_BURST_SEC;
+    pending.active = true;
   }
 
   private spawnShard(
@@ -335,6 +421,7 @@ export class ComicImpactVfxSystem {
     intensity: number,
     factor: number,
     voidPalette: boolean,
+    lifeScale = 1,
   ): void {
     const idx = this.shardCursor;
     this.shardCursor = (this.shardCursor + 1) % MAX_SHARDS;
@@ -368,7 +455,7 @@ export class ComicImpactVfxSystem {
     this.shardSpeed[idx] = (9 + Math.random() * 9) * (0.7 + intensity * 0.5) * factor;
     this.shardLenMax[idx] = (0.9 + Math.random() * 1.6) * (0.75 + intensity * 0.55) * factor;
     this.shardWidthMax[idx] = (0.12 + Math.random() * 0.16) * factor;
-    const life = (0.16 + Math.random() * 0.14) * (factor > 1.2 ? 1.25 : 1);
+    const life = (0.16 + Math.random() * 0.14) * (factor > 1.2 ? 1.25 : 1) * lifeScale;
     this.shardLife[idx] = life;
     this.shardMaxLife[idx] = life;
 
@@ -424,26 +511,43 @@ export class ComicImpactVfxSystem {
     this.smokeCursor = (this.smokeCursor + 1) % MAX_SMOKES;
     const smoke = this.smokes[idx];
     smoke.position.copy(position);
-    smoke.material.rotation = Math.random() * Math.PI * 2;
-    smoke.material.opacity = 1;
     smoke.scale.setScalar(Math.max(2.6, Math.min(7.5, radius * 3.2)));
     smoke.visible = true;
+    // Semilla nueva por explosión: cada nube tiene silueta propia.
+    this.smokeMaterials[idx].uniforms.uSeed.value = Math.random() * 100;
+    this.smokeMaterials[idx].uniforms.uProgress.value = 0;
     this.smokeLife[idx] = SMOKE_LIFETIME;
     this.smokeMaxLife[idx] = SMOKE_LIFETIME;
     this.smokeRadius[idx] = radius;
-    this.smokeDebrisDone[idx] = false;
   }
 
   // ------------------------------------------------------------------
   // Bucle
   // ------------------------------------------------------------------
 
-  update(dt: number, cameraPos: THREE.Vector3): void {
+  update(dt: number, camera: THREE.Camera): void {
     if (dt <= 0) return;
     this.shardMaterial.uniforms.uTime.value += dt;
-    this.updateShards(dt, cameraPos);
+    this.updatePendingClouds(dt);
+    this.updateShards(dt, camera.position);
     this.updateStars(dt);
-    this.updateSmokes(dt);
+    this.updateSmokes(dt, camera);
+  }
+
+  /** Nubes de vacío diferidas: nacen cuando la ráfaga de la explosión se apaga. */
+  private updatePendingClouds(dt: number): void {
+    for (const pending of this.pendingClouds) {
+      if (!pending.active) continue;
+      pending.timer -= dt;
+      if (pending.timer > 0) continue;
+      pending.active = false;
+      this.spawnSmoke(pending.pos, pending.radius);
+      // Cachitos: la nube nace desmoronándose en fragmentos de nebulosa.
+      const count = 8 + Math.floor(pending.radius * 3);
+      for (let s = 0; s < count; s++) {
+        this.spawnShard(pending.pos, null, 0.6, 0.45 + pending.radius * 0.16, true, 0.65);
+      }
+    }
   }
 
   private updateShards(dt: number, cameraPos: THREE.Vector3): void {
@@ -532,7 +636,7 @@ export class ComicImpactVfxSystem {
     }
   }
 
-  private updateSmokes(dt: number): void {
+  private updateSmokes(dt: number, camera: THREE.Camera): void {
     for (let i = 0; i < MAX_SMOKES; i++) {
       if (this.smokeLife[i] <= 0) continue;
       this.smokeLife[i] -= dt;
@@ -542,20 +646,11 @@ export class ComicImpactVfxSystem {
         continue;
       }
       const p = 1 - this.smokeLife[i] / this.smokeMaxLife[i];
-      // Atlas: cada frame hornea la expansión, la erosión y la disipación.
-      const frame = Math.min(SMOKE_FRAMES - 1, Math.floor(p * SMOKE_FRAMES));
-      this.smokeTextures[i].offset.x = frame / SMOKE_FRAMES;
-      smoke.material.opacity = p > 0.72 ? 1 - (p - 0.72) / 0.28 : 1;
-      // Cachitos finales: justo antes de disiparse, la nube de vacío se
-      // desmorona en una andanada de fragmentos violetas/cian.
-      if (!this.smokeDebrisDone[i] && p >= SMOKE_DEBRIS_P) {
-        this.smokeDebrisDone[i] = true;
-        const radius = this.smokeRadius[i];
-        const count = 8 + Math.floor(radius * 3);
-        for (let s = 0; s < count; s++) {
-          this.spawnShard(smoke.position, null, 0.6, 0.45 + radius * 0.16, true);
-        }
-      }
+      // Billboard: el quad mira a cámara; el shader hace el resto.
+      smoke.quaternion.copy(camera.quaternion);
+      const uniforms = this.smokeMaterials[i].uniforms;
+      uniforms.uProgress.value = p;
+      uniforms.uTime.value = this.shardMaterial.uniforms.uTime.value;
     }
   }
 
@@ -598,139 +693,6 @@ export class ComicImpactVfxSystem {
     return texture;
   }
 
-  /**
-   * Atlas de la nube de vacío: SMOKE_FRAMES evoluciones de la nube cel-shaded
-   * (sombra de tinta desplazada, cuerpo violeta plano, trama halftone, banda
-   * interior y agujero de erosión que crece), horneadas de una vez.
-   */
-  private static createSmokeAtlas(): THREE.Texture {
-    // Lóbulos fijos: todas las explosiones comparten silueta, pero la
-    // rotación aleatoria por sprite la disimula.
-    const lobes: SmokeLobe[] = [];
-    const tongues = 7 + Math.floor(Math.random() * 4);
-    for (let i = 0; i < tongues; i++) {
-      lobes.push({
-        angle: (i / tongues) * Math.PI * 2 + (Math.random() - 0.5) * 0.45,
-        force: 0.45 + Math.random() * 0.8,
-        width: 2.8 + Math.random() * 4.2,
-      });
-    }
-    const seed = Math.random() * 100;
-
-    // Trama halftone de la referencia (puntos rosas en diagonal de cómic).
-    const patternCanvas = document.createElement('canvas');
-    patternCanvas.width = 12;
-    patternCanvas.height = 12;
-    const pctx = patternCanvas.getContext('2d');
-    let halftone: CanvasPattern | null = null;
-    if (pctx) {
-      pctx.fillStyle = 'rgba(139, 92, 246, 0.38)';
-      pctx.beginPath();
-      pctx.arc(3, 3, 1.7, 0, Math.PI * 2);
-      pctx.fill();
-      pctx.beginPath();
-      pctx.arc(9, 9, 1.7, 0, Math.PI * 2);
-      pctx.fill();
-    }
-
-    const canvas = document.createElement('canvas');
-    canvas.width = SMOKE_FRAME_SIZE * SMOKE_FRAMES;
-    canvas.height = SMOKE_FRAME_SIZE;
-    const ctx = canvas.getContext('2d');
-
-    if (ctx) {
-      halftone = ctx.createPattern(patternCanvas, 'repeat');
-      const half = SMOKE_FRAME_SIZE / 2;
-      const radiusMax = half * 0.78;
-      const vertices = 84;
-
-      for (let f = 0; f < SMOKE_FRAMES; f++) {
-        const p = f / (SMOKE_FRAMES - 1);
-        const expansion = 1 - Math.pow(1 - p, 4);
-        const radius = radiusMax * expansion;
-        const cx = f * SMOKE_FRAME_SIZE + half;
-        const cy = half;
-
-        // Trazado de la nube (con agujero de erosión a partir de p > 0.24).
-        const tracePath = (offsetX: number, offsetY: number, tScale: number) => {
-          ctx.beginPath();
-          for (let i = 0; i <= vertices; i++) {
-            const ang = (i / vertices) * Math.PI * 2;
-            const n = smokeNoise(ang, p * 2.2 * tScale, seed, lobes);
-            const r = radius * (0.55 + Math.max(0.28, n) * 0.55);
-            const px = cx + Math.cos(ang) * r + offsetX;
-            const py = cy + Math.sin(ang) * r + offsetY;
-            if (i === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-          }
-          ctx.closePath();
-          if (p > 0.24) {
-            const holeProgress = (p - 0.24) / 0.76;
-            const holeRadius = radius * Math.pow(holeProgress, 1.1) * 0.96;
-            for (let i = vertices; i >= 0; i--) {
-              const ang = (i / vertices) * Math.PI * 2;
-              const n = smokeNoise(ang + 1.2, p * 2.8 * tScale, seed, lobes);
-              const r = holeRadius * (0.65 + Math.max(0, n) * 0.55);
-              const hx = cx + Math.cos(ang) * r + offsetX;
-              const hy = cy + Math.sin(ang) * r + offsetY;
-              if (i === vertices) ctx.moveTo(hx, hy);
-              else ctx.lineTo(hx, hy);
-            }
-            ctx.closePath();
-          }
-        };
-
-        // 1. Sombra dura de tinta desplazada.
-        tracePath(4, 4, 1);
-        ctx.fillStyle = '#09070d';
-        ctx.fill('evenodd');
-
-        // 2. Cuerpo violeta plano (blanco el primer instante).
-        tracePath(0, 0, 1);
-        ctx.fillStyle = p < 0.14 ? '#f5f2ff' : '#6d54c8';
-        ctx.fill('evenodd');
-
-        // 3. Trama halftone sobre el humo.
-        if (halftone) {
-          tracePath(0, 0, 1);
-          ctx.fillStyle = halftone;
-          ctx.fill('evenodd');
-        }
-
-        // 4. Banda cel interior más clara.
-        if (p < 0.65) {
-          const bandScale = (1 - p * 0.4) * 0.72;
-          ctx.beginPath();
-          for (let i = 0; i <= 54; i++) {
-            const ang = (i / 54) * Math.PI * 2;
-            const n = smokeNoise(ang, p * 3.2, seed, lobes);
-            const r = radius * bandScale * (0.5 + Math.max(0.22, n) * 0.5);
-            const px = cx + Math.cos(ang) * r;
-            const py = cy + Math.sin(ang) * r;
-            if (i === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-          }
-          ctx.closePath();
-          ctx.fillStyle = p < 0.25 ? '#ffffff' : '#b9a7f2';
-          ctx.fill();
-        }
-
-        // 5. Entintado exterior grueso.
-        tracePath(0, 0, 1);
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = Math.max(2, 4.5 * (1 - p * 0.45));
-        ctx.strokeStyle = '#09070d';
-        ctx.stroke();
-      }
-    }
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.repeat.set(1 / SMOKE_FRAMES, 1);
-    texture.wrapS = THREE.RepeatWrapping;
-    return texture;
-  }
-
   dispose(): void {
     this.scene.remove(this.shardMesh);
     this.shardMesh.geometry.dispose();
@@ -740,10 +702,10 @@ export class ComicImpactVfxSystem {
       star.material.dispose();
     }
     for (const texture of this.starTextures) texture.dispose();
-    for (const smoke of this.smokes) {
-      this.scene.remove(smoke);
-      smoke.material.dispose();
+    for (let i = 0; i < MAX_SMOKES; i++) {
+      this.scene.remove(this.smokes[i]);
+      this.smokeMaterials[i].dispose();
     }
-    for (const texture of this.smokeTextures) texture.dispose();
+    this.smokeGeometry.dispose();
   }
 }
