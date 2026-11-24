@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import {
-  DARK_RING_MAX_RADIUS_FRAC,
-  DARK_RING_PX_PER_M,
+  DARK_RING_FAR_DIST_M,
+  DARK_RING_MAX_DIAMETER_PX,
+  DARK_RING_MIN_DIAMETER_PX,
+  DARK_RING_NEAR_DIST_M,
   DOME_PLAYER_BOUND_RADIUS,
   RETICLE_BREAK_RADIUS_PX,
   RETICLE_LOCK_RADIUS_PX,
-  VISOR_CIRCLE_RADIUS_PX,
   type DomeDarkRing,
   type DomeHudState,
   type DomeRadarDot,
@@ -398,13 +399,14 @@ export class NyxDomeController {
     () => ({ x: 0, y: 0, onScreen: true, edgeAngleDeg: 0 }),
   );
 
-  // --- Aro de Materia Oscura: marcador pasivo de enemigos lejanos. El radio
-  // en píxeles crece con la distancia; cuando cabe en el círculo del visor
-  // (radio <= VISOR_CIRCLE_RADIUS_PX) el aro desaparece y el lock-in manda.
+  // --- Aro de Materia Oscura: marcador pasivo de enemigos lejanos. El
+  // tamaño en pantalla está ACOTADO (diámetro 40..60 px): escala
+  // proporcionalmente con la distancia dentro de ese rango y desaparece
+  // por debajo de DARK_RING_NEAR_DIST_M (el lock-in manda).
   private readonly darkRings: DomeDarkRing[] = [];
   private readonly darkRingPool: DomeDarkRing[] = Array.from(
     { length: 16 },
-    () => ({ x: 0, y: 0, radius: 0, alpha: 1, phase: 0 }),
+    () => ({ x: 0, y: 0, radius: 0, alpha: 1, t: 0, phase: 0 }),
   );
 
   // --- Recursos y progresión
@@ -1384,12 +1386,15 @@ export class NyxDomeController {
 
   /**
    * Aro de Materia Oscura (pasivo, sin Tab): proyecta cada enemigo vivo a
-   * pantalla y le asigna un aro cuyo radio CRECE con la distancia
-   * (DARK_RING_PX_PER_M px por metro). Solo entra en la lista mientras el
-   * radio sea mayor que el círculo general del visor: al acercarse, el aro
-   * converge y desaparece bajo el visor (el lock-in toma el relevo). Sin
-   * raycast de oclusión: es un "sentido" de materia oscura y atraviesa
-   * suelos, lo que lo hace útil justo cuando el enemigo no se ve.
+   * pantalla y le asigna un aro de tamaño ACOTADO. El diámetro base escala
+   * proporcionalmente con la distancia dentro de [min 40 px, max 60 px]
+   * (clamp estricto: nunca más pequeño que el visor ni gigantesco por la
+   * perspectiva), y `t` (0..1) lleva la posición dentro del rango para que
+   * la intensidad de las espinas escale igual en el overlay. Solo entra en
+   * la lista más allá de DARK_RING_NEAR_DIST_M: al acercarse desaparece y
+   * el lock-in toma el relevo. Sin raycast de oclusión: es un "sentido" de
+   * materia oscura y atraviesa suelos, lo que lo hace útil justo cuando el
+   * enemigo no se ve.
    */
   private updateDarkMatterRings(
     camera: THREE.PerspectiveCamera,
@@ -1400,28 +1405,32 @@ export class NyxDomeController {
 
     const width = this.viewportW;
     const height = this.viewportH;
-    const maxRadius = Math.min(width, height) * DARK_RING_MAX_RADIUS_FRAC;
-    // Banda de fundido: entra al superar el visor y sale al volver a caber.
-    const fadeBand = VISOR_CIRCLE_RADIUS_PX * 1.35 - VISOR_CIRCLE_RADIUS_PX;
+    const range = DARK_RING_FAR_DIST_M - DARK_RING_NEAR_DIST_M;
 
     for (const enemy of enemies) {
       if (!this.projectToScreen(enemy.position, camera, width, height)) continue;
       const dist = camera.position.distanceTo(enemy.position);
-      let radius = DARK_RING_PX_PER_M * dist;
-      if (radius <= VISOR_CIRCLE_RADIUS_PX) continue;
-      radius = Math.min(radius, maxRadius);
-      const alpha = Math.min(1, (radius - VISOR_CIRCLE_RADIUS_PX) / fadeBand);
+      if (dist <= DARK_RING_NEAR_DIST_M) continue;
+
+      // Escalado proporcional acotado: t = 0 en el umbral cercano (tamaño
+      // mínimo), t = 1 a partir de DARK_RING_FAR_DIST_M (tamaño máximo).
+      const t = Math.min(1, (dist - DARK_RING_NEAR_DIST_M) / range);
+      const diameter =
+        DARK_RING_MIN_DIAMETER_PX + (DARK_RING_MAX_DIAMETER_PX - DARK_RING_MIN_DIAMETER_PX) * t;
+      // Fundido de entrada en los primeros 2.5 m sobre el umbral.
+      const alpha = Math.min(1, (dist - DARK_RING_NEAR_DIST_M) / 2.5);
 
       const index = this.darkRings.length;
       let ring = this.darkRingPool[index];
       if (!ring) {
-        ring = { x: 0, y: 0, radius: 0, alpha: 1, phase: 0 };
+        ring = { x: 0, y: 0, radius: 0, alpha: 1, t: 0, phase: 0 };
         this.darkRingPool.push(ring);
       }
       ring.x = this.screenPos.x;
       ring.y = this.screenPos.y;
-      ring.radius = radius;
+      ring.radius = diameter * 0.5;
       ring.alpha = alpha;
+      ring.t = t;
       // Fase estable por enemigo: el ruido de cada aro es independiente y
       // no "salta" entre frames ni al reciclar slots del pool.
       let hash = 0;

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { DARK_RING_MAX_SPIKE_RADIUS_PX } from '@/game/dome/domeTypes';
 import type { NyxDomeController } from '@/game/dome/NyxDomeController';
 
 // ============================================================================
@@ -6,8 +7,9 @@ import type { NyxDomeController } from '@/game/dome/NyxDomeController';
 // ============================================================================
 // Dibuja en un canvas 2D propio (con bucle rAF independiente) los aros que
 // NyxDomeController proyecta cada frame para los enemigos LEJOS: un aro
-// inestable de tinta blanca cuyo radio crece con la distancia y que
-// desaparece al converger dentro del círculo del visor. Al vivir fuera de
+// inestable de tinta blanca de tamaño ACOTADO (diámetro base 40..60 px
+// según la distancia, clamp estricto también en los picos) que desaparece
+// al acercarse por debajo del umbral de distancia. Al vivir fuera de
 // React (sin estado, sin re-render), el coste por frame es solo el trazado
 // de los polígonos de los enemigos visibles.
 //
@@ -53,13 +55,17 @@ interface RingShape {
   y: number;
   radius: number;
   alpha: number;
+  t: number;
   phase: number;
 }
 
 /**
  * Traza el polígono del aro en el contexto, escalado de la referencia (radio
  * 133) al radio real. `tOffset` desfasa el ruido (eco) y `dir` invierte el
- * giro para que el eco contrarrote.
+ * giro para que el eco contrarrote. CLAMP ESTRICTO del radio dibujado: nunca
+ * por debajo del 72% del radio base (el aro no "encoge" visualmente) y
+ * nunca por encima de DARK_RING_MAX_SPIKE_RADIUS_PX, de modo que ni los
+ * picos más largos superan el tamaño máximo absoluto en pantalla.
  */
 function traceRingPath(
   ctx: CanvasRenderingContext2D,
@@ -76,6 +82,8 @@ function traceRingPath(
   const scale = ring.radius / REF_RADIUS;
   const cx = ring.x;
   const cy = ring.y;
+  const minPx = ring.radius * 0.72;
+  const maxPx = Math.max(minPx + 1, DARK_RING_MAX_SPIKE_RADIUS_PX);
   ctx.beginPath();
   for (let i = 0; i < vertices; i++) {
     const baseAngle = (i / vertices) * Math.PI * 2;
@@ -91,8 +99,10 @@ function traceRingPath(
         magnitude * sign * dirMult * 91 * intensityScale +
         jitter,
     );
-    const px = cx + Math.cos(angle) * r * scale;
-    const py = cy + Math.sin(angle) * r * scale;
+    // Clamp estricto en píxeles de pantalla (no en unidades de referencia).
+    const rPx = Math.min(maxPx, Math.max(minPx, r * scale));
+    const px = cx + Math.cos(angle) * rPx;
+    const py = cy + Math.sin(angle) * rPx;
     if (i === 0) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
   }
@@ -162,11 +172,15 @@ function DomeDarkMatterRings({ controllerRef }: DomeDarkMatterRingsProps) {
       for (let i = 0; i < count; i++) {
         const ring = rings![i];
         if (ring.alpha <= 0.01) continue;
-        const strokeScale = Math.max(0.7, Math.min(1.6, ring.radius / REF_RADIUS));
+        const strokeScale = Math.max(0.7, Math.min(1.2, ring.radius / REF_RADIUS));
+        // Intensidad de las espinas proporcional a la distancia DENTRO del
+        // rango acotado: t=0 (cerca) espinas contenidas, t=1 (lejos) máxima
+        // agresividad — sin romper el tope absoluto del clamp.
+        const spike = 0.85 + 0.4 * ring.t;
 
         // --- Anillo principal agresivo: halo ancho tenue + trazo blanco.
         ctx.globalAlpha = ring.alpha;
-        traceRingPath(ctx, ring, noiseTime, rotation, RING_VERTICES, 1, 1, 1.6, 0.55, 0);
+        traceRingPath(ctx, ring, noiseTime, rotation, RING_VERTICES, 1, spike, 1.6, 0.55, 0);
         ctx.lineJoin = 'miter';
         ctx.miterLimit = 10;
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
@@ -185,7 +199,7 @@ function DomeDarkMatterRings({ controllerRef }: DomeDarkMatterRingsProps) {
           -rotation * 1.3,
           Math.max(12, Math.floor(RING_VERTICES * 0.75)),
           0.88,
-          0.85,
+          spike * 0.85,
           1.6 * 1.15,
           0.55 * 1.1,
           10.5,

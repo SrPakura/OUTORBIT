@@ -140,19 +140,23 @@ export interface DomeRadarDot {
 
 /**
  * Aro de Materia Oscura: marcador de enemigo lejano proyectado a pantalla.
- * El aro es 2D, se mueve con la cámara según distancia y ángulo, y su radio
- * CRECE con la distancia al enemigo. Regla de visibilidad: solo se ve
- * mientras su radio sea MAYOR que el círculo general del visor; al acercarse
- * el aro converge y, cuando cabe dentro del visor, desaparece (el lock-in
- * toma el relevo). No requiere pulsar Tab.
+ * El aro es 2D, se mueve con la cámara según distancia y ángulo. Su tamaño
+ * está ACOTADO en pantalla: el diámetro base escala proporcionalmente con
+ * la distancia dentro de [DARK_RING_MIN_DIAMETER_PX, DARK_RING_MAX_DIAMETER_PX]
+ * (nunca crece sin límite con la perspectiva 3D) y los picos más largos no
+ * pueden superar DARK_RING_MAX_SPIKE_RADIUS_PX de radio (~70 px absolutos).
+ * Solo se ve más allá de DARK_RING_NEAR_DIST_M; al acercarse, desaparece y
+ * el lock-in toma el relevo. No requiere pulsar Tab.
  */
 export interface DomeDarkRing {
   x: number;
   y: number;
-  /** Radio actual del aro en píxeles de pantalla. */
+  /** Radio base del aro en píxeles de pantalla (sin picos), ya acotado. */
   radius: number;
-  /** 0..1: fundido de entrada/salida cerca del umbral del visor. */
+  /** 0..1: fundido de entrada/salida cerca del umbral de distancia. */
   alpha: number;
+  /** 0..1: posición proporcional dentro del rango [min, max] de tamaño. */
+  t: number;
   /** Fase estable por enemigo (hash del id) para que el ruido no "salte". */
   phase: number;
 }
@@ -167,13 +171,20 @@ export const RETICLE_BREAK_RADIUS_PX = 262;
 /**
  * Radio del círculo general del visor en pantalla: el octógono exterior de
  * visor.svg va de 40 a 472 en un viewBox de 512 (radio 216) escalado a
- * RETICLE_SIZE_PX. Es la referencia del aro de materia oscura.
+ * RETICLE_SIZE_PX.
  */
 export const VISOR_CIRCLE_RADIUS_PX = RETICLE_SIZE_PX * (216 / 512); // ≈ 50.6 px
-/** Píxeles de radio de aro por metro de distancia al enemigo (a mayor distancia, mayor radio). */
-export const DARK_RING_PX_PER_M = 2.3;
-/** Tope de radio del aro como fracción del lado corto de la pantalla. */
-export const DARK_RING_MAX_RADIUS_FRAC = 0.46;
+
+/** Diámetro base MÍNIMO del aro en pantalla (nunca más pequeño, esté donde esté). */
+export const DARK_RING_MIN_DIAMETER_PX = 40;
+/** Diámetro base MÁXIMO del aro: 1.5x el mínimo. */
+export const DARK_RING_MAX_DIAMETER_PX = 60;
+/** Tope ABSOLUTO de radio con los picos más largos (~70 px de diámetro total). */
+export const DARK_RING_MAX_SPIKE_RADIUS_PX = 35;
+/** Distancia (m) por debajo de la cual el aro no se dibuja (manda el lock-in). */
+export const DARK_RING_NEAR_DIST_M = 22;
+/** Distancia (m) a partir de la cual el aro satura en su tamaño máximo. */
+export const DARK_RING_FAR_DIST_M = 60;
 
 export const DOME_ARENA_RADIUS = 90;
 export const DOME_PLAYER_BOUND_RADIUS = 88.6;
