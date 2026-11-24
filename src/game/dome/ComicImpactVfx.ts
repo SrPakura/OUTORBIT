@@ -21,7 +21,9 @@ import * as THREE from 'three';
 //   cada pico es un quad de 4 vértices con color por vértice, entintado en
 //   el plano que contiene su dirección y mira a cámara. Desaparecen por
 //   estrechamiento (ancho → 0), así que el material es OPACO: sin blending
-//   ni problemas de orden.
+//   ni problemas de orden. Un único ShaderMaterial cubre los dos modos:
+//   color plano (golpes, paleta cómic) o nebulosa del enemigo en espacio
+//   de pantalla (explosiones), elegido por el atributo aVoid por vértice.
 // - Estrellas: pool de sprites con 2 texturas canvas pre-generadas (7 y 10
 //   puntas, relleno blanco + contorno de tinta).
 // - Humo: pool de 4 sprites que comparten imagen de atlas y animan el frame
@@ -35,9 +37,9 @@ const MAX_SMOKES = 4;
 
 const SMOKE_FRAMES = 8;
 const SMOKE_FRAME_SIZE = 160;
-// La nube de vacío respira lenta: expansión por gravedad durante ~2.6 s
+// La nube de vacío respira lenta: expansión por gravedad durante ~1.3 s
 // antes de erosionarse y soltar los cachitos finales.
-const SMOKE_LIFETIME = 2.6;
+const SMOKE_LIFETIME = 1.3;
 // Momento de la vida del humo en el que estallan los cachitos (0..1).
 const SMOKE_DEBRIS_P = 0.8;
 
@@ -48,6 +50,85 @@ const COLOR_INK = 0x09070d;
 // Paleta de vacío/gravedad (explosiones): violeta espacial + brillo cian.
 const COLOR_VOID = 0x7c3aed;
 const COLOR_GLOW = 0x8ff5ff;
+
+// ============================================================================
+// Shader de nebulosa de los enemigos (puerto de enemyNebulaFrag de
+// DomeEnemyModels): los cachos de la explosión son fragmentos del mismo
+// universo interior — FBM en espacio de pantalla + estrellas titilantes.
+// Los picos de golpe (paleta cómic) salen planos: el atributo aVoid decide.
+// ============================================================================
+const SHARD_VERT = /* glsl */ `
+  attribute vec3 color;
+  attribute float aVoid;
+  varying vec3 vColor;
+  varying float vVoid;
+  void main() {
+    vColor = color;
+    vVoid = aVoid;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+  }
+`;
+
+const SHARD_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform vec3 uColorA;
+  uniform vec3 uColorB;
+  varying vec3 vColor;
+  varying float vVoid;
+
+  float hash21( vec2 p ) {
+    p = fract( p * vec2( 234.34, 435.345 ) );
+    p += dot( p, p + 34.23 );
+    return fract( p.x * p.y );
+  }
+  float noise2( vec2 p ) {
+    vec2 i = floor( p );
+    vec2 f = fract( p );
+    f = f * f * ( 3.0 - 2.0 * f );
+    return mix(
+      mix( hash21( i ), hash21( i + vec2( 1.0, 0.0 ) ), f.x ),
+      mix( hash21( i + vec2( 0.0, 1.0 ) ), hash21( i + vec2( 1.0, 1.0 ) ), f.x ),
+      f.y
+    );
+  }
+  float fbm( vec2 p ) {
+    float v = 0.0; float a = 0.5;
+    mat2 m = mat2( 0.8, 0.6, -0.6, 0.8 );
+    for ( int i = 0; i < 4; i++ ) { v += a * noise2( p ); p = m * p * 2.02; a *= 0.5; }
+    return v;
+  }
+  float starLayer( vec2 uv, float scale, float speed ) {
+    vec2 gv = fract( uv * scale ) - 0.5;
+    vec2 id = floor( uv * scale );
+    float h = hash21( id );
+    if ( h < 0.70 ) return 0.0;
+    vec2 offset = vec2( hash21( id + 7.1 ), hash21( id + 13.7 ) ) - 0.5;
+    float d = length( gv - offset * 0.65 );
+    float tw = 0.6 + 0.4 * sin( uTime * speed + h * 40.0 );
+    return smoothstep( mix( 0.05, 0.16, fract( h * 19.3 ) ), 0.0, d ) * tw;
+  }
+  void main() {
+    // Picos de golpe: color plano de paleta cómic.
+    if ( vVoid < 0.5 ) {
+      gl_FragColor = vec4( vColor, 1.0 );
+      return;
+    }
+    // Cachos de vacío: nebulosa del enemigo en espacio de pantalla, con el
+    // color por vértice (violeta/cian/tinta) como tinte del fragmento.
+    vec2 uv = gl_FragCoord.xy * 0.0048;
+    vec2 drift = vec2( uTime * 0.045, -uTime * 0.03 );
+    float n1 = fbm( uv * 1.6 + drift );
+    float n2 = fbm( uv * 2.5 - drift * 1.3 + n1 * 0.9 );
+    vec3 col = vec3( 0.02, 0.008, 0.035 );
+    col = mix( col, uColorA * 0.48, smoothstep( 0.36, 0.80, n1 ) );
+    col = mix( col, uColorB * 0.62, smoothstep( 0.48, 0.88, n2 ) );
+    float stars = starLayer( uv + drift * 0.35, 14.0, 2.6 ) * 1.3
+                + starLayer( uv - drift * 0.22, 24.0, 3.8 ) * 1.6;
+    col += mix( vec3( 1.0 ), vColor, 0.3 ) * stars;
+    col += vColor * 0.3;
+    gl_FragColor = vec4( col, 1.0 );
+  }
+`;
 
 const _shardDir = new THREE.Vector3();
 const _shardRight = new THREE.Vector3();
@@ -79,8 +160,10 @@ export class ComicImpactVfxSystem {
 
   // --- Picos rombo (una draw call)
   private readonly shardMesh: THREE.Mesh;
+  private readonly shardMaterial: THREE.ShaderMaterial;
   private readonly shardPositions: Float32Array;
   private readonly shardColors: Float32Array;
+  private readonly shardVoid: Float32Array;
   private readonly shardDir: Float32Array;
   private readonly shardOrigin: Float32Array;
   private readonly shardSpeed: Float32Array;
@@ -115,6 +198,7 @@ export class ComicImpactVfxSystem {
     // --- Picos: geometría indexada compartida, color por vértice.
     this.shardPositions = new Float32Array(MAX_SHARDS * 4 * 3);
     this.shardColors = new Float32Array(MAX_SHARDS * 4 * 3);
+    this.shardVoid = new Float32Array(MAX_SHARDS * 4);
     this.shardDir = new Float32Array(MAX_SHARDS * 3);
     this.shardOrigin = new Float32Array(MAX_SHARDS * 3);
     this.shardSpeed = new Float32Array(MAX_SHARDS);
@@ -138,11 +222,21 @@ export class ComicImpactVfxSystem {
     const shardGeometry = new THREE.BufferGeometry();
     shardGeometry.setAttribute('position', new THREE.BufferAttribute(this.shardPositions, 3));
     shardGeometry.setAttribute('color', new THREE.BufferAttribute(this.shardColors, 3));
+    shardGeometry.setAttribute('aVoid', new THREE.BufferAttribute(this.shardVoid, 1));
     shardGeometry.setIndex(new THREE.BufferAttribute(indices, 1));
-    this.shardMesh = new THREE.Mesh(
-      shardGeometry,
-      new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }),
-    );
+    // Paleta de nebulosa abisal violeta (la misma familia que la carne de
+    // los enemigos): los cachos de la explosión son trozos de su universo.
+    this.shardMaterial = new THREE.ShaderMaterial({
+      vertexShader: SHARD_VERT,
+      fragmentShader: SHARD_FRAG,
+      uniforms: {
+        uTime: { value: 0 },
+        uColorA: { value: new THREE.Color(0x8b5cf6) },
+        uColorB: { value: new THREE.Color(0x4c1d95) },
+      },
+      side: THREE.DoubleSide,
+    });
+    this.shardMesh = new THREE.Mesh(shardGeometry, this.shardMaterial);
     this.shardMesh.frustumCulled = false;
     scene.add(this.shardMesh);
 
@@ -299,6 +393,7 @@ export class ComicImpactVfxSystem {
       this.shardColors[c] = _tmpColor.r;
       this.shardColors[c + 1] = _tmpColor.g;
       this.shardColors[c + 2] = _tmpColor.b;
+      this.shardVoid[idx * 4 + v] = voidPalette ? 1 : 0;
     }
   }
 
@@ -345,6 +440,7 @@ export class ComicImpactVfxSystem {
 
   update(dt: number, cameraPos: THREE.Vector3): void {
     if (dt <= 0) return;
+    this.shardMaterial.uniforms.uTime.value += dt;
     this.updateShards(dt, cameraPos);
     this.updateStars(dt);
     this.updateSmokes(dt);
@@ -415,6 +511,7 @@ export class ComicImpactVfxSystem {
       const geometry = this.shardMesh.geometry;
       (geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
       (geometry.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
+      (geometry.getAttribute('aVoid') as THREE.BufferAttribute).needsUpdate = true;
     }
   }
 
@@ -637,7 +734,7 @@ export class ComicImpactVfxSystem {
   dispose(): void {
     this.scene.remove(this.shardMesh);
     this.shardMesh.geometry.dispose();
-    (this.shardMesh.material as THREE.MeshBasicMaterial).dispose();
+    this.shardMaterial.dispose();
     for (const star of this.stars) {
       this.scene.remove(star);
       star.material.dispose();
