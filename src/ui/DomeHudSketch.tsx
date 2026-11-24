@@ -38,14 +38,41 @@ function DomeHudSketchInner({
   const lock = hud.reticleLockState;
   const isLocked = lock === 'locked';
 
-  // --- Estrella central: blanca -> rojo suave (rojo + blanco 25% = #ff4040) -> rojo puro + glow (#ff0000)
-  const starStroke = lock === 'none' ? '#ffffff' : lock === 'can_lock' ? '#ff4040' : '#ff0000';
-  const starFill = isLocked ? 'rgba(255, 0, 0, 0.24)' : 'none';
+  // --- Sentadilla Cinética: azul clarito = pared en la mira (disponible),
+  // azul brillante = rebote adjudicado. La adjudicación pisa al lock de
+  // enemigo (el rebote ya está decidido); la disponibilidad no (el combate
+  // manda sobre la oferta).
+  const kinetic = hud.kineticBounceState;
+  const kineticCommitted = kinetic === 'committed';
+
+  // --- Estrella central: blanca -> azul clarito (rebote disponible) -> rojo
+  // suave (rojo + blanco 25% = #ff4040) -> rojo puro + glow (#ff0000) ->
+  // azul brillante + glow (rebote adjudicado)
+  const starStroke = kineticCommitted
+    ? '#00d0ff'
+    : kinetic === 'available' && lock === 'none'
+      ? '#7fd8ff'
+      : lock === 'none'
+        ? '#ffffff'
+        : lock === 'can_lock'
+          ? '#ff4040'
+          : '#ff0000';
+  const starFill = isLocked ? 'rgba(255, 0, 0, 0.24)' : kineticCommitted ? 'rgba(0, 208, 255, 0.28)' : 'none';
   const starStyle =
-    lock === 'locked'
+    lock === 'locked' && !kineticCommitted
       ? { filter: 'drop-shadow(0 0 10px #ff0000) drop-shadow(0 0 22px rgba(255,0,0,0.85))' }
-      : undefined;
-  const dotFill = lock === 'none' ? '#ffffff' : lock === 'can_lock' ? '#ff4040' : '#ff0000';
+      : kineticCommitted
+        ? { filter: 'drop-shadow(0 0 12px #00d0ff) drop-shadow(0 0 26px rgba(0,208,255,0.9))' }
+        : undefined;
+  const dotFill = kineticCommitted
+    ? '#00d0ff'
+    : kinetic === 'available' && lock === 'none'
+      ? '#7fd8ff'
+      : lock === 'none'
+        ? '#ffffff'
+        : lock === 'can_lock'
+          ? '#ff4040'
+          : '#ff0000';
 
   const enemyPos =
     hud.lockedEnemyScreenPos != null && (lock === 'locked' || lock === 'can_lock')

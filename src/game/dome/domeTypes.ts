@@ -13,6 +13,13 @@ export type SpeedAttackKind = 'gravity_kick' | 'spiral_drill_kick' | 'void_fall'
 export type ReticleLockState = 'none' | 'can_lock' | 'locked';
 
 /**
+ * Sentadilla Cinética en el visor: 'available' = pared en la mira con
+ * velocidad suficiente (estrella azul clarito, Clic Derecho la adjudica),
+ * 'committed' = rebote adjudicado (estrella azul brillante).
+ */
+export type KineticBounceUiState = 'none' | 'available' | 'committed';
+
+/**
  * Colisión exacta contra la malla del trozo arrancado (tapa + raíz iceberg):
  * los triángulos no indexados de la geometría local SIN escala (el escalado
  * en vivo lo aporta `mesh.scale`), el radio de la esfera envolvente local y
@@ -86,6 +93,8 @@ export interface DomeHudState {
   /** Hay un mando (Gamepad API) conectado: el HUD muestra el aviso. */
   gamepadConnected?: boolean;
   reticleLockState: ReticleLockState;
+  /** Sentadilla Cinética: disponible (azul clarito) o adjudicada (azul brillante). */
+  kineticBounceState: KineticBounceUiState;
   lockedEnemyScreenPos: { x: number; y: number } | null;
   bulletTimeActive: boolean;
   bulletTimeRemaining: number;

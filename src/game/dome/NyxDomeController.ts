@@ -57,10 +57,12 @@ import type { SynthAudio } from '@/game/audio/SynthAudio';
 //                   (0.20): un Dash W/A/D apuntando a él re-lockea, curva el
 //                   vector de golpe +4 m/s SIN cortar la patada.
 //  - 'kick_recover' Frenado suave hasta casi 0 encadenando kick_flip.
-//  - 'kinetic_bounce' Sentadilla Cinética (intrínseca, 0 Edén): impacto
-//                   contra superficie no pisable a >= 12 m/s → pies a la
-//                   normal, sentadilla de amortiguación y salida con TODO el
-//                   impulso en la dirección reflejada (ver nyxKineticBounce.ts).
+//  - 'kinetic_bounce' Sentadilla Cinética (intrínseca, 0 Edén, OPTATIVA):
+//                   pared en la mira a >= 12 m/s → estrella azul clarito;
+//                   Clic Derecho la adjudica (azul brillante), curva al punto
+//                   de impacto óptimo y al contacto: pies a la normal,
+//                   sentadilla de amortiguación y salida con TODO el impulso
+//                   reflejado (ver nyxKineticBounce.ts).
 //
 // Economía de Edén (base 100): +1%/s de regeneración siempre en suelo (aunque
 // andes o esprines) y en flotación solo sin WASD ni clics (aunque te deslices
@@ -882,6 +884,12 @@ export class NyxDomeController {
       pointerLocked: this.pointerLocked,
       gamepadConnected: this.isGamepadConnected(),
       reticleLockState: this.reticleLockState,
+      kineticBounceState:
+        this.kinetic.phase === 'committed' || this.mode === 'kinetic_bounce'
+          ? 'committed'
+          : this.kinetic.phase === 'idle' && this.kinetic.aimReady
+            ? 'available'
+            : 'none',
       lockedEnemyScreenPos: this.lockedEnemyScreenPos,
       bulletTimeActive: this.bulletTimeTimer > 0 || this.redirectWindowTimer > 0,
       bulletTimeRemaining: Math.max(this.bulletTimeTimer, this.redirectWindowTimer),
@@ -1421,8 +1429,29 @@ export class NyxDomeController {
     // En 'kick_recover' o vuelo lento (< 12 m/s): Espacio NO hace nada.
   }
 
-  /** Clic Derecho: dash (3.0 Edén). En speed_attack solo lateral/trasero. */
+  /**
+   * Clic Derecho: dash (3.0 Edén). En speed_attack solo lateral/trasero.
+   * Con una pared valida en la mira y velocidad suficiente, el Clic
+   * Derecho ADJUDICA la Sentadilla Cinética (0 Edén) en vez de dashear.
+   */
   private handleDash(f: number, r: number): void {
+    // --- Sentadilla Cinética optativa: pared en la mira (estrella azul
+    // clarito) + velocidad mínima → el clic se consume en el rebote. Sin
+    // velocidad o sin pared, cae al dash normal: el botón nunca muere.
+    if (
+      (this.mode === 'floating' || this.mode === 'dashing') &&
+      this.kinetic.phase === 'idle' &&
+      this.kinetic.aimReady
+    ) {
+      this.kinetic.beginCommit(
+        this.kinetic.targetPoint,
+        this.kinetic.wallNormal,
+        this.velocity.length(),
+      );
+      this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
+      this.audio?.playAnchor();
+      return;
+    }
     if (this.mode === 'speed_attack') {
       if (this.eden < EDEN_DASH_COST) return;
       // Dash de redirección: SOLO si el jugador apunta. En cámara lenta hace
@@ -2023,46 +2052,88 @@ export class NyxDomeController {
   // ==========================================================================
   // Sentadilla Cinética (rebote impulsado en pared)
   //
-  // Intrínseca de Nyx (0 Edén, no es habilidad activa): impacto de pared a
-  // velocidad >= umbral drill → pies a la normal, sentadilla que absorbe y
-  // salida con TODO el impulso en la dirección reflejada. Fases, timing y
-  // contrato de animación: nyxKineticBounce.ts.
+  // Intrínseca de Nyx (0 Edén, no es habilidad activa), 100% optativa: mira
+  // a una pared a >= 12 m/s → estrella azul clarito; Clic Derecho → rebote
+  // adjudicado (estrella azul brillante): curva al punto de impacto óptimo,
+  // sentadilla que absorbe y salida con TODO el impulso reflejado. Fases,
+  // timing y contrato de animación: nyxKineticBounce.ts.
   // ==========================================================================
 
   /**
-   * Predicción de impacto de pared: raycast de anticipación a lo largo de la
-   * velocidad. Si detecta una pared frontal a (radio + velocidad ×
-   * PREDICT_TIME) metros, arranca/refresca la fase `prepare` para orientar
-   * los pies hacia la normal justo antes del contacto. También gestiona el
-   * timeout de la preparación (pared esquivada o roce que no llega).
+   * Latido de la Sentadilla Cinética (cada frame):
+   *
+   * - idle: raycast de la MIRA (cámara) contra slabs. Si apunta a una cara
+   *   no pisable a >= TRIGGER_SPEED y con margen de aproximación
+   *   suficiente, marca `aimReady` (estrella azul clarito en el HUD).
+   *
+   * - committed: el jugador adjudicó el rebote. Curva el vector hacia el
+   *   punto de impacto óptimo (perpendicular a la pared en el tramo final)
+   *   conservando el módulo, y cancela por timeout si el contacto no llega.
    */
   private updateKineticBounce(slabs: SlabCollider[], dt: number): void {
     const kb = this.kinetic;
     if (kb.phase === 'squat' || kb.phase === 'launch') return; // los avanza el modo
 
-    if (kb.phase === 'prepare') {
+    if (kb.phase === 'committed') {
       kb.timer += dt;
       if (
-        kb.timer >= KINETIC_BOUNCE.PREPARE_TIMEOUT ||
+        kb.timer >= KINETIC_BOUNCE.COMMIT_TIMEOUT ||
         this.mode === 'grounded' ||
-        this.velocity.length() < KINETIC_BOUNCE.TRIGGER_SPEED
+        this.velocity.length() < KINETIC_BOUNCE.TRIGGER_SPEED * 0.5
       ) {
         kb.reset();
         return;
       }
+      // Curvado del vector: hacia el punto adjudicado; a HOMING_FINAL_DIST
+      // metros del impacto, gira a la entrada perpendicular (−normal) para
+      // el rebote máximo y la animación más limpia. Solo rota la dirección
+      // y reescala: el módulo (el impulso que devolverá la pared) se
+      // conserva intacto (rotateToward pisa el módulo al snapar).
+      const speed = this.velocity.length();
+      if (speed > 1e-4) {
+        const toTarget = this.tmpA.copy(kb.targetPoint).sub(this.nyxRoot.position);
+        const dist = toTarget.length();
+        const desired =
+          dist > KINETIC_BOUNCE.HOMING_FINAL_DIST
+            ? toTarget.multiplyScalar(1 / dist)
+            : this.tmpB.copy(kb.wallNormal).multiplyScalar(-1);
+        const dir = this.tmpC.copy(this.velocity).multiplyScalar(1 / speed);
+        this.rotateToward(dir, desired, KINETIC_BOUNCE.HOMING_TURN_RATE * dt);
+        this.velocity.copy(dir).multiplyScalar(speed);
+      }
+      return;
     }
 
+    // --- idle: ¿pared valida en la mira? (estrella azul clarito)
+    kb.aimReady = false;
     const speed = this.velocity.length();
-    if (this.mode === 'grounded' || this.bounceCooldown > 0) return;
+    if (this.mode !== 'floating' && this.mode !== 'dashing') return;
+    if (this.bounceCooldown > 0) return;
     if (speed < KINETIC_BOUNCE.TRIGGER_SPEED) return;
 
-    const dir = this.tmpA.copy(this.velocity).multiplyScalar(1 / speed);
-    const reach = PLAYER_RADIUS + speed * KINETIC_BOUNCE.PREDICT_TIME;
-    const hit = raycastSlabs(slabs, this.nyxRoot.position, dir, reach, this.kineticHitScratch);
+    const hit = raycastSlabs(
+      slabs,
+      this.nyxRoot.position,
+      this.camFwd,
+      KINETIC_BOUNCE.AIM_RANGE,
+      this.kineticHitScratch,
+    );
     if (!hit) return;
-    // Solo paredes frontales: la normal prevista se opone al vuelo.
-    if (hit.normal.dot(dir) > -KINETIC_BOUNCE.HEAD_ON_DOT) return;
-    kb.beginPrepare(hit.normal, dir, speed);
+    // Solo superficies NO pisables (pared/canto/raíz): la tapa superior
+    // aterriza, no rebota. La normal debe mirar hacia Nyx (de frente).
+    const slab = hit.slab;
+    if (slab.oneSidedTop) {
+      const topDot = hit.normal.dot(this.tmpC.set(0, 1, 0).applyQuaternion(slab.quaternion));
+      if (topDot > 0.65) return;
+    }
+    if (hit.normal.dot(this.camFwd) > -0.2) return;
+    // Margen de aproximación: sin tiempo para orientar y curvar, no se ofrece.
+    if (hit.distance / speed < KINETIC_BOUNCE.MIN_APPROACH_TIME) return;
+
+    kb.aimReady = true;
+    kb.targetPoint.copy(hit.point);
+    kb.wallNormal.copy(hit.normal);
+    kb.entrySpeed = speed;
   }
 
   /**
@@ -2219,9 +2290,9 @@ export class NyxDomeController {
           // conserva intacta: cero teletransporte hacia dentro de la
           // plataforma, se posa donde ha tocado de verdad.
           this.nyxRoot.position.addScaledVector(landNormal, this.contact.depth);
-          // Si la preparación de la Sentadilla Cinética estaba en marcha y
-          // resulta que la cara era pisable, gana el aterrizaje.
-          if (this.kinetic.phase === 'prepare') this.kinetic.reset();
+          // Si el rebote estaba adjudicado y resulta que la cara era
+          // pisable, gana el aterrizaje (la adjudicación se cancela).
+          if (this.kinetic.phase === 'committed') this.kinetic.reset();
           this.landOn(landNormal, Math.max(0, -approach));
         } else {
           // Iceberg inferior de un slab flotante (roca viva) vs pared/canto:
@@ -2231,23 +2302,19 @@ export class NyxDomeController {
             !isTopFace &&
             this.up.dot(n) < -0.35;
 
-          // --- Sentadilla Cinética: impacto contra cualquier superficie no
-          // pisable (pared, canto o raíz iceberg) a >= 12 m/s con componente
-          // normal real. En vez del rebote amortiguado, Nyx absorbe en
-          // sentadilla y sale con TODO el impulso en la dirección reflejada.
+          // --- Sentadilla Cinética ADJUDICADA: el jugador apuntó a esta
+          // pared y pulsó el Clic Derecho (estrella azul brillante). El
+          // contacto con cualquier superficie no pisable dispara la
+          // sentadilla SIEMPRE: la velocidad mínima se validó al adjudicar.
           // Coste 0 de Edén: intrínseca.
           const impactSpeed = this.velocity.length();
-          if (
-            this.bounceCooldown <= 0 &&
-            -approach >= KINETIC_BOUNCE.MIN_NORMAL_IMPACT &&
-            impactSpeed >= KINETIC_BOUNCE.TRIGGER_SPEED
-          ) {
+          if (this.kinetic.phase === 'committed' && this.bounceCooldown <= 0) {
             this.beginKineticSquat(impactSpeed);
             return;
           }
           // El contacto se resuelve por otra vía (roce, rebote): la
-          // preparación de la sentadilla, si estaba pendiente, se cancela.
-          if (this.kinetic.phase === 'prepare') this.kinetic.reset();
+          // adjudicación de la sentadilla, si estaba pendiente, se cancela.
+          if (this.kinetic.phase === 'committed') this.kinetic.reset();
 
           // --- Corner correction a baja velocidad: rozar una esquina o
           // vértice a poca velocidad no rebota ni aturde. Solo expulsa y
@@ -2719,10 +2786,10 @@ export class NyxDomeController {
         -12,
         12,
       );
-      // --- Preparación de la Sentadilla Cinética: justo antes del contacto
-      // los pies se orientan hacia la normal de la pared prevista (el rumbo
-      // se proyecta tangente para no degenerar la base del modelo).
-      if (this.kinetic.phase === 'prepare') {
+      // --- Rebote adjudicado: durante la aproximación los pies se orientan
+      // hacia la normal de la pared prevista (el rumbo se proyecta tangente
+      // para no degenerar la base del modelo).
+      if (this.kinetic.phase === 'committed') {
         this.up
           .lerp(this.kinetic.wallNormal, 1 - Math.exp(-KINETIC_BOUNCE.ORIENT_RATE * dt))
           .normalize();

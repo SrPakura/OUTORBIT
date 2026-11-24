@@ -4,14 +4,17 @@ import * as THREE from 'three';
 // OUTORBIT — NYX: Sentadilla Cinética (Rebote Impulsado en Pared)
 // ============================================================================
 //
-// Mecánica intrínseca de NYX (NO es una habilidad activa): cuando se desplaza
-// hacia una pared (cualquier superficie NO pisable: canto de la tapa, raíz
-// iceberg, lateral de un suelo) a una velocidad de impacto igual o superior a
-// TRIGGER_SPEED (12 m/s: ~1 s de WASD en flotación, cualquier dash o patada
-// lo supera), en lugar del rebote estándar amortiguado
-// Nyx orienta los pies hacia la normal de la pared, absorbe el impacto en una
-// sentadilla redirigiendo su energía cinética y sale disparada en la
-// dirección opuesta conservando TODO el impulso acumulado.
+// Mecánica intrínseca de NYX (NO es una habilidad activa), 100% OPTATIVA:
+// cuando el visor apunta a una pared (cualquier superficie NO pisable: canto
+// de la tapa, raíz iceberg, lateral de un suelo) a velocidad >= TRIGGER_SPEED
+// (12 m/s: ~1 s de WASD en flotación) y con margen de aproximación
+// suficiente, la estrella del visor se pone AZUL CLARITO (disponible). El
+// jugador la ADJUDICA con el Clic Derecho (el del dash): la estrella pasa a
+// AZUL BRILLANTE, Nyx se orienta, curva su vector hacia el punto de impacto
+// óptimo (perpendicular a la pared = animación limpia y rebote máximo) y al
+// contacto absorbe en sentadilla y sale disparada en la dirección reflejada
+// conservando TODO el impulso. Sin velocidad mínima el Clic Derecho hace el
+// dash normal: el botón nunca se siente muerto.
 //
 // Lore mecánico: Nyx altera de forma natural la gravedad local junto con su
 // propia composición de cosmos, absorbiendo el impacto sin daño físico ni
@@ -33,18 +36,22 @@ import * as THREE from 'three';
 //
 // Máquina de estados (fases en orden, ver `KineticBouncePhase`):
 //
-//   idle ──(predicción de impacto)──► prepare ──(contacto real)──► squat
-//          ──(fin de la compresión)──► launch ──(fin del impulso)──► idle
+//   idle ──(Clic Derecho con pared en la mira)──► committed ──(contacto
+//          real)──► squat ──(fin de la compresión)──► launch ──(fin del
+//          impulso)──► idle
 //
-//   idle     Estado de reposo lógico. Sin efecto visual.
+//   idle     Estado de reposo lógico. Sin efecto visual. El controlador
+//            refresca cada frame `aimReady` (pared en la mira, velocidad y
+//            margen suficientes) para pintar la estrella azul clarito.
 //
-//   prepare  PREPARACIÓN (duración variable, típicamente ~0.16 s, tope
-//            PREPARE_TIMEOUT = 0.30 s). Un raycast de anticipación detecta
-//            la pared a (radio + velocidad × PREDICT_TIME) metros. La física
-//            NO cambia: Nyx sigue volando con su vector intacto mientras el
-//            cuerpo gira los pies hacia la normal prevista (lerp exponencial
-//            a ORIENT_RATE). Si el contacto no llega a tiempo (o resulta ser
-//            una cara pisable), la preparación se cancela sin efecto.
+//   committed ADJUDICACIÓN (duración variable, tope COMMIT_TIMEOUT = 2.6 s).
+//            El jugador ha pedido el rebote: la estrella brilla en azul y
+//            Nyx curva su vector hacia el punto de impacto óptimo
+//            (HOMING_TURN_RATE; a HOMING_FINAL_DIST metros gira a la
+//            entrada perpendicular −normal) mientras el cuerpo orienta los
+//            pies hacia la normal (lerp exponencial a ORIENT_RATE). Si el
+//            contacto no llega a tiempo (o resulta ser una cara pisable), la
+//            adjudicación se cancela sin efecto.
 //            ANIMACIÓN: reorientación del rig, sin clip dedicado.
 //
 //   squat    COMPRESIÓN DE SENTADILLA (SQUAT_DURATION = 0.16 s ≈ 9.6 frames
@@ -62,7 +69,7 @@ import * as THREE from 'three';
 //            `nyxBakedClips.ts`, horneado de nyx_kinetic_squat.glb, DEBE
 //            coincidir con SQUAT_DURATION + LAUNCH_DURATION).
 //
-// Orientación del modelo durante prepare/squat/launch:
+// Orientación del modelo durante committed/squat/launch:
 //   - Eje +Y del rig (cabeza) = normal de la pared (`wallNormal`).
 //   - Pies (-Y) hacia la superficie de contacto.
 //   - Eje +Z (frente) = tangente: la proyección del rumbo de vuelo al plano
@@ -90,33 +97,31 @@ import * as THREE from 'three';
 // ============================================================================
 
 /**
- * Umbral de activación: velocidad de impacto (m/s) mínima para que la pared
- * "muerda" la sentadilla. Anclado originalmente al umbral del taladro
- * espiral (18 m/s); rebajado a 12 m/s para que sea alcanzable con ~1 s de
- * empuje WASD en flotación, sin llegar a dispararse al correr o derrapar
- * en suelo (7.4 / 10 m/s).
+ * Umbral de activación: velocidad (m/s) mínima para que la opción de rebote
+ * aparezca en la mira. 12 m/s = ~1 s de empuje WASD en flotación, sin
+ * llegar a ofrecerse al correr o derrapar en suelo (7.4 / 10 m/s).
  */
 export const KINETIC_BOUNCE = {
-  /** m/s de impacto total que activan la sentadilla. */
+  /** m/s mínimos para que la estrella ofrezca el rebote. */
   TRIGGER_SPEED: 12.0,
+  /** m máximos de la mira a la pared para ofrecer el rebote. */
+  AIM_RANGE: 42.0,
   /**
-   * m/s mínimos de componente normal: un roce tangencial no la activa.
-   * 2.0 = hasta ~80° de inclinación a 12 m/s (antes 4.0, ~70°): los impactos
-   * en diagonal contra la raíz iceberg disparan sentadilla en vez de
-   * desviarse como roce de canto.
+   * s mínimos de aproximación (distancia / velocidad): si la pared está tan
+   * cerca que no da tiempo a orientarse y curvar el vector, la opción no
+   * se ofrece (la estrella no se pone azul).
    */
-  MIN_NORMAL_IMPACT: 2.0,
-  /** s de anticipación del raycast: mira `velocidad × PREDICT_TIME` metros. */
-  PREDICT_TIME: 0.16,
-  /** s máximos de preparación sin contacto antes de cancelar. */
-  PREPARE_TIMEOUT: 0.30,
+  MIN_APPROACH_TIME: 0.22,
+  /** s máximos de adjudicación sin contacto antes de cancelar. */
+  COMMIT_TIMEOUT: 2.6,
+  /** rad/s de curvado del vector hacia el punto de impacto óptimo. */
+  HOMING_TURN_RATE: 10.0,
   /**
-   * Impacto frontal previsto: la normal se opone al vuelo (|dot| mínimo).
-   * 0.35 = la preparación orienta los pies también en impactos en diagonal
-   * (hasta ~69° de la normal); el disparo real lo miden TRIGGER_SPEED y
-   * MIN_NORMAL_IMPACT en el contacto.
+   * m al punto de impacto a partir de los que el vector gira de "hacia el
+   * punto" a "perpendicular a la pared" (−normal): entrada frontal = rebote
+   * máximo y animación más limpia.
    */
-  HEAD_ON_DOT: 0.35,
+  HOMING_FINAL_DIST: 4.0,
   /** s de compresión de la sentadilla (fase squat). */
   SQUAT_DURATION: 0.16,
   /** s de impulso de salida (fase launch). */
@@ -132,7 +137,10 @@ export const KINETIC_BOUNCE = {
 } as const;
 
 /** Fases de la Sentadilla Cinética (ver contrato de animación arriba). */
-export type KineticBouncePhase = 'idle' | 'prepare' | 'squat' | 'launch';
+export type KineticBouncePhase = 'idle' | 'committed' | 'squat' | 'launch';
+
+/** Estado de la estrella del visor para el HUD. */
+export type KineticBounceUiState = 'none' | 'available' | 'committed';
 
 /**
  * Estado de la Sentadilla Cinética. El controlador lo alimenta con las
@@ -141,10 +149,19 @@ export type KineticBouncePhase = 'idle' | 'prepare' | 'squat' | 'launch';
  */
 export class KineticBounceState {
   phase: KineticBouncePhase = 'idle';
-  /** Segundos llevados en la fase actual (prepare/squat/launch). */
+  /** Segundos llevados en la fase actual (committed/squat/launch). */
   timer = 0;
 
-  /** Normal de la pared: la prevista en prepare, la real en squat/launch. */
+  /**
+   * ¿Hay pared valida en la mira este frame? Lo refresca el controlador
+   * cada frame en idle: pinta la estrella azul clarito y arma el commit
+   * del Clic Derecho.
+   */
+  aimReady = false;
+
+  /** Punto de impacto previsto/adjudicado (mundo). */
+  readonly targetPoint = new THREE.Vector3();
+  /** Normal de la pared: la prevista en committed, la real en squat/launch. */
   readonly wallNormal = new THREE.Vector3();
   /** Vector unitario de entrada (hacia la pared) en el contacto. */
   readonly entryDir = new THREE.Vector3(0, 0, -1);
@@ -162,12 +179,16 @@ export class KineticBounceState {
     this.exitSpeed = 0;
   }
 
-  /** Fase de preparación: guarda la normal prevista y el vector de vuelo. */
-  beginPrepare(normal: THREE.Vector3, dir: THREE.Vector3, speed: number): void {
-    this.phase = 'prepare';
+  /**
+   * Adjudicación del rebote (Clic Derecho con pared en la mira): fija el
+   * punto de impacto óptimo y la normal prevista; el controlador curva el
+   * vector hacia ellos.
+   */
+  beginCommit(point: THREE.Vector3, normal: THREE.Vector3, speed: number): void {
+    this.phase = 'committed';
     this.timer = 0;
+    this.targetPoint.copy(point);
     this.wallNormal.copy(normal);
-    this.entryDir.copy(dir);
     this.entrySpeed = speed;
   }
 
