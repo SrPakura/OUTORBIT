@@ -178,24 +178,25 @@ export const VISOR_CIRCLE_RADIUS_PX = RETICLE_SIZE_PX * (216 / 512); // ≈ 50.6
 /** Tamaño FIJO del aro en pantalla (diámetro base, sin picos), esté donde esté el enemigo. */
 export const DARK_RING_FIXED_DIAMETER_PX = 60;
 /**
- * Tamaño proporcional por debajo del cual el aro se OCULTA: la visibilidad
- * sigue la regla proporcional (55 px a 22 m → 70 px a 60 m), pero el dibujo
- * no encoge — al acercarse, cuando el tamaño proporcional "debería" bajar de
- * este valor, el aro desaparece con fundido.
+ * Regla de visibilidad por tamaño proporcional: el juego calcula el diámetro
+ * que el aro "debería" tener según la distancia (55 px a 22 m, 70 px a 60 m,
+ * con la pendiente extendiéndose sin saturar más allá). El aro solo se
+ * dibuja mientras ese tamaño queda DENTRO de la banda
+ * (HIDE_BELOW, HIDE_ABOVE); al dibujar se usa el tamaño fijo.
  */
 export const DARK_RING_HIDE_BELOW_SIZE_PX = 60;
-/** Tamaño proporcional en el umbral cercano (22 m) — solo para la regla de visibilidad. */
+/** Tamaño proporcional a partir del cual el aro se OCULTA (enemigo demasiado lejos). */
+export const DARK_RING_HIDE_ABOVE_SIZE_PX = 80;
+/** Tamaño proporcional a 22 m (umbral cercano) — pendiente de visibilidad. */
 export const DARK_RING_MIN_DIAMETER_PX = 55;
-/** Tamaño proporcional saturado (a partir de 60 m) — solo para la regla de visibilidad. */
+/** Tamaño proporcional a 60 m — pendiente de visibilidad (se extiende sin saturar). */
 export const DARK_RING_MAX_DIAMETER_PX = 70;
 /** Tope ABSOLUTO de radio con los picos más largos (82 px de diámetro total). */
 export const DARK_RING_MAX_SPIKE_RADIUS_PX = 41;
 /** Distancia (m) del tamaño proporcional mínimo (umbral cercano). */
 export const DARK_RING_NEAR_DIST_M = 22;
-/** Distancia (m) a partir de la cual el tamaño proporcional satura. */
+/** Distancia (m) del segundo punto de la pendiente proporcional. */
 export const DARK_RING_FAR_DIST_M = 60;
-/** Distancia (m) MÁS ALLÁ de la cual el aro se OCULTA (enemigo fuera de banda). */
-export const DARK_RING_FAR_HIDE_DIST_M = 80;
 
 export const DOME_ARENA_RADIUS = 90;
 export const DOME_PLAYER_BOUND_RADIUS = 88.6;

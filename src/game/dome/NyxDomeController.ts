@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import {
   DARK_RING_FAR_DIST_M,
-  DARK_RING_FAR_HIDE_DIST_M,
   DARK_RING_FIXED_DIAMETER_PX,
+  DARK_RING_HIDE_ABOVE_SIZE_PX,
   DARK_RING_HIDE_BELOW_SIZE_PX,
   DARK_RING_MAX_DIAMETER_PX,
   DARK_RING_MIN_DIAMETER_PX,
@@ -403,9 +403,9 @@ export class NyxDomeController {
   );
 
   // --- Aro de Materia Oscura: marcador pasivo de enemigos lejanos. El
-  // tamaño en pantalla es FIJO (65 px de diámetro); la visibilidad sigue
-  // la regla proporcional y el aro desaparece cuando su tamaño "debería"
-  // bajar del umbral de ocultación (el lock-in manda cerca).
+  // tamaño en pantalla es FIJO (60 px de diámetro); la visibilidad la decide
+  // el tamaño proporcional (banda 60..80 px): fuera de ella, oculto (el
+  // lock-in manda cerca y el enemigo lejísimo no aporta).
   private readonly darkRings: DomeDarkRing[] = [];
   private readonly darkRingPool: DomeDarkRing[] = Array.from(
     { length: 16 },
@@ -1389,14 +1389,16 @@ export class NyxDomeController {
 
   /**
    * Aro de Materia Oscura (pasivo, sin Tab): proyecta cada enemigo vivo a
-   * pantalla y le asigna un aro de tamaño FIJO (65 px de diámetro). La
-   * visibilidad sigue la regla proporcional (55 px a 22 m → 70 px a 60 m):
-   * cuando al acercarse el tamaño proporcional "debería" bajar de 60 px, el
-   * aro desaparece con fundido en vez de encoger. `t` (0..1) conserva la
-   * posición proporcional para que la intensidad de las espinas siga
-   * escalando con la distancia en el overlay. Sin raycast de oclusión: es
-   * un "sentido" de materia oscura y atraviesa suelos, lo que lo hace útil
-   * justo cuando el enemigo no se ve.
+   * pantalla y le asigna un aro de tamaño FIJO (60 px de diámetro). La
+   * visibilidad la decide el tamaño PROPORCIONAL que el aro "debería" tener
+   * según la distancia (55 px a 22 m, 70 px a 60 m, pendiente extendida sin
+   * saturar): solo se dibuja mientras ese cálculo queda dentro de la banda
+   * (60 px, 80 px) — al acercarse desaparece cuando "debería" bajar de 60,
+   * y al alejarse cuando "debería" superar 80. `t` (0..1, saturado a 60 m)
+   * conserva la posición proporcional para que la intensidad de las espinas
+   * siga escalando con la distancia en el overlay. Sin raycast de oclusión:
+   * es un "sentido" de materia oscura y atraviesa suelos, lo que lo hace
+   * útil justo cuando el enemigo no se ve.
    */
   private updateDarkMatterRings(
     camera: THREE.PerspectiveCamera,
@@ -1409,30 +1411,25 @@ export class NyxDomeController {
     const height = this.viewportH;
     const range = DARK_RING_FAR_DIST_M - DARK_RING_NEAR_DIST_M;
     const sizeRange = DARK_RING_MAX_DIAMETER_PX - DARK_RING_MIN_DIAMETER_PX;
-    // Distancia a la que el tamaño proporcional "debe ser" el umbral de
-    // ocultación: por debajo, el aro desaparece.
-    const hideDist =
+    // Distancias a las que el tamaño proporcional "debe ser" cada umbral de
+    // la banda de visibilidad (la pendiente se extiende sin saturar).
+    const hideNearDist =
       DARK_RING_NEAR_DIST_M +
       (range * (DARK_RING_HIDE_BELOW_SIZE_PX - DARK_RING_MIN_DIAMETER_PX)) / sizeRange;
+    const hideFarDist =
+      DARK_RING_NEAR_DIST_M +
+      (range * (DARK_RING_HIDE_ABOVE_SIZE_PX - DARK_RING_MIN_DIAMETER_PX)) / sizeRange;
 
     for (const enemy of enemies) {
       if (!this.projectToScreen(enemy.position, camera, width, height)) continue;
       const dist = camera.position.distanceTo(enemy.position);
-      // Banda de visibilidad: se oculta al acercarse (cuando el tamaño
-      // proporcional "debería" bajar del umbral cercano) y también MÁS ALLÁ
-      // de DARK_RING_FAR_HIDE_DIST_M (enemigo fuera de banda).
-      if (dist <= hideDist || dist >= DARK_RING_FAR_HIDE_DIST_M) continue;
+      // Banda de visibilidad por tamaño proporcional: fuera de ella, oculto.
+      if (dist <= hideNearDist || dist >= hideFarDist) continue;
 
-      // Escalado proporcional (solo visibilidad): t = 0 en el umbral cercano,
-      // t = 1 a partir de DARK_RING_FAR_DIST_M.
+      // t saturado a 60 m: solo alimenta la intensidad de las espinas.
       const t = Math.min(1, (dist - DARK_RING_NEAR_DIST_M) / range);
-      // Fundido de entrada en los primeros 2.5 m sobre el punto de ocultación
-      // y de salida en los últimos 2.5 m antes del límite lejano.
-      const alpha = Math.min(
-        (dist - hideDist) / 2.5,
-        (DARK_RING_FAR_HIDE_DIST_M - dist) / 2.5,
-        1,
-      );
+      // Fundidos de 2.5 m en ambos bordes de la banda.
+      const alpha = Math.min((dist - hideNearDist) / 2.5, (hideFarDist - dist) / 2.5, 1);
 
       const index = this.darkRings.length;
       let ring = this.darkRingPool[index];
