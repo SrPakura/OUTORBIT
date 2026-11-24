@@ -99,14 +99,24 @@ import * as THREE from 'three';
 export const KINETIC_BOUNCE = {
   /** m/s de impacto total que activan la sentadilla. */
   TRIGGER_SPEED: 12.0,
-  /** m/s mínimos de componente normal: un roce tangencial no la activa. */
-  MIN_NORMAL_IMPACT: 4.0,
+  /**
+   * m/s mínimos de componente normal: un roce tangencial no la activa.
+   * 2.0 = hasta ~80° de inclinación a 12 m/s (antes 4.0, ~70°): los impactos
+   * en diagonal contra la raíz iceberg disparan sentadilla en vez de
+   * desviarse como roce de canto.
+   */
+  MIN_NORMAL_IMPACT: 2.0,
   /** s de anticipación del raycast: mira `velocidad × PREDICT_TIME` metros. */
   PREDICT_TIME: 0.16,
   /** s máximos de preparación sin contacto antes de cancelar. */
   PREPARE_TIMEOUT: 0.30,
-  /** Impacto frontal previsto: la normal se opone al vuelo (|dot| mínimo). */
-  HEAD_ON_DOT: 0.55,
+  /**
+   * Impacto frontal previsto: la normal se opone al vuelo (|dot| mínimo).
+   * 0.35 = la preparación orienta los pies también en impactos en diagonal
+   * (hasta ~69° de la normal); el disparo real lo miden TRIGGER_SPEED y
+   * MIN_NORMAL_IMPACT en el contacto.
+   */
+  HEAD_ON_DOT: 0.35,
   /** s de compresión de la sentadilla (fase squat). */
   SQUAT_DURATION: 0.16,
   /** s de impulso de salida (fase launch). */
