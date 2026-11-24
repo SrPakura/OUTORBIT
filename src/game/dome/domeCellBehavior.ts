@@ -2,9 +2,11 @@
 // DOME CELL BEHAVIOR — IA de la Célula Abisal (modo Cúpula)
 // ============================================================================
 // Depredadora de oportunidad: nunca planta cara. Repta a 20 m/s buscando
-// oclusión real (slabs y enemigos grandes), orbita a Nyx en un anillo que se
-// cierra de 7 a 5 m y solo salta —lunge de 6 m a 30 m/s, trayectoria FIJADA
-// al iniciar el windup, sin corrección en vuelo— en el "momento
+// oclusión real (slabs y enemigos grandes) y orbita la RETAGUARDIA de Nyx en
+// un anillo que se cierra de 7 a 5 m poco a poco (~10 s; rastrera) — y a
+// toda velocidad mientras Nyx está quieta (la emboscada se compromete).
+// Solo salta —lunge de 6 m a 30 m/s, trayectoria FIJADA al iniciar el
+// windup, sin corrección en vuelo— en el "momento
 // matemáticamente perfecto": Nyx quieta (>0.6 s), lockeada/peleando con otro
 // enemigo, o en pleno dash (donde el lunge cae en falso y la delata: el dash
 // es cebo deliberado). Si la miran de frente o la persiguen, huye tras
@@ -45,10 +47,14 @@ const CELL_RECOVER_SEC = 0.8;
 export const CELL_RING_START = 7.0;
 /** Radio mínimo del anillo: "se van acercando" (m). */
 const CELL_RING_MIN = 5.0;
-/** Cierre del anillo cuando Nyx no puede verla (m/s). */
-const CELL_RING_TIGHTEN = 0.45;
-/** Reapertura del anillo cuando la mira de frente (m/s). */
+/** Cierre del anillo cuando Nyx no puede verla (m/s): 7→5 en ~10 s. */
+const CELL_RING_TIGHTEN = 0.2;
+/** Cierre acelerado mientras Nyx está QUIETA: la emboscada se compromete. */
+const CELL_RING_TIGHTEN_STILL = 0.6;
+/** Retroceso del anillo cuando la mira (m/s): la cobarde toma distancia. */
 const CELL_RING_WIDEN = 1.4;
+/** Radio al que retrocede el anillo mientras la mira (m). */
+const CELL_RING_SEEN = 12.0;
 /** Anillo de aproximación inicial tras spawn/lejos (m). */
 const CELL_SEEK_RING = 11.0;
 /** Distancia a la que la aproximación pasa a acecho (m). */
@@ -57,8 +63,8 @@ const CELL_SEEK_TO_STALK_DIST = 14.0;
 const CELL_SEEN_DOT = 0.45;
 /** Nyx la ve: distancia máx. de visión efectiva (m). */
 const CELL_SEEN_MAX_DIST = 42.0;
-/** Huye si Nyx la mira de frente más cerca de esto (m). */
-const CELL_FLEE_TRIGGER_DIST = 9.0;
+/** Huye si Nyx la mira de frente más cerca de esto (m): susto a bocajarro. */
+const CELL_FLEE_TRIGGER_DIST = 6.5;
 /** Deja de huir al superar esta distancia de Nyx (m). */
 const CELL_FLEE_SAFE_DIST = 16.0;
 /** Daño del lunge al contacto (HP). */
@@ -109,8 +115,14 @@ const CELL_ARENA_KEEP_RADIUS = 70.0;
 const CELL_ARENA_KEEP_PULL = 9.0;
 /** Velocidad de deriva del ángulo de órbita (rad/s). */
 const CELL_ORBIT_DRIFT = 0.16;
+/** Separación angular entre slots del abanico trasero (rad). */
+const CELL_ORBIT_SPREAD = 0.7;
 /** Distancia de frenado al llegar al slot de órbita (m). */
 const CELL_ORBIT_ARRIVE_DIST = 4.0;
+/** Escondite solitario: distancia mínima del punto de cobertura a Nyx (m). */
+const CELL_HIDE_MIN_PLAYER_DIST = 10.0;
+/** Margen del punto de cobertura tras el slab/enemigo (m). */
+const CELL_COVER_MARGIN = 2.0;
 
 // ============================================================================
 // Tipos
@@ -315,6 +327,8 @@ function isCellOccluded(
 const _toPlayer = new THREE.Vector3();
 const _fleeDir = new THREE.Vector3();
 const _coverDir = new THREE.Vector3();
+const _hideDir = new THREE.Vector3();
+const _behindDir = new THREE.Vector3();
 const _steer = new THREE.Vector3();
 const _sep = new THREE.Vector3();
 const _orbitTarget = new THREE.Vector3();
@@ -369,6 +383,69 @@ function hasPackNearby(
     }
   }
   return false;
+}
+
+/**
+ * Punto de escondite para la célula solitaria: la cara oculta del slab o
+ * enemigo grande más cercano respecto de Nyx (a >= CELL_HIDE_MIN_PLAYER_DIST
+ * de ella). Escribe el punto en `out` y devuelve true si hay candidato.
+ */
+function findCoverPoint(
+  playerPos: THREE.Vector3,
+  cellPos: THREE.Vector3,
+  activeSlabs: SlabCollider[] | undefined,
+  enemies: readonly ManagedWaveEnemy[],
+  selfId: string,
+  out: THREE.Vector3,
+): boolean {
+  let bestDist = Infinity;
+
+  if (activeSlabs && activeSlabs.length > 0) {
+    for (const slab of activeSlabs) {
+      _hideDir.subVectors(slab.center, playerPos);
+      const d = _hideDir.length();
+      if (d < 1e-4) {
+        continue;
+      }
+      _hideDir
+        .divideScalar(d)
+        .multiplyScalar(slab.halfExtents.length() + CELL_COVER_MARGIN)
+        .add(slab.center);
+      if (_hideDir.distanceTo(playerPos) < CELL_HIDE_MIN_PLAYER_DIST) {
+        continue;
+      }
+      const coverDist = _hideDir.distanceTo(cellPos);
+      if (coverDist < bestDist) {
+        bestDist = coverDist;
+        out.copy(_hideDir);
+      }
+    }
+  }
+
+  for (const other of enemies) {
+    if (!other.entity.alive || other.id === selfId || other.radius < CELL_COVER_MIN_RADIUS) {
+      continue;
+    }
+    _hideDir.subVectors(other.position, playerPos);
+    const d = _hideDir.length();
+    if (d < 1e-4) {
+      continue;
+    }
+    _hideDir
+      .divideScalar(d)
+      .multiplyScalar(other.radius + CELL_COVER_MARGIN)
+      .add(other.position);
+    if (_hideDir.distanceTo(playerPos) < CELL_HIDE_MIN_PLAYER_DIST) {
+      continue;
+    }
+    const coverDist = _hideDir.distanceTo(cellPos);
+    if (coverDist < bestDist) {
+      bestDist = coverDist;
+      out.copy(_hideDir);
+    }
+  }
+
+  return bestDist < Infinity;
 }
 
 /**
@@ -615,31 +692,58 @@ export function updateCellEnemy(
         return;
       }
 
-      // --- Aproximación: anillo ancho hasta entrar en zona de acecho ---
-      if (internal.cellState === 'seek') {
-        internal.cellRing = CELL_SEEK_RING;
-        if (distToPlayer < CELL_SEEK_TO_STALK_DIST) {
-          internal.cellState = 'stalk';
-          internal.cellRing = CELL_RING_START;
-        }
-      } else {
-        // Anillo de acecho: se cierra si Nyx no puede verla (ocluida o a la
-        // retaguardia), se reabre si la mira de frente.
-        if (occluded || facingDot < -0.1) {
-          internal.cellRing = Math.max(CELL_RING_MIN, internal.cellRing - CELL_RING_TIGHTEN * dt);
-        } else if (seen) {
-          internal.cellRing = Math.min(CELL_RING_START, internal.cellRing + CELL_RING_WIDEN * dt);
-        }
-      }
+      // --- Solitaria sin combate ajeno: a esconderse e incubar compañía ---
+      // Solo orbita a Nyx en pandilla, o de oportunista si ella pelea con
+      // otro enemigo. Si está sola y Nyx está libre, busca cobertura.
+      const playerEngaged = focus.lockedId !== null && focus.lockedId !== enemy.id;
+      const hiding =
+        director.cellCount <= 1 &&
+        !playerEngaged &&
+        findCoverPoint(playerPos, enemy.position, activeSlabs, ctx.enemies, enemy.id, _orbitTarget);
 
-      // --- Slot de órbita del enjambre: rodear, no apelotonarse ---
-      const slotAngle =
-        (internal.cellSlot / Math.max(1, director.cellCount)) * Math.PI * 2 +
-        elapsed * CELL_ORBIT_DRIFT * internal.cellOrbitSign;
-      _orbitTarget
-        .set(Math.cos(slotAngle), 0, Math.sin(slotAngle))
-        .multiplyScalar(internal.cellRing)
-        .add(playerPos);
+      if (!hiding) {
+        // --- Aproximación: anillo ancho hasta entrar en zona de acecho ---
+        if (internal.cellState === 'seek') {
+          internal.cellRing = CELL_SEEK_RING;
+          if (distToPlayer < CELL_SEEK_TO_STALK_DIST) {
+            internal.cellState = 'stalk';
+            internal.cellRing = CELL_RING_START;
+          }
+        } else {
+          // Anillo de acecho: se cierra poco a poco si Nyx no puede verla
+          // (ocluida o a la retaguardia) — y mucho más rápido mientras Nyx
+          // está QUIETA: la emboscada se compromete. Si la mira, la cobarde
+          // retrocede hasta CELL_RING_SEEN (puede rodear por fuera sin
+          // cruzar el frente a distancia de susto).
+          if (occluded || facingDot < -0.1) {
+            const rate = director.isPlayerStill()
+              ? CELL_RING_TIGHTEN_STILL
+              : CELL_RING_TIGHTEN;
+            internal.cellRing = Math.max(CELL_RING_MIN, internal.cellRing - rate * dt);
+          } else if (seen) {
+            internal.cellRing = Math.min(CELL_RING_SEEN, internal.cellRing + CELL_RING_WIDEN * dt);
+          }
+        }
+
+        // --- Slot de órbita del enjambre: RETAGUARDIA de Nyx, no de frente.
+        // Base del ángulo = opuesta al aimForward; los slots reparten un
+        // abanico trasero. Si Nyx gira la cámara, el enjambre se recoloca.
+        _behindDir.set(-focus.aimForward.x, 0, -focus.aimForward.z);
+        if (_behindDir.lengthSq() < 1e-4) {
+          _behindDir.set(0, 0, 1);
+        } else {
+          _behindDir.normalize();
+        }
+        const behindAngle = Math.atan2(_behindDir.z, _behindDir.x);
+        const spread =
+          (internal.cellSlot - (director.cellCount - 1) * 0.5) * CELL_ORBIT_SPREAD;
+        const slotAngle =
+          behindAngle + spread + elapsed * CELL_ORBIT_DRIFT * internal.cellOrbitSign;
+        _orbitTarget
+          .set(Math.cos(slotAngle), 0, Math.sin(slotAngle))
+          .multiplyScalar(internal.cellRing)
+          .add(playerPos);
+      }
 
       _steer.subVectors(_orbitTarget, enemy.position);
       const targetDist = _steer.length();
