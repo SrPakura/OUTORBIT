@@ -7,7 +7,7 @@ import type { NyxDomeController } from '@/game/dome/NyxDomeController';
 // ============================================================================
 // Dibuja en un canvas 2D propio (con bucle rAF independiente) los aros que
 // NyxDomeController proyecta cada frame para los enemigos LEJOS: un aro
-// inestable de tinta blanca de tamaño ACOTADO (diámetro base 100..150 px
+// inestable de tinta blanca de tamaño ACOTADO (diámetro base 64..96 px
 // según la distancia, clamp estricto también en los picos) que desaparece
 // al acercarse por debajo del umbral de distancia. Al vivir fuera de
 // React (sin estado, sin re-render), el coste por frame es solo el trazado
@@ -172,7 +172,7 @@ function DomeDarkMatterRings({ controllerRef }: DomeDarkMatterRingsProps) {
       for (let i = 0; i < count; i++) {
         const ring = rings![i];
         if (ring.alpha <= 0.01) continue;
-        const strokeScale = Math.max(0.9, Math.min(1.2, ring.radius / REF_RADIUS));
+        const strokeScale = Math.max(0.8, Math.min(1.2, ring.radius / REF_RADIUS));
         // Intensidad de las espinas proporcional a la distancia DENTRO del
         // rango acotado: t=0 (cerca) espinas contenidas, t=1 (lejos) máxima
         // agresividad — sin romper el tope absoluto del clamp.
