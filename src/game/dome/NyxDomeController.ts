@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   DARK_RING_APPEAR_RADIUS_PX,
+  DARK_RING_NEAR_CUTOFF_M,
   DARK_RING_PADDING_PX,
   DOME_PLAYER_BOUND_RADIUS,
   RETICLE_BREAK_RADIUS_PX,
@@ -1391,8 +1392,10 @@ export class NyxDomeController {
    * pasiva (opacidad fluyendo al 30-40% en el overlay) solo mientras ese
    * radio no supere DARK_RING_APPEAR_RADIUS_PX: más cerca el enemigo se ve
    * por sí solo y manda el lock-in. Con el radar de Tab activo el umbral se
-   * ignora y todos los aros salen a opacidad total del tirón. Sin raycast de
-   * oclusión: es un "sentido" de materia oscura y atraviesa suelos.
+   * ignora y todos los aros salen a opacidad total del tirón. Por debajo de
+   * DARK_RING_NEAR_CUTOFF_M (desde Nyx) el aro desaparece SIEMPRE, incluso
+   * con Tab. Sin raycast de oclusión: es un "sentido" de materia oscura y
+   * atraviesa suelos.
    */
   private updateDarkMatterRings(
     camera: THREE.PerspectiveCamera,
@@ -1406,6 +1409,13 @@ export class NyxDomeController {
     const radar = this.radarEnabled;
 
     for (const enemy of enemies) {
+      // Corte cercano: por debajo de DARK_RING_NEAR_CUTOFF_M el aro no sale
+      // NUNCA, ni en pasivo ni con el radar de Tab. A esa distancia el
+      // enemigo se ve por sí solo y un aro abrazando su hitbox a bocajarro
+      // es puro ruido visual.
+      const playerDist = this.nyxRoot.position.distanceTo(enemy.position);
+      if (playerDist <= DARK_RING_NEAR_CUTOFF_M) continue;
+
       if (!this.projectToScreen(enemy.position, camera, width, height)) continue;
       const cx = this.screenPos.x;
       const cy = this.screenPos.y;
@@ -1433,9 +1443,11 @@ export class NyxDomeController {
       ring.y = cy;
       ring.radius = ringRadius;
       // Fundido en la banda de 12 px antes del umbral; con Tab, opacidad total.
-      ring.alpha = radar
-        ? 1
-        : Math.min(1, (DARK_RING_APPEAR_RADIUS_PX - ringRadius) / 12);
+      // Además, fundido de 1.5 m al cruzar el corte cercano para evitar pop.
+      const nearFade = Math.min(1, (playerDist - DARK_RING_NEAR_CUTOFF_M) / 1.5);
+      ring.alpha =
+        (radar ? 1 : Math.min(1, (DARK_RING_APPEAR_RADIUS_PX - ringRadius) / 12)) *
+        nearFade;
       ring.pulse = !radar;
       // t: 1 = enemigo pequeño en pantalla (lejos), 0 = al borde del umbral.
       ring.t = Math.min(1, Math.max(0, 1 - ringRadius / DARK_RING_APPEAR_RADIUS_PX));

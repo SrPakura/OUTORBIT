@@ -163,6 +163,12 @@ export interface DomeDarkRing {
 /** Padding del aro alrededor de la hitbox proyectada, por lado (px). */
 export const DARK_RING_PADDING_PX = 5;
 /**
+ * Corte cercano (m de Nyx al enemigo): por debajo el aro desaparece SIEMPRE,
+ * incluso con el radar de Tab — a esa distancia el enemigo se ve por sí solo
+ * y un aro abrazando su hitbox a bocajarro es puro ruido visual.
+ */
+export const DARK_RING_NEAR_CUTOFF_M = 20;
+/**
  * Umbral de aparición pasiva (px de radio): el aro solo se dibuja mientras
  * su radio no supere este valor — más cerca, el enemigo se ve por sí solo y
  * manda el lock-in del visor. 109 px = Gólem (hitbox de 3.2 m) proyectado a
