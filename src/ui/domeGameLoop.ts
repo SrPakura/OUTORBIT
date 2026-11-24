@@ -170,7 +170,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
 
   const applyFloorMode = (mode: WaveFloorMode) => {
     if (mode === 'basic') {
-      floatingSlabs.setTargetCount(5 + Math.floor(Math.random() * 6));
+      // Suelos básicos reducidos un 30%: antes 5..10, ahora 4..7.
+      floatingSlabs.setTargetCount(4 + Math.floor(Math.random() * 4));
       sphereTiles.setMode('none');
     } else if (mode === 'miniboss') {
       floatingSlabs.setTargetCount(0);

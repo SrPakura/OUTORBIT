@@ -12,7 +12,7 @@ import { mulberry32 } from './meshFactory';
 //      carácter: Pilar del Mundo con anillos de energía fluida, Singularidad
 //      cenital y dos agujeros negros de horizonte con shader de lente
 //      gravitacional + disco de acreción GLSL, 14 monolitos monumentales,
-//      8 arcos rúnicos, 36 fragmentos, 22 asteroides y 32 prismas de cristal
+//      8 arcos rúnicos, 36 fragmentos, 11 asteroides y 16 prismas de cristal
 //      galáctico, más el agujero negro abisal de niebla morada (Y = -125 m) y
 //      la bóveda espacial con shader propio.
 //
@@ -39,9 +39,9 @@ const DOME_RADIUS = 90;
 const MONOLITH_COUNT = 14;
 const ARC_COUNT = 8;
 const FRAGMENT_COUNT = 36;
-const ASTEROID_COUNT = 22;
+const ASTEROID_COUNT = 11;
 const STAR_COUNT = 260;
-const PRISM_COUNT = 32;
+const PRISM_COUNT = 16;
 
 /** Altura del vórtice abisal: el "fin del mundo" bajo la arena. */
 const ABYSS_Y = -125;
@@ -1416,7 +1416,7 @@ export function createDomeArenaBackdrop(scene: THREE.Scene): DomeArenaBackdrop {
   }
 
   // ==========================================================================
-  // 2e. 22 asteroides con carácter: grietas de maná + contorno cian sutil
+  // 2e. 11 asteroides con carácter: grietas de maná + contorno cian sutil
   // ==========================================================================
 
   const asteroidGeo = new THREE.DodecahedronGeometry(1, 0);
@@ -1587,7 +1587,7 @@ export function createDomeArenaBackdrop(scene: THREE.Scene): DomeArenaBackdrop {
   }
 
   // ==========================================================================
-  // 2g. Estrellas de 4 puntas + 32 prismas de cristal galáctico
+  // 2g. Estrellas de 4 puntas + 16 prismas de cristal galáctico
   // ==========================================================================
 
   const starGeo = new THREE.BufferGeometry();

@@ -13,11 +13,13 @@ import {
   collectKronosRig,
   collectNecrozmaRig,
   collectSparrowRig,
+  enemyInkScaleForWave,
   instantiateEnemyVisual,
   INK_DISTANCE_SCALE,
   measureStandHeight,
   onEnemyModelLoaded,
   preloadEnemyModels,
+  setEnemyInkScale,
   STAR_CORE_EMISSIVE,
   type EnemyBone,
   type GolemRig,
@@ -822,6 +824,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     activeSlabs?: SlabCollider[],
     homePosOverride?: THREE.Vector3,
   ): void {
+    // Grosor de tinta de esta oleada: 1-10 normal, 11-20 x1.25, 21-30 x1.5...
+    // (el Modo Entrenamiento no pasa por startWave: currentWave 0 cuenta como 1).
+    setEnemyInkScale(enemyInkScaleForWave(this.currentWave));
     const stats = DOME_ENEMY_ARCHETYPES[archetype];
     const visual = this.visuals[archetype];
     const glbVisual = instantiateEnemyVisual(archetype);
@@ -852,7 +857,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       fallbackMesh.name = `waveEnemy_${this.currentWave}_${archetype}_${index}`;
       const outline = addComicOutline(
         fallbackMesh,
-        visual.outlineThickness,
+        visual.outlineThickness * enemyInkScaleForWave(this.currentWave),
         0x090b14,
         INK_DISTANCE_SCALE,
       );

@@ -92,6 +92,26 @@ const DETAIL_OUTLINE_THICKNESS = 0.04;
 const OUTLINE_MARKER = '__comic_outline__';
 
 // ============================================================================
+// Grosor de tinta variable por oleada: las oleadas 1-10 usan la tinta normal
+// (la del personaje), y a partir de ahí el trazo engorda un 25% por cada
+// bloque de 10 oleadas: 11-20 -> x1.25, 21-30 -> x1.5, 31-40 -> x1.75...
+// ============================================================================
+let enemyInkScale = 1;
+
+/** Multiplicador de tinta de la oleada `wave` (clampado a >= 1). */
+export function enemyInkScaleForWave(wave: number): number {
+  return 1 + 0.25 * Math.floor((Math.max(1, wave) - 1) / 10);
+}
+
+/**
+ * Fija el multiplicador de grosor que aplican los contornos creados a partir
+ * de ahora. Lo actualiza el DomeWaveManager al desplegar cada oleada.
+ */
+export function setEnemyInkScale(scale: number): void {
+  enemyInkScale = scale;
+}
+
+// ============================================================================
 // Carne nebulosa estilo NYX: universo interior FBM + estrellas titilantes en
 // espacio de pantalla, con paleta roja/morada oscura aleatoria por instancia y
 // vibración de energía descontrolada en el vertex shader.
@@ -502,7 +522,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       });
       addComicOutline(
         mesh,
-        STAR_CORE_OUTLINE_THICKNESS,
+        STAR_CORE_OUTLINE_THICKNESS * enemyInkScale,
         STAR_CORE_INK,
         INK_DISTANCE_SCALE,
       ).name = OUTLINE_MARKER;
@@ -513,7 +533,11 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       // vibración de energía; depthWrite: true oculta el interior del BackSide blanco.
       const fleshMaterial = createEnemyNebulaMaterial(archetype, rimColor);
       mesh.material = fleshMaterial;
-      const outline = addVibratingInkOutline(mesh, FLESH_OUTLINE_THICKNESS, FLESH_INK_WHITE);
+      const outline = addVibratingInkOutline(
+        mesh,
+        FLESH_OUTLINE_THICKNESS * enemyInkScale,
+        FLESH_INK_WHITE
+      );
       outline.renderOrder = 2;
       outline.name = OUTLINE_MARKER;
       animatedMaterials.push(fleshMaterial, outline.material as THREE.ShaderMaterial);
@@ -524,7 +548,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       });
       addComicOutline(
         mesh,
-        DETAIL_OUTLINE_THICKNESS,
+        DETAIL_OUTLINE_THICKNESS * enemyInkScale,
         FLESH_INK_WHITE,
         INK_DISTANCE_SCALE,
       ).name = OUTLINE_MARKER;

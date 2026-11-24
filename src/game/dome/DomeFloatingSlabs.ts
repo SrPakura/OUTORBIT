@@ -10,7 +10,7 @@ import { createP3RTileMaterial, createTornSlabGeometry, mulberry32 } from './Dom
 // que cruza la esfera de parte a parte: nace fuera de la cúpula (R = 96..102
 // m, en una zona que la cámara no esté mirando), la atraviesa a 2.2..4.2 m/s
 // con bob y rotación suaves, y al salir (R > 93 m) se desvanece y re-entra
-// desde el borde exterior (R = 98 m). Así siempre hay entre 5 y 10 suelos
+// desde el borde exterior (R = 98 m). Así siempre hay entre 4 y 7 suelos
 // moviéndose de forma constante, sin pop-in dentro de la vista.
 // ============================================================================
 
@@ -257,7 +257,7 @@ export class DomeFloatingSlabManager {
 
   /**
    * Fija cuántos suelos del pool deben estar activos (0..10). En oleadas
-   * básicas se piden entre 5 y 10; en oleadas de Miniboss/Boss se baja a 0
+   * básicas se piden entre 4 y 7; en oleadas de Miniboss/Boss se baja a 0
    * para despedazar la arena. Las transiciones (escala + uOpacity) corren en
    * `update`.
    */
