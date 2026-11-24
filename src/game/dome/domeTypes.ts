@@ -179,7 +179,7 @@ export const VISOR_CIRCLE_RADIUS_PX = RETICLE_SIZE_PX * (216 / 512); // ≈ 50.6
 export const DARK_RING_FIXED_DIAMETER_PX = 60;
 /**
  * Regla de visibilidad por tamaño proporcional: el juego calcula el diámetro
- * que el aro "debería" tener según la distancia (55 px a 22 m, 70 px a 60 m,
+ * que el aro "debería" tener según la distancia (55 px a 22 m, 100 px a 60 m,
  * con la pendiente extendiéndose sin saturar más allá). El aro solo se
  * dibuja mientras ese tamaño queda DENTRO de la banda
  * (HIDE_BELOW, HIDE_ABOVE); al dibujar se usa el tamaño fijo.
@@ -190,7 +190,7 @@ export const DARK_RING_HIDE_ABOVE_SIZE_PX = 80;
 /** Tamaño proporcional a 22 m (umbral cercano) — pendiente de visibilidad. */
 export const DARK_RING_MIN_DIAMETER_PX = 55;
 /** Tamaño proporcional a 60 m — pendiente de visibilidad (se extiende sin saturar). */
-export const DARK_RING_MAX_DIAMETER_PX = 70;
+export const DARK_RING_MAX_DIAMETER_PX = 100;
 /** Tope ABSOLUTO de radio con los picos más largos (82 px de diámetro total). */
 export const DARK_RING_MAX_SPIKE_RADIUS_PX = 41;
 /** Distancia (m) del tamaño proporcional mínimo (umbral cercano). */

@@ -1391,7 +1391,7 @@ export class NyxDomeController {
    * Aro de Materia Oscura (pasivo, sin Tab): proyecta cada enemigo vivo a
    * pantalla y le asigna un aro de tamaño FIJO (60 px de diámetro). La
    * visibilidad la decide el tamaño PROPORCIONAL que el aro "debería" tener
-   * según la distancia (55 px a 22 m, 70 px a 60 m, pendiente extendida sin
+   * según la distancia (55 px a 22 m, 100 px a 60 m, pendiente extendida sin
    * saturar): solo se dibuja mientras ese cálculo queda dentro de la banda
    * (60 px, 80 px) — al acercarse desaparece cuando "debería" bajar de 60,
    * y al alejarse cuando "debería" superar 80. `t` (0..1, saturado a 60 m)
