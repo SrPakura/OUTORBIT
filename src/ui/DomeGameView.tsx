@@ -82,6 +82,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
     newLevel: 1,
     choices: null,
     requiresSlotReplacement: false,
+    openId: 0,
   });
   const levelUpOpenRef = useRef(false);
   levelUpOpenRef.current = levelUpState.isOpen;
@@ -134,13 +135,19 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
       if (!prog || !choices) return;
       const fullOption = choices.find((c) => c.id === option.id) ?? choices[0];
       prog.applyChoice(fullOption, replaceSlotIndex);
-      setLevelUpState({ isOpen: false, newLevel: prog.level, choices: null, requiresSlotReplacement: false });
+      setLevelUpState({
+        isOpen: false,
+        newLevel: prog.level,
+        choices: null,
+        requiresSlotReplacement: false,
+        openId: levelUpState.openId,
+      });
       const canvas = canvasRef.current;
       if (canvas && document.pointerLockElement !== canvas) {
         canvas.requestPointerLock?.();
       }
     },
-    [levelUpState.choices],
+    [levelUpState.choices, levelUpState.openId],
   );
 
   const handlePlayAgain = useCallback(() => {
@@ -293,7 +300,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         />
       )}
       <DomeLevelUpSequence
-        key={levelUpState.newLevel}
+        key={`${levelUpState.newLevel}-${levelUpState.openId}`}
         isOpen={levelUpState.isOpen}
         newLevel={levelUpState.newLevel}
         choices={levelUpState.choices}

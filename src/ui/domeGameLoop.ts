@@ -58,6 +58,14 @@ export interface DomeLevelUpUiState {
   requiresSlotReplacement: boolean;
   /** true en la elección inicial de la partida: sin animación de planeta. */
   skipPlanetAnimation?: boolean;
+  /**
+   * Identificador de apertura: se incrementa en cada apertura del modal.
+   * DomeGameView lo usa en el `key` de la secuencia para REMONTAR el
+   * componente en cada apertura: sin él, la elección inicial (newLevel 1,
+   * igual al estado por defecto) reutiliza el montaje previo con la fase
+   * `planet` ya inicializada y el planeta anima aunque llegue el flag.
+   */
+  openId: number;
 }
 
 /** Dependencias que DomeGameView inyecta al runtime del loop. */
@@ -208,6 +216,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   }
   let nextWaveDelay = 0;
 
+  // Cada apertura del modal tiene su propio id: fuerza el remount de la
+  // secuencia (fase y refs internas limpias) incluso para el mismo nivel.
+  let levelUpOpenCount = 0;
+
   const openLevelUpModal = (forLevel: number, skipPlanetAnimation = false) => {
     if (document.pointerLockElement === canvas) {
       document.exitPointerLock?.();
@@ -224,6 +236,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       choices,
       requiresSlotReplacement: allSlotsFull,
       skipPlanetAnimation,
+      openId: ++levelUpOpenCount,
     });
   };
 
