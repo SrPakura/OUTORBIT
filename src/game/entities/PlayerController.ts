@@ -40,7 +40,7 @@ const PITCH_FREE = 1.5;
 const AIM_CONE_MARGIN = 0.32; // rad de tolerancia sobre el radio angular del planeta
 const HEAD_HEIGHT = 1.5;
 
-// Game feel tipo Mario Galaxy / Minecraft: rotación del personaje hacia WASD.
+// Game feel: rotación del personaje hacia WASD.
 const CHAR_YAW_SPEED = 18; // interpolación exponencial del giro del personaje
 const RUN_LEAN_ANGLE = 0.16; // inclinación hacia adelante al correr
 const FLIP_TIME = 0.55; // voltereta 360º del doble salto / Ancla
@@ -58,7 +58,7 @@ const PARRY_COOLDOWN = 0.85;
 // Campo de Estasis (R/C captura; Clic Izquierdo dispara 1 objeto o melee)
 const STASIS_GRAB_RANGE = 9;
 
-// Lock-On (Q/Tab/V + Flechas): estilo GTA San Andreas
+// Lock-On (Q/Tab/V + Flechas): fijado de objetivo con cámara dedicada
 const LOCK_ON_RANGE = 34;
 const LOCK_ON_DROP_RANGE = 44; // margen antes de perder el objetivo fijado
 const LOCK_ON_AIM_EXP = 6.5; // interpolación exponencial estable (sin saltos por frame)
@@ -76,7 +76,7 @@ const GRAVITY_JUMP_COOLDOWN_MIN = 1.8; // salto entre planetas: 1.8s-2.8s
 const GRAVITY_JUMP_COOLDOWN_MAX = 2.8;
 const GRAVITY_JUMP_COOLDOWN_DIST0 = 30; // distancia de referencia del mapeo
 
-// Dash instantáneo estilo Jett (Clic Derecho rápido < 0.22s o Shift en aire)
+// Dash instantáneo (Clic Derecho rápido < 0.22s o Shift en aire)
 const RIGHT_CLICK_DASH_TIME = 0.22;
 // Vuelo libre / Dash gravitario 3D hacia el espacio abierto (sin planeta).
 const FREE_DASH_SPEED = 34;
@@ -149,11 +149,11 @@ interface CharacterParts {
   tail: THREE.Object3D;
   /** HITO 4: punta articulada de la cola de Kitsune (meneo de látigo). */
   tailTip: THREE.Object3D | null;
-  /** Skin P5: capa/bufanda trasera que ondea con la velocidad. */
+  /** Skin temática: capa/bufanda trasera que ondea con la velocidad. */
   cape: THREE.Object3D | null;
-  /** Skin P5: broca del taladro de Digger (gira al excavar). */
+  /** Skin temática: broca del taladro de Digger (gira al excavar). */
   drill: THREE.Object3D | null;
-  /** Skin P5: llamas cian del jetpack de Axel. */
+  /** Skin temática: llamas cian del jetpack de Axel. */
   flameL: THREE.Object3D | null;
   flameR: THREE.Object3D | null;
   /** HITO 4: aletas aero-jet del jetpack de Axel (se abren en vuelo). */
@@ -178,8 +178,8 @@ interface CharacterParts {
  *   para cambiar el vector de gravedad) y en pleno vuelo cancela/redirige el
  *   salto. Sin planeta bajo la mira: Vuelo Libre / Dash Gravitatorio 3D hacia
  *   la cámara (¡cuidado con la DERIVA ESPACIAL a >260 m de toda superficie!).
- * - Clic Derecho rápido (< 0.22s) o Shift en el aire: dash instantáneo estilo
- *   Jett hacia la dirección WASD (o cámara si quieto), con ráfaga de FOV.
+ * - Clic Derecho rápido (< 0.22s) o Shift en el aire: dash instantáneo hacia
+ *   la dirección WASD (o cámara si quieto), con ráfaga de FOV.
  * - Espacio en pleno vuelo: Ancla que frena el impulso (flotación).
  * - R/C: captura objetos cercanos al Campo de Estasis (hasta 4 en órbita).
  * - Clic Izquierdo: dispara 1 solo objeto de la Estasis hacia el objetivo
@@ -317,7 +317,7 @@ export class PlayerController {
   private dashHitTimer = 0;
   private readonly dashDir = new THREE.Vector3();
 
-  // Cámara libre + dash Jett + deriva espacial.
+  // Cámara libre + dash aéreo + deriva espacial.
   private simTime = 0;
   private rcPressTime = -1; // instante del último Clic Derecho (dash rápido)
   private nearestSurfaceDist = 0; // distancia a la superficie más cercana
@@ -356,7 +356,7 @@ export class PlayerController {
   /** Acumulador de pisadas: suena 'step' cada ~0.35s corriendo en suelo. */
   private stepAccum = 0;
 
-  // Game feel: rotación independiente del personaje + animaciones P5.
+  // Game feel: rotación independiente del personaje + animaciones de skins.
   private charYaw = 0;
   private leanAngle = 0;
   private flipTimer = 0;
@@ -633,7 +633,7 @@ export class PlayerController {
     return this.inFlight && this.flightDirected;
   }
 
-  /** Dash Jett/Gravity activo (ráfaga de FOV + líneas de velocidad). */
+  /** Dash gravitario activo (ráfaga de FOV + líneas de velocidad). */
   get isDashing(): boolean {
     return this.dashTimer > 0;
   }
@@ -781,8 +781,8 @@ export class PlayerController {
     else if (this.codeMatches('interact', code)) this.tryInteract();
     else if (this.codeMatches('parry', code)) this.tryParry();
     else if (this.codeMatches('sprint', code)) {
-      // Sprint en el aire (salto o vuelo libre): dash instantáneo estilo Jett.
-      if (this.isAirborne || (this.inFlight && !this.flightDirected)) this.jettDash();
+      // Sprint en el aire (salto o vuelo libre): dash instantáneo.
+      if (this.isAirborne || (this.inFlight && !this.flightDirected)) this.burstDash();
       else this.toggleBurrow();
     } else if (this.codeMatches('stasis', code)) this.captureStasis();
     else if (this.codeMatches('lockOn', code)) this.toggleLockOn();
@@ -817,7 +817,7 @@ export class PlayerController {
       // Clic central: Lock-On on/off.
       if (down) this.toggleLockOn();
     } else if (button === 2) {
-      // Gravity Shift (apuntado a otro planeta) / Dash Jett / vuelo libre 3D.
+      // Gravity Shift (apuntado a otro planeta) / dash aéreo / vuelo libre 3D.
       if (down) {
         if (this.isSwimming || this.coreDiveActive) return;
         // En pleno vuelo: Clic Derecho CANCELA el cruce y vuelve a apuntar
@@ -831,12 +831,12 @@ export class PlayerController {
         this.gravityShifting = false;
         const target = this.gravityTarget;
         this.gravityTarget = null;
-        // Clic rápido (< 0.22s): dash instantáneo estilo Jett (suelo o aire).
+        // Clic rápido (< 0.22s): dash instantáneo (suelo o aire).
         const quickClick =
           this.rcPressTime >= 0 && this.simTime - this.rcPressTime < RIGHT_CLICK_DASH_TIME;
         this.rcPressTime = -1;
         if (quickClick) {
-          this.jettDash();
+          this.burstDash();
         } else if (target && target !== this.currentPlanet) {
           // Tormenta Orbital: SÍ te deja saltar, pero avisa del riesgo de
           // impacto (los interceptores pueden rebotarte al planeta origen).
@@ -1247,7 +1247,7 @@ export class PlayerController {
   }
 
   /**
-   * Game feel P5/Mario Galaxy: rotación independiente del personaje hacia la
+   * Game feel de cámara arcade: rotación independiente del personaje hacia la
    * dirección WASD al correr, hacia el objetivo fijado en Lock-On y hacia la
    * cámara en reposo. Interpolación exponencial limpia (sin saltos).
    */
@@ -1288,7 +1288,7 @@ export class PlayerController {
   }
 
   /**
-   * Animaciones de la skin P5: inclinación al correr, voltereta 360º del
+   * Animaciones de la skin temática: inclinación al correr, voltereta 360º del
    * doble salto/Ancla, giro del taladro al excavar, capa que ondea con la
    * velocidad y llamas del jetpack de Axel en el aire.
    */
@@ -2143,13 +2143,13 @@ export class PlayerController {
   }
 
   /**
-   * Dash instantáneo estilo Jett (Clic Derecho rápido < 0.22s o Shift en el
+   * Dash instantáneo (Clic Derecho rápido < 0.22s o Shift en el
    * aire): impulso hacia la dirección de movimiento WASD (o la cámara si
    * está quieto). En suelo discurre por el plano tangente; en el aire es un
    * dash 3D completo (arriba, adelante, diagonal); en vuelo libre redirige
    * la velocidad por completo. Ráfaga de FOV + estela cian via GameEngine.
    */
-  private jettDash(): void {
+  private burstDash(): void {
     if (this.isSwimming || this.coreDiveActive || this.isBurrowing) return;
     if (!this.inFlight && this.gravityShiftCooldown > 0) return;
     this.getCameraOrientation(this._q1);

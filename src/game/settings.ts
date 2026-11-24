@@ -45,7 +45,7 @@ export const CONTROL_ACTIONS: ControlAction[] = [
 
 /**
  * Acciones rebindables del mando dentro de la Cúpula (Gamepad API estándar).
- * Compatible con DualShock 4 (PS4) y mandos genéricos vía mapeo W3C.
+ * Compatible con mandos estándar vía mapeo W3C.
  */
 export type GamepadAction = 'attack' | 'dash' | 'jump' | 'skill' | 'cycleSlot' | 'pause';
 
@@ -126,7 +126,7 @@ export const DEFAULT_BINDINGS: Record<ControlAction, string> = {
 };
 
 /**
- * Bindings de mando por defecto (mapeo W3C estándar, DualShock 4 / genérico):
+ * Bindings de mando por defecto (mapeo W3C estándar):
  * R2 (7) ataca, R1 (5) dashea, Cruz (0) salta/despega, Triángulo (3) usa la
  * habilidad de la ranura activa, D-Pad Abajo (13) cambia de ranura y
  * Options (9) pausa.
@@ -389,7 +389,7 @@ export function formatKeyCode(code: string): string {
 
 /**
  * Etiquetas legibles (en español) de los botones estándar W3C 0..17, con el
- * nombre DualShock 4 primero y el genérico Xbox/PC entre paréntesis:
+ * nombre clásico de mando primero y el genérico de PC entre paréntesis:
  * `0 -> Cruz (A)`, `1 -> Círculo (B)`, `4 -> L1`, `9 -> Options (Start)`.
  */
 export const GAMEPAD_BUTTON_LABELS: Record<GamepadButtonIndex, string> = {

@@ -57,8 +57,8 @@ interface TileSlot {
 export type DomeSphereTileMode = 'none' | 'miniboss' | 'boss';
 
 // ----------------------------------------------------------------------------
-// Texturas del damero estilo Persona 3 Reload (cocina de la Torre):
-// casillas blanco/nave alternas con juntas luminosas cian/verde.
+// Texturas del damero de baldosas: casillas blanco/nave alternas con juntas
+// luminosas cian/verde.
 // ----------------------------------------------------------------------------
 
 function createCheckerTextures(): { map: THREE.CanvasTexture; emissive: THREE.CanvasTexture } {

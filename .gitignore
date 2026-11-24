@@ -22,7 +22,7 @@ __pycache__/
 .app.json*
 .types/
 
-# Referencias con copyright (Gravity Rush y otros): nunca al repo
+# Referencias con copyright de terceros: nunca al repo
 referencias y base/
 base44/.app.jsonc
 

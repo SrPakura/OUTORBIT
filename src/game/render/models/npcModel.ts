@@ -1,7 +1,7 @@
 // ============================================================================
 // NPC MODEL — NPC amigable cabezón
 // ============================================================================
-// NPC estilo Animal Crossing con boina de explorador, pañuelo del color de acento y bocadillo [E] flotante. Extraído de proceduralModels.ts (P8).
+// NPC cabezón con boina de explorador, pañuelo del color de acento y bocadillo [E] flotante. Extraído de proceduralModels.ts (P8).
 // ============================================================================
 
 import * as THREE from 'three';
@@ -10,7 +10,7 @@ import { toonMesh } from '../meshFactory';
 import { buildEyes, buildLimb } from './modelParts';
 
 /**
- * NPC amigable cabezón (estilo Animal Crossing): boina/sombrero de
+ * NPC amigable cabezón: boina/sombrero de
  * explorador, pañuelo del color `accentColor` y un bocadillo azul cian
  * flotante con la letra [E] encima para invitar a hablar.
  */

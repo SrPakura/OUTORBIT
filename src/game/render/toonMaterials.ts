@@ -315,7 +315,7 @@ const skyFragmentShader = /* glsl */ `
     return sum;
   }
 
-  // Trama de puntos halftone (impresión cómic Persona 5).
+  // Trama de puntos halftone (impresión cómic).
   float halftoneDots( vec2 fragCoord, float scale ) {
     float angle = 0.523599; // 30 grados
     mat2 rot = mat2( cos( angle ), -sin( angle ), sin( angle ), cos( angle ) );

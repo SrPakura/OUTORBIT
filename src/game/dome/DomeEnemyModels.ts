@@ -199,7 +199,7 @@ const enemyNebulaFrag = /* glsl */ `
 
 /**
  * Material de nebulosa/universo para la carne de los enemigos, inspirado en el
- * shader Raven Nebula de NYX pero en rojos y morados oscuros. Cada instancia
+ * shader de nebulosa de NYX pero en rojos y morados oscuros. Cada instancia
  * recibe un matiz único: `uColorA`/`uColorB` se interpolan al azar entre
  * carmesí oscuro y morado abisal, y `uRimColor` toma el tono de la tinta
  * (fucsia o azul oscurillo) para que borde y contorno casen. Translúcido y sin

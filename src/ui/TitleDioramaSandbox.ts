@@ -321,7 +321,7 @@ export class TitleDioramaSandbox {
     bgQuad.renderOrder = -10;
     this.scene.add(bgQuad);
 
-    // 2. Material Cosmic Nebula (RAVEN NEBULA exacto en sRGB directo)
+    // 2. Material Nebula Cósmica (colores sRGB directos)
     this.universeMat = new THREE.ShaderMaterial({
       vertexShader: nyxVertexShader,
       fragmentShader: nyxUniverseFragmentShader,

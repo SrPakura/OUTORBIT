@@ -67,7 +67,7 @@ const atmosphereFragmentShader = /* glsl */ `
 
 // ============================================================================
 // Anillos orbitales: maná translúcido animado con borde de energía brillante
-// (Persona 5 x Epic Mickey x Frieren). `uv.x` recorre el anillo y `uv.y` la
+// (estética de anime cósmico). `uv.x` recorre el anillo y `uv.y` la
 // sección del tubo (0/1 = borde exterior, 0.5 = borde interior).
 // ============================================================================
 

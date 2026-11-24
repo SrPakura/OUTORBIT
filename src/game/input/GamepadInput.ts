@@ -8,7 +8,7 @@ import {
 // GamepadInput — lector de la Gamepad API estándar (W3C) para la Cúpula.
 // ============================================================================
 //
-// Diseñado para DualShock 4 (PS4) y cualquier mando genérico: usa el mapeo
+// Diseñado para cualquier mando W3C estándar: usa el mapeo
 // estándar del navegador (0=Cruz/A, 1=Círculo/B, 2=Cuadrado/X, 3=Triángulo/Y,
 // 4=L1, 5=R1, 6=L2, 7=R2, 9=Options/Start, 12..15=D-Pad).
 //

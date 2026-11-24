@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { addComicOutline } from '@/game/render/toonMaterials';
 import type { SlabCollider } from './domeTypes';
-import { createP3RTileMaterial, createTornSlabGeometry, mulberry32 } from './DomeSlabGeometry';
+import { createDameroTileMaterial, createTornSlabGeometry, mulberry32 } from './DomeSlabGeometry';
 
 // ============================================================================
-// Pool de suelos arrancados flotantes (estética P3R / Tartarus) dentro de la
+// Pool de suelos arrancados flotantes (damero de baldosas) dentro de la
 // cúpula. Pre-genera 10 colliders `oneSidedTop` con orientaciones variadas en
 // 3D y los activa/desactiva por oleadas. Cada suelo activo recorre una CUERDA
 // que cruza la esfera de parte a parte: nace fuera de la cúpula (R = 96..102
@@ -114,7 +114,7 @@ export class DomeFloatingSlabManager {
         thickness
       );
       this.geometries.push(geometry);
-      const material = createP3RTileMaterial();
+      const material = createDameroTileMaterial();
       this.materials.push(material);
 
       const mesh = new THREE.Mesh(geometry, material);

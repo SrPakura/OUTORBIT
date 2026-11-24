@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 // ============================================================================
-// ComicImpactVfx — VFX procedurales de materia oscura (estilo Gravity Rush)
+// ComicImpactVfx — VFX procedurales de materia oscura
 // ============================================================================
 // Puerto 3D de la referencia impacto_y_explosión.html, adaptado al combate de
 // la cúpula para que RESPONDA al golpe, la velocidad y la habilidad:

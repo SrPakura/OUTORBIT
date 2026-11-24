@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { mulberry32 } from '../render/meshFactory';
 
 // ============================================================================
-// Geometría y material de los suelos arrancados de la cúpula (estética Persona
-// 3 Reload / Tartarus): tapa superior 100% plana con damero de baldosas
+// Geometría y material de los suelos arrancados de la cúpula (damero de
+// baldosas): tapa superior 100% plana con damero de baldosas
 // cel-shaded y raíz inferior tipo iceberg (profunda, asimétrica y facetada),
 // como un bloque de suelo arrancado por una explosión.
 // ============================================================================
@@ -69,7 +69,7 @@ function fbm3(x: number, y: number, z: number, seed: number): number {
 }
 
 // ============================================================================
-// Material cel-shaded de baldosas P3R (Tartarus)
+// Material cel-shaded del damero de baldosas
 // ============================================================================
 
 const tileVertexShader = /* glsl */ `
@@ -109,7 +109,7 @@ const tileFragmentShader = /* glsl */ `
   varying vec3 vWorldNormal;
   varying vec3 vViewDir;
 
-  // Paleta P3R / Tartarus
+  // Paleta del damero
   const vec3 TILE_LIGHT = vec3( 0.910, 0.933, 0.969 ); // #e8eef7 marfil
   const vec3 TILE_DARK  = vec3( 0.106, 0.145, 0.220 ); // #1b2538 azul-gris
   const vec3 GROUT       = vec3( 0.043, 0.078, 0.125 ); // juntas finas oscuras
@@ -146,7 +146,7 @@ const tileFragmentShader = /* glsl */ `
 
     vec3 color;
     if ( topFace > 0.5 ) {
-      // --- Damero nítido de baldosas de cocina (P3R) ---
+      // --- Damero nítido de baldosas de cocina ---
       vec2 cell = vUv * 2.0;
       vec2 id = floor( cell );
       vec2 f = fract( cell );
@@ -205,7 +205,7 @@ const tileFragmentShader = /* glsl */ `
 `;
 
 /**
- * Material cel-shaded con estética de baldosas de Persona 3 Reload (Tartarus):
+ * Material cel-shaded de baldosas de cocina en damero:
  * tapa superior de damero marfil/azul-gris con juntas finas y acentos
  * verde-cian cada 4 baldosas; laterales y fondo de roca arrancada con 3 bandas
  * de cel y grietas sutiles.
@@ -220,7 +220,7 @@ const tileFragmentShader = /* glsl */ `
  * @param options.warningColor si es `true`, el material nace con `uWarning = 1`
  *   (variante de aviso para suelos de Miniboss).
  */
-export function createP3RTileMaterial(
+export function createDameroTileMaterial(
   options: { warningColor?: boolean } = {}
 ): THREE.ShaderMaterial {
   const { warningColor = false } = options;
@@ -283,7 +283,7 @@ function buildContour(
  *
  * - Tapa superior (`Y = +thickness/2`): polígono irregular de 20 vértices
  *   triangulado en abanico, 100% plano y liso, con UVs planas
- *   `(x * 0.35, z * 0.35)` para el damero P3R y atributo `aIsTop = 1`.
+ *   `(x * 0.35, z * 0.35)` para el damero y atributo `aIsTop = 1`.
  * - Raíz inferior: el contorno se estrecha en `ICEBERG_RINGS` (5) anillos
  *   colgantes hasta un ápice a `(radiusX + radiusZ) * 0.26..0.42` bajo la
  *   tapa (bloque arrancado proporcionado, no una torre larga). El ápice está desplazado en XZ con ruido según `seed` (masa

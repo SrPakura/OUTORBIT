@@ -495,7 +495,7 @@ export class SynthAudio {
 
   /**
    * Aviso de vigilancia (modo WARNING): chirp crisp de dos tonos estilo
-   * Metal Gear / Persona — el guardia te ha visto pero aún no salta la
+   * alerta encubierta — el guardia te ha visto pero aún no salta la
    * alarma. Volumen sutil para no saturar con varios guardias a la vez.
    */
   playWarning(): void {

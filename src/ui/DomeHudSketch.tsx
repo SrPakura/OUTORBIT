@@ -464,7 +464,7 @@ function DomeHudSketchInner({
         </div>
       )}
 
-      {/* Aviso de mando conectado (Gamepad API: PS4 / genérico) */}
+      {/* Aviso de mando conectado (Gamepad API) */}
       {hud.gamepadConnected && (
         <div className="pointer-events-none absolute right-4 top-14 -skew-x-12 border border-cyan-300/50 bg-[#090314]/70 px-3 py-1">
           <span className="block skew-x-12 text-[9px] font-bold tracking-[0.22em] text-cyan-200">

@@ -3,7 +3,7 @@ import { addComicOutline, sharedShaderState } from './toonMaterials';
 import { mulberry32 } from './meshFactory';
 
 // ============================================================================
-// OUTORBIT — "Hades 3D de Gravedad": escenario de la arena bajo cúpula.
+// OUTORBIT — arena mítica de gravedad 3D: escenario bajo cúpula.
 //
 // createDomeArenaBackdrop monta todo el backdrop en un único THREE.Group:
 //   1. Cúpula de cristal de 50 m (caras translúcidas + retícula geodésica +

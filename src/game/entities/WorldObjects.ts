@@ -1191,7 +1191,7 @@ export class WorldObjectsManager implements EnemyAIHost {
   /** Modo Sandbox: impacto de objeto/explosión contra dianas de retos. */
   onSandboxTargetHit: ((pos: THREE.Vector3, radius: number) => boolean) | null = null;
 
-  /** Red de IA enemiga (P5): FSM, visión, sospecha, steering y proyectiles. */
+  /** Red de IA enemiga: FSM, visión, sospecha, steering y proyectiles. */
   private readonly enemyAI = new EnemyAISystem(this);
 
   constructor(group: THREE.Group, planets: PlanetRuntime[]) {

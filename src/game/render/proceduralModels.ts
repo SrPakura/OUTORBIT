@@ -8,7 +8,7 @@
 // Desde la modularización (P8) la implementación vive en módulos temáticos
 // bajo src/game/render/models/:
 //   modelParts        — ojos/limbs compartidos, halo de sombra y propulsor
-//   characterModel    — escuadrón cabezón + skins estilo Persona 5
+//   characterModel    — escuadrón cabezón + skins temáticas
 //   verdantProps      — Aldea Feudal y Selva Tropical de Verdant
 //   cryoIronProps     — Cryo-Drop e Iron Bastion
 //   cyberProps        — Metrópolis cyberpunk de Neon Bastion

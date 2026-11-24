@@ -662,7 +662,7 @@ const OverlayScreens = memo(function OverlayScreens({
         </div>
       )}
 
-      {/* --- PASO B: tarjeta de TUTORIAL COMPLETADO (P5/Frieren). Tres salidas:
+      {/* --- PASO B: tarjeta de TUTORIAL COMPLETADO. Tres salidas:
           siguiente tutorial (si no es el último), reintentar y volver al menú.
           Nunca abre el Battle Report: los tutoriales no puntúan. --- */}
       {tutorialCompleted && (

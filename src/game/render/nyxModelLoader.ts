@@ -7,7 +7,7 @@ import { NyxFloatPlayer, type FloatClips } from '@/game/render/nyxFloatPlayer';
 import { NyxLoopPlayer } from '@/game/render/nyxLoopPlayer';
 
 // ============================================================================
-// Shader Raven Nebula: piel de NYX como nebulosa viva con estrellas titilantes
+// Shader Nebula Cósmica: piel de NYX como nebulosa viva con estrellas titilantes
 // ============================================================================
 
 const nyxVert = /* glsl */ `
@@ -263,7 +263,7 @@ async function loadLoopClip(
 }
 
 /**
- * Carga `/models/nyx_rigged.glb` y lo viste con el shader Raven Nebula:
+ * Carga `/models/nyx_rigged.glb` y lo viste con el shader Nebula Cósmica:
  * `nyx_eyes` recibe un MeshBasicMaterial oscuro plano; `nyx_body`,
  * `nyx_hair` y `nyx_face` reciben el material de nebulosa y un contorno
  * blanco skinned (grosores 0.015 / 0.011 / 0.008). Devuelve la raíz, el

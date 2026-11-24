@@ -49,11 +49,11 @@ import type { SynthAudio } from '@/game/audio/SynthAudio';
 //                   ~nulo), WASD acelera hacia la cámara (1.0 Edén/s), la cámara
 //                   va pegada a la espalda y el cuerpo gira con desfase elástico
 //                   limitado por la física centrípeta 1/(1+speed*0.11).
-//  - 'dashing'      Clic Derecho (3.0 Edén): 0.36 s a 24 m/s según WASD,
+//  - 'dashing'      Clic Derecho (3.0 Edén): 0.36 s a 31 m/s según WASD,
 //                   redirigible en vivo con el ratón.
 //  - 'speed_attack' Clic Izquierdo (2.0 Edén/s): patada con lock-in al enemigo
 //                   de la mira (gravity_kick / spiral_drill_kick según la
-//                   velocidad instantánea >= 14.5 m/s) o Caída al Vacío
+//                   velocidad instantánea >= 18 m/s) o Caída al Vacío
 //                   (void_fall) sin enemigo. Dash lateral/trasero para cortar
 //                   vector y Espacio para frenar del todo en 1-3 kick_flip.
 //                   Si el enemigo se esquiva de cerca (giro imposible para el
@@ -226,7 +226,7 @@ const CAM_OFFSET_RIGHT_ATTACK = 0.65;
 // Encuadre de ataque: sube el look para que Nyx quede baja de centro.
 const CAM_ATTACK_LOOK_LIFT = 0.42;
 const CAM_ATTACK_LOOK_LIFT_FAST = 0.62;
-// Slerp de nivelación del horizonte al aterrizar (Gravity Rush).
+// Slerp de nivelación del horizonte al aterrizar.
 const CAM_HORIZON_SLERP_TIME = 0.45;
 // Dutch roll del horizonte (±0.38 rad ≈ ±22°).
 const CAM_ROLL_MAX = 0.38;
@@ -440,7 +440,7 @@ export class NyxDomeController {
   private domeBounceFlash = 0;
   private shake = 0;
 
-  // --- Dirección de cámara arcade (estilo Persona 5)
+  // --- Dirección de cámara arcade
   private camDist = CAM_DISTANCE; // distancia real del spring-arm
   private camDistVel = 0; // velocidad del muelle (tirachinas elástico)
   private camTugTimer = 0; // segundos restantes del tirachinas
@@ -718,7 +718,7 @@ export class NyxDomeController {
   private viewportH = window.innerHeight;
 
   /**
-   * Entrada del mando (Gamepad API estándar, DualShock 4 / genérico). NO
+   * Entrada del mando (Gamepad API estándar W3C). NO
    * depende del pointer lock: se puede jugar solo con mando y dejar el ratón
    * libre. El stick derecho rota la cámara (gamepadSensitivity + invertY),
    * el izquierdo se fusiona con WASD en update(), y los botones configurados
@@ -3128,7 +3128,7 @@ export class NyxDomeController {
     this.computeCameraBasis();
 
     // --- Horizonte: slerp de nivelación al aterrizar (0.45 s ease-out). Al
-    // pasar de vuelo a suelo el mundo rota suave como en Gravity Rush en vez
+    // pasar de vuelo a suelo el mundo rota suave en vez
     // de dar un latigazo de 1 frame.
     if (this.transitionCamUpTimer > 0) {
       this.transitionCamUpTimer = Math.max(0, this.transitionCamUpTimer - dt);

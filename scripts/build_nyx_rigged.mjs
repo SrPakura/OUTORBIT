@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build public/models/nyx_rigged.glb — NYX 100% PROCEDURAL (cero assets externos).
 //
-// NO lee `cro01_base.glb` ni ningún otro asset con copyright: las 4 primitivas
+// No lee ningún asset externo: las 4 primitivas
 // (`nyx_hair`, `nyx_body`, `nyx_face`, `nyx_eyes`) se generan matemáticamente.
 //
 // - `nyx_body`: lofting anatómico continuo — perfiles transversales
@@ -345,7 +345,7 @@ function profAt(stations, v) {
 // coincidente con el basal del cuello de nyx_face) al REMATE de pelvis
 // (Y 0.80, ABIERTO: hacia los muslos lo cierran las sillas de montar y el
 // parche del perineo — nunca una tapa). bust/glute = pecho/glúteo gaussianos.
-// Perfil medido sobre cro01_base: cintura avispa w 0.164 (Y 1.13), cadera
+// Perfil anatómico de referencia: cintura avispa w 0.164 (Y 1.13), cadera
 // máxima w 0.322 (Y 0.94) → busto:cintura:cadera ≈ 1.46:1:1.96.
 // [y, rx, rzF, rzB, p, bust, glute]
 const TORSO_PROF = [

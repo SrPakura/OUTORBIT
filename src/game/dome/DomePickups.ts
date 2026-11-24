@@ -4,7 +4,7 @@ import * as THREE from 'three';
 // DomePickups — Partículas flotantes de EXP y Edén/Vida.
 //
 // Al morir, cada enemigo se deshace en orbes esféricos brillantes (verde lima
-// tipo Minecraft para la EXP) con un halo aditivo que los hace legibles a
+// para la EXP) con un halo aditivo que los hace legibles a
 // cualquier distancia. Flotan con inercia y bob senoidal; pasado un margen
 // persiguen a Nyx desde cualquier punto y se recogen al contacto.
 // ============================================================================
@@ -32,7 +32,7 @@ interface PickupItem {
 }
 
 const MAX_PICKUPS = 160;
-/** Radio del núcleo: orbe de EXP de Minecraft (~0,25 bloques). */
+/** Radio del núcleo del orbe de EXP (~0,25 m). */
 const PICKUP_RADIUS = 0.2;
 /** Tamaño del halo: sólo un cerco, el núcleo sólido manda en la lectura. */
 const GLOW_SCALE = 0.62;
@@ -55,7 +55,7 @@ const HOMING_CATCHUP = 6;
 const HOMING_MAX_SPEED = 60;
 
 const KIND_COLORS: Record<DomePickupKind, number> = {
-  exp: 0x8cff3a,  // verde lima de orbe de EXP de Minecraft
+  exp: 0x8cff3a,  // verde lima de EXP
   eden: 0xc77dff, // lavanda
   hp: 0x5cff8a,   // verde vida
 };
@@ -310,7 +310,7 @@ export class DomePickupManager {
   /**
    * Núcleo opaco y saturado: con blending aditivo el orbe se leía como una
    * mancha translúcida y perdía el color. Sin blending mantiene el verde lima
-   * plano de los orbes de EXP de Minecraft y recorta silueta contra el fondo.
+   * plano de los orbes de EXP y recorta silueta contra el fondo.
    */
   private static createKindMaterial(color: number): THREE.MeshBasicMaterial {
     return new THREE.MeshBasicMaterial({

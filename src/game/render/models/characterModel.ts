@@ -1,7 +1,7 @@
 // ============================================================================
-// CHARACTER MODEL — escuadrón cabezón (estilo Animal Crossing)
+// CHARACTER MODEL — escuadrón cabezón de proporciones chibi
 // ============================================================================
-// Paletas, cabezas con extras por personaje (orejas de kitsune, taladro de Digger, visera de Axel), colas, complementos de cuello, skins temáticas estilo Persona 5 y buildCharacterModel. Extraído de proceduralModels.ts (P8).
+// Paletas, cabezas con extras por personaje (orejas de kitsune, taladro de Digger, visera de Axel), colas, complementos de cuello, skins temáticas del escuadrón y buildCharacterModel. Extraído de proceduralModels.ts (P8).
 // ============================================================================
 
 import * as THREE from 'three';
@@ -190,11 +190,11 @@ function buildNeckwear(id: CharacterId, palette: CharacterPalette): THREE.Group 
   return neckwear;
 }
 // ============================================================================
-// Skins temáticas estilo Persona 5 (antifaz, capa, taladro, jetpack)
+// Skins temáticas del escuadrón (antifaz, capa, taladro, jetpack)
 // ============================================================================
 
 /**
- * Extras temáticos P5 por personaje (subgrupos nombrados para animación):
+ * Extras temáticos por personaje (subgrupos nombrados para animación):
  * - Kitsune (Ladrón Fantasma): antifaz rojo/negro sobre los ojos, capa larga
  *   trasera (`cape`) que ondea con la velocidad y kunai en la mano.
  * - Digger (Minero Mecha): visor luminoso cian/amarillo, mochila taladro con
@@ -450,7 +450,7 @@ function buildCharacterSkinExtras(
 /**
  * Construye el modelo modular de un personaje del escuadrón.
  * Subgrupos nombrados para animación: body, head, leftArm, rightArm,
- * leftLeg, rightLeg, tail (+ cape/drill/flames de la skin P5). Mira hacia +Z.
+ * leftLeg, rightLeg, tail (+ cape/drill/flames de la skin temática). Mira hacia +Z.
  */
 export function buildCharacterModel(id: CharacterId): THREE.Group {
   const profile = GAME_CONSTANTS.CHARACTERS[id];
