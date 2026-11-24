@@ -299,6 +299,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         choices={levelUpState.choices}
         equippedSlots={hud.slots.map((s) => ({ name: s.name, level: s.level }))}
         requiresSlotReplacement={levelUpState.requiresSlotReplacement}
+        skipPlanetAnimation={levelUpState.skipPlanetAnimation}
         audioRef={audioRef}
         onSelect={handleSelectCard}
       />

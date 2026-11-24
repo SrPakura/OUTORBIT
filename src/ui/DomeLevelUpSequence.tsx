@@ -8,11 +8,10 @@ import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
 // ============================================================================
 // Subida de nivel cinemática — secuencia completa de pantalla completa:
 //
-//   1. PLANETA  · Transición 3D portada de "referencia_transición.html"
-//                (punto blanco → acercamiento exponencial → impacto del anillo
-//                → barrido diagonal a papel), recoloreada con la paleta del
-//                menú: tinta #0b0d12, papel #f1f1ed, carmesí #e11d48,
-//                cian #22d3ee y dorado #fbbf24.
+//   1. PLANETA  · Transición 3D en canvas transparente sobre la partida en
+//                vivo (sin fondo negro ni estrellas): punto blanco → zoom-in
+//                continuo del planeta hasta cubrir el viewport y blanquearlo
+//                al papel #f1f1ed de la interfaz de cartas.
 //   2. CARTAS   · La pantalla de cartas de levelup-preview: título brutal,
 //                slams con shake, carta elegida que vuela al centro temblando
 //                y ranuras de reemplazo.
@@ -22,8 +21,7 @@ import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
 
 const TIMING = {
   PHASE1_END: 0.3, // Punto blanco + pulso
-  PHASE2_END: 1.3, // Acercamiento exponencial
-  PHASE3_END: 1.8, // Impacto del anillo + barrido a papel
+  PHASE2_END: 1.55, // Zoom-in continuo hasta cubrir el viewport
 };
 
 const ROLL_ANGLE = -27 * (Math.PI / 180);
@@ -35,7 +33,6 @@ const RING_THICKNESS = 0.11;
 
 // Paleta del menú (la misma que levelup-preview / character-sheet).
 const COL = {
-  ink: new THREE.Color('#0b0d12'),
   paper: new THREE.Color('#f1f1ed'),
   crimson: new THREE.Color('#e11d48'),
   cyan: new THREE.Color('#22d3ee'),
@@ -48,6 +45,9 @@ export interface DomeLevelUpSequenceProps {
   choices: LevelUpCardOption[] | null;
   equippedSlots: Array<{ name: string | null; level: number }>;
   requiresSlotReplacement: boolean;
+  /** Selección inicial de la partida: salta la animación del planeta y
+   *  muestra el papel y las cartas desde el primer frame. */
+  skipPlanetAnimation?: boolean;
   audioRef: { current: SynthAudio | null };
   onSelect: (option: LevelUpCardOption, replaceSlotIndex?: 0 | 1 | 2) => void;
 }
@@ -220,39 +220,6 @@ const ringFragmentShader = /* glsl */ `
   }
 `;
 
-const starVertexShader = /* glsl */ `
-  attribute float aSize;
-  attribute float aKind;
-  varying float vKind;
-  void main() {
-    vKind = aKind;
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = aSize;
-    gl_Position = projectionMatrix * mvPosition;
-  }
-`;
-
-const starFragmentShader = /* glsl */ `
-  varying float vKind;
-  void main() {
-    vec2 p = gl_PointCoord - 0.5;
-    float d = length(p);
-    float alpha = 0.0;
-
-    if (vKind > 0.5) {
-      float diamond = abs(p.x) + abs(p.y);
-      float cross = min(abs(p.x), abs(p.y));
-      alpha = smoothstep(0.48, 0.14, diamond) + smoothstep(0.11, 0.02, cross) * smoothstep(0.5, 0.1, d);
-      alpha = clamp(alpha, 0.0, 1.0);
-    } else {
-      alpha = 1.0 - smoothstep(0.22, 0.48, d);
-    }
-
-    if (alpha < 0.05) discard;
-    gl_FragColor = vec4(0.945, 0.945, 0.929, alpha);
-  }
-`;
-
 const wipeVertexShader = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -340,50 +307,20 @@ function PlanetTransition({
     const renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
-      alpha: false,
+      alpha: true,
       powerPreference: 'high-performance',
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setClearColor(COL.ink, 1);
+    renderer.setClearColor(0x000000, 0);
     renderer.autoClear = false;
 
     const scene = new THREE.Scene();
-    scene.background = COL.ink.clone();
 
     const aspect0 = window.innerWidth / Math.max(window.innerHeight, 1);
     const camera = new THREE.PerspectiveCamera(computeResponsiveFov(aspect0), aspect0, 0.08, 1200);
     camera.position.set(0, 0, 0);
     camera.lookAt(0, 0, -1);
-
-    // --- Estrellas fijas ---
-    const starCount = 720;
-    const starPos = new Float32Array(starCount * 3);
-    const starSizes = new Float32Array(starCount);
-    const starKinds = new Float32Array(starCount);
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    for (let i = 0; i < starCount; i++) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const radius = 380 + Math.random() * 240;
-      starPos[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
-      starPos[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
-      starPos[i * 3 + 2] = -Math.abs(radius * Math.cos(phi)) - 30;
-      const isSparkle = Math.random() > 0.86;
-      starKinds[i] = isSparkle ? 1.0 : 0.0;
-      starSizes[i] = (isSparkle ? 4.5 + Math.random() * 3.8 : 1.5 + Math.random() * 2.2) * dpr;
-    }
-    const starGeo = new THREE.BufferGeometry();
-    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-    starGeo.setAttribute('aSize', new THREE.BufferAttribute(starSizes, 1));
-    starGeo.setAttribute('aKind', new THREE.BufferAttribute(starKinds, 1));
-    const starMat = new THREE.ShaderMaterial({
-      vertexShader: starVertexShader,
-      fragmentShader: starFragmentShader,
-      transparent: true,
-      depthWrite: false,
-    });
-    scene.add(new THREE.Points(starGeo, starMat));
 
     // --- Punto blanco inicial (Fase 1) ---
     const dotMaterial = new THREE.ShaderMaterial({
@@ -501,15 +438,12 @@ function PlanetTransition({
     };
     window.addEventListener('resize', onResize);
 
-    // --- Coreografía de entrada (Fases 1 → 4) ---
+    // --- Coreografía de entrada (Fases 1 → 3) ---
     const zStart = -155.0;
-    const zImpact = -3.95;
-    const yImpact = -0.35;
-    const tmpVec = new THREE.Vector3();
 
     let currentPhase = 0;
     let spinAngle = 0;
-    let minWipeThreshold = Infinity;
+    let slashPlayed = false;
     let finished = false;
 
     const start = performance.now();
@@ -548,8 +482,6 @@ function PlanetTransition({
         ringMat.uniforms.uWhiteout.value = 1.0 - emergeScale * 0.55;
 
         wipeMaterial.uniforms.uActive.value = 0.0;
-        wipeMaterial.uniforms.uMode.value = 0.0;
-        wipeMaterial.uniforms.uThreshold.value = sMax + 0.2;
       } else if (elapsed < TIMING.PHASE2_END) {
         if (currentPhase !== 2) {
           currentPhase = 2;
@@ -568,65 +500,36 @@ function PlanetTransition({
         planetPositionGroup.visible = true;
         planetPositionGroup.scale.setScalar(1.0);
 
-        const expProgress = Math.pow(t2, 1.52);
-        const z = -Math.abs(zStart) * Math.pow(Math.abs(zImpact) / Math.abs(zStart), expProgress);
-        const y = yImpact * Math.pow(t2, 2.2);
-        planetPositionGroup.position.set(0, y, z);
+        // Zoom-in único y continuo: interpolación exponencial desde el fondo
+        // hasta la distancia a la que la esfera cubre el viewport completo.
+        // Sin pausas intermedias ni desplazamiento vertical.
+        const fovRad = camera.fov * (Math.PI / 180);
+        const zCover = (PLANET_RADIUS * 0.92) / (Math.tan(fovRad * 0.5) * Math.max(1, aspect));
+        const ease = Math.pow(t2, 1.45);
+        const z = -Math.abs(zStart) * Math.pow(zCover / Math.abs(zStart), ease);
+        planetPositionGroup.position.set(0, 0, z);
 
         const spinSpeed = 5.5 + Math.pow(t2, 1.8) * 11.0;
         spinAngle += dt * spinSpeed;
         planetSpinGroup.rotation.y = spinAngle;
 
-        const introFade = Math.max(0.0, 1.0 - t2 * 5.0);
-        planetMat.uniforms.uWhiteout.value = introFade * 0.35;
-        ringMat.uniforms.uWhiteout.value = introFade * 0.35;
-
-        minWipeThreshold = sMax + 0.05;
-        wipeMaterial.uniforms.uActive.value = 0.0;
-        wipeMaterial.uniforms.uMode.value = 0.0;
-        wipeMaterial.uniforms.uThreshold.value = minWipeThreshold;
-      } else if (elapsed < TIMING.PHASE3_END) {
-        if (currentPhase !== 3) {
-          currentPhase = 3;
+        // Al final del acercamiento el planeta se blanquea y pinta la
+        // pantalla del papel de la interfaz de cartas.
+        const wT = Math.min(1, Math.max(0, (t2 - 0.72) / 0.28));
+        const whiteout = wT * wT * (3 - 2 * wT);
+        if (whiteout > 0 && !slashPlayed) {
+          slashPlayed = true;
           audio?.playLevelUpSlash();
         }
-        dotMesh.visible = false;
-        planetPositionGroup.visible = true;
 
-        const t3 = (elapsed - TIMING.PHASE2_END) / (TIMING.PHASE3_END - TIMING.PHASE2_END);
-        const easeSweep = 1.0 - Math.pow(1.0 - t3, 1.35);
-        const z = zImpact + easeSweep * 0.72;
-        const y = yImpact - Math.pow(t3, 1.15) * 2.85;
-        planetPositionGroup.position.set(0, y, z);
+        const introFade = Math.max(0.0, 1.0 - t2 * 5.0);
+        planetMat.uniforms.uWhiteout.value = Math.max(introFade * 0.35, whiteout);
+        ringMat.uniforms.uWhiteout.value = Math.max(introFade * 0.35, whiteout);
 
-        spinAngle += dt * 16.5;
-        planetSpinGroup.rotation.y = spinAngle;
-
-        planetMat.uniforms.uWhiteout.value = Math.min(1.0, t3 * 2.8);
-        ringMat.uniforms.uWhiteout.value = Math.min(1.0, t3 * 3.8);
-
-        planetPositionGroup.updateMatrixWorld(true);
-        tmpVec.set(0, 0, RING_OUTER);
-        planetPitchGroup.localToWorld(tmpVec);
-        tmpVec.project(camera);
-
-        const px = tmpVec.x * 0.5 * aspect;
-        const py = tmpVec.y * 0.5;
-        const nx = -Math.sin(ROLL_ANGLE);
-        const ny = Math.cos(ROLL_ANGLE);
-        const projectedFrontS = px * nx + py * ny;
-
-        const fallbackSweep = (sMax + 0.05) + (-2.0 * sMax - 0.18) * Math.pow(t3, 1.05);
-        const targetThreshold = Math.min(projectedFrontS + 0.015, fallbackSweep);
-        minWipeThreshold = Math.min(minWipeThreshold, targetThreshold);
-
-        wipeMaterial.uniforms.uActive.value = 1.0;
-        wipeMaterial.uniforms.uMode.value = 0.0;
-        wipeMaterial.uniforms.uThreshold.value = minWipeThreshold;
-        wipeMaterial.uniforms.uHalftoneAlpha.value = Math.min(1.0, Math.max(0.0, (t3 - 0.55) / 0.45));
+        wipeMaterial.uniforms.uActive.value = 0.0;
       } else {
-        // Fase 4: pantalla 100% papel → la UI de cartas toma el relevo.
-        currentPhase = 4;
+        // Fase 3: pantalla 100% papel → la UI de cartas toma el relevo.
+        currentPhase = 3;
         dotMesh.visible = false;
         planetPositionGroup.visible = false;
         wipeMaterial.uniforms.uActive.value = 1.0;
@@ -688,11 +591,14 @@ export default function DomeLevelUpSequence({
   choices,
   equippedSlots,
   requiresSlotReplacement,
+  skipPlanetAnimation,
   audioRef,
   onSelect,
 }: DomeLevelUpSequenceProps) {
   const { t } = useI18n();
-  const [phase, setPhase] = useState<'planet' | 'cards' | 'closing'>('planet');
+  const [phase, setPhase] = useState<'planet' | 'cards' | 'closing'>(
+    skipPlanetAnimation ? 'cards' : 'planet',
+  );
   const [showReplace, setShowReplace] = useState(false);
   const [flashKey, setFlashKey] = useState(0);
 
@@ -1006,7 +912,9 @@ export default function DomeLevelUpSequence({
           inset: 0;
           z-index: 50;
           overflow: hidden;
-          background: #f1f1ed;
+          /* Transparente: durante el planeta se ve la partida detrás y el
+             papel lo aporta .lu-sheet. */
+          background: transparent;
           font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
           -webkit-font-smoothing: antialiased;
         }

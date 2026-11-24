@@ -56,6 +56,8 @@ export interface DomeLevelUpUiState {
   newLevel: number;
   choices: LevelUpCardOption[] | null;
   requiresSlotReplacement: boolean;
+  /** true en la elección inicial de la partida: sin animación de planeta. */
+  skipPlanetAnimation?: boolean;
 }
 
 /** Dependencias que DomeGameView inyecta al runtime del loop. */
@@ -206,7 +208,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   }
   let nextWaveDelay = 0;
 
-  const openLevelUpModal = (forLevel: number) => {
+  const openLevelUpModal = (forLevel: number, skipPlanetAnimation = false) => {
     if (document.pointerLockElement === canvas) {
       document.exitPointerLock?.();
     }
@@ -221,12 +223,13 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       newLevel: forLevel,
       choices,
       requiresSlotReplacement: allSlotsFull,
+      skipPlanetAnimation,
     });
   };
 
   // Nivel 1: abre elección inicial en el segundo 1 (Carta 1 fija Campo Gravitacional)
   if (progression.pendingInitialPick) {
-    openLevelUpModal(1);
+    openLevelUpModal(1, true);
   }
 
   let loadedNyx: LoadedNyx | null = null;
