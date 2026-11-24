@@ -155,7 +155,8 @@ const VOID_IMPACT_WOBBLE = 1.0;
 
 // --- Flotación 0G
 const FLOAT_ACCEL = 13.5;
-const FLOAT_MAX_SPEED = 28.0;
+/** Tope de velocidad de Nyx en flotación (m/s). La IA lo usa como referencia. */
+export const FLOAT_MAX_SPEED = 28.0;
 const FLOAT_DRAG = 0.06; // exp(-0.06*dt): conserva ~95% de la velocidad por segundo
 // Por debajo de esta velocidad y sin pulsar nada, Nyx entra en la pose de
 // flotación quieta (`zero_g_float`); por encima sigue la flotación direccional

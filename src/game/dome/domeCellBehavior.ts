@@ -25,6 +25,7 @@
 import * as THREE from 'three';
 import type { SlabCollider, SlabRaycastHit } from './domeTypes';
 import { raycastSlabs } from './DomeSlabs';
+import { FLOAT_MAX_SPEED } from './NyxDomeController';
 import type { EnemyInternal, ManagedWaveEnemy } from './DomeWaveManager';
 
 // ============================================================================
@@ -68,8 +69,8 @@ const CELL_FLEE_SAFE_DIST = 16.0;
  * DIVERGENTE (rotación del vector de huida según su slot) para que Nyx no
  * pueda seguir a todas y al menos una gane su espalda.
  */
-const CELL_SCATTER_BASE_RAD = 0.87; // ~50° de desvío respecto de "huir recto"
-const CELL_SCATTER_STEP_RAD = 0.61; // +35° por cada par de slots
+const CELL_SCATTER_BASE_RAD = 1.13; // ~65° de desvío respecto de "huir recto"
+const CELL_SCATTER_STEP_RAD = 0.96; // +55° por cada par de slots
 /** Duración máxima de la dispersión (s). */
 const CELL_SCATTER_MAX_SEC = 2.5;
 /** Segundos fuera de vista que cortan la dispersión (s). */
@@ -80,7 +81,14 @@ const CELL_LUNGE_DAMAGE = 8;
 const CELL_PLAYER_CONTACT = 1.6;
 /** Token del enjambre: espera entre lunges de células distintas (s). */
 const CELL_LUNGE_TOKEN_CD = 2.5;
-/** Quietud de Nyx que cuenta como "distracción" (s). */
+/**
+ * Quietud de Nyx que cuenta como "distracción" (m/s): 1/3 de su velocidad
+ * máxima en flotación. Derivar por inercia por debajo de ese umbral es
+ * predecible (el lunge apunta con lead) y por tanto atacable; moverse con
+ * intención (frenetismo) no lo es.
+ */
+const CELL_STILL_SPEED = FLOAT_MAX_SPEED / 3;
+/** Segundos de quietud que la abren (s). */
 const CELL_STILL_SEC = 0.6;
 /** Lead máx. de predicción del lunge (s): apunta a donde VAS, no donde estás. */
 const CELL_LEAD_MAX = 0.5;
@@ -131,7 +139,14 @@ const CELL_COVER_MAX_ARENA_R = 66.0;
 /** Velocidad de deriva del ángulo de órbita (rad/s). */
 const CELL_ORBIT_DRIFT = 0.16;
 /** Separación angular entre slots del abanico trasero (rad). */
-const CELL_ORBIT_SPREAD = 0.7;
+const CELL_ORBIT_SPREAD = 0.9;
+/**
+ * Velocidad a la que la retaguardia suavizada sigue a la cámara (1/s). Baja a
+ * propósito: el abanico trasero NO gira al ritmo del aim (si no, las células
+ * persiguen un punto que da vueltas cuando Nyx sigue a otra con la mirada y
+ * nunca se asientan en su espalda), sino con inercia.
+ */
+const CELL_REAR_SMOOTH_RATE = 1.5;
 /** Distancia de frenado al llegar al slot de órbita (m). */
 const CELL_ORBIT_ARRIVE_DIST = 4.0;
 /** Escondite solitario: distancia mínima del punto de cobertura a Nyx (m). */
@@ -198,8 +213,17 @@ export class CellSwarmDirector {
     lockedPos: null,
   };
 
-  /** Segundos que lleva Nyx quieta (velocidad < 1.25 m/s). */
+  /** Segundos que lleva Nyx quieta (velocidad < CELL_STILL_SPEED m/s). */
   private stillFor = 0;
+  /**
+   * Retaguardia suavizada de Nyx: ángulo XZ de -aimForward con inercia
+   * (NaN = sin inicializar; snap en el primer frame). Es la base del abanico
+   * trasero del enjambre, para que una célula asentada en la espalda se quede
+   * ahí aunque Nyx gire la cámara siguiendo a otra. Se suaviza el ÁNGULO (no
+   * el vector: el lerp de vectores antipodales + normalize se queda clavado
+   * en los giros de 180°).
+   */
+  behindAngleSmooth = NaN;
   /** Cuenta atrás del token de lunge: nadie salta hasta que llegue a 0. */
   lungeTokenCd = 0;
   /** Id de la célula duplicándose (solo una a la vez). */
@@ -213,6 +237,7 @@ export class CellSwarmDirector {
     this.stillFor = 0;
     this.lungeTokenCd = 0;
     this.duplicateOwnerId = null;
+    this.behindAngleSmooth = NaN;
     this.cells.length = 0;
     this.cellCount = 0;
   }
@@ -243,8 +268,21 @@ export class CellSwarmDirector {
     focus.lockedId = lockedId;
     focus.lockedPos = lockedPos;
 
-    this.stillFor = playerVel.lengthSq() < 1.5625 ? this.stillFor + dt : 0;
+    this.stillFor = playerVel.lengthSq() < CELL_STILL_SPEED * CELL_STILL_SPEED
+      ? this.stillFor + dt
+      : 0;
     this.lungeTokenCd = Math.max(0, this.lungeTokenCd - dt);
+
+    // Retaguardia suavizada: el ángulo XZ opuesto al aim, con inercia y por
+    // el camino angular más corto. NaN (tras reset) hace snap el primer frame.
+    const behindTargetAngle = Math.atan2(-playerAimForward.z, -playerAimForward.x);
+    if (Number.isNaN(this.behindAngleSmooth)) {
+      this.behindAngleSmooth = behindTargetAngle;
+    } else {
+      let delta = behindTargetAngle - this.behindAngleSmooth;
+      delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+      this.behindAngleSmooth += delta * (1 - Math.exp(-CELL_REAR_SMOOTH_RATE * dt));
+    }
 
     // Slots de órbita: el índice dentro del enjambre fija el ángulo.
     this.cells.length = 0;
@@ -352,7 +390,6 @@ const _fleeDir = new THREE.Vector3();
 const _scatterAway = new THREE.Vector3();
 const _coverDir = new THREE.Vector3();
 const _hideDir = new THREE.Vector3();
-const _behindDir = new THREE.Vector3();
 const _steer = new THREE.Vector3();
 const _sep = new THREE.Vector3();
 const _orbitTarget = new THREE.Vector3();
@@ -814,15 +851,10 @@ export function updateCellEnemy(
         }
 
         // --- Slot de órbita del enjambre: RETAGUARDIA de Nyx, no de frente.
-        // Base del ángulo = opuesta al aimForward; los slots reparten un
-        // abanico trasero. Si Nyx gira la cámara, el enjambre se recoloca.
-        _behindDir.set(-focus.aimForward.x, 0, -focus.aimForward.z);
-        if (_behindDir.lengthSq() < 1e-4) {
-          _behindDir.set(0, 0, 1);
-        } else {
-          _behindDir.normalize();
-        }
-        const behindAngle = Math.atan2(_behindDir.z, _behindDir.x);
+        // Base del ángulo = retaguardia SUAVIZADA del director (sigue la
+        // cámara con inercia): si el aim gira al seguir a otra célula, el
+        // abanico no da vueltas con él y esta se queda asentada en la espalda.
+        const behindAngle = director.behindAngleSmooth;
         const spread =
           (internal.cellSlot - (director.cellCount - 1) * 0.5) * CELL_ORBIT_SPREAD;
         const slotAngle =
