@@ -26,13 +26,15 @@ import type { EnemyInternal, ManagedWaveEnemy } from './DomeWaveManager';
 
 const CRAB_TURN_RATE = 4.0; // Giro del cuerpo sobre el slab (slerp/seg).
 const CRAB_TURRET_TURN_RATE = 6.0; // Giro del cañón hacia Nyx (slerp/seg).
+const CRAB_TURRET_IDLE_TURN_RATE = 3.0; // Cañón siguiendo a Nyx en reposo (rad/s).
 const CANNON_MUZZLE_DISTANCE = 1.4; // Boca del cañón desde el hueso turret.
 const CRAB_SLAB_MARGIN = 1.1; // Margen para no salirse del borde del slab.
 const CRAB_ATTACH_BLEND_TIME = 0.45; // Aterrizaje suave al cambiar de slab.
 // --- Cangrejo Artillero: spawn sobre suelos + salto entre ellos ---
 const CRAB_SPAWN_MAX_R = 70.0; // Radio preferido del slab de spawn.
 const CRAB_LEAVE_R = 72.0; // El slab flotante sale de la cúpula: saltar.
-const CRAB_JUMP_TARGET_MAX_R = 68.0; // Radio preferido del slab de aterrizaje.
+const CRAB_JUMP_RETARGET_R = 76.0; // Radio del destino que fuerza a re-objetivar en vuelo.
+const CRAB_JUMP_R_WEIGHT = 1.2; // Peso del radio de la cúpula al puntuar suelos.
 const CRAB_JUMP_DURATION = 0.75; // Duración base del arco del salto (s).
 const CRAB_JUMP_DURATION_MAX = 2.4; // Techo de duración en saltos largos (s).
 const CRAB_JUMP_H_SPEED = 22.0; // Velocidad horizontal de referencia (m/s).
@@ -55,7 +57,10 @@ export type CrabAttackState = 'idle' | 'laser_aim' | 'laser_fire' | 'burst' | 'k
 
 // --- Ataque 1: Rayo Láser Continuo (dist > 7 m) ---
 export const CRAB_LASER_DPS = 20.0; // 20*dt continuos a Nyx y a cualquier enemigo.
-const CRAB_LASER_MIN_DIST = 7.0;
+const CRAB_LASER_MIN_DIST = 10.0;
+// Tope de enganche del láser: más allá, el cangrejo ni se molesta (no es un
+// rayo infinito, pero cubre toda la cúpula útil).
+const CRAB_LASER_MAX_DIST = 50.0;
 const CRAB_LASER_AIM_SEC = 2.0; // Telegraph completo.
 const CRAB_LASER_AIM_TRACK_SEC = 1.65; // Primeros 1.65 s persigue; luego sella.
 const CRAB_LASER_AIM_TURN_RATE = 1.8; // Velocidad angular máx. de rastreo (rad/s).
@@ -68,7 +73,7 @@ const CRAB_LASER_HIT_RADIUS = 1.7; // Cuerpo de Nyx contra el haz (m).
 export const CRAB_LASER_BEAM_FF_MARGIN = 0.45; // Margen del haz contra enemigos (m).
 
 // --- Ataque 2: Ráfaga Láser de Corta Distancia (5 < dist <= 7 m) ---
-const CRAB_BURST_MAX_DIST = 7.0;
+const CRAB_BURST_MAX_DIST = 10.0;
 const CRAB_BURST_TELEGRAPH_SEC = 0.25; // Chispazo en las 3 pinzas del cañón.
 const CRAB_BURST_SHOT_INTERVAL = 0.10; // Separación entre los 3 disparos (s).
 const CRAB_BURST_TOTAL_SEC = CRAB_BURST_TELEGRAPH_SEC + 2 * CRAB_BURST_SHOT_INTERVAL;
@@ -328,9 +333,12 @@ export function pickCrabSpawnSlab(activeSlabs: SlabCollider[], rng: () => number
 }
 
 /**
- * Destino del salto del cangrejo: el slab disponible más cercano al cangrejo
- * con center < 68 m o, si todos están lejos, el más cercano al centro de la
- * cúpula. Excluye el slab que está abandonando.
+ * Destino del salto del cangrejo: el slab disponible con mejor puntuación
+ * `distanciaAlCangrejo + peso·radioDeLaCúpula`. Penalizar el radio evita el
+ * suicidio por la esfera: los suelos interiores acaban de entrar y les queda
+ * todo el cruce por delante, mientras que los exteriores están a punto de
+ * salirse de la cúpula (y matar al cangrejo al aterrizar). Excluye el slab
+ * que está abandonando.
  */
 function pickCrabJumpSlab(
   activeSlabs: SlabCollider[] | undefined,
@@ -346,22 +354,7 @@ function pickCrabJumpSlab(
     if (slab.id === leavingSlabId) {
       continue;
     }
-    if (slab.center.length() < CRAB_JUMP_TARGET_MAX_R) {
-      const score = fromPos.distanceTo(slab.center);
-      if (score < bestScore) {
-        best = slab;
-        bestScore = score;
-      }
-    }
-  }
-  if (best) {
-    return best;
-  }
-  for (const slab of activeSlabs) {
-    if (slab.id === leavingSlabId) {
-      continue;
-    }
-    const score = slab.center.length();
+    const score = fromPos.distanceTo(slab.center) + CRAB_JUMP_R_WEIGHT * slab.center.length();
     if (score < bestScore) {
       best = slab;
       bestScore = score;
@@ -600,6 +593,19 @@ function updateCrabJump(
     }
     return;
   }
+  if (targetSlab.center.length() > CRAB_JUMP_RETARGET_R && activeSlabs) {
+    // El destino marcha hacia la salida de la cúpula: si hay otro
+    // visiblemente mejor, re-objetiva en pleno vuelo (solo si es claramente
+    // mejor, para no oscilar entre dos suelos igual de malos).
+    const better = pickCrabJumpSlab(activeSlabs, jump.targetSlabId, enemy.position);
+    if (better && better.center.length() < targetSlab.center.length() - 4.0) {
+      const next = startCrabJump(enemy, internal, activeSlabs, jump.targetSlabId);
+      if (next) {
+        next.offset.add(jump.offset);
+      }
+      return;
+    }
+  }
 
   jump.time += dt;
   const t = Math.min(1, jump.time / jump.duration);
@@ -688,10 +694,12 @@ function updateCrabOnSlab(
     }
   }
 
-  // El cañón apunta fino hacia Nyx solo en reposo (sin clips en el GLB): en
-  // los estados de ataque lo gobierna la FSM con límites de velocidad angular.
-  if (internal.crabState === 'idle' && !internal.mixer) {
-    aimCrabTurret(internal, dt, playerPos);
+  // Torreta de área: en reposo el cañón persigue a Nyx a 3 rad/s (IA que
+  // apunta SIEMPRE). Los clips de idle viven en las patas/root; el scan del
+  // clip sobre `turret` queda pisado por este apuntado continuo. En los
+  // estados de ataque lo gobierna la FSM con sus propios límites angulares.
+  if (internal.crabState === 'idle') {
+    aimCrabTurretLimited(internal, playerPos, CRAB_TURRET_IDLE_TURN_RATE, dt);
   }
 }
 
@@ -707,29 +715,6 @@ export function computeCrabMuzzle(internal: EnemyInternal, out: THREE.Vector3): 
   _muzzleDir.copy(internal.turretForward).applyQuaternion(_turretWorldQuat);
   out.addScaledVector(_muzzleDir, CANNON_MUZZLE_DISTANCE);
   return true;
-}
-
-/** Gira el hueso del cañón para apuntar su eje de disparo hacia Nyx. */
-function aimCrabTurret(internal: EnemyInternal, dt: number, playerPos: THREE.Vector3): void {
-  const node = internal.turretNode;
-  if (!node) {
-    return;
-  }
-  node.updateWorldMatrix(true, false);
-  node.getWorldPosition(_muzzlePos);
-  _lookDir.subVectors(playerPos, _muzzlePos);
-  if (_lookDir.lengthSq() < 1e-6) {
-    return;
-  }
-  _lookDir.normalize();
-  // Orientación mundial deseada: el eje local del cañón apunta a Nyx.
-  _targetQuat.setFromUnitVectors(internal.turretForward, _lookDir);
-  const parent = node.parent;
-  if (parent) {
-    parent.getWorldQuaternion(_invQuat).invert();
-    _targetQuat.premultiply(_invQuat);
-  }
-  node.quaternion.slerp(_targetQuat, 1 - Math.exp(-CRAB_TURRET_TURN_RATE * dt));
 }
 
 /** Cangrejo en el aire sin slab: encara a Nyx con un guiñeo ligero. */
@@ -1045,7 +1030,8 @@ export function updateCrabAttack(
         } else {
           enemy.attackTimer = 1.0;
         }
-      } else if (dist > CRAB_LASER_MIN_DIST) {
+      } else if (dist <= CRAB_LASER_MAX_DIST) {
+        // Entre 10 y 50 m: rayo de control de espacio desde cualquier lado.
         if (internal.turretNode) {
           internal.crabState = 'laser_aim';
           internal.crabTimer = 0;
@@ -1053,6 +1039,7 @@ export function updateCrabAttack(
           enemy.attackTimer = 1.0;
         }
       }
+      // Más allá de 50 m: fuera del alcance del cangrejo, no ataca.
       return;
     }
   }
