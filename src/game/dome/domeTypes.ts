@@ -176,11 +176,11 @@ export const RETICLE_BREAK_RADIUS_PX = 262;
 export const VISOR_CIRCLE_RADIUS_PX = RETICLE_SIZE_PX * (216 / 512); // ≈ 50.6 px
 
 /** Diámetro base MÍNIMO del aro en pantalla (nunca más pequeño, esté donde esté). */
-export const DARK_RING_MIN_DIAMETER_PX = 64;
+export const DARK_RING_MIN_DIAMETER_PX = 72;
 /** Diámetro base MÁXIMO del aro: 1.5x el mínimo. */
-export const DARK_RING_MAX_DIAMETER_PX = 96;
-/** Tope ABSOLUTO de radio con los picos más largos (1.5x el mínimo: 96 px de diámetro total). */
-export const DARK_RING_MAX_SPIKE_RADIUS_PX = 48;
+export const DARK_RING_MAX_DIAMETER_PX = 108;
+/** Tope ABSOLUTO de radio con los picos más largos (1.5x el mínimo: 108 px de diámetro total). */
+export const DARK_RING_MAX_SPIKE_RADIUS_PX = 54;
 /** Distancia (m) por debajo de la cual el aro no se dibuja (manda el lock-in). */
 export const DARK_RING_NEAR_DIST_M = 22;
 /** Distancia (m) a partir de la cual el aro satura en su tamaño máximo. */
