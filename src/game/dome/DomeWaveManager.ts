@@ -592,12 +592,16 @@ export interface EnemyInternal {
   cellTimer: number;
   /** Célula: dirección del lunge, FIJADA al iniciar el windup (sin homing). */
   cellLungeDir: THREE.Vector3;
+  /** Célula: dirección divergente de la dispersión (fijada al entrar). */
+  cellScatterDir: THREE.Vector3;
   /** Célula: metros restantes del lunge en curso. */
   cellLungeLeft: number;
   /** Célula: radio actual del anillo de acecho (7 → 5 m). */
   cellRing: number;
   /** Célula: segundos llevada oculta de la vista de Nyx. */
   cellHiddenFor: number;
+  /** Célula: segundos llevada fuera de vista (ocluida o a la espalda). */
+  cellUnseenFor: number;
   /** Célula: slot de órbita asignado por el enjambre (ángulo equidistante). */
   cellSlot: number;
   /** Célula: sentido de giro de la órbita. */
@@ -1014,9 +1018,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       cellState: 'seek',
       cellTimer: 0,
       cellLungeDir: new THREE.Vector3(),
+      cellScatterDir: new THREE.Vector3(),
       cellLungeLeft: 0,
       cellRing: CELL_RING_START,
       cellHiddenFor: 0,
+      cellUnseenFor: 0,
       cellSlot: 0,
       cellOrbitSign: index % 2 === 0 ? 1 : -1,
       actions: glbVisual ? glbVisual.actions : null,
@@ -2098,6 +2104,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           clipName = 'cell_recover';
           break;
         case 'flee':
+        case 'scatter':
           clipName = 'cell_flee_loop';
           break;
         case 'duplicate':

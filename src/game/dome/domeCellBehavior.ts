@@ -1,7 +1,7 @@
 // ============================================================================
 // DOME CELL BEHAVIOR — IA de la Célula Abisal (modo Cúpula)
 // ============================================================================
-// Depredadora de oportunidad: nunca planta cara. Repta a 20 m/s buscando
+// Depredadora de oportunidad: nunca planta cara. Repta a 14 m/s buscando
 // oclusión real (slabs y enemigos grandes) y orbita la RETAGUARDIA de Nyx en
 // un anillo que se cierra de 7 a 5 m poco a poco (~10 s; rastrera) — y a
 // toda velocidad mientras Nyx está quieta (la emboscada se compromete).
@@ -32,7 +32,7 @@ import type { EnemyInternal, ManagedWaveEnemy } from './DomeWaveManager';
 // ============================================================================
 
 /** Velocidad de reptado/acecho (m/s). */
-const CELL_SNEAK_SPEED = 20.0;
+const CELL_SNEAK_SPEED = 14.0;
 /** Velocidad de huida en pánico (m/s): más rápida que el acecho. */
 const CELL_FLEE_SPEED = 26.0;
 /** Velocidad del lunge (m/s): el ataque debe superar al reptado. */
@@ -51,10 +51,6 @@ const CELL_RING_MIN = 5.0;
 const CELL_RING_TIGHTEN = 0.2;
 /** Cierre acelerado mientras Nyx está QUIETA: la emboscada se compromete. */
 const CELL_RING_TIGHTEN_STILL = 0.6;
-/** Retroceso del anillo cuando la mira (m/s): la cobarde toma distancia. */
-const CELL_RING_WIDEN = 1.4;
-/** Radio al que retrocede el anillo mientras la mira (m). */
-const CELL_RING_SEEN = 12.0;
 /** Anillo de aproximación inicial tras spawn/lejos (m). */
 const CELL_SEEK_RING = 11.0;
 /** Distancia a la que la aproximación pasa a acecho (m). */
@@ -67,6 +63,17 @@ const CELL_SEEN_MAX_DIST = 42.0;
 const CELL_FLEE_TRIGGER_DIST = 6.5;
 /** Deja de huir al superar esta distancia de Nyx (m). */
 const CELL_FLEE_SAFE_DIST = 16.0;
+/**
+ * Dispersión del enjambre al ser visto: cada célula sale en una dirección
+ * DIVERGENTE (rotación del vector de huida según su slot) para que Nyx no
+ * pueda seguir a todas y al menos una gane su espalda.
+ */
+const CELL_SCATTER_BASE_RAD = 0.87; // ~50° de desvío respecto de "huir recto"
+const CELL_SCATTER_STEP_RAD = 0.61; // +35° por cada par de slots
+/** Duración máxima de la dispersión (s). */
+const CELL_SCATTER_MAX_SEC = 2.5;
+/** Segundos fuera de vista que cortan la dispersión (s). */
+const CELL_SCATTER_UNSEEN_SEC = 0.35;
 /** Daño del lunge al contacto (HP). */
 const CELL_LUNGE_DAMAGE = 8;
 /** Radio de contacto del cuerpo de Nyx para el lunge (m). */
@@ -137,7 +144,15 @@ const CELL_COVER_MARGIN = 2.0;
 // ============================================================================
 
 /** FSM de la Célula Abisal. */
-export type CellState = 'seek' | 'stalk' | 'windup' | 'lunge' | 'recover' | 'flee' | 'duplicate';
+export type CellState =
+  | 'seek'
+  | 'stalk'
+  | 'windup'
+  | 'lunge'
+  | 'recover'
+  | 'flee'
+  | 'scatter'
+  | 'duplicate';
 
 /** Contexto que aporta el DomeWaveManager (dueño del spawn y del reloj). */
 export interface CellBehaviorContext {
@@ -334,6 +349,7 @@ function isCellOccluded(
 
 const _toPlayer = new THREE.Vector3();
 const _fleeDir = new THREE.Vector3();
+const _scatterAway = new THREE.Vector3();
 const _coverDir = new THREE.Vector3();
 const _hideDir = new THREE.Vector3();
 const _behindDir = new THREE.Vector3();
@@ -589,6 +605,12 @@ export function updateCellEnemy(
     : 1.0;
   const seen =
     !occluded && facingDot > CELL_SEEN_DOT && distToPlayer < CELL_SEEN_MAX_DIST;
+  // Fuera de vista (ocluida O a la retaguardia): corta la dispersión.
+  if (occluded || facingDot < -0.1) {
+    internal.cellUnseenFor += dt;
+  } else {
+    internal.cellUnseenFor = 0;
+  }
 
   switch (internal.cellState) {
     // -----------------------------------------------------------------
@@ -664,6 +686,24 @@ export function updateCellEnemy(
     }
 
     // -----------------------------------------------------------------
+    case 'scatter': {
+      // Dispersión del enjambre: dirección divergente FIJADA al entrar (el
+      // vector de huida rotado según el slot). Nyx no puede seguir a todas.
+      internal.cellTimer -= dt;
+      _steer.copy(internal.cellScatterDir).multiplyScalar(CELL_FLEE_SPEED * ctx.speedMult);
+      enemy.velocity.lerp(_steer, 1 - Math.exp(-4.5 * dt));
+      enemy.position.addScaledVector(enemy.velocity, dt);
+      keepInsideArena(enemy, dt);
+
+      // Termina al perderla un instante (ocluida o a la espalda) o al
+      // agotarse el tiempo: vuelve al acecho y el enjambre se recompone.
+      if (internal.cellUnseenFor >= CELL_SCATTER_UNSEEN_SEC || internal.cellTimer <= 0) {
+        internal.cellState = 'stalk';
+      }
+      return;
+    }
+
+    // -----------------------------------------------------------------
     case 'duplicate': {
       internal.cellTimer -= dt;
       // Canal quieta: pulso creciente de energía (la estrella partiéndose).
@@ -702,9 +742,27 @@ export function updateCellEnemy(
     case 'seek':
     case 'stalk':
     default: {
-      // --- ¿Huir? Nyx la mira de frente y se acerca ---
+      // --- ¿Huir? Nyx la mira de frente y se acerca (susto a bocajarro) ---
       if (seen && distToPlayer < CELL_FLEE_TRIGGER_DIST) {
         internal.cellState = 'flee';
+        return;
+      }
+
+      // --- ¿Dispersarse? La mira: el enjambre se abre en direcciones
+      // contrarias para que no pueda seguir a todas (y una gane la espalda).
+      if (seen) {
+        _scatterAway.subVectors(enemy.position, playerPos);
+        if (_scatterAway.lengthSq() < 1e-4) {
+          _scatterAway.set(1, 0, 0);
+        } else {
+          _scatterAway.normalize();
+        }
+        const sign = internal.cellSlot % 2 === 0 ? 1 : -1;
+        const spreadRad =
+          sign * (CELL_SCATTER_BASE_RAD + Math.floor(internal.cellSlot / 2) * CELL_SCATTER_STEP_RAD);
+        internal.cellScatterDir.copy(_scatterAway).applyAxisAngle(_up, spreadRad);
+        internal.cellState = 'scatter';
+        internal.cellTimer = CELL_SCATTER_MAX_SEC;
         return;
       }
 
@@ -745,16 +803,13 @@ export function updateCellEnemy(
         } else {
           // Anillo de acecho: se cierra poco a poco si Nyx no puede verla
           // (ocluida o a la retaguardia) — y mucho más rápido mientras Nyx
-          // está QUIETA: la emboscada se compromete. Si la mira, la cobarde
-          // retrocede hasta CELL_RING_SEEN (puede rodear por fuera sin
-          // cruzar el frente a distancia de susto).
+          // está QUIETA: la emboscada se compromete. (Si la mira, entra en
+          // scatter antes de llegar aquí.)
           if (occluded || facingDot < -0.1) {
             const rate = director.isPlayerStill()
               ? CELL_RING_TIGHTEN_STILL
               : CELL_RING_TIGHTEN;
             internal.cellRing = Math.max(CELL_RING_MIN, internal.cellRing - rate * dt);
-          } else if (seen) {
-            internal.cellRing = Math.min(CELL_RING_SEEN, internal.cellRing + CELL_RING_WIDEN * dt);
           }
         }
 
