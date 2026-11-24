@@ -1,8 +1,12 @@
 import * as THREE from 'three';
 import {
+  DARK_RING_MAX_RADIUS_FRAC,
+  DARK_RING_PX_PER_M,
   DOME_PLAYER_BOUND_RADIUS,
   RETICLE_BREAK_RADIUS_PX,
   RETICLE_LOCK_RADIUS_PX,
+  VISOR_CIRCLE_RADIUS_PX,
+  type DomeDarkRing,
   type DomeHudState,
   type DomeRadarDot,
   type NyxMovementMode,
@@ -392,6 +396,15 @@ export class NyxDomeController {
   private readonly radarDotPool: DomeRadarDot[] = Array.from(
     { length: 32 },
     () => ({ x: 0, y: 0, onScreen: true, edgeAngleDeg: 0 }),
+  );
+
+  // --- Aro de Materia Oscura: marcador pasivo de enemigos lejanos. El radio
+  // en píxeles crece con la distancia; cuando cabe en el círculo del visor
+  // (radio <= VISOR_CIRCLE_RADIUS_PX) el aro desaparece y el lock-in manda.
+  private readonly darkRings: DomeDarkRing[] = [];
+  private readonly darkRingPool: DomeDarkRing[] = Array.from(
+    { length: 16 },
+    () => ({ x: 0, y: 0, radius: 0, alpha: 1, phase: 0 }),
   );
 
   // --- Recursos y progresión
@@ -1023,9 +1036,11 @@ export class NyxDomeController {
     const sprintHeld = this.isDown('sprint');
 
     // --- Mira: detección de enemigo en el visor (lock / break) con oclusión
-    // tras suelos, y puntos rojos del radar de enemigos (Tab).
+    // tras suelos, puntos rojos del radar de enemigos (Tab) y aros pasivos
+    // de materia oscura para los enemigos lejanos.
     this.updateReticle(camera, enemies, slabs);
     this.updateRadarDots(camera, enemies);
+    this.updateDarkMatterRings(camera, enemies);
 
     // --- Early Cancel: tras los primeros 0.12 s de impacto, cualquier WASD,
     // despegue o Dash corta el animLock de land_recover / jump_land para que
@@ -1365,6 +1380,62 @@ export class NyxDomeController {
     dot.onScreen = onScreen;
     dot.edgeAngleDeg = edgeAngleDeg;
     this.radarDots.push(dot);
+  }
+
+  /**
+   * Aro de Materia Oscura (pasivo, sin Tab): proyecta cada enemigo vivo a
+   * pantalla y le asigna un aro cuyo radio CRECE con la distancia
+   * (DARK_RING_PX_PER_M px por metro). Solo entra en la lista mientras el
+   * radio sea mayor que el círculo general del visor: al acercarse, el aro
+   * converge y desaparece bajo el visor (el lock-in toma el relevo). Sin
+   * raycast de oclusión: es un "sentido" de materia oscura y atraviesa
+   * suelos, lo que lo hace útil justo cuando el enemigo no se ve.
+   */
+  private updateDarkMatterRings(
+    camera: THREE.PerspectiveCamera,
+    enemies: TestEnemySphere[] | undefined,
+  ): void {
+    this.darkRings.length = 0;
+    if (!enemies) return;
+
+    const width = this.viewportW;
+    const height = this.viewportH;
+    const maxRadius = Math.min(width, height) * DARK_RING_MAX_RADIUS_FRAC;
+    // Banda de fundido: entra al superar el visor y sale al volver a caber.
+    const fadeBand = VISOR_CIRCLE_RADIUS_PX * 1.35 - VISOR_CIRCLE_RADIUS_PX;
+
+    for (const enemy of enemies) {
+      if (!this.projectToScreen(enemy.position, camera, width, height)) continue;
+      const dist = camera.position.distanceTo(enemy.position);
+      let radius = DARK_RING_PX_PER_M * dist;
+      if (radius <= VISOR_CIRCLE_RADIUS_PX) continue;
+      radius = Math.min(radius, maxRadius);
+      const alpha = Math.min(1, (radius - VISOR_CIRCLE_RADIUS_PX) / fadeBand);
+
+      const index = this.darkRings.length;
+      let ring = this.darkRingPool[index];
+      if (!ring) {
+        ring = { x: 0, y: 0, radius: 0, alpha: 1, phase: 0 };
+        this.darkRingPool.push(ring);
+      }
+      ring.x = this.screenPos.x;
+      ring.y = this.screenPos.y;
+      ring.radius = radius;
+      ring.alpha = alpha;
+      // Fase estable por enemigo: el ruido de cada aro es independiente y
+      // no "salta" entre frames ni al reciclar slots del pool.
+      let hash = 0;
+      for (let i = 0; i < enemy.id.length; i++) {
+        hash = (hash * 31 + enemy.id.charCodeAt(i)) % 1000;
+      }
+      ring.phase = hash * 0.7;
+      this.darkRings.push(ring);
+    }
+  }
+
+  /** Aros de materia oscura del frame (para el overlay 2D del HUD). */
+  getDarkMatterRings(): ReadonlyArray<DomeDarkRing> {
+    return this.darkRings;
   }
 
   /** Proyecta a píxeles de pantalla. false si está detrás de la cámara. */

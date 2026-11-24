@@ -16,6 +16,7 @@ import { DomeFloatingSlabManager } from '@/game/dome/DomeFloatingSlabs';
 import { DomeSphereTileManager } from '@/game/dome/DomeSphereTiles';
 import { DomeWaveManager, type ManagedWaveEnemy, type WaveFloorMode } from '@/game/dome/DomeWaveManager';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
+import { ComicImpactVfxSystem } from '@/game/dome/ComicImpactVfx';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
 import { GamepadInput, readConnectedGamepad } from '@/game/input/GamepadInput';
 import {
@@ -150,6 +151,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   const runTracker = new DomeRunTracker();
   runTrackerRef.current = runTracker;
   const vfx = new MotionVfxSystem(scene);
+  // VFX cómic de materia oscura: picos entintados, estrellas de impacto y
+  // humo rosa cel-shaded que responden a la velocidad del golpe y la skill.
+  const comicVfx = new ComicImpactVfxSystem(scene);
+  // Dirección de impulso reutilizada por los VFX de daño de habilidad.
+  const skillImpulseDir = new THREE.Vector3();
+  let lastSkillComicTime = -1;
   // Llamarada de absorción: recoger EXP/Edén en pleno vuelo se siente jugoso.
   pickups.onCollect = (kind, position) => {
     vfx.spawnAbsorbFlare(position, kind);
@@ -157,6 +164,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   // Muerte de enemigo: la malla vibra y estalla; aquí van chispas y anillos.
   waveMgr.onEnemyExplode = (position, radius, color) => {
     vfx.spawnEnemyExplosion(position, radius, color);
+    comicVfx.spawnComicExplosion(position, radius);
   };
   const audio = new SynthAudio();
   audio.setVolumeMultiplier(settingsRef.current.masterVolume);
@@ -350,6 +358,21 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     const enemy = waveMgr.getActiveEnemies().find((e) => e.id === target.id);
     if (!enemy || !enemy.entity.alive) return;
 
+    // VFX cómic del golpe de habilidad: intensidad según el impulso y el
+    // daño, con throttle para que las skills de daño continuo (agujero
+    // negro, pozo) no spameen picos en cada tick.
+    if (elapsed - lastSkillComicTime >= 0.12) {
+      lastSkillComicTime = elapsed;
+      const impulseLen = impulse.length();
+      comicVfx.spawnComicHit(
+        enemy.position,
+        impulseLen > 0.01
+          ? skillImpulseDir.copy(impulse).multiplyScalar(1 / impulseLen)
+          : null,
+        Math.min(1.3, 0.45 + impulseLen / 22 + amount * 0.004),
+      );
+    }
+
     enemy.entity.position.copy(enemy.position);
     const res = combat.computeKineticImpact(
       enemy.entity,
@@ -393,6 +416,14 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     impactSpeed?: number,
   ) => {
     waveMgr.onHitEnemy(enemy, hitDir, isDrill, impactSpeed);
+    // VFX cómic del impacto cinético: la intensidad escala con la velocidad
+    // real del golpe (el taladro pega más fuerte) y los picos salen sesgados
+    // hacia la dirección del hit.
+    comicVfx.spawnComicHit(
+      enemy.position,
+      hitDir,
+      Math.min(1.3, Math.max(0.4, (impactSpeed ?? 14) / 26)) * (isDrill ? 1.2 : 1),
+    );
     const managed = waveMgr.getActiveEnemies().find((e) => e.id === enemy.id);
     if (managed && managed.entity.alive) {
       const res = combat.computeKineticImpact(
@@ -813,6 +844,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         controller.getAimForward(),
       );
 
+      // VFX cómic de materia oscura (picos, estrellas, humo).
+      comicVfx.update(worldDt, camera.position);
+
       // Motor gravitacional: el viento sigue la velocidad real de Nyx (30
       // m/s = tope de dash/taladro) y el zumbido grave acompaña a las rocas
       // en órbita y a cualquier agujero negro vivo.
@@ -953,6 +987,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     sphereTiles.dispose();
     floatingSlabs.dispose();
     vfx.dispose();
+    comicVfx.dispose();
     backdrop.dispose();
     renderer.dispose();
   };

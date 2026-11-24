@@ -14,6 +14,7 @@ import { SynthAudio } from '@/game/audio/SynthAudio';
 import { musicPlayer } from '@/game/audio/MusicPlayer';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
 import { startDomeGameLoop, type DomeLevelUpUiState, type DomeTrainingBridge } from '@/ui/domeGameLoop';
+import DomeDarkMatterRings from '@/ui/DomeDarkMatterRings';
 import DomeHudSketch from '@/ui/DomeHudSketch';
 import DomeLevelUpSequence from '@/ui/DomeLevelUpSequence';
 import SettingsScreen from '@/ui/SettingsScreen';
@@ -260,6 +261,8 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[#040510]">
       <canvas ref={canvasRef} className="block h-full w-full cursor-none" />
+      {/* Aros de materia oscura: enemigos lejanos marcados en pantalla (bajo el HUD). */}
+      <DomeDarkMatterRings controllerRef={controllerRef} />
       <DomeHudSketch
         hud={hud}
         onExit={onExit}

@@ -138,12 +138,42 @@ export interface DomeRadarDot {
   edgeAngleDeg?: number;
 }
 
+/**
+ * Aro de Materia Oscura: marcador de enemigo lejano proyectado a pantalla.
+ * El aro es 2D, se mueve con la cámara según distancia y ángulo, y su radio
+ * CRECE con la distancia al enemigo. Regla de visibilidad: solo se ve
+ * mientras su radio sea MAYOR que el círculo general del visor; al acercarse
+ * el aro converge y, cuando cabe dentro del visor, desaparece (el lock-in
+ * toma el relevo). No requiere pulsar Tab.
+ */
+export interface DomeDarkRing {
+  x: number;
+  y: number;
+  /** Radio actual del aro en píxeles de pantalla. */
+  radius: number;
+  /** 0..1: fundido de entrada/salida cerca del umbral del visor. */
+  alpha: number;
+  /** Fase estable por enemigo (hash del id) para que el ruido no "salte". */
+  phase: number;
+}
+
 /** Tamaño visual en píxeles de pantalla del visor central (visor.svg) */
 export const RETICLE_SIZE_PX = 120;
 /** Radio lógico en píxeles para poder lockear un enemigo dentro del visor */
 export const RETICLE_LOCK_RADIUS_PX = 62;
 /** Distancia en píxeles (2.5x radio) a la que se rompe el auto-lock si el enemigo escapa */
 export const RETICLE_BREAK_RADIUS_PX = 262;
+
+/**
+ * Radio del círculo general del visor en pantalla: el octógono exterior de
+ * visor.svg va de 40 a 472 en un viewBox de 512 (radio 216) escalado a
+ * RETICLE_SIZE_PX. Es la referencia del aro de materia oscura.
+ */
+export const VISOR_CIRCLE_RADIUS_PX = RETICLE_SIZE_PX * (216 / 512); // ≈ 50.6 px
+/** Píxeles de radio de aro por metro de distancia al enemigo (a mayor distancia, mayor radio). */
+export const DARK_RING_PX_PER_M = 2.3;
+/** Tope de radio del aro como fracción del lado corto de la pantalla. */
+export const DARK_RING_MAX_RADIUS_FRAC = 0.46;
 
 export const DOME_ARENA_RADIUS = 90;
 export const DOME_PLAYER_BOUND_RADIUS = 88.6;
