@@ -6,9 +6,9 @@ import * as THREE from 'three';
 //
 // Mecánica intrínseca de NYX (NO es una habilidad activa): cuando se desplaza
 // hacia una pared (cualquier superficie NO pisable: canto de la tapa, raíz
-// iceberg, lateral de un suelo) a una velocidad de impacto igual o superior
-// al umbral del taladro espiral (el punto en el que una patada normal se
-// transforma en `spiral_drill_kick`), en lugar del rebote estándar amortiguado
+// iceberg, lateral de un suelo) a una velocidad de impacto igual o superior a
+// TRIGGER_SPEED (12 m/s: ~1 s de WASD en flotación, cualquier dash o patada
+// lo supera), en lugar del rebote estándar amortiguado
 // Nyx orienta los pies hacia la normal de la pared, absorbe el impacto en una
 // sentadilla redirigiendo su energía cinética y sale disparada en la
 // dirección opuesta conservando TODO el impulso acumulado.
@@ -70,7 +70,7 @@ import * as THREE from 'three';
 //
 // Vectores de dirección (espacio mundo):
 //   - entryDir: vector unitario de la velocidad en el contacto (hacia la
-//     pared). entrySpeed = |velocidad| ≥ TRIGGER_SPEED (18 m/s).
+//     pared). entrySpeed = |velocidad| ≥ TRIGGER_SPEED (12 m/s).
 //   - wallNormal: normal unitaria de la superficie en el punto de contacto
 //     (apunta SIEMPRE hacia Nyx, lista para empujar).
 //   - exitDir = entryDir − 2·(entryDir·wallNormal)·wallNormal  (reflejo).
@@ -90,13 +90,15 @@ import * as THREE from 'three';
 // ============================================================================
 
 /**
- * Umbral de activación: velocidad de impacto (m/s) a partir de la cual una
- * patada normal se transforma en taladro espiral. Debe mantenerse sincronizado
- * con `DRILL_SPEED_THRESHOLD` de NyxDomeController.
+ * Umbral de activación: velocidad de impacto (m/s) mínima para que la pared
+ * "muerda" la sentadilla. Anclado originalmente al umbral del taladro
+ * espiral (18 m/s); rebajado a 12 m/s para que sea alcanzable con ~1 s de
+ * empuje WASD en flotación, sin llegar a dispararse al correr o derrapar
+ * en suelo (7.4 / 10 m/s).
  */
 export const KINETIC_BOUNCE = {
-  /** m/s de impacto total que activan la sentadilla (= umbral drill). */
-  TRIGGER_SPEED: 18.0,
+  /** m/s de impacto total que activan la sentadilla. */
+  TRIGGER_SPEED: 12.0,
   /** m/s mínimos de componente normal: un roce tangencial no la activa. */
   MIN_NORMAL_IMPACT: 4.0,
   /** s de anticipación del raycast: mira `velocidad × PREDICT_TIME` metros. */

@@ -57,10 +57,10 @@ import type { SynthAudio } from '@/game/audio/SynthAudio';
 //                   (0.20): un Dash W/A/D apuntando a él re-lockea, curva el
 //                   vector de golpe +4 m/s SIN cortar la patada.
 //  - 'kick_recover' Frenado suave hasta casi 0 encadenando kick_flip.
-//  - 'kinetic_bounce' Sentadilla Cinética (intrínseca, 0 Edén): impacto de
-//                   pared a velocidad >= umbral drill → pies a la normal,
-//                   sentadilla de amortiguación y salida con TODO el impulso
-//                   en la dirección reflejada (ver nyxKineticBounce.ts).
+//  - 'kinetic_bounce' Sentadilla Cinética (intrínseca, 0 Edén): impacto
+//                   contra superficie no pisable a >= 12 m/s → pies a la
+//                   normal, sentadilla de amortiguación y salida con TODO el
+//                   impulso en la dirección reflejada (ver nyxKineticBounce.ts).
 //
 // Economía de Edén (base 100): +1%/s de regeneración siempre en suelo (aunque
 // andes o esprines) y en flotación solo sin WASD ni clics (aunque te deslices
@@ -2232,10 +2232,10 @@ export class NyxDomeController {
             this.up.dot(n) < -0.35;
 
           // --- Sentadilla Cinética: impacto contra cualquier superficie no
-          // pisable (pared, canto o raíz iceberg) a velocidad de taladro
-          // (>= umbral drill) con componente normal real. En vez del rebote
-          // amortiguado, Nyx absorbe en sentadilla y sale con TODO el impulso
-          // en la dirección reflejada. Coste 0 de Edén: intrínseca.
+          // pisable (pared, canto o raíz iceberg) a >= 12 m/s con componente
+          // normal real. En vez del rebote amortiguado, Nyx absorbe en
+          // sentadilla y sale con TODO el impulso en la dirección reflejada.
+          // Coste 0 de Edén: intrínseca.
           const impactSpeed = this.velocity.length();
           if (
             this.bounceCooldown <= 0 &&
