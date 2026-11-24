@@ -400,7 +400,7 @@ export class NyxDomeController {
   );
 
   // --- Aro de Materia Oscura: marcador pasivo de enemigos lejanos. El
-  // tamaño en pantalla está ACOTADO (diámetro 40..60 px): escala
+  // tamaño en pantalla está ACOTADO (diámetro 55..70 px): escala
   // proporcionalmente con la distancia dentro de ese rango y desaparece
   // por debajo de DARK_RING_NEAR_DIST_M (el lock-in manda).
   private readonly darkRings: DomeDarkRing[] = [];
