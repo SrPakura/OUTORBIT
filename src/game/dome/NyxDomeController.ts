@@ -18,6 +18,7 @@ import {
   updateSlabMotion,
   type SlabContact,
 } from '@/game/dome/DomeSlabs';
+import { KINETIC_BOUNCE, KineticBounceState } from '@/game/dome/nyxKineticBounce';
 import { NyxAnimator, type NyxAnimParams, type NyxAnimState } from '@/game/render/nyxAnimator';
 import type { NyxWalkPlayer } from '@/game/render/nyxWalkPlayer';
 import type { NyxClips } from '@/game/render/nyxModelLoader';
@@ -56,6 +57,10 @@ import type { SynthAudio } from '@/game/audio/SynthAudio';
 //                   (0.20): un Dash W/A/D apuntando a él re-lockea, curva el
 //                   vector de golpe +4 m/s SIN cortar la patada.
 //  - 'kick_recover' Frenado suave hasta casi 0 encadenando kick_flip.
+//  - 'kinetic_bounce' Sentadilla Cinética (intrínseca, 0 Edén): impacto de
+//                   pared a velocidad >= umbral drill → pies a la normal,
+//                   sentadilla de amortiguación y salida con TODO el impulso
+//                   en la dirección reflejada (ver nyxKineticBounce.ts).
 //
 // Economía de Edén (base 100): +1%/s de regeneración siempre en suelo (aunque
 // andes o esprines) y en flotación solo sin WASD ni clics (aunque te deslices
@@ -124,6 +129,14 @@ const ICEBERG_WOBBLE = 0.85;
 const WALL_BOUNCE_LIFT = 1.5; // m/s hacia this.up tras el golpe
 const WALL_BOUNCE_ROLL = 0.26;
 const WALL_WOBBLE = 0.75;
+// --- Corner correction (esquinas y vértices)
+// Contacto casi perpendicular al marco de suelo actual (esquina/vértice de
+// otra geometría): no roba el marco ni re-ancla, solo expulsa y desliza.
+const CORNER_FRAME_DOT = 0.25;
+// Roce a baja velocidad contra cualquier superficie no pisable: expulsión +
+// deslizamiento suave, sin rebote ni hit_stagger. La flotación nunca queda
+// bloqueada por una colisión residual en una esquina.
+const CORNER_GRAZE_MAX_SPEED = 5.0;
 // Barrera blanca: impacto masivo contra cristal energético.
 const DOME_BOUNCE_HIT_STOP = 0.065;
 const DOME_BOUNCE_FOV_PUNCH = -14;
@@ -447,6 +460,11 @@ export class NyxDomeController {
   private readonly touchGoTimes = new Map<string, number>();
   private edenFlash = 0; // 0..1 destello de recarga para el HUD
 
+  // --- Sentadilla Cinética (rebote impulsado en pared): máquina de fases
+  // prepare → squat → launch con los vectores de la coreografía. Intrínseca
+  // de Nyx: coste 0 de Edén y nunca se bloquea como habilidad activa.
+  private readonly kinetic = new KineticBounceState();
+
   // --- Gravity Shift: estado gravitatorio visible en el material de Nyx
   private nyxMaterial: THREE.ShaderMaterial | null = null;
   private gravityShift = 0; // 0 = grounded, 1 = poder gravitatorio encendido
@@ -487,6 +505,12 @@ export class NyxDomeController {
     distance: 0,
   };
   private readonly stickHitScratch: SlabRaycastHit = {
+    slab: null as unknown as SlabCollider,
+    point: new THREE.Vector3(),
+    normal: new THREE.Vector3(),
+    distance: 0,
+  };
+  private readonly kineticHitScratch: SlabRaycastHit = {
     slab: null as unknown as SlabCollider,
     point: new THREE.Vector3(),
     normal: new THREE.Vector3(),
@@ -1038,7 +1062,15 @@ export class NyxDomeController {
       case 'kick_recover':
         this.updateKickRecover(simDt);
         break;
+      case 'kinetic_bounce':
+        this.updateKineticBounceMode(simDt);
+        break;
     }
+
+    // --- Sentadilla Cinética: raycast de anticipación de pared (fase
+    // prepare) + timeout de la preparación. El avance de squat/launch lo
+    // lleva updateKineticBounceMode.
+    this.updateKineticBounce(slabs, simDt);
 
     // --- Integración (congelada durante el hit-stop)
     if (!hitStop) {
@@ -1593,6 +1625,9 @@ export class NyxDomeController {
     }
     // En kick_recover espera a terminar de frenar, salvo re-lock en cámara lenta.
     if (this.mode === 'kick_recover' && this.bulletTimeTimer <= 0) return;
+    // La Sentadilla Cinética es un estado cerrado de 0.28 s: no se puede
+    // interrumpir con un ataque (el impulso sale solo, sin coste de Edén).
+    if (this.mode === 'kinetic_bounce') return;
     if (this.eden <= 0.01) return;
     const speed = this.velocity.length();
 
@@ -1986,6 +2021,135 @@ export class NyxDomeController {
   }
 
   // ==========================================================================
+  // Sentadilla Cinética (rebote impulsado en pared)
+  //
+  // Intrínseca de Nyx (0 Edén, no es habilidad activa): impacto de pared a
+  // velocidad >= umbral drill → pies a la normal, sentadilla que absorbe y
+  // salida con TODO el impulso en la dirección reflejada. Fases, timing y
+  // contrato de animación: nyxKineticBounce.ts.
+  // ==========================================================================
+
+  /**
+   * Predicción de impacto de pared: raycast de anticipación a lo largo de la
+   * velocidad. Si detecta una pared frontal a (radio + velocidad ×
+   * PREDICT_TIME) metros, arranca/refresca la fase `prepare` para orientar
+   * los pies hacia la normal justo antes del contacto. También gestiona el
+   * timeout de la preparación (pared esquivada o roce que no llega).
+   */
+  private updateKineticBounce(slabs: SlabCollider[], dt: number): void {
+    const kb = this.kinetic;
+    if (kb.phase === 'squat' || kb.phase === 'launch') return; // los avanza el modo
+
+    if (kb.phase === 'prepare') {
+      kb.timer += dt;
+      if (
+        kb.timer >= KINETIC_BOUNCE.PREPARE_TIMEOUT ||
+        this.mode === 'grounded' ||
+        this.velocity.length() < KINETIC_BOUNCE.TRIGGER_SPEED
+      ) {
+        kb.reset();
+        return;
+      }
+    }
+
+    const speed = this.velocity.length();
+    if (this.mode === 'grounded' || this.bounceCooldown > 0) return;
+    if (speed < KINETIC_BOUNCE.TRIGGER_SPEED) return;
+
+    const dir = this.tmpA.copy(this.velocity).multiplyScalar(1 / speed);
+    const reach = PLAYER_RADIUS + speed * KINETIC_BOUNCE.PREDICT_TIME;
+    const hit = raycastSlabs(slabs, this.nyxRoot.position, dir, reach, this.kineticHitScratch);
+    if (!hit) return;
+    // Solo paredes frontales: la normal prevista se opone al vuelo.
+    if (hit.normal.dot(dir) > -KINETIC_BOUNCE.HEAD_ON_DOT) return;
+    kb.beginPrepare(hit.normal, dir, speed);
+  }
+
+  /**
+   * Arranca la compresión en el contacto real con la pared: clava la esfera
+   * sobre el punto de contacto, limpia el estado de ataque previo y entra en
+   * el modo `kinetic_bounce` con el clip `kinetic_squat`.
+   */
+  private beginKineticSquat(entrySpeed: number): void {
+    const kb = this.kinetic;
+    kb.beginSquat(
+      this.contact.normal,
+      this.tmpE.copy(this.velocity).multiplyScalar(1 / Math.max(entrySpeed, 1e-4)),
+      entrySpeed,
+    );
+    // La patada/caída termina contra la pared: el rebote conserva el impulso.
+    if (this.mode === 'speed_attack') {
+      this.lockedEnemy = null;
+      this.redirectTargetEnemy = null;
+      this.redirectWindowTimer = 0;
+      this.speedAttackKind = null;
+    }
+    this.mode = 'kinetic_bounce';
+    this.groundedSlab = null;
+    this.animLock = null;
+    this.slideTimer = 0;
+    this.airDriftTimer = 0;
+    // Esfera clavada sobre el punto de contacto real (radio + margen).
+    this.nyxRoot.position
+      .copy(this.contact.point)
+      .addScaledVector(this.contact.normal, PLAYER_RADIUS + 0.02);
+    this.playOneShot('kinetic_squat');
+    this.vfx.spawnDustBurst(this.nyxRoot.position, this.contact.normal, 'land');
+    this.audio?.playLand();
+    // Amortiguación limpia: tambaleo de compresión sin hit-stagger ni daño.
+    this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, 0.55);
+  }
+
+  /**
+   * Impulso de salida: fija la velocidad reflejada (todo el impulso) y
+   * re-arma el marco de vuelo hacia la dirección de escape.
+   */
+  private launchKineticBounce(): void {
+    const kb = this.kinetic;
+    kb.beginLaunch();
+    this.velocity.copy(kb.exitDir).multiplyScalar(kb.exitSpeed);
+    // Marco de vuelo hacia la salida: la normal de la pared proyectada
+    // perpendicular a la salida (si el impacto fue frontal, la tangente del
+    // rumbo anterior evita degenerar el marco).
+    this.aimForward.copy(kb.exitDir);
+    this.prevAimFwd.copy(this.aimForward);
+    this.aimUp.copy(kb.wallNormal).addScaledVector(kb.exitDir, -kb.wallNormal.dot(kb.exitDir));
+    if (this.aimUp.lengthSq() < 1e-4) this.aimUp.copy(this.facing);
+    if (this.aimUp.lengthSq() < 1e-4) this.aimUp.set(0, 1, 0);
+    this.aimUp.normalize();
+    this.facing.copy(kb.exitDir);
+    this.startCamTug();
+    this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
+    this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
+    this.audio?.playGravityShift();
+  }
+
+  /** Modo `kinetic_bounce`: absorción en la sentadilla y transición al vuelo. */
+  private updateKineticBounceMode(dt: number): void {
+    const kb = this.kinetic;
+    if (kb.phase === 'squat') {
+      kb.timer += dt;
+      // Absorción: la energía cinética se guarda en la flexión (decae rápido
+      // mientras la esfera sigue clavada a la pared).
+      this.velocity.multiplyScalar(Math.exp(-KINETIC_BOUNCE.ABSORB_LAMBDA * dt));
+      if (kb.timer >= KINETIC_BOUNCE.SQUAT_DURATION) {
+        this.launchKineticBounce();
+      }
+      return;
+    }
+    if (kb.phase === 'launch') {
+      kb.timer += dt;
+      // La velocidad de salida ya está fijada: vuela constante durante el
+      // impulso y pasa a flotación 0G al terminar la extensión.
+      if (kb.timer >= KINETIC_BOUNCE.LAUNCH_DURATION) {
+        kb.reset();
+        this.mode = 'floating';
+        this.bounceCooldown = KINETIC_BOUNCE.COOLDOWN;
+      }
+    }
+  }
+
+  // ==========================================================================
   // Colisiones
   // ==========================================================================
 
@@ -2000,6 +2164,17 @@ export class NyxDomeController {
     if (hit) {
       const n = this.contact.normal;
       const approach = this.velocity.dot(n); // < 0 = entrando en la superficie
+
+      // --- Sentadilla Cinética en curso: la pared solo expulsa
+      // posicionalmente. La velocidad la gestiona el modo (absorción en la
+      // compresión; lanzamiento ya alejándose de la superficie), así que
+      // aquí NUNCA se refleja ni se mata el impulso acumulado.
+      if (this.mode === 'kinetic_bounce') {
+        this.nyxRoot.position
+          .copy(this.contact.point)
+          .addScaledVector(n, PLAYER_RADIUS + 0.02);
+        return;
+      }
 
       if (this.mode !== 'grounded') {
         // Suelos oneSidedTop: solo la cara superior (+Y del slab) es pisable;
@@ -2038,10 +2213,56 @@ export class NyxDomeController {
             footAlign > LAND_ALIGN_MIN);
 
         if (canLand) {
-          // Aterriza: esfera apoyada sobre la superficie, nunca al centro del slab.
-          this.nyxRoot.position.copy(this.contact.point).addScaledVector(landNormal, PLAYER_RADIUS);
+          // Aterriza en el punto de contacto real: expulsión a lo largo de la
+          // normal por exactamente la penetración medida. La posición
+          // tangencial (la que traía Nyx al rozar el borde o la esquina) se
+          // conserva intacta: cero teletransporte hacia dentro de la
+          // plataforma, se posa donde ha tocado de verdad.
+          this.nyxRoot.position.addScaledVector(landNormal, this.contact.depth);
+          // Si la preparación de la Sentadilla Cinética estaba en marcha y
+          // resulta que la cara era pisable, gana el aterrizaje.
+          if (this.kinetic.phase === 'prepare') this.kinetic.reset();
           this.landOn(landNormal, Math.max(0, -approach));
         } else {
+          // Iceberg inferior de un slab flotante (roca viva) vs pared/canto:
+          // el rebote, la sacudida y el VFX son distintos.
+          const icebergHit =
+            this.contact.slab?.oneSidedTop === true &&
+            !isTopFace &&
+            this.up.dot(n) < -0.35;
+
+          // --- Sentadilla Cinética: impacto de pared/canto a velocidad de
+          // taladro (>= umbral drill) con componente normal real. En vez del
+          // rebote amortiguado, Nyx absorbe en sentadilla y sale con TODO el
+          // impulso en la dirección reflejada. Coste 0 de Edén: intrínseca.
+          const impactSpeed = this.velocity.length();
+          if (
+            !icebergHit &&
+            this.bounceCooldown <= 0 &&
+            -approach >= KINETIC_BOUNCE.MIN_NORMAL_IMPACT &&
+            impactSpeed >= KINETIC_BOUNCE.TRIGGER_SPEED
+          ) {
+            this.beginKineticSquat(impactSpeed);
+            return;
+          }
+          // El contacto se resuelve por otra vía (roce, rebote): la
+          // preparación de la sentadilla, si estaba pendiente, se cancela.
+          if (this.kinetic.phase === 'prepare') this.kinetic.reset();
+
+          // --- Corner correction a baja velocidad: rozar una esquina o
+          // vértice a poca velocidad no rebota ni aturde. Solo expulsa y
+          // recorta la componente normal, dejando que Nyx resbale alrededor
+          // del vértice: la flotación nunca queda bloqueada por una colisión
+          // residual.
+          if (this.velocity.length() < CORNER_GRAZE_MAX_SPEED) {
+            this.nyxRoot.position
+              .copy(this.contact.point)
+              .addScaledVector(n, PLAYER_RADIUS + 0.02);
+            const vn = this.velocity.dot(n);
+            if (vn < 0) this.velocity.addScaledVector(n, -vn);
+            return;
+          }
+
           // --- Ledge Glance: roce superficial contra el canto de un slab. En
           // vez de comerse un hit_stagger seco de pared, se desvía suave con
           // una nubecita de polvo conservando el 80% de la velocidad para no
@@ -2088,12 +2309,6 @@ export class NyxDomeController {
           // onda de impacto de caída libre (se lee antes de limpiar el kind).
           const wasVoidFall =
             this.mode === 'speed_attack' && this.speedAttackKind === 'void_fall';
-          // Iceberg inferior de un slab flotante (roca viva) vs pared/canto:
-          // el rebote, la sacudida y el VFX son distintos.
-          const icebergHit =
-            this.contact.slab?.oneSidedTop === true &&
-            !isTopFace &&
-            this.up.dot(n) < -0.35;
           const vn = this.velocity.dot(n);
           if (vn < 0) this.velocity.addScaledVector(n, -2 * vn); // reflect
           if (icebergHit) {
@@ -2151,6 +2366,19 @@ export class NyxDomeController {
         return;
       }
 
+      // --- Corner correction (marco de suelo): un contacto casi
+      // perpendicular a la normal del suelo actual (esquina o vértice de otra
+      // geometría que se incrusta al caminar el borde) NO roba el marco ni
+      // re-ancla la plataforma: solo expulsa posicionalmente y recorta la
+      // componente normal. Nyx resbala alrededor del vértice en vez de
+      // quedarse enganchada con un choque continuo que le impida despegar.
+      if (n.dot(this.groundNormal) < CORNER_FRAME_DOT) {
+        this.nyxRoot.position.addScaledVector(n, this.contact.depth + 0.02);
+        const vn = this.velocity.dot(n);
+        if (vn < 0) this.velocity.addScaledVector(n, -vn);
+        return;
+      }
+
       // Suelos oneSidedTop: si el contacto es con la parte superior —aunque
       // sea la arista del borde, donde la normal sale diagonal— el marco de
       // suelo se FIJA al +Y local del slab. Nyx camina plana hasta el último
@@ -2163,9 +2391,11 @@ export class NyxDomeController {
           groundN = topDir;
         }
       }
-      // Corrección posicional: esfera apoyada sobre la superficie (en la tapa
-      // se apoya sobre el plano, no sobre la arista diagonal).
-      this.nyxRoot.position.copy(this.contact.point).addScaledVector(groundN, PLAYER_RADIUS);
+      // Corrección posicional: expulsión a lo largo de la normal por exactamente
+      // la penetración medida. La posición tangencial se conserva: caminar
+      // rozando el borde o una esquina nunca arrastra a Nyx hacia el punto de
+      // contacto (sin snap lateral artificial).
+      this.nyxRoot.position.addScaledVector(groundN, this.contact.depth);
       if (approach < 0) this.velocity.addScaledVector(n, -approach);
       this.groundNormal.copy(groundN);
       // Re-ancla al slab de contacto (puede ser otro suelo al caminar).
@@ -2462,6 +2692,20 @@ export class NyxDomeController {
       } else {
         this.turnRate = 0;
       }
+    } else if (this.mode === 'kinetic_bounce' && this.kinetic.phase === 'squat') {
+      // Sentadilla Cinética (compresión): el cuerpo se planta sobre la pared
+      // con los pies hacia la superficie (up = normal de la pared) y el
+      // rumbo se mantiene tangente al plano de contacto.
+      this.up
+        .lerp(this.kinetic.wallNormal, 1 - Math.exp(-KINETIC_BOUNCE.ORIENT_RATE * dt))
+        .normalize();
+      this.facing.addScaledVector(this.up, -this.facing.dot(this.up));
+      if (this.facing.lengthSq() < 1e-4) {
+        this.facing.crossVectors(this.up, this.aimUp);
+        if (this.facing.lengthSq() < 1e-4) this.facing.set(1, 0, 0).cross(this.up);
+      }
+      this.facing.normalize();
+      this.turnRate = 0;
     } else {
       // Vuelo: el cuerpo se alinea de espaldas a la cámara con desfase elástico,
       // limitado por la física centrípeta (a más velocidad, más le cuesta girar).
@@ -2475,6 +2719,20 @@ export class NyxDomeController {
         -12,
         12,
       );
+      // --- Preparación de la Sentadilla Cinética: justo antes del contacto
+      // los pies se orientan hacia la normal de la pared prevista (el rumbo
+      // se proyecta tangente para no degenerar la base del modelo).
+      if (this.kinetic.phase === 'prepare') {
+        this.up
+          .lerp(this.kinetic.wallNormal, 1 - Math.exp(-KINETIC_BOUNCE.ORIENT_RATE * dt))
+          .normalize();
+        this.facing.addScaledVector(this.up, -this.facing.dot(this.up));
+        if (this.facing.lengthSq() < 1e-4) {
+          this.facing.crossVectors(this.up, this.aimUp);
+          if (this.facing.lengthSq() < 1e-4) this.facing.set(1, 0, 0).cross(this.up);
+        }
+        this.facing.normalize();
+      }
     }
 
     // +Z = frente de nyx_rigged.glb, +Y = cabeza: base ortonormal directa.
@@ -2612,6 +2870,13 @@ export class NyxDomeController {
       }
       case 'kick_recover':
         break; // lo maneja updateKickRecover
+      case 'kinetic_bounce':
+        // Red de seguridad: el clip lo sujeta el animLock de `playOneShot`,
+        // pero si se soltara antes de tiempo el estado se re-fija.
+        if (this.animator.getState() !== 'kinetic_squat') {
+          this.animator.setState('kinetic_squat');
+        }
+        break;
     }
   }
 

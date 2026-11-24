@@ -9,6 +9,7 @@ import {
   GRAVITY_KICK_LOOP,
   KICK_FLIP_CLIP,
   KICK_FLIP_DRILL_CLIP,
+  KINETIC_SQUAT_CLIP,
   SPIRAL_DRILL_KICK_LOOP,
   ZERO_G_FLOAT_LOOP,
   type NyxBakedClip,
@@ -76,6 +77,7 @@ export type NyxAnimState =
   | 'counter_parry'
   | 'wall_shift_flip'
   | 'dome_bounce'
+  | 'kinetic_squat'
   | 'victory_float'
   | 'stasis_cast'
   | 'stasis_throw'
@@ -85,7 +87,7 @@ export type NyxAnimState =
 export const NYX_ANIM_STATES: readonly NyxAnimState[] = [
   'idle', 'run', 'jump_land', 'land_recover', 'zero_g_float', 'gravity_fall',
   'air_dash', 'gravity_kick', 'kick_flip', 'kick_flip_drill', 'spiral_drill_kick', 'gravity_slide',
-  'counter_parry', 'wall_shift_flip', 'dome_bounce', 'victory_float',
+  'counter_parry', 'wall_shift_flip', 'dome_bounce', 'kinetic_squat', 'victory_float',
   'stasis_cast', 'stasis_throw', 'hit_stagger', 'eden_absorb',
 ];
 
@@ -130,7 +132,8 @@ const DURATION: Record<NyxAnimState, number> = {
   kick_flip_drill: KICK_FLIP_DRILL_CLIP.duration,
   spiral_drill_kick: INF, gravity_slide: INF,
   counter_parry: COUNTER_PARRY_DURATION, wall_shift_flip: WALL_SHIFT_FLIP_DURATION,
-  dome_bounce: DOME_BOUNCE_DURATION, victory_float: INF,
+  dome_bounce: DOME_BOUNCE_DURATION, kinetic_squat: KINETIC_SQUAT_CLIP.duration,
+  victory_float: INF,
   stasis_cast: INF, stasis_throw: 1.30, hit_stagger: 0.95, eden_absorb: INF,
 };
 /** Pose a la que se funde un estado de un disparo al terminar. */
@@ -141,7 +144,8 @@ const FALLBACK: Record<NyxAnimState, NyxAnimState> = {
   kick_flip_drill: 'zero_g_float',
   spiral_drill_kick: 'spiral_drill_kick', gravity_slide: 'gravity_slide',
   counter_parry: 'zero_g_float', wall_shift_flip: 'gravity_fall',
-  dome_bounce: 'zero_g_float', victory_float: 'victory_float',
+  dome_bounce: 'zero_g_float', kinetic_squat: 'zero_g_float',
+  victory_float: 'victory_float',
   stasis_cast: 'stasis_cast', stasis_throw: 'idle', hit_stagger: 'idle', eden_absorb: 'eden_absorb',
 };
 /** Cuánto pesa la gravedad sobre el pelo en cada estado (0G ≈ casi flota). */
@@ -149,7 +153,7 @@ const HAIR_GRAVITY_SCALE: Record<NyxAnimState, number> = {
   idle: 1, run: 0.7, jump_land: 0.9, land_recover: 1, zero_g_float: 0.12,
   gravity_fall: 0.9, air_dash: 0.35, gravity_kick: 0.3, kick_flip: 0.25,
   kick_flip_drill: 0.25, spiral_drill_kick: 0.2, gravity_slide: 0.65, counter_parry: 0.35,
-  wall_shift_flip: 0.2, dome_bounce: 0.3, victory_float: 0.08,
+  wall_shift_flip: 0.2, dome_bounce: 0.3, kinetic_squat: 0.25, victory_float: 0.08,
   stasis_cast: 0.8, stasis_throw: 0.8, hit_stagger: 0.9, eden_absorb: -0.25,
 };
 
@@ -628,6 +632,14 @@ export class NyxAnimator {
       case 'counter_parry': poseCounterParry(this.writer, t); break;
       case 'wall_shift_flip': poseWallShiftFlip(this.writer, t); break;
       case 'dome_bounce': poseDomeBounce(this.writer, t); break;
+      case 'kinetic_squat': {
+        // Clip de Blender `nyx_kinetic_squat.glb` (0.28 s, 15 keyframes a
+        // 50 fps): compresión 0..0.16 s + impulso 0.16..0.28 s, sincronizado
+        // con la física de nyxKineticBounce.ts. La vieja pose procedural
+        // queda retirada.
+        this.sampleClip(KINETIC_SQUAT_CLIP, t);
+        break;
+      }
       case 'victory_float': poseVictoryFloat(this.writer, g); break;
       case 'stasis_cast': poseStasisCast(this.writer, t, g); break;
       case 'stasis_throw': poseStasisThrow(this.writer, t, g); break;

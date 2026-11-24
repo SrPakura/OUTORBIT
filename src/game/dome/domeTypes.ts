@@ -5,7 +5,8 @@ export type NyxMovementMode =
   | 'floating'      // Flotando en 0G (cámara pegada a la espalda con lag + inercia espacial)
   | 'dashing'       // Dash con Clic Derecho + dirección (redirigible con cámara)
   | 'speed_attack'  // Clic Izq: Patada (con lock-in a enemigo) o Caída al Vacío (sin enemigo)
-  | 'kick_recover'; // Frenado con 1, 2 o 3 kick_flip tras cancelar con Espacio o impactar
+  | 'kick_recover'  // Frenado con 1, 2 o 3 kick_flip tras cancelar con Espacio o impactar
+  | 'kinetic_bounce'; // Sentadilla Cinética: rebote impulsado en pared (ver nyxKineticBounce.ts)
 
 export type SpeedAttackKind = 'gravity_kick' | 'spiral_drill_kick' | 'void_fall';
 

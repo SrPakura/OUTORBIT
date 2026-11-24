@@ -203,6 +203,13 @@ export function poseDomeBounce(w: PoseWriter, t: number): void {
 }
 
 // ============================================================================
+// poseKineticSquat — RETIRADA: la Sentadilla Cinética usa el clip horneado
+// KINETIC_SQUAT_CLIP (nyx_kinetic_squat.glb, 0.28 s) muestreado por
+// NyxAnimator.sampleClip. El contrato de fases para Blender vive en
+// `src/game/dome/nyxKineticBounce.ts`.
+// ============================================================================
+
+// ============================================================================
 // poseVictoryFloat — flotación triunfal (sostenida)
 // ============================================================================
 // Flotación triunfal ingrávida al limpiar una sala o vencer a un Dragón-
