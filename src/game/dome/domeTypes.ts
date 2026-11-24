@@ -175,15 +175,24 @@ export const RETICLE_BREAK_RADIUS_PX = 262;
  */
 export const VISOR_CIRCLE_RADIUS_PX = RETICLE_SIZE_PX * (216 / 512); // ≈ 50.6 px
 
-/** Tamaño del aro en el umbral cercano: por debajo el aro se OCULTA (no se clamp). */
+/** Tamaño FIJO del aro en pantalla (diámetro base, sin picos), esté donde esté el enemigo. */
+export const DARK_RING_FIXED_DIAMETER_PX = 65;
+/**
+ * Tamaño proporcional por debajo del cual el aro se OCULTA: la visibilidad
+ * sigue la regla proporcional (55 px a 22 m → 70 px a 60 m), pero el dibujo
+ * no encoge — al acercarse, cuando el tamaño proporcional "debería" bajar de
+ * este valor, el aro desaparece con fundido.
+ */
+export const DARK_RING_HIDE_BELOW_SIZE_PX = 60;
+/** Tamaño proporcional en el umbral cercano (22 m) — solo para la regla de visibilidad. */
 export const DARK_RING_MIN_DIAMETER_PX = 55;
-/** Diámetro base MÁXIMO del aro: 1.5x el mínimo. */
+/** Tamaño proporcional saturado (a partir de 60 m) — solo para la regla de visibilidad. */
 export const DARK_RING_MAX_DIAMETER_PX = 70;
-/** Tope ABSOLUTO de radio con los picos más largos (1.5x el mínimo: 82 px de diámetro total). */
+/** Tope ABSOLUTO de radio con los picos más largos (82 px de diámetro total). */
 export const DARK_RING_MAX_SPIKE_RADIUS_PX = 41;
-/** Distancia (m) por debajo de la cual el aro no se dibuja (manda el lock-in). */
+/** Distancia (m) del tamaño proporcional mínimo (umbral cercano). */
 export const DARK_RING_NEAR_DIST_M = 22;
-/** Distancia (m) a partir de la cual el aro satura en su tamaño máximo. */
+/** Distancia (m) a partir de la cual el tamaño proporcional satura. */
 export const DARK_RING_FAR_DIST_M = 60;
 
 export const DOME_ARENA_RADIUS = 90;

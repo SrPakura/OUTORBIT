@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import {
   DARK_RING_FAR_DIST_M,
+  DARK_RING_FIXED_DIAMETER_PX,
+  DARK_RING_HIDE_BELOW_SIZE_PX,
   DARK_RING_MAX_DIAMETER_PX,
   DARK_RING_MIN_DIAMETER_PX,
   DARK_RING_NEAR_DIST_M,
@@ -400,9 +402,9 @@ export class NyxDomeController {
   );
 
   // --- Aro de Materia Oscura: marcador pasivo de enemigos lejanos. El
-  // tamaño en pantalla está ACOTADO (diámetro 55..70 px): escala
-  // proporcionalmente con la distancia dentro de ese rango y desaparece
-  // por debajo de DARK_RING_NEAR_DIST_M (el lock-in manda).
+  // tamaño en pantalla es FIJO (65 px de diámetro); la visibilidad sigue
+  // la regla proporcional y el aro desaparece cuando su tamaño "debería"
+  // bajar del umbral de ocultación (el lock-in manda cerca).
   private readonly darkRings: DomeDarkRing[] = [];
   private readonly darkRingPool: DomeDarkRing[] = Array.from(
     { length: 16 },
@@ -1386,15 +1388,14 @@ export class NyxDomeController {
 
   /**
    * Aro de Materia Oscura (pasivo, sin Tab): proyecta cada enemigo vivo a
-   * pantalla y le asigna un aro de tamaño ACOTADO. El diámetro base escala
-   * proporcionalmente con la distancia dentro de [min 40 px, max 60 px]
-   * (clamp estricto: nunca más pequeño que el visor ni gigantesco por la
-   * perspectiva), y `t` (0..1) lleva la posición dentro del rango para que
-   * la intensidad de las espinas escale igual en el overlay. Solo entra en
-   * la lista más allá de DARK_RING_NEAR_DIST_M: al acercarse desaparece y
-   * el lock-in toma el relevo. Sin raycast de oclusión: es un "sentido" de
-   * materia oscura y atraviesa suelos, lo que lo hace útil justo cuando el
-   * enemigo no se ve.
+   * pantalla y le asigna un aro de tamaño FIJO (65 px de diámetro). La
+   * visibilidad sigue la regla proporcional (55 px a 22 m → 70 px a 60 m):
+   * cuando al acercarse el tamaño proporcional "debería" bajar de 60 px, el
+   * aro desaparece con fundido en vez de encoger. `t` (0..1) conserva la
+   * posición proporcional para que la intensidad de las espinas siga
+   * escalando con la distancia en el overlay. Sin raycast de oclusión: es
+   * un "sentido" de materia oscura y atraviesa suelos, lo que lo hace útil
+   * justo cuando el enemigo no se ve.
    */
   private updateDarkMatterRings(
     camera: THREE.PerspectiveCamera,
@@ -1406,19 +1407,23 @@ export class NyxDomeController {
     const width = this.viewportW;
     const height = this.viewportH;
     const range = DARK_RING_FAR_DIST_M - DARK_RING_NEAR_DIST_M;
+    const sizeRange = DARK_RING_MAX_DIAMETER_PX - DARK_RING_MIN_DIAMETER_PX;
+    // Distancia a la que el tamaño proporcional "debe ser" el umbral de
+    // ocultación: por debajo, el aro desaparece.
+    const hideDist =
+      DARK_RING_NEAR_DIST_M +
+      (range * (DARK_RING_HIDE_BELOW_SIZE_PX - DARK_RING_MIN_DIAMETER_PX)) / sizeRange;
 
     for (const enemy of enemies) {
       if (!this.projectToScreen(enemy.position, camera, width, height)) continue;
       const dist = camera.position.distanceTo(enemy.position);
-      if (dist <= DARK_RING_NEAR_DIST_M) continue;
+      if (dist <= hideDist) continue;
 
-      // Escalado proporcional acotado: t = 0 en el umbral cercano (tamaño
-      // mínimo), t = 1 a partir de DARK_RING_FAR_DIST_M (tamaño máximo).
+      // Escalado proporcional (solo visibilidad): t = 0 en el umbral cercano,
+      // t = 1 a partir de DARK_RING_FAR_DIST_M.
       const t = Math.min(1, (dist - DARK_RING_NEAR_DIST_M) / range);
-      const diameter =
-        DARK_RING_MIN_DIAMETER_PX + (DARK_RING_MAX_DIAMETER_PX - DARK_RING_MIN_DIAMETER_PX) * t;
-      // Fundido de entrada en los primeros 2.5 m sobre el umbral.
-      const alpha = Math.min(1, (dist - DARK_RING_NEAR_DIST_M) / 2.5);
+      // Fundido de entrada en los primeros 2.5 m sobre el punto de ocultación.
+      const alpha = Math.min(1, (dist - hideDist) / 2.5);
 
       const index = this.darkRings.length;
       let ring = this.darkRingPool[index];
@@ -1428,7 +1433,8 @@ export class NyxDomeController {
       }
       ring.x = this.screenPos.x;
       ring.y = this.screenPos.y;
-      ring.radius = diameter * 0.5;
+      // Tamaño FIJO: el dibujo no encoge con la aproximación.
+      ring.radius = DARK_RING_FIXED_DIAMETER_PX * 0.5;
       ring.alpha = alpha;
       ring.t = t;
       // Fase estable por enemigo: el ruido de cada aro es independiente y
