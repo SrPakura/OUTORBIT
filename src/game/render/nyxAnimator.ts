@@ -125,11 +125,18 @@ const BONE_NAMES: readonly string[] = [
 ];
 
 const INF = Number.POSITIVE_INFINITY;
+// Duración efectiva de las volteretas: el giro (pista unwrapped de hips.x)
+// completa los 360º/720º antes de que acabe el clip y los keyframes que
+// quedan son asentado casi estático hacia la pose de flotación. Recortar
+// aquí devuelve el control en cuanto el giro acaba; el asentado que sobra
+// lo funde el fallback a zero_g_float (y el wrap de hips.x aterriza en ~0).
+const KICK_FLIP_PLAY = 0.77; // giro completo a ~0.76 s (clip: 0.8667 s)
+const KICK_FLIP_DRILL_PLAY = 1.18; // 2º giro completo a ~1.17 s (clip: 1.3333 s)
 /** Duración (s) de los estados de un solo disparo; INF = estado sostenido. */
 const DURATION: Record<NyxAnimState, number> = {
   idle: INF, run: INF, jump_land: 1.15, land_recover: 1.1, zero_g_float: INF,
-  gravity_fall: INF, air_dash: 0.6, gravity_kick: INF, kick_flip: KICK_FLIP_CLIP.duration,
-  kick_flip_drill: KICK_FLIP_DRILL_CLIP.duration,
+  gravity_fall: INF, air_dash: 0.6, gravity_kick: INF, kick_flip: KICK_FLIP_PLAY,
+  kick_flip_drill: KICK_FLIP_DRILL_PLAY,
   spiral_drill_kick: INF, gravity_slide: INF,
   counter_parry: COUNTER_PARRY_DURATION, wall_shift_flip: WALL_SHIFT_FLIP_DURATION,
   dome_bounce: DOME_BOUNCE_DURATION, kinetic_squat: KINETIC_SQUAT_CLIP.duration,
