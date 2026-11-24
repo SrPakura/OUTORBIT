@@ -18873,6 +18873,8 @@ var BONE_NAMES = [
   "halo_ring"
 ];
 var INF = Number.POSITIVE_INFINITY;
+var KICK_FLIP_PLAY = 0.77;
+var KICK_FLIP_DRILL_PLAY = 1.18;
 var DURATION = {
   idle: INF,
   run: INF,
@@ -18882,8 +18884,8 @@ var DURATION = {
   gravity_fall: INF,
   air_dash: 0.6,
   gravity_kick: INF,
-  kick_flip: KICK_FLIP_CLIP.duration,
-  kick_flip_drill: KICK_FLIP_DRILL_CLIP.duration,
+  kick_flip: KICK_FLIP_PLAY,
+  kick_flip_drill: KICK_FLIP_DRILL_PLAY,
   spiral_drill_kick: INF,
   gravity_slide: INF,
   counter_parry: COUNTER_PARRY_DURATION,

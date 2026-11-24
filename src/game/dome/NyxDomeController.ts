@@ -788,6 +788,17 @@ export class NyxDomeController {
     return this.velocity.length();
   }
 
+  /** Vector de velocidad actual (referencia viva, no copia). */
+  getVelocity(): THREE.Vector3 {
+    return this.velocity;
+  }
+
+  /** true mientras dura el dash (Clic Derecho): lo leen las células para su
+   *  "error tonto" de atacar en pleno dash y quedar delatadas. */
+  isPlayerDashing(): boolean {
+    return this.mode === 'dashing';
+  }
+
   getHp(): number {
     return this.hp;
   }

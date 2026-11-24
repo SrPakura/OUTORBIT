@@ -369,8 +369,15 @@ export interface EnemyVisual {
   root: THREE.Group;
   /** Mallas star_core: rotan sobre sí mismas cada frame. */
   starCores: THREE.Object3D[];
-  /** Mixer con los clips del GLB ya en play (undefined si no tiene clips). */
+  /** Mixer de los clips del GLB (undefined si no tiene clips). */
   mixer?: THREE.AnimationMixer;
+  /**
+   * Acciones del mixer indexadas por nombre de clip (vacío si no tiene
+   * clips). Los bucles van en LoopRepeat y los one-shot en LoopOnce con
+   * clampWhenFinished; solo se reproduce la de reposo — el comportamiento
+   * de cada enemigo hace los crossfades por nombre de estado.
+   */
+  actions: Map<string, THREE.AnimationAction>;
   /**
    * Materiales con uniform `uTime` (carne nebulosa + contorno de tinta
    * vibrante): el caller debe avanzarles `uTime` cada frame.
@@ -556,14 +563,31 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
   });
 
   let mixer: THREE.AnimationMixer | undefined;
+  const actions = new Map<string, THREE.AnimationAction>();
   if (cached.animations.length > 0) {
     mixer = new THREE.AnimationMixer(root);
     for (const clip of cached.animations) {
-      mixer.clipAction(clip).play();
+      const action = mixer.clipAction(clip);
+      // Bucles (idle/sneak/flee/duplicate...) frente a one-shots
+      // (windup/lunge/recover/hit): estos últimos se congelan en su último
+      // frame hasta que el comportamiento los reinicie con reset().
+      if (/loop|idle|float|duplicate/.test(clip.name)) {
+        action.setLoop(THREE.LoopRepeat, Infinity);
+      } else {
+        action.setLoop(THREE.LoopOnce, 1);
+        action.clampWhenFinished = true;
+      }
+      actions.set(clip.name, action);
+    }
+    // Solo arranca en reposo el clip de idle; el resto los activa la IA.
+    const idle =
+      actions.get('cell_idle_float') ?? actions.values().next().value ?? null;
+    if (idle) {
+      idle.play();
     }
   }
 
-  return { root, starCores, mixer, animatedMaterials, standHeight };
+  return { root, starCores, mixer, actions, animatedMaterials, standHeight };
 }
 
 /** Libera las escenas GLB cacheadas (geometrías y materiales originales). */

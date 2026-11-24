@@ -47,6 +47,14 @@ import {
   type CrabBehaviorContext,
   type CrabJump,
 } from './domeCrabBehavior';
+import {
+  CellSwarmDirector,
+  CELL_CHILD_EXP,
+  CELL_RING_START,
+  updateCellEnemy,
+  type CellBehaviorContext,
+  type CellState,
+} from './domeCellBehavior';
 import { faceTowards, lookAtQuat } from './domeEnemyOrient';
 
 // ============================================================================
@@ -578,6 +586,28 @@ export interface EnemyInternal {
   chargeSpeed: number;
   chargeDamage: number;
   chargeDir: THREE.Vector3;
+  /** Célula Abisal: estado de su FSM de oportunista. */
+  cellState: CellState;
+  /** Célula: segundos restantes de la fase actual (windup/recover/duplicate). */
+  cellTimer: number;
+  /** Célula: dirección del lunge, FIJADA al iniciar el windup (sin homing). */
+  cellLungeDir: THREE.Vector3;
+  /** Célula: metros restantes del lunge en curso. */
+  cellLungeLeft: number;
+  /** Célula: radio actual del anillo de acecho (7 → 5 m). */
+  cellRing: number;
+  /** Célula: segundos llevada oculta de la vista de Nyx. */
+  cellHiddenFor: number;
+  /** Célula: slot de órbita asignado por el enjambre (ángulo equidistante). */
+  cellSlot: number;
+  /** Célula: sentido de giro de la órbita. */
+  cellOrbitSign: 1 | -1;
+  /** Clips del GLB por nombre (célula animada; null si el modelo no tiene). */
+  actions: Map<string, THREE.AnimationAction> | null;
+  /** Acción de clip en reproducción (para crossfade solo al cambiar). */
+  currentClipAction: THREE.AnimationAction | null;
+  /** Célula: segundos restantes del flinch de cell_hit sobre la IA. */
+  cellHitTimer: number;
 }
 
 /**
@@ -641,9 +671,12 @@ interface WaveProjectile {
 // DomeWaveManager
 // ---------------------------------------------------------------------------
 
-export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorContext {
+export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorContext, CellBehaviorContext {
   /** Enemigos vivos de la oleada (compatibles con TestEnemySphere[]). */
   readonly enemies: ManagedWaveEnemy[] = [];
+
+  /** Coordinador de enjambre de las Células Abisales (slots + token de lunge). */
+  readonly cellDirector = new CellSwarmDirector();
 
   private readonly scene: THREE.Scene;
   private readonly internals = new Map<string, EnemyInternal>();
@@ -792,6 +825,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       internal.animatedMaterials = glbVisual.animatedMaterials;
       internal.starCores = glbVisual.starCores;
       internal.mixer = glbVisual.mixer;
+      internal.actions = glbVisual.actions;
+      internal.currentClipAction = null;
       internal.isGlb = true;
       // Altura de apoyo del GLB real: el cangrejo recoloca sus patas sobre la
       // tapa del slab en el siguiente frame con la medida ya skinneada.
@@ -976,6 +1011,17 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       chargeSpeed: 0,
       chargeDamage: 0,
       chargeDir: new THREE.Vector3(),
+      cellState: 'seek',
+      cellTimer: 0,
+      cellLungeDir: new THREE.Vector3(),
+      cellLungeLeft: 0,
+      cellRing: CELL_RING_START,
+      cellHiddenFor: 0,
+      cellSlot: 0,
+      cellOrbitSign: index % 2 === 0 ? 1 : -1,
+      actions: glbVisual ? glbVisual.actions : null,
+      currentClipAction: null,
+      cellHitTimer: 0,
     });
   }
 
@@ -1085,6 +1131,42 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal.kronosTimer = 0;
     internal.kronosRingsLeft = 0;
     internal.kronosJawOpen = 0;
+    // Célula Abisal: cancela cualquier fase ofensiva/telegraph en curso.
+    if (internal.cellState !== 'seek' && internal.cellState !== 'stalk') {
+      internal.cellState = 'stalk';
+      internal.cellTimer = 0;
+      internal.cellLungeLeft = 0;
+    }
+    internal.cellHitTimer = 0;
+  }
+
+  // -------------------------------------------------------------------------
+  // Contexto de la Célula Abisal (CellBehaviorContext)
+  // -------------------------------------------------------------------------
+
+  getCurrentWave(): number {
+    return this.currentWave;
+  }
+
+  isEnemiesPassive(): boolean {
+    return this.enemiesPassive;
+  }
+
+  /**
+   * Duplicación de la Célula Abisal: spawnea la hija junto a la madre (a
+   * HP completo pero con EXP reducida) y deja a la madre al 60% de su HP.
+   */
+  spawnCellChild(mother: ManagedWaveEnemy, offset: THREE.Vector3): void {
+    const rng = makeRng(Math.floor(Math.random() * 0x7fffffff) || 1);
+    const homePos = mother.position.clone().add(offset);
+    const index = this.enemies.length;
+    this.spawnEnemy('abyssal_cell', index, rng, undefined, homePos);
+    const child = this.enemies[index];
+    if (child) {
+      child.entity.expValue = CELL_CHILD_EXP;
+      child.attackTimer = 1.5;
+    }
+    mother.entity.hp = Math.max(1, mother.entity.hp * 0.6);
   }
 
   /**
@@ -1104,6 +1186,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
     // Un golpe interrumpe la embestida en curso.
     internal.chargeTimer = 0;
+    // Célula Abisal: flinch de cell_hit (la FSM ya corta la duplicación por
+    // el pico de hitFlash).
+    if (internal.enemy.entity.archetype === 'abyssal_cell' && internal.actions) {
+      internal.cellHitTimer = 0.2;
+    }
   }
 
   /**
@@ -1235,6 +1322,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     playerPos: THREE.Vector3,
     lockedEnemy: TestEnemySphere | null,
     playerAttackTime: number,
+    playerVel: THREE.Vector3,
+    playerAimForward: THREE.Vector3,
+    playerDashing: boolean,
     activeSlabs: SlabCollider[] | undefined,
     onPlayerHit: (damage: number) => void,
     onOctopusInk: () => void,
@@ -1245,6 +1335,19 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.waveTime += dt;
     this.updateDying(dt);
     const lockedId = lockedEnemy?.id ?? null;
+
+    // Enjambre de Células Abisales: foco de Nyx + slots de órbita + token.
+    this.cellDirector.beginFrame(
+      dt,
+      this.enemies,
+      playerPos,
+      playerVel,
+      playerAimForward,
+      playerDashing,
+      playerAttackTime,
+      lockedId,
+      lockedEnemy?.position ?? null,
+    );
 
     // Iteración hacia atrás por índice: killEnemy hace splice de this.enemies
     // durante el bucle y así los índices pendientes no se desplazan (cero
@@ -1283,15 +1386,18 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         animatedMaterial.uniforms.uTime.value = elapsed;
       }
 
-      // Rotación continua de la estrella interior en 2 ejes + vibración de energía
-      for (const star of internal.starCores) {
-        star.rotation.y += dt * 2.8;
-        star.rotation.x += dt * 2.0;
-        star.position.set(
-          Math.sin(elapsed * 29 + enemy.phase) * 0.035,
-          Math.cos(elapsed * 34 + enemy.phase) * 0.035,
-          Math.sin(elapsed * 23 + enemy.phase * 1.4) * 0.035,
-        );
+      // Rotación continua de la estrella interior en 2 ejes + vibración de
+      // energía. Con clips embebidos (célula) el núcleo lo anima el GLB.
+      if (!internal.actions) {
+        for (const star of internal.starCores) {
+          star.rotation.y += dt * 2.8;
+          star.rotation.x += dt * 2.0;
+          star.position.set(
+            Math.sin(elapsed * 29 + enemy.phase) * 0.035,
+            Math.cos(elapsed * 34 + enemy.phase) * 0.035,
+            Math.sin(elapsed * 23 + enemy.phase * 1.4) * 0.035,
+          );
+        }
       }
       internal.mixer?.update(dt);
 
@@ -1346,12 +1452,25 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         updateCrabEnemy(this, enemy, internal, dt, elapsed, playerPos, activeSlabs);
       } else if (enemy.entity.archetype === 'kronos_leviathan') {
         updateKronosMovement(this, enemy, internal, dt, elapsed);
+      } else if (enemy.entity.archetype === 'abyssal_cell') {
+        // Célula Abisal: FSM de oportunista (acecho, lunge, huida, duplicación)
+        // con su propio ataque por contacto — no pasa por updateEnemyBehavior.
+        updateCellEnemy(
+          this,
+          this.cellDirector,
+          enemy,
+          internal,
+          dt,
+          elapsed,
+          activeSlabs,
+          onPlayerHit,
+        );
       } else {
         this.applyFloatMovement(enemy, internal, dt, elapsed);
       }
 
       // --- Comportamiento ofensivo por arquetipo (desactivado en modo pasivo) ---
-      if (!this.enemiesPassive) {
+      if (!this.enemiesPassive && enemy.entity.archetype !== 'abyssal_cell') {
         this.updateEnemyBehavior(
           enemy,
           internal,
@@ -1398,6 +1517,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         this.updateGolemPose(enemy, internal, dt, elapsed, playerPos);
       } else if (enemy.entity.archetype === 'kronos_leviathan') {
         updateKronosPose(this, enemy, internal, dt, elapsed, playerPos);
+      } else if (enemy.entity.archetype === 'abyssal_cell') {
+        this.updateCellPose(enemy, internal, dt, elapsed);
       }
 
       enemy.entity.position.copy(enemy.position);
@@ -1929,10 +2050,87 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   }
 
   /**
-   * Cangrejo Artillero: anclaje a suelos, salto parabólico entre ellos cuando
-   * el suyo sale de la cúpula o desaparece, y flotación suave (con agarre de
-   * suelos cercanos) mientras no quede ninguno disponible.
+   * Célula Abisal: crossfade del clip que corresponde a su estado de FSM
+   * (sneak/flee/windup/lunge/recover/duplicate), flinch de `cell_hit` al
+   * recibir daño y orientación hacia la dirección de movimiento (el lunge
+   * mira el salto comprometido). Sin GLB de clips, solo orienta.
    */
+  private updateCellPose(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    _elapsed: number,
+  ): void {
+    // Orientación: en windup/lunge mira el salto comprometido; si no, repta
+    // de cara a su velocidad.
+    if (internal.cellState === 'windup' || internal.cellState === 'lunge') {
+      if (internal.cellLungeDir.lengthSq() > 1e-6) {
+        _lookDir.copy(internal.cellLungeDir);
+        faceTowards(enemy.mesh, _lookDir, 5.0, dt);
+      }
+    } else if (enemy.velocity.lengthSq() > 0.3) {
+      _lookDir.copy(enemy.velocity).normalize();
+      faceTowards(enemy.mesh, _lookDir, 3.0, dt);
+    }
+
+    if (!internal.actions) {
+      // Forma provisional sin clips: la pose la pinta el wobble global.
+      return;
+    }
+
+    // Clip deseado: el flinch de cell_hit pisa la FSM mientras dura.
+    let clipName: string;
+    if (internal.cellHitTimer > 0) {
+      internal.cellHitTimer -= dt;
+      clipName = 'cell_hit';
+    } else if (this.enemiesPassive) {
+      clipName = 'cell_idle_float';
+    } else {
+      switch (internal.cellState) {
+        case 'windup':
+          clipName = 'cell_windup';
+          break;
+        case 'lunge':
+          clipName = 'cell_lunge';
+          break;
+        case 'recover':
+          clipName = 'cell_recover';
+          break;
+        case 'flee':
+          clipName = 'cell_flee_loop';
+          break;
+        case 'duplicate':
+          clipName = 'cell_duplicate';
+          break;
+        case 'seek':
+        case 'stalk':
+        default:
+          clipName = 'cell_sneak_loop';
+          break;
+      }
+    }
+    this.crossfadeCellAction(internal, clipName);
+  }
+
+  /** Crossfade suave entre clips de la célula (solo cuando cambia de clip). */
+  private crossfadeCellAction(internal: EnemyInternal, clipName: string): void {
+    const actions = internal.actions;
+    if (!actions) {
+      return;
+    }
+    const next = actions.get(clipName);
+    if (!next || next === internal.currentClipAction) {
+      return;
+    }
+    const prev = internal.currentClipAction;
+    next.reset();
+    next.fadeIn(0.12).play();
+    if (prev) {
+      prev.fadeOut(0.12);
+    }
+    internal.currentClipAction = next;
+  }
+
   /** Pulpo: orientación suave hacia Nyx con balanceo en espiral y tentáculos ondeando. */
   private updateOctopusPose(
     enemy: ManagedWaveEnemy,
@@ -2194,6 +2392,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     this.enemies.length = 0;
     this.internals.clear();
+    this.cellDirector.reset();
     for (const dying of this.dying) {
       this.scene.remove(dying.mesh);
       for (const material of dying.materials) material.dispose();
