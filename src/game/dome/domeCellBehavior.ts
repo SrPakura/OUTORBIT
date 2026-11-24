@@ -1,9 +1,9 @@
 // ============================================================================
 // DOME CELL BEHAVIOR — IA de la Célula Abisal (modo Cúpula)
 // ============================================================================
-// Depredadora de oportunidad: nunca planta cara. Repta a 2.5 m/s buscando
+// Depredadora de oportunidad: nunca planta cara. Repta a 20 m/s buscando
 // oclusión real (slabs y enemigos grandes), orbita a Nyx en un anillo que se
-// cierra de 7 a 5 m y solo salta —lunge de 6 m a 6 m/s, trayectoria FIJADA
+// cierra de 7 a 5 m y solo salta —lunge de 6 m a 30 m/s, trayectoria FIJADA
 // al iniciar el windup, sin corrección en vuelo— en el "momento
 // matemáticamente perfecto": Nyx quieta (>0.6 s), lockeada/peleando con otro
 // enemigo, o en pleno dash (donde el lunge cae en falso y la delata: el dash
@@ -30,11 +30,11 @@ import type { EnemyInternal, ManagedWaveEnemy } from './DomeWaveManager';
 // ============================================================================
 
 /** Velocidad de reptado/acecho (m/s). */
-const CELL_SNEAK_SPEED = 2.5;
-/** Velocidad de huida en pánico (m/s): algo más rápida, pero alcanzable. */
-const CELL_FLEE_SPEED = 3.4;
-/** Velocidad del lunge (m/s). */
-const CELL_LUNGE_SPEED = 6.0;
+const CELL_SNEAK_SPEED = 20.0;
+/** Velocidad de huida en pánico (m/s): más rápida que el acecho. */
+const CELL_FLEE_SPEED = 26.0;
+/** Velocidad del lunge (m/s): el ataque debe superar al reptado. */
+const CELL_LUNGE_SPEED = 30.0;
 /** Distancia máxima del lunge (m): obliga a acercarse para atacar. */
 const CELL_LUNGE_MAX_DIST = 6.0;
 /** Telegraph del lunge: se echa hacia atrás antes de saltar (s). */
@@ -72,7 +72,7 @@ const CELL_STILL_SEC = 0.6;
 /** Lead máx. de predicción del lunge (s): apunta a donde VAS, no donde estás. */
 const CELL_LEAD_MAX = 0.5;
 /** Empuje hacia atrás al iniciar el windup (m/s): el "se echa para atrás". */
-const CELL_WINDUP_BACKSTEP = 2.2;
+const CELL_WINDUP_BACKSTEP = 8.0;
 
 // --- Duplicación ---
 /** Canal de duplicación quieta y brillando (s). */
@@ -102,13 +102,15 @@ const CELL_COVER_MIN_RADIUS = 3.0;
 /** Distancia de separación entre células (m). */
 const CELL_SEPARATION_DIST = 2.4;
 /** Fuerza del empuje de separación entre células. */
-const CELL_SEPARATION_STRENGTH = 2.2;
+const CELL_SEPARATION_STRENGTH = 8.0;
 /** Radio XZ de contención dentro de la arena (m). */
 const CELL_ARENA_KEEP_RADIUS = 70.0;
 /** Tirón hacia el centro al superar la contención (m/s). */
 const CELL_ARENA_KEEP_PULL = 9.0;
 /** Velocidad de deriva del ángulo de órbita (rad/s). */
 const CELL_ORBIT_DRIFT = 0.16;
+/** Distancia de frenado al llegar al slot de órbita (m). */
+const CELL_ORBIT_ARRIVE_DIST = 4.0;
 
 // ============================================================================
 // Tipos
@@ -182,11 +184,13 @@ export class CellSwarmDirector {
 
   /**
    * Un tick por frame ANTES de actualizar las células: refresca el foco de
-   * Nyx, acumula la quietud, consume el token de lunge y reasigna slots.
+   * Nyx, acumula la quietud, consume el token de lunge y reasigna los slots
+   * de órbita (N células repartidas en ángulos equidistantes).
    */
   beginFrame(
     dt: number,
     enemies: readonly ManagedWaveEnemy[],
+    internals: Map<string, EnemyInternal>,
     playerPos: THREE.Vector3,
     playerVel: THREE.Vector3,
     playerAimForward: THREE.Vector3,
@@ -207,10 +211,14 @@ export class CellSwarmDirector {
     this.stillFor = playerVel.lengthSq() < 1.5625 ? this.stillFor + dt : 0;
     this.lungeTokenCd = Math.max(0, this.lungeTokenCd - dt);
 
-    // Slots de órbita: N células repartidas en ángulos equidistantes.
+    // Slots de órbita: el índice dentro del enjambre fija el ángulo.
     this.cells.length = 0;
     for (const enemy of enemies) {
       if (enemy.entity.alive && enemy.entity.archetype === 'abyssal_cell') {
+        const internal = internals.get(enemy.id);
+        if (internal) {
+          internal.cellSlot = this.cells.length;
+        }
         this.cells.push(enemy);
       }
     }
@@ -637,6 +645,11 @@ export function updateCellEnemy(
       const targetDist = _steer.length();
       if (targetDist > 0.2) {
         _steer.divideScalar(targetDist).multiplyScalar(CELL_SNEAK_SPEED * ctx.speedMult);
+        // Arrive: frena en los últimos metros para asentarse en el anillo en
+        // vez de orbitar el slot con overshoot (la deriva lo mantiene en movimiento).
+        if (targetDist < CELL_ORBIT_ARRIVE_DIST) {
+          _steer.multiplyScalar(targetDist / CELL_ORBIT_ARRIVE_DIST);
+        }
       } else {
         _steer.set(0, 0, 0);
       }

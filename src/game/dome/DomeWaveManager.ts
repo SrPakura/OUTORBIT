@@ -1340,6 +1340,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.cellDirector.beginFrame(
       dt,
       this.enemies,
+      this.internals,
       playerPos,
       playerVel,
       playerAimForward,
