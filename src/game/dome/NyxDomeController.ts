@@ -810,6 +810,16 @@ export class NyxDomeController {
     return this.mode === 'speed_attack' || this.mode === 'kick_recover';
   }
 
+  /**
+   * Suelo flotante sobre el que Nyx está anclada AHORA MISMO (o null si está
+   * volando/floating, en mitad de una patada o pegada a la esfera). El Cangrejo
+   * Artillero lo usa para su banda táctica: misma plataforma -> ráfaga corta;
+   * distinta plataforma o volando -> rayo láser.
+   */
+  getGroundedSlab(): SlabCollider | null {
+    return this.mode === 'grounded' ? this.groundedSlab : null;
+  }
+
   getHp(): number {
     return this.hp;
   }

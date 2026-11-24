@@ -812,6 +812,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         controller.getAimForward(),
         controller.isPlayerDashing(),
         controller.isPlayerInKickAnim(),
+        controller.getGroundedSlab(),
         activeSlabs,
         onWavePlayerHit,
         onOctopusInk,

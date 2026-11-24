@@ -55,9 +55,8 @@ const CRAB_FLIGHT_WOBBLE_SPEED = 2.7; // Frecuencia del guiñeo de vuelo (rad/s)
 /** Estado de la máquina de ataques del cangrejo. */
 export type CrabAttackState = 'idle' | 'laser_aim' | 'laser_fire' | 'burst' | 'kamikaze_prime';
 
-// --- Ataque 1: Rayo Láser Continuo (dist > 7 m) ---
+// --- Ataque 1: Rayo Láser Continuo (Nyx NO está en el suelo del cangrejo) ---
 export const CRAB_LASER_DPS = 20.0; // 20*dt continuos a Nyx y a cualquier enemigo.
-const CRAB_LASER_MIN_DIST = 10.0;
 // Tope de enganche del láser: más allá, el cangrejo ni se molesta (no es un
 // rayo infinito, pero cubre toda la cúpula útil).
 const CRAB_LASER_MAX_DIST = 50.0;
@@ -72,8 +71,9 @@ const CRAB_LASER_AIM_BLINK_HZ = 14.0; // Parpadeo blanco/rojo del sellado final.
 const CRAB_LASER_HIT_RADIUS = 1.7; // Cuerpo de Nyx contra el haz (m).
 export const CRAB_LASER_BEAM_FF_MARGIN = 0.45; // Margen del haz contra enemigos (m).
 
-// --- Ataque 2: Ráfaga Láser de Corta Distancia (5 < dist <= 7 m) ---
-const CRAB_BURST_MAX_DIST = 10.0;
+// --- Ataque 2: Ráfaga Láser (Nyx ESTÁ en el suelo del cangrejo) ---
+// Banda táctica legible: da igual a qué distancia pise la plataforma; si
+// comparte suelo con el cangrejo, la defensa perimetral entra en acción.
 const CRAB_BURST_TELEGRAPH_SEC = 0.25; // Chispazo en las 3 pinzas del cañón.
 const CRAB_BURST_SHOT_INTERVAL = 0.10; // Separación entre los 3 disparos (s).
 const CRAB_BURST_TOTAL_SEC = CRAB_BURST_TELEGRAPH_SEC + 2 * CRAB_BURST_SHOT_INTERVAL;
@@ -863,8 +863,9 @@ function showCrabAimLine(
  *  1. Rayo Láser Continuo (dist > 7 m): telegraph de 2.0 s con rastreo a
  *     1.8 rad/s (lead 0.25 s) que se sella los últimos 0.35 s, haz grueso de
  *     2.0 s que barre con inercia (0.45 rad/s) y daña todo lo que cruza.
- *  2. Ráfaga Láser (5 < dist <= 7 m): 3 proyectiles rectos de 36 m/s sin
- *     homing (parryables), intervalo 0.10 s, la torreta rota a 6 rad/s.
+ *  2. Ráfaga Láser (Nyx en la MISMA plataforma del cangrejo): 3 proyectiles
+ *     rectos de 36 m/s sin homing (parryables), intervalo 0.10 s, la torreta
+ *     rota a 6 rad/s, sin importar la distancia dentro del suelo.
  *  3. Protocolo Kamikaze (dist <= 5 m): guarda anti-patada 0.75 s + acumular
  *     0.25 s de proximidad; cebado de 1.1 s punto de no retorno corriendo
  *     por su slab a 6.5 m/s y detonación de radio 10 m.
@@ -877,6 +878,7 @@ export function updateCrabAttack(
   playerPos: THREE.Vector3,
   playerVel: THREE.Vector3,
   playerKickAnim: boolean,
+  playerSlab: SlabCollider | null,
   activeSlabs: SlabCollider[] | undefined,
   onPlayerHit: (damage: number) => void,
   onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
@@ -1012,6 +1014,10 @@ export function updateCrabAttack(
       if (enemy.attackTimer > 0) {
         return;
       }
+      // ¿Nyx pisa el MISMO suelo que el cangrejo? (anclada a su slab, no
+      // flotando por encima: a 3 m del suelo ya cuenta como "no está en él").
+      const sameFloor =
+        !!playerSlab && !!internal.attachedSlabId && playerSlab.id === internal.attachedSlabId;
       if (dist <= CRAB_KAMIKAZE_TRIGGER_DIST) {
         // Guardia anti-patada: nada de kamikaze tras un impacto melee de Nyx
         // ni mientras ella siga en rebote/animación de patada.
@@ -1022,7 +1028,8 @@ export function updateCrabAttack(
         } else {
           enemy.attackTimer = CRAB_KAMIKAZE_RETRY_SEC;
         }
-      } else if (dist <= CRAB_BURST_MAX_DIST) {
+      } else if (sameFloor) {
+        // Misma plataforma (a cualquier distancia): defensa perimetral.
         if (internal.turretNode) {
           internal.crabState = 'burst';
           internal.crabTimer = 0;
@@ -1031,7 +1038,8 @@ export function updateCrabAttack(
           enemy.attackTimer = 1.0;
         }
       } else if (dist <= CRAB_LASER_MAX_DIST) {
-        // Entre 10 y 50 m: rayo de control de espacio desde cualquier lado.
+        // Distinta plataforma o volando (aunque sea a 3 m de su suelo):
+        // rayo de control de espacio de largo alcance.
         if (internal.turretNode) {
           internal.crabState = 'laser_aim';
           internal.crabTimer = 0;
@@ -1039,7 +1047,7 @@ export function updateCrabAttack(
           enemy.attackTimer = 1.0;
         }
       }
-      // Más allá de 50 m: fuera del alcance del cangrejo, no ataca.
+      // Más allá de 50 m de otra plataforma: fuera del alcance, no ataca.
       return;
     }
   }
