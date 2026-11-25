@@ -150,7 +150,8 @@ const DOME_BOUNCE_FOV_PUNCH = -14;
 const DOME_BOUNCE_WOBBLE = 1.25;
 const DOME_BOUNCE_ROLL = 0.3;
 // Caída al Vacío: tambaleo extra en vuelo y onda de impacto al estrellarse.
-const VOID_WOBBLE_BONUS = 0.35;
+const VOID_WOBBLE_BONUS = 0.95;
+const VOID_FALL_STEER_DAMP = 0.16;
 const VOID_IMPACT_FOV_PUNCH = -10;
 const VOID_IMPACT_WOBBLE = 1.0;
 
@@ -181,8 +182,10 @@ const ATTACK_ACCEL = 15;
 const DRILL_SPEED_THRESHOLD = 18.0; // m/s instantáneos -> spiral_drill_kick
 const GRAVITY_KICK_SPEED = 23.5; // velocidad tope de la patada gravitatoria
 const SPIRAL_DRILL_SPEED = 34.0; // velocidad tope del taladro espiral
-const VOID_FALL_START_SPEED = 22.0;
+const VOID_FALL_START_SPEED = 8.0;
 const VOID_FALL_MAX_SPEED = 33.0;
+const VOID_FALL_ACCEL = 42.0;
+const VOID_FALL_RAMP_TIME = 0.35;
 const KICK_RECOVER_BRAKE = 4.2; // exp(-4.2*dt): frena hasta casi 0
 const KICK_RECOVER_MAX_TIME_PER_FLIP = 0.9; // seguridad anti-atasco por flip
 
@@ -225,6 +228,7 @@ const REDIRECT_SPEED_RETENTION = 0.80;
 const CAM_PITCH_LIMIT = 1.15;
 const AIM_PITCH_MAX_DOT = 0.985;
 const CAM_DISTANCE = 6.2; // suelo
+const CAM_VOID_FALL_DISTANCE = 8.4; // más alejada durante la Caída al Vacío
 const CAM_SETTLE_DISTANCE = 6.1; // vuelo estabilizado
 const CAM_HOVER_DISTANCE = 4.8; // flotación quieta: intimidad y precisión
 const CAM_LOOK_HEIGHT = 1.35;
@@ -866,12 +870,17 @@ export class NyxDomeController {
    * camYaw/camPitch; en vuelo rota aimForward con transporte paralelo.
    */
   private rotateLook(dx: number, dy: number): void {
-    const pitch = -dy * (this.settings.invertY ? -1 : 1);
+    const steerScale =
+      this.mode === 'speed_attack' && this.speedAttackKind === 'void_fall'
+        ? VOID_FALL_STEER_DAMP
+        : 1.0;
+    const effDx = dx * steerScale;
+    const pitch = -dy * steerScale * (this.settings.invertY ? -1 : 1);
 
     if (this.mode === 'grounded') {
       // Cámara libre 360°: dos ángulos escalares sobre el marco del suelo.
       // dx > 0 (derecha) gira la vista a la derecha alrededor de this.up.
-      this.camYaw -= dx;
+      this.camYaw -= effDx;
       // dy < 0 (arriba) mira hacia arriba; dy > 0 (abajo) mira hacia abajo.
       this.camPitch = THREE.MathUtils.clamp(this.camPitch + pitch, -CAM_PITCH_LIMIT, CAM_PITCH_LIMIT);
       return;
@@ -879,7 +888,7 @@ export class NyxDomeController {
 
     // En vuelo la cámara va pegada a la espalda: el giro rota la mira objetivo
     // (aimForward) y el cuerpo se alinea detrás con desfase elástico.
-    this.quat.setFromAxisAngle(this.aimUp, -dx);
+    this.quat.setFromAxisAngle(this.aimUp, -effDx);
     this.aimForward.applyQuaternion(this.quat);
     this.tmpAxis.crossVectors(this.aimForward, this.aimUp);
     if (this.tmpAxis.lengthSq() > 1e-6) {
@@ -2718,12 +2727,15 @@ export class NyxDomeController {
           : GRAVITY_KICK_SPEED) * this.speedMultiplier;
     // Curva de arranque: pull-in gravitatorio exponencial. Empieza tirando
     // suave y rompe a aceleración máxima a los 0.28 s (nunca lineal plana).
-    const ramp = clamp01(this.attackElapsed / ATTACK_RAMP_TIME);
-    const accel = ATTACK_ACCEL * (0.15 + 0.85 * ramp * ramp);
+    const isVoidFall = this.speedAttackKind === 'void_fall';
+    const rampTime = isVoidFall ? VOID_FALL_RAMP_TIME : ATTACK_RAMP_TIME;
+    const baseAccel = isVoidFall ? VOID_FALL_ACCEL : ATTACK_ACCEL;
+    const ramp = clamp01(this.attackElapsed / rampTime);
+    const accel = baseAccel * (0.2 + 0.8 * ramp * ramp);
     const targetSpeed =
       speed < maxSpeed
         ? Math.min(maxSpeed, speed + accel * dt)
-        : Math.max(maxSpeed, speed - ATTACK_ACCEL * dt);
+        : Math.max(maxSpeed, speed - baseAccel * dt);
     const dir = this.tmpB.copy(this.velocity);
     if (dir.lengthSq() < 1e-4) dir.copy(this.facing);
     else dir.normalize();
@@ -3796,6 +3808,8 @@ export class NyxDomeController {
       offsetUpTarget -= lookUp01 * 0.25;
     } else if (this.mode === 'floating' && speed < 1.5) {
       distTarget = CAM_HOVER_DISTANCE;
+    } else if (this.mode === 'speed_attack' && this.speedAttackKind === 'void_fall') {
+      distTarget = CAM_VOID_FALL_DISTANCE;
     } else {
       distTarget = CAM_SETTLE_DISTANCE;
     }
@@ -3868,9 +3882,11 @@ export class NyxDomeController {
     this.wobbleTime += dt;
     const wt = this.wobbleTime;
     const hoverBase = this.mode === 'floating' ? 0.3 : 0;
-    // Caída al Vacío: el picado a velocidad terminal suma un plus de tambaleo
-    // de alta velocidad encima de la fuerza G.
-    const voidBoost = this.speedAttackKind === 'void_fall' ? VOID_WOBBLE_BONUS : 0;
+    // Caída al Vacío: el picado a velocidad terminal suma turbulencia frenética
+    // de alta frecuencia encima de la fuerza G.
+    const isVoidFall = this.mode === 'speed_attack' && this.speedAttackKind === 'void_fall';
+    const voidFallIntensity = isVoidFall ? clamp01(speed / VOID_FALL_MAX_SPEED) : 0;
+    const voidBoost = isVoidFall ? VOID_WOBBLE_BONUS * (0.4 + 0.6 * voidFallIntensity) : 0;
     const g = Math.max(hoverBase, clamp01((speed - 4) / 14) + voidBoost);
     const dashOsc = Math.sin(wt * 34) * this.dashWobbleImpulse;
     const impactOsc = Math.sin(wt * 26 + 0.6) * this.impactWobbleImpulse;
@@ -3886,6 +3902,13 @@ export class NyxDomeController {
       impactOsc * 0.081;
     let wobbleRoll =
       g * 0.11 * Math.sin(wt * 4.3 + 0.9) + dashOsc * 0.153 + impactOsc * 0.126;
+
+    if (isVoidFall) {
+      const f = 0.45 + 0.55 * voidFallIntensity;
+      wobblePitch += f * 0.068 * (Math.sin(wt * 24.3) * 0.6 + Math.sin(wt * 38.7 + 0.8) * 0.4);
+      wobbleYaw += f * 0.078 * (Math.sin(wt * 19.7 + 1.4) * 0.6 + Math.sin(wt * 33.1 + 2.1) * 0.4);
+      wobbleRoll += f * 0.16 * (Math.sin(wt * 14.5 + 0.5) * 0.6 + Math.sin(wt * 27.9 + 1.7) * 0.4);
+    }
 
     // --- cosmos_fusion (KRONOS Fase 4): alabeo (roll/pitch) y temblor
     // extremo CONTINUO mientras dure la agenda en el manager — el mundo se
@@ -3930,7 +3953,10 @@ export class NyxDomeController {
     // Vibración: shake de impactos + micro-temblor extra durante el hit-stop
     // + temblor continuo de cosmos_fusion (KRONOS Fase 4).
     const jitter =
-      this.shake + (this.hitStopTimer > 0 ? 0.05 : 0) + this.kronosCameraShake * 0.14;
+      this.shake +
+      (this.hitStopTimer > 0 ? 0.05 : 0) +
+      this.kronosCameraShake * 0.14 +
+      (isVoidFall ? 0.085 * voidFallIntensity : 0);
     if (jitter > 0.001) {
       camPos.x += (Math.random() * 2 - 1) * jitter;
       camPos.y += (Math.random() * 2 - 1) * jitter;
