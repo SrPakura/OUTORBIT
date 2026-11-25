@@ -16,7 +16,7 @@ export interface DomePauseModalProps {
   level?: number;
   onResume: () => void;
   onOpenSettings: () => void;
-  onRestart: () => void;
+  onRestart?: () => void;
   onExitToMenu: () => void;
 }
 
@@ -58,24 +58,30 @@ export function DomePauseModal({
 }: DomePauseModalProps) {
   const { t } = useI18n();
 
-  // Teclado: [1]..[4] dispara los botones del menú mientras la pausa está abierta.
+  const items = [
+    { label: t('pause.resume'), accent: '#22d3ee', action: onResume },
+    { label: t('pause.settings'), accent: '#fbbf24', action: onOpenSettings },
+    ...(onRestart ? [{ label: t('pause.restart'), accent: '#e11d48', action: onRestart }] : []),
+    { label: t('pause.exit'), accent: '#0b0d12', action: onExitToMenu },
+  ];
+
+  // Teclado: [1]..[N] dispara los botones del menú mientras la pausa está abierta.
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === '1') onResume();
-      else if (event.key === '2') onOpenSettings();
-      else if (event.key === '3') onRestart();
-      else if (event.key === '4') onExitToMenu();
+      const idx = Number(event.key) - 1;
+      if (Number.isInteger(idx) && idx >= 0 && idx < items.length) {
+        items[idx]?.action();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, onResume, onOpenSettings, onRestart, onExitToMenu]);
 
   // Mando: D-Pad/stick mueve, Cruz (A) activa, Círculo (B) reanuda.
-  const pauseActions = [onResume, onOpenSettings, onRestart, onExitToMenu];
-  const [padIndex] = useGamepadListNav(pauseActions.length, {
+  const [padIndex] = useGamepadListNav(items.length, {
     enabled: isOpen,
-    onConfirm: (i) => pauseActions[i]?.(),
+    onConfirm: (i) => items[i]?.action(),
     onBack: onResume,
   });
 
@@ -112,34 +118,16 @@ export function DomePauseModal({
         </div>
 
         <nav className="pause-nav">
-          <PauseButton
-            label={t('pause.resume')}
-            hotkey="[1]"
-            accent="#22d3ee"
-            focused={padIndex === 0}
-            onClick={onResume}
-          />
-          <PauseButton
-            label={t('pause.settings')}
-            hotkey="[2]"
-            accent="#fbbf24"
-            focused={padIndex === 1}
-            onClick={onOpenSettings}
-          />
-          <PauseButton
-            label={t('pause.restart')}
-            hotkey="[3]"
-            accent="#e11d48"
-            focused={padIndex === 2}
-            onClick={onRestart}
-          />
-          <PauseButton
-            label={t('pause.exit')}
-            hotkey="[4]"
-            accent="#0b0d12"
-            focused={padIndex === 3}
-            onClick={onExitToMenu}
-          />
+          {items.map((item, i) => (
+            <PauseButton
+              key={item.label}
+              label={item.label}
+              hotkey={`[${i + 1}]`}
+              accent={item.accent}
+              focused={padIndex === i}
+              onClick={item.action}
+            />
+          ))}
         </nav>
       </div>
 

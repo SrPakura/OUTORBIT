@@ -345,7 +345,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         level={hud.level}
         onResume={handlePauseResume}
         onOpenSettings={() => setSettingsOpen(true)}
-        onRestart={handlePauseRestart}
+        onRestart={training ? undefined : handlePauseRestart}
         onExitToMenu={onExit}
       />
       {settingsOpen && (
