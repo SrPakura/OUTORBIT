@@ -157,6 +157,8 @@ const VOID_IMPACT_WOBBLE = 1.0;
 const FLOAT_ACCEL = 13.5;
 /** Tope de velocidad de Nyx en flotación (m/s). La IA lo usa como referencia. */
 export const FLOAT_MAX_SPEED = 28.0;
+/** cosmos_fusion (KRONOS Fase 4): velocidad base de Nyx reducida a 1/3. */
+const KRONOS_DEFORM_SPEED_SCALE = 1 / 3;
 const FLOAT_DRAG = 0.06; // exp(-0.06*dt): conserva ~95% de la velocidad por segundo
 // Por debajo de esta velocidad y sin pulsar nada, Nyx entra en la pose de
 // flotación quieta (`zero_g_float`); por encima sigue la flotación direccional
@@ -587,6 +589,25 @@ export class NyxDomeController {
     distance: 0,
   };
 
+  /**
+   * Fase 4 de KRONOS — deformación de cosmos_fusion: Nyx queda atrapada en
+   * flotación 0G forzada (sin dashes, patadas, caídas/picados ni caminar por
+   * suelos) mientras su malla se deforma y su velocidad base cae a 1/3.
+   * Lo enciende/apaga la agenda del boss (domeKronosBehavior vía el game
+   * loop); aquí solo se aplica el estado físico.
+   */
+  private kronosDeformed = false;
+  /** Suavizado 0..1 de la intensidad visual de la deformación. */
+  private kronosDeformT = 0;
+  /** Fase 4 de KRONOS — temblor/alabeo extremo continuo de cámara (0..1). */
+  private kronosCameraShake = 0;
+  /** Fase 4 de KRONOS — inversión aleatoria de los ejes de control. */
+  private kronosControlsInverted = false;
+  private kronosInvertForward = 1;
+  private kronosInvertSide = 1;
+  /** Fase 4 de KRONOS — slow-mo global continuo (timeScale del mundo). */
+  private kronosSlowMo = 1;
+
   constructor(
     nyxRoot: THREE.Group,
     animator: NyxAnimator,
@@ -634,12 +655,87 @@ export class NyxDomeController {
     this.nyxMaterial = material;
   }
 
+  /**
+   * Velocidad máxima de Nyx en flotación SIN pasiva de velocidad (28 m/s).
+   * Es la `V_base` que la IA del Leviatán KRONOS lee como referencia física
+   * del mundo: sus fases se escalan sobre este valor exacto.
+   */
+  getBaseMaxSpeed(): number {
+    return FLOAT_MAX_SPEED;
+  }
+
+  /**
+   * Escala de tiempo global aplicada por KRONOS (Fase 4: 0.75 durante los
+   * 60 s de destrucción). Se MULTIPLICA con las cámaras lentas de Nyx para
+   * que el slow-mo del boss sea continuo y global.
+   */
+  setKronosSlowMoScale(scale: number): void {
+    this.kronosSlowMo = THREE.MathUtils.clamp(scale, 0.05, 1);
+  }
+
+  /**
+   * cosmos_fusion — Deformación KRONOS: bloquea dashes, patadas y
+   * caídas/picados (Clic Izquierdo), fuerza la flotación 0G (sin caminar ni
+   * adherirse a suelos) y reduce la velocidad base de Nyx a 1/3. La malla se
+   * deforma visualmente (sacudida elástica no uniforme de escala).
+   */
+  setKronosDeformed(active: boolean): void {
+    if (this.kronosDeformed === active) {
+      return;
+    }
+    this.kronosDeformed = active;
+    if (active) {
+      // Flotación 0G forzada: cancela cualquier modo de superficie/ataque.
+      if (this.mode !== 'floating' && this.mode !== 'kinetic_bounce') {
+        this.mode = 'floating';
+        this.dashTimer = 0;
+        this.animLock = null;
+        this.speedAttackKind = null;
+        this.lockedEnemy = null;
+        this.animator.setState('zero_g_float');
+        this.aimForward.copy(this.facing).normalize();
+        this.aimUp.copy(this.up);
+        this.prevAimFwd.copy(this.aimForward);
+        this.groundedSlab = null;
+      }
+    }
+  }
+
+  /** cosmos_fusion — Temblor/alabeo (roll/pitch) extremo continuo de cámara. */
+  setKronosCameraShake(intensity: number): void {
+    this.kronosCameraShake = THREE.MathUtils.clamp(intensity, 0, 1);
+  }
+
+  /**
+   * cosmos_fusion — Inversión de ejes: con cada activación se sortea qué
+   * ejes de movimiento quedan invertidos (adelante/atrás y/o lado a lado,
+   * siempre al menos uno).
+   */
+  setKronosControlsInverted(active: boolean): void {
+    if (active && !this.kronosControlsInverted) {
+      this.kronosInvertForward = Math.random() < 0.5 ? -1 : 1;
+      this.kronosInvertSide = Math.random() < 0.5 ? -1 : 1;
+      if (this.kronosInvertForward === 1 && this.kronosInvertSide === 1) {
+        if (Math.random() < 0.5) {
+          this.kronosInvertForward = -1;
+        } else {
+          this.kronosInvertSide = -1;
+        }
+      }
+    }
+    this.kronosControlsInverted = active;
+  }
+
   /** Escala de tiempo del mundo: 0.20 en redirección, 0.22 en cámara lenta. */
   getTimeScale(): number {
+    let scale = 1.0;
     if (this.redirectWindowTimer > 0) {
-      return this.parryWindowActive ? PARRY_TIME_SCALE : REDIRECT_TIME_SCALE;
+      scale = this.parryWindowActive ? PARRY_TIME_SCALE : REDIRECT_TIME_SCALE;
+    } else if (this.bulletTimeTimer > 0) {
+      scale = BULLET_TIME_SCALE;
     }
-    return this.bulletTimeTimer > 0 ? BULLET_TIME_SCALE : 1.0;
+    // Slow-mo global de KRONOS (Fase 4): multiplica cualquier cámara lenta.
+    return scale * this.kronosSlowMo;
   }
 
   /**
@@ -1247,6 +1343,11 @@ export class NyxDomeController {
       f = THREE.MathUtils.clamp(f - this.gpLeftY, -1, 1);
       r = THREE.MathUtils.clamp(r + this.gpLeftX, -1, 1);
     }
+    // KRONOS cosmos_fusion: inversión aleatoria de los ejes de control.
+    if (this.kronosControlsInverted) {
+      f *= this.kronosInvertForward;
+      r *= this.kronosInvertSide;
+    }
     const hasMoveInput = f !== 0 || r !== 0;
     const sprintHeld = this.isDown('sprint');
 
@@ -1379,6 +1480,27 @@ export class NyxDomeController {
     }
 
     const speed = this.velocity.length();
+
+    // --- cosmos_fusion (KRONOS Fase 4): deformación visual de la malla de
+    // Nyx — sacudida elástica no uniforme de escala mientras la agenda del
+    // boss mantenga el efecto activo (suavizada al entrar/salir).
+    const deformTarget = this.kronosDeformed ? 1 : 0;
+    this.kronosDeformT += (deformTarget - this.kronosDeformT) * (1 - Math.exp(-6 * rawDt));
+    if (this.kronosDeformT > 0.001) {
+      const d = this.kronosDeformT;
+      const tDeform = this.time;
+      this.nyxRoot.scale.set(
+        1 + d * (0.14 + 0.12 * Math.sin(tDeform * 9.2)),
+        1 + d * (-0.1 + 0.13 * Math.sin(tDeform * 7.7 + 1.4)),
+        1 + d * (0.15 + 0.11 * Math.sin(tDeform * 8.4 + 2.6)),
+      );
+    } else if (
+      this.nyxRoot.scale.x !== 1 ||
+      this.nyxRoot.scale.y !== 1 ||
+      this.nyxRoot.scale.z !== 1
+    ) {
+      this.nyxRoot.scale.set(1, 1, 1);
+    }
 
     // --- Marco de vuelo (transporte paralelo) + orientación del cuerpo
     this.updateFlightFrame();
@@ -1788,6 +1910,8 @@ export class NyxDomeController {
 
   /** Espacio: despegue a flotación (solo en suelo) o cancelar el ataque. */
   private handleJump(): void {
+    // cosmos_fusion: flotación 0G forzada — ni despegues ni frenos de vuelo.
+    if (this.kronosDeformed) return;
     if (this.mode === 'grounded') {
       // SOLO se entra a flotación con Espacio estando en un suelo/pared.
       this.nyxRoot.position.addScaledVector(this.groundNormal, FLOAT_ENTRY_OFFSET);
@@ -1829,6 +1953,8 @@ export class NyxDomeController {
    * Derecho ADJUDICA la Sentadilla Cinética (0 Edén) en vez de dashear.
    */
   private handleDash(f: number, r: number): void {
+    // cosmos_fusion: la deformación de KRONOS bloquea TODO dash.
+    if (this.kronosDeformed) return;
     // --- Parry del Gólem (FASE 1): si la ventana está abierta y el dash aún
     // NO se ejecutó, el Dash va DIRECTO al aro dorado junto a su brazo malo
     // (no es un dash lateral de WASD, ni el dash de redirección hacia el
@@ -2096,6 +2222,8 @@ export class NyxDomeController {
 
   /** Clic Izquierdo: Ataque de Velocidad (o disparo de habilidad si hay override). */
   private handleAttack(): void {
+    // cosmos_fusion: la deformación de KRONOS bloquea patadas y caídas/picados.
+    if (this.kronosDeformed) return;
     if (this.onLeftClickAttackOverride?.()) return;
     if (this.mode === 'speed_attack') {
       // Si estaba atacando sin lock (p.ej. tras perderlo en cámara lenta) y mete
@@ -2367,6 +2495,8 @@ export class NyxDomeController {
   }
 
   private updateFloating(dt: number, f: number, r: number): void {
+    // cosmos_fusion: la deformación de KRONOS reduce la velocidad base a 1/3.
+    const kronosSpeedScale = this.kronosDeformed ? KRONOS_DEFORM_SPEED_SCALE : 1;
     // WASD / stick izquierdo acelera hacia la cámara (1.0 Edén/s mientras se
     // pulsa), con la magnitud analógica del mando escalando el empuje.
     if ((f !== 0 || r !== 0) && this.eden > 0.01) {
@@ -2374,7 +2504,10 @@ export class NyxDomeController {
       if (dir.lengthSq() > 1e-6) {
         dir.normalize();
         const mag = Math.min(1, Math.hypot(f, r));
-        this.velocity.addScaledVector(dir, FLOAT_ACCEL * mag * this.speedMultiplier * dt);
+        this.velocity.addScaledVector(
+          dir,
+          FLOAT_ACCEL * mag * this.speedMultiplier * kronosSpeedScale * dt,
+        );
         this.eden = Math.max(0, this.eden - EDEN_MOVE_DRAIN * dt);
       }
     }
@@ -2405,15 +2538,15 @@ export class NyxDomeController {
       }
       this.airDriftSpeed *= Math.exp(-AIR_DRIFT_DECAY * dt);
       // El derrape respeta el tope de flotación (no puede superar 28 m/s).
-      const driftMax = FLOAT_MAX_SPEED * this.speedMultiplier;
+      const driftMax = FLOAT_MAX_SPEED * this.speedMultiplier * kronosSpeedScale;
       if (this.airDriftSpeed > driftMax) this.airDriftSpeed = driftMax;
       this.velocity.copy(this.airDriftDir).multiplyScalar(this.airDriftSpeed);
       return;
     }
 
-    // Tope suave ~28 m/s (escalado por pasiva de velocidad).
+    // Tope suave ~28 m/s (escalado por pasiva de velocidad y por KRONOS).
     const sp = this.velocity.length();
-    const floatMax = FLOAT_MAX_SPEED * this.speedMultiplier;
+    const floatMax = FLOAT_MAX_SPEED * this.speedMultiplier * kronosSpeedScale;
     if (sp > floatMax) {
       this.velocity.setLength(THREE.MathUtils.lerp(sp, floatMax, 1 - Math.exp(-1.6 * dt)));
     }
@@ -2796,6 +2929,17 @@ export class NyxDomeController {
     if (hit) {
       const n = this.contact.normal;
       const approach = this.velocity.dot(n); // < 0 = entrando en la superficie
+
+      // --- cosmos_fusion (KRONOS): flotación 0G forzada — los suelos NO se
+      // pueden pisar ni adherir. Solo expulsan suavemente para que Nyx
+      // atraviese la arena sin anclarse ni rebota con hit_stagger.
+      if (this.kronosDeformed) {
+        this.nyxRoot.position.addScaledVector(n, this.contact.depth);
+        if (approach < 0) {
+          this.velocity.addScaledVector(n, -approach * 0.45);
+        }
+        return;
+      }
 
       // --- Sentadilla Cinética en curso: la pared solo expulsa
       // posicionalmente. La velocidad la gestiona el modo (absorción en la
@@ -3677,16 +3821,29 @@ export class NyxDomeController {
     const impactOsc = Math.sin(wt * 26 + 0.6) * this.impactWobbleImpulse;
     this.dashWobbleImpulse *= Math.exp(-7 * dt);
     this.impactWobbleImpulse *= Math.exp(-6 * dt);
-    const wobblePitch =
+    let wobblePitch =
       g * 0.065 * (Math.sin(wt * 6.7) * 0.6 + Math.sin(wt * 12.9 + 1.3) * 0.4) +
       dashOsc * 0.09 +
       impactOsc * 0.099;
-    const wobbleYaw =
+    let wobbleYaw =
       g * 0.085 * (Math.sin(wt * 5.1 + 2.1) * 0.6 + Math.sin(wt * 10.7 + 0.4) * 0.4) +
       dashOsc * 0.072 +
       impactOsc * 0.081;
-    const wobbleRoll =
+    let wobbleRoll =
       g * 0.11 * Math.sin(wt * 4.3 + 0.9) + dashOsc * 0.153 + impactOsc * 0.126;
+
+    // --- cosmos_fusion (KRONOS Fase 4): alabeo (roll/pitch) y temblor
+    // extremo CONTINUO mientras dure la agenda en el manager — el mundo se
+    // descompone alrededor de Nyx durante la supervivencia de 60 s.
+    const kronosShake = this.kronosCameraShake;
+    if (kronosShake > 0.001) {
+      const ks = Math.sin(wt * 31.4) * 0.55 + Math.sin(wt * 47.2 + 1.1) * 0.45;
+      const kp = Math.sin(wt * 39.7 + 0.6) * 0.55 + Math.sin(wt * 53.1 + 2.4) * 0.45;
+      const ky = Math.sin(wt * 23.9 + 1.9) * 0.55 + Math.sin(wt * 43.3 + 0.3) * 0.45;
+      wobblePitch += kp * 0.24 * kronosShake;
+      wobbleYaw += ky * 0.2 * kronosShake;
+      wobbleRoll += ks * 0.34 * kronosShake;
+    }
 
     // --- Lag elástico del rig: la base de seguimiento persigue a Nyx con un
     // lerp exponencial rápido (~16/s en vuelo) para que el dash y los giros
@@ -3715,8 +3872,10 @@ export class NyxDomeController {
     if (camHit) camDist = Math.max(1.1, camHit.distance - 0.25);
 
     const camPos = this.tmpC.copy(look).addScaledVector(back, camDist);
-    // Vibración: shake de impactos + micro-temblor extra durante el hit-stop.
-    const jitter = this.shake + (this.hitStopTimer > 0 ? 0.05 : 0);
+    // Vibración: shake de impactos + micro-temblor extra durante el hit-stop
+    // + temblor continuo de cosmos_fusion (KRONOS Fase 4).
+    const jitter =
+      this.shake + (this.hitStopTimer > 0 ? 0.05 : 0) + this.kronosCameraShake * 0.14;
     if (jitter > 0.001) {
       camPos.x += (Math.random() * 2 - 1) * jitter;
       camPos.y += (Math.random() * 2 - 1) * jitter;

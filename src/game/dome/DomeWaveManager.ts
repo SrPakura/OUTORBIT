@@ -61,16 +61,29 @@ import {
   type GolemState,
 } from './domeGolemBehavior';
 import {
-  CHARGE_CONTACT_PADDING,
+  applyKronosStarBreak,
+  createKronosBossState,
+  deactivateKronosPortals,
   deactivateKronosRings,
   KRONOS_RING_POOL_SIZE,
+  resetKronosOffense,
   updateKronosAttack,
   updateKronosMovement,
+  updateKronosPhase4,
   updateKronosPose,
+  updateKronosPortals,
   updateKronosRings,
   type KronosBehaviorContext,
+  type KronosBossState,
+  type KronosNyxEffects,
+  type KronosPortal,
   type KronosRing,
 } from './domeKronosBehavior';
+import {
+  createKronosPortalVisual,
+  disposeKronosPortalShared,
+} from './DomeEnemyModels';
+import { FLOAT_MAX_SPEED } from './NyxDomeController';
 import {
   crabLaserContactDistanceSq,
   CRAB_HIT_CLIP_SEC,
@@ -209,11 +222,11 @@ const SPARROW_TURN_RATE = 2.4;
 const GOLEM_FIST_NEON_RIM = 0x39ffb0;
 const PRISMA_NECROZ_TURN_RATE = 2.6;
 
-// --- Leviatán KRONOS (Boss): serpenteo con huesos + 3 patrones de ataque ---
-// Ondulación serpentina progresiva de la cadena seg_01..seg_12.
-// Ataque 1 — Tramo Devorasuelos: embestida que atraviesa la arena rompiendo suelos.
-// Ataque 2 — Anillos de Contención: jaw abierta + ondas circulares expansivas.
-// Ataque 3 — Enrosco Gravitatorio (Fase < 50% HP).
+// --- Leviatán KRONOS (Boss, rediseño): física de cadena y FSM de 4 fases en
+// domeKronosBehavior.ts. Aquí quedan el pool de Anillos/Portales y las
+// puertas de rotura de Estrellas Dorsales (anti-skip). ---
+/** Margen del daño por contacto de las embestidas (Ave Legendaria). */
+const CHARGE_CONTACT_PADDING = 1.9;
 
 // Proyectiles oscuros lentos (pool fijo, sin allocations por frame).
 const PROJECTILE_POOL_SIZE = 32;
@@ -732,30 +745,13 @@ export interface EnemyInternal {
   golemTwist: number;
   /** Gólem: punto de impacto sellado del puñetazo en espacio mundo. */
   golemImpact: THREE.Vector3;
-  /** KRONOS: huesos del GLB (cadena seg_01..12, head/jaw, aletas, estrellas). */
+  /** KRONOS: huesos del GLB (cadena seg_01..12, head/jaw, aletas, cola, estrellas). */
   kronosRig: KronosRig | null;
-  /** KRONOS: fase actual de su máquina de ataques. */
-  kronosState: 'roam' | 'charge' | 'rings' | 'coil';
-  /** KRONOS: segundos restantes del sub-estado actual. */
-  kronosTimer: number;
-  /** KRONOS: contador de ataques (alterna Devorasuelos <-> Anillos). */
-  kronosAttackIndex: number;
-  /** KRONOS: anillos pendientes de emitir en el ataque en curso. */
-  kronosRingsLeft: number;
-  /** KRONOS: apertura suavizada del hueso jaw (0 = cerrado, 1 = abierto). */
-  kronosJawOpen: number;
-  /** KRONOS: cooldown de daño por contacto durante la embestida. */
-  kronosContactCd: number;
-  /** KRONOS: cooldown del Enrosco Gravitatorio (solo bajo el 50% de HP). */
-  kronosCoilCooldown: number;
-  /** KRONOS: ángulo actual de la órbita del enrosco (rad). */
-  kronosOrbitAngle: number;
-  /** KRONOS: ángulo del abanico espiral de esferas oscuras (rad). */
-  kronosSpiralAngle: number;
-  /** KRONOS: cuenta atrás del próximo disparo de la espiral (s). */
-  kronosSpiralTimer: number;
-  /** KRONOS: carne de los segmentos antes del enrosco (se restaura al salir). */
-  kronosFleshRestore: number;
+  /**
+   * KRONOS: estado del boss (4 Estrellas Dorsales, FSM de 4 fases, cadena
+   * serpentina prealocada, agenda de cosmos_fusion). Campos (roam/rings/...).
+   */
+  kronos: KronosBossState;
   /** Segundos restantes de embestida en curso (0 = libre). */
   chargeTimer: number;
   chargeSpeed: number;
@@ -886,6 +882,26 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   readonly kronosRings: KronosRing[] = [];
   private readonly kronosRingGeometry = new THREE.TorusGeometry(1, 0.07, 8, 48);
   private readonly kronosRingMaterial: THREE.ShaderMaterial;
+  /** Portales Cósmicos 'SOLAR RIFT' de KRONOS (2 slots: entrada y salida). */
+  readonly kronosPortals: KronosPortal[] = [];
+  /**
+   * Efectos de cosmos_fusion sobre Nyx (Fase 4): el game loop los empuja al
+   * controller cada frame y consume los pulsos one-shot.
+   */
+  readonly kronosNyxEffects: KronosNyxEffects = {
+    deformActive: false,
+    cameraShake: 0,
+    controlsInverted: false,
+    phase4: false,
+    shakePulse: 0,
+    voidFlashPulse: 0,
+  };
+  /** V_base de Nyx sin pasivas (la fija el game loop con getBaseMaxSpeed()). */
+  kronosBaseMaxSpeed = FLOAT_MAX_SPEED;
+  /** Foto por frame del aim de Nyx (portales a su espalda + predicción). */
+  readonly playerAimForward = new THREE.Vector3(0, 0, 1);
+  /** Foto por frame de la velocidad de Nyx (física de cadena + esquivas). */
+  readonly playerVelocity = new THREE.Vector3();
   /** Hilos/haces láser de los cangrejos (pool fijo, uno por atacante). */
   private readonly crabLasers: CrabLaserBeam[] = [];
   private readonly crabLaserGeometry = new THREE.CylinderGeometry(1, 1, 1, 10, 1, true);
@@ -1033,6 +1049,27 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       });
     }
 
+    // Portales Cósmicos 'SOLAR RIFT' de KRONOS: 2 slots (entrada del boss y
+    // salida tras Nyx). La apertura elástica y el vórtice los anima el
+    // comportamiento cada frame.
+    for (let i = 0; i < 2; i++) {
+      const visual = createKronosPortalVisual();
+      this.scene.add(visual.group);
+      this.kronosPortals.push({
+        group: visual.group,
+        disk: visual.disk,
+        diskMaterial: visual.diskMaterial,
+        rim: visual.rim,
+        rimMaterial: visual.rimMaterial,
+        active: false,
+        dir: new THREE.Vector3(0, 0, 1),
+        pos: new THREE.Vector3(),
+        open: 0,
+        openVel: 0,
+        life: 0,
+      });
+    }
+
     // Haz láser del cangrejo: cilindro alargable con material aditivo propio
     // (el parpadeo blanco/rojo del sellado es por instancia, no compartido).
     for (let i = 0; i < CRAB_LASER_POOL_SIZE; i++) {
@@ -1170,6 +1207,10 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         internal.golemRig = collectGolemRig(glbVisual.root);
       } else if (enemy.entity.archetype === 'kronos_leviathan') {
         internal.kronosRig = collectKronosRig(glbVisual.root);
+        // El rig cambió: la cadena se re-mide contra el bind pose del GLB
+        // en el próximo frame (posiciones de reposo + huesos + longitudes).
+        internal.kronos.chain.ready = false;
+        internal.kronos.chain.submerged.fill(false);
       }
     }
   }
@@ -1332,17 +1373,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       golemTwist: 0,
       golemImpact: new THREE.Vector3(),
       kronosRig: archetype === 'kronos_leviathan' ? collectKronosRig(mesh) : null,
-      kronosState: 'roam',
-      kronosTimer: 0,
-      kronosAttackIndex: 0,
-      kronosRingsLeft: 0,
-      kronosJawOpen: 0,
-      kronosContactCd: 0,
-      kronosCoilCooldown: 0,
-      kronosOrbitAngle: enemy.phase,
-      kronosSpiralAngle: 0,
-      kronosSpiralTimer: 0,
-      kronosFleshRestore: 0,
+      kronos: createKronosBossState(),
       chargeTimer: 0,
       chargeSpeed: 0,
       chargeDamage: 0,
@@ -1487,14 +1518,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       internal.crabProxTimer = 0;
       internal.crabHitTimer = 0;
     }
-    if (internal.kronosState === 'coil' && internal.kronosFleshRestore > 0) {
-      internal.enemy.entity.fleshThickness = internal.kronosFleshRestore;
-      internal.kronosFleshRestore = 0;
+    if (internal.enemy.entity.archetype === 'kronos_leviathan') {
+      // KRONOS: cancela cualquier ataque en curso (anillos, latigazo,
+      // portales) y cierra los portales abiertos.
+      resetKronosOffense(this, internal.enemy, internal);
     }
-    internal.kronosState = 'roam';
-    internal.kronosTimer = 0;
-    internal.kronosRingsLeft = 0;
-    internal.kronosJawOpen = 0;
     // Célula Abisal: cancela cualquier fase ofensiva/telegraph en curso.
     if (internal.cellState !== 'seek' && internal.cellState !== 'stalk') {
       internal.cellState = 'stalk';
@@ -1819,6 +1847,10 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     let golemParryStarPos: THREE.Vector3 | null = null;
     // Foto de Nyx para la IA observadora del Gólem (una por frame).
     this.golemInfo.vel.copy(playerVel);
+    // Foto de Nyx para KRONOS: velocidad (predicción honesta de trayectoria,
+    // esquivas) y aim (Portal 2 a la espalda de Nyx).
+    this.playerVelocity.copy(playerVel);
+    this.playerAimForward.copy(playerAimForward);
     this.golemInfo.aimForward.copy(playerAimForward);
     this.golemInfo.hpRatio = THREE.MathUtils.clamp(playerHpRatio, 0, 1);
     this.golemInfo.edenRatio = THREE.MathUtils.clamp(playerEdenRatio, 0, 1);
@@ -1946,7 +1978,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       if (isCrab) {
         updateCrabEnemy(this, enemy, internal, dt, elapsed, playerPos, activeSlabs);
       } else if (enemy.entity.archetype === 'kronos_leviathan') {
-        updateKronosMovement(this, enemy, internal, dt, elapsed);
+        // Solo la CABEZA es empujada por la velocidad de la IA: la cadena
+        // de segmentos la resuelve la física de follow-the-leader en la pose.
+        updateKronosMovement(this, enemy, internal, dt, elapsed, playerPos);
+        // Fase 4: timer de supervivencia + agenda de cosmos_fusion.
+        updateKronosPhase4(this, enemy, internal, dt);
       } else if (enemy.entity.archetype === 'abyssal_cell') {
         // Célula Abisal: FSM de oportunista (acecho, lunge, huida, duplicación)
         // con su propio ataque por contacto — no pasa por updateEnemyBehavior.
@@ -1994,9 +2030,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       }
 
       // --- Voladores contra los icebergs: nunca atraviesan los suelos ---
-      // (KRONOS en plena embestida los devora: los rompe en su lugar.)
-      const kronosCharging =
-        enemy.entity.archetype === 'kronos_leviathan' && internal.kronosState === 'charge';
+      // (KRONOS NO rompe suelos: rebota suavemente y los esquivan su
+      // movimiento — nunca llama a onSlabSmash.)
       // Gólem en plena carga en espiral: la FSM resuelve la colisión con los
       // slabs (la broca se clava; el ariete los rompe y sigue arando).
       const golemSpiral =
@@ -2006,7 +2041,6 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       if (
         activeSlabs &&
         !crabOnSlab &&
-        !kronosCharging &&
         !golemSpiral &&
         resolveSphereSlabCollision(activeSlabs, enemy.position, enemy.radius, _slabContact)
       ) {
@@ -2064,13 +2098,20 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
 
       // --- Flash de impacto + vibración de energía descontrolada + pinchos ---
       const flash = enemy.hitFlash;
-      // El cangrejo en cebado kamikaze se hincha por pulsos además del flash.
-      const baseScale = 1 + flash * HIT_FLASH_SCALE + internal.crabSwell;
-      enemy.mesh.scale.set(
-        baseScale + Math.sin(elapsed * 27 + enemy.phase) * 0.026,
-        baseScale + Math.cos(elapsed * 31 + enemy.phase) * 0.026,
-        baseScale + Math.sin(elapsed * 24 + enemy.phase * 1.7) * 0.026,
-      );
+      if (enemy.entity.archetype === 'kronos_leviathan') {
+        // KRONOS: la escala de la malla la controla EXCLUSIVAMENTE su física
+        // de cadena (el wobble global pelearía contra las longitudes medidas
+        // de los eslabones). Solo queda el flash en el material.
+        enemy.mesh.scale.set(1, 1, 1);
+      } else {
+        // El cangrejo en cebado kamikaze se hincha por pulsos además del flash.
+        const baseScale = 1 + flash * HIT_FLASH_SCALE + internal.crabSwell;
+        enemy.mesh.scale.set(
+          baseScale + Math.sin(elapsed * 27 + enemy.phase) * 0.026,
+          baseScale + Math.cos(elapsed * 31 + enemy.phase) * 0.026,
+          baseScale + Math.sin(elapsed * 24 + enemy.phase * 1.7) * 0.026,
+        );
+      }
       let emissive = flash * HIT_FLASH_EMISSIVE;
       if (internal.material) {
         if (enemy.entity.spikesActive) {
@@ -2085,6 +2126,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
 
     this.updateProjectiles(dt, playerPos, onPlayerHit, onOctopusInk);
     updateKronosRings(this, dt, playerPos, onGolemSmash);
+    updateKronosPortals(this.kronosPortals, dt, elapsed);
 
     // Ventana de parry abierta este frame: el game loop arranca el slow-mo
     // con el gólem y el punto de su estrella (clonado: el manager seguirá
@@ -2114,6 +2156,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.kronosRings.length = 0;
     this.kronosRingGeometry.dispose();
     this.kronosRingMaterial.dispose();
+    for (const portal of this.kronosPortals) {
+      this.scene.remove(portal.group);
+      portal.diskMaterial.dispose();
+      portal.rimMaterial.dispose();
+    }
+    this.kronosPortals.length = 0;
+    disposeKronosPortalShared();
+    this.resetKronosNyxEffects();
     for (const beam of this.crabLasers) {
       this.scene.remove(beam.mesh);
       beam.material.dispose();
@@ -2210,17 +2260,17 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       return;
     }
 
-    // Leviatán KRONOS: máquina de estados de sus 3 patrones de ataque.
+    // Leviatán KRONOS: FSM de ataques por fase (Anillos, Latigazo de Cola,
+    // Portales Cósmicos + Mordisco, cosmos_fusion y supernova).
     if (archetype === 'kronos_leviathan') {
-      updateKronosAttack(this, 
+      updateKronosAttack(
+        this,
         enemy,
         internal,
         dt,
         playerPos,
-        activeSlabs,
         onPlayerHit,
         onGolemSmash,
-        onSlabSmash,
       );
       return;
     }
@@ -2502,6 +2552,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       if (crabLaserContactDistanceSq(other.position, from, dir, dist) > reach * reach) {
         continue;
       }
+      // KRONOS: proyectil de entorno — puede romper UNA Estrella Dorsal (con
+      // las puertas anti-skip del manager), pero jamás daña su "HP" (4 = 4
+      // estrellas: la barra genérica no existe).
+      if (other.entity.archetype === 'kronos_leviathan') {
+        this.tryBreakKronosStarFromEnv(other);
+        other.hitFlash = Math.max(other.hitFlash, 0.3);
+        continue;
+      }
       // El láser quema la carne amortiguadora y daña directo.
       other.entity.fleshThickness = Math.max(0, other.entity.fleshThickness - damage * 0.25);
       other.entity.hp -= damage;
@@ -2571,6 +2629,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         continue;
       }
       const [damage, push] = DomeWaveManager.kamikazeBand(dist);
+      // KRONOS: proyectil de entorno — 1 Estrella Dorsal a lo sumo (con las
+      // puertas anti-skip del manager), sin tocar su "HP" (vidas = estrellas).
+      if (other.entity.archetype === 'kronos_leviathan') {
+        this.tryBreakKronosStarFromEnv(other);
+        other.hitFlash = 1;
+        other.entity.hitFlash = 1;
+        continue;
+      }
       other.entity.fleshThickness = Math.max(0, other.entity.fleshThickness - damage * 0.5);
       other.entity.hp -= damage;
       other.hitFlash = 1;
@@ -3622,5 +3688,115 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       for (const material of dying.materials) material.dispose();
     }
     this.dying.length = 0;
+    // KRONOS fuera de escena: sin portales, sin anillos, sin efectos sobre
+    // Nyx (el game loop empuja este estado al controller en el mismo frame).
+    deactivateKronosPortals(this);
+    this.resetKronosNyxEffects();
+  }
+
+  /**
+   * Apaga TODOS los efectos de cosmos_fusion sobre Nyx y el slow-mo de la
+   * Fase 4 (muerte del boss, fin de oleada, modo pasivo, etc.).
+   */
+  private resetKronosNyxEffects(): void {
+    this.kronosNyxEffects.deformActive = false;
+    this.kronosNyxEffects.cameraShake = 0;
+    this.kronosNyxEffects.controlsInverted = false;
+    this.kronosNyxEffects.phase4 = false;
+    this.kronosNyxEffects.shakePulse = 0;
+    this.kronosNyxEffects.voidFlashPulse = 0;
+  }
+
+  // -------------------------------------------------------------------------
+  // Leviatán KRONOS (rediseño): rotura de Estrellas Dorsales
+  // -------------------------------------------------------------------------
+
+  /**
+   * Efectos de cosmos_fusion sobre Nyx (Fase 4) que el game loop empuja al
+   * controller cada frame. El loop consume los pulsos tras aplicarlos.
+   */
+  getKronosNyxEffects(): KronosNyxEffects {
+    return this.kronosNyxEffects;
+  }
+
+  /** ¿Vive KRONOS en Fase 4? (slow-mo global continuo timeScale = 0.75). */
+  isKronosPhase4Active(): boolean {
+    return this.kronosNyxEffects.phase4;
+  }
+
+  /**
+   * V_base de Nyx sin pasivas: la fija el game loop con
+   * controller.getBaseMaxSpeed() (FLOAT_MAX_SPEED). Por defecto usa esa
+   * misma constante (Modo Entrenamiento sin controller enganchado).
+   */
+  setKronosBaseMaxSpeed(vBase: number): void {
+    if (vBase > 0) {
+      this.kronosBaseMaxSpeed = vBase;
+    }
+  }
+
+  /**
+   * Rotura de Estrella Dorsal por impacto CINÉTICO de Nyx (Patada Taladro o
+   * velocidad > umbral cinético) o por el barrido de las hitboxes de la
+   * cadena. Puertas anti-skip: Fase 4 invulnerable y ~0.5 s de
+   * invulnerabilidad de transición (nunca más de 1 estrella por uso).
+   */
+  tryBreakKronosStar(enemy: ManagedWaveEnemy, impactSpeed: number, isDrill: boolean): boolean {
+    const internal = this.internals.get(enemy.id);
+    if (!internal || !enemy.entity.alive) {
+      return false;
+    }
+    const k = internal.kronos;
+    if (k.phase4) {
+      return false; // Fase 4: invulnerable al daño.
+    }
+    if (k.starInvulnSec > 0) {
+      return false; // Invulnerabilidad de transición (~0.5 s por rotura).
+    }
+    if (!isDrill && impactSpeed < 18) {
+      return false; // Sin taladro y sin velocidad: no rompe.
+    }
+    return applyKronosStarBreak(internal.enemy, internal, this.kronosNyxEffects);
+  }
+
+  /**
+   * Rotura de Estrella Dorsal por HABILIDAD gravitatoria (Campo
+   * Gravitacional, agujero negro, Implosión legendaria...): sin umbral de
+   * velocidad, pero con las MISMAS puertas anti-skip (1 por uso; las skills
+   * de daño continuo quedan limitadas por la invulnerabilidad de transición).
+   */
+  tryBreakKronosStarFromSkill(enemy: ManagedWaveEnemy): boolean {
+    const internal = this.internals.get(enemy.id);
+    if (!internal || !enemy.entity.alive) {
+      return false;
+    }
+    const k = internal.kronos;
+    if (k.phase4 || k.starInvulnSec > 0) {
+      return false;
+    }
+    return applyKronosStarBreak(internal.enemy, internal, this.kronosNyxEffects);
+  }
+
+  /**
+   * Rotura de Estrella Dorsal por PROYECTIL DE ENTORNO (fuego amigo del láser
+   * del cangrejo, detonación kamikaze). Mismas puertas anti-skip.
+   */
+  tryBreakKronosStarFromEnv(enemy: ManagedWaveEnemy): boolean {
+    return this.tryBreakKronosStarFromSkill(enemy);
+  }
+
+  /**
+   * Fase 4: terminó la convulsión de la supernova (~1.2 s) — la última
+   * estrella colapsa y KRONOS estalla soltando su EXP (10) por la vía de
+   * muerte interna de la IA (`onInternalKill` del game loop).
+   */
+  finalizeKronosSupernova(enemy: ManagedWaveEnemy): void {
+    if (!enemy.entity.alive) {
+      return;
+    }
+    this.resetKronosNyxEffects();
+    deactivateKronosPortals(this);
+    enemy.entity.hp = 0;
+    enemy.entity.alive = false;
   }
 }

@@ -604,7 +604,12 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
 
   let mixer: THREE.AnimationMixer | undefined;
   const actions = new Map<string, THREE.AnimationAction>();
-  if (cached.animations.length > 0) {
+  // Leviatán KRONOS: CERO clips de Blender — todo su movimiento (serpenteo,
+  // latigazo de cola, mordisco) lo resuelve la física de cadena procedural
+  // de domeKronosBehavior. Reproducir `kronos_tail_idle` en el mixer pisaría
+  // los huesos `seg_*` y bloquearía la rotación procedural de las estrellas
+  // y los ojos, así que ni siquiera se crea el mixer.
+  if (cached.animations.length > 0 && archetype !== 'kronos_leviathan') {
     mixer = new THREE.AnimationMixer(root);
     for (const clip of cached.animations) {
       const action = mixer.clipAction(clip);
@@ -819,16 +824,31 @@ export interface KronosRig {
   /** Aletas pectorales (si existen): aleteo procedural. */
   finL: EnemyBone | null;
   finR: EnemyBone | null;
+  /** Cola: abanico de latigazo (hijos de seg_12 en el GLB). */
+  tailL: EnemyBone | null;
+  tailR: EnemyBone | null;
+  /** Punta de la cola (hueso `tail_tip`): sacudida del extremo. */
+  tailTip: EnemyBone | null;
   /** Cadena `seg_01..seg_12` ordenada de cabeza a cola (ondulación serpentina). */
   segments: EnemyBone[];
-  /** Materiales cel de las 4 Estrellas Vitales (`star_core_1..4`): respuesta al daño. */
+  /** Mallas star_core_1..4: se apagan al romperse cada Estrella Dorsal. */
+  starCoreMeshes: THREE.Mesh[];
+  /** Materiales cel de las 4 Estrellas Dorsales (`star_core_1..4`): respuesta al daño. */
   starCoreMaterials: THREE.ShaderMaterial[];
+  /**
+   * Mallas de carne por eslabón ([0] = flesh_head/cabeza, [1..12] =
+   * flesh_seg_01..12): los Portales Cósmicos las ocultan segmento a segmento
+   * cuando KRONOS cruza el umbral (null si el GLB no trae esa malla).
+   */
+  fleshBySegment: (THREE.Mesh | null)[];
 }
 
 /**
  * Huesos del Leviatán KRONOS: cadena `seg_01..seg_12` para la onda serpentina
- * progresiva, `head`/`jaw` (fauces de los Anillos de Contención) y las aletas
- * `fin_L`/`fin_R`. Las Estrellas Vitales rotan vía `starCores` del visual.
+ * progresiva, `head`/`jaw` (fauces de los Anillos de Contención y el
+ * Mordisco), las aletas `fin_L`/`fin_R` y el abanico de cola `tail_L`/`tail_R`
+ * (+ `tail_tip`). Las 4 Estrellas Dorsales (`star_core_1..4`) rotan vía
+ * `starCores` del visual y se apagan aquí al romperse.
  */
 export function collectKronosRig(root: THREE.Object3D): KronosRig {
   const segments: EnemyBone[] = [];
@@ -838,11 +858,29 @@ export function collectKronosRig(root: THREE.Object3D): KronosRig {
       segments.push(segment);
     }
   }
+  const starCoreMeshes: THREE.Mesh[] = [];
   const starCoreMaterials: THREE.ShaderMaterial[] = [];
   for (let i = 1; i <= 4; i++) {
     const star = root.getObjectByName(`star_core_${i}`) as THREE.Mesh | undefined;
-    if (star?.isMesh && star.material instanceof THREE.ShaderMaterial) {
-      starCoreMaterials.push(star.material);
+    if (star?.isMesh) {
+      starCoreMeshes.push(star);
+      if (star.material instanceof THREE.ShaderMaterial) {
+        starCoreMaterials.push(star.material);
+      }
+    }
+  }
+  // Carne por eslabón: flesh_head -> 0, flesh_seg_01 -> 1 ... flesh_seg_12 -> 12.
+  const fleshBySegment: (THREE.Mesh | null)[] = new Array(13).fill(null);
+  const headFlesh = root.getObjectByName('flesh_head') as THREE.Mesh | undefined;
+  if (headFlesh?.isMesh) {
+    fleshBySegment[0] = headFlesh;
+  }
+  for (let i = 1; i <= 12; i++) {
+    const flesh = root.getObjectByName(
+      `flesh_seg_${String(i).padStart(2, '0')}`,
+    ) as THREE.Mesh | undefined;
+    if (flesh?.isMesh) {
+      fleshBySegment[i] = flesh;
     }
   }
   return {
@@ -850,7 +888,244 @@ export function collectKronosRig(root: THREE.Object3D): KronosRig {
     jaw: findBone(root, 'jaw'),
     finL: findBone(root, 'fin_L'),
     finR: findBone(root, 'fin_R'),
+    tailL: findBone(root, 'tail_L'),
+    tailR: findBone(root, 'tail_R'),
+    tailTip: findBone(root, 'tail_tip'),
     segments,
+    starCoreMeshes,
     starCoreMaterials,
+    fleshBySegment,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Shaders de paleta portados de public/character-sheet.html (universo propio
+// de NYX: nebulosa FBM en espacio de pantalla + estrellas titilantes + borde
+// Fresnel). KRONOS los usa para sus Portales Cósmicos ('SOLAR RIFT', Fase 3+)
+// y para el cuerpo en Fase 4 ('VOID COSMOS').
+// ---------------------------------------------------------------------------
+
+/** Paleta 'SOLAR RIFT' (character-sheet.html): fisura solar carmesí-ámbar. */
+export const KRONOS_SOLAR_RIFT_PALETTE = {
+  deep: 0x120614,
+  nebulaA: 0xbe123c,
+  nebulaB: 0xf59e0b,
+  rim: 0xfde68a,
+};
+/** Paleta 'VOID COSMOS' (character-sheet.html): vacío violeta-carmesí. */
+export const KRONOS_VOID_COSMOS_PALETTE = {
+  deep: 0x070518,
+  nebulaA: 0x4c1d95,
+  nebulaB: 0xe11d48,
+  rim: 0xa5f3fc,
+};
+
+const kronosCosmosVert = /* glsl */ `
+  #include <common>
+  #include <skinning_pars_vertex>
+  uniform float uTime;
+  varying vec3 vNormalWorld;
+  varying vec3 vViewDir;
+  void main() {
+    #include <beginnormal_vertex>
+    #include <skinbase_vertex>
+    #include <skinnormal_vertex>
+    #include <begin_vertex>
+    #include <skinning_vertex>
+    vec4 worldPos = modelMatrix * vec4( transformed, 1.0 );
+    vNormalWorld = normalize( mat3( modelMatrix ) * objectNormal );
+    vViewDir = normalize( cameraPosition - worldPos.xyz );
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
+  }
+`;
+
+const kronosCosmosFrag = /* glsl */ `
+  uniform vec3 uDeepColor;
+  uniform vec3 uNebulaA;
+  uniform vec3 uNebulaB;
+  uniform vec3 uRimColor;
+  uniform float uTime;
+  uniform float uOpacity;
+  uniform float uEmissiveBoost;
+  varying vec3 vNormalWorld;
+  varying vec3 vViewDir;
+
+  // --- Portado de universeFragmentShader (character-sheet.html) ---
+  float hash21( vec2 p ) {
+    p = fract( p * vec2( 234.34, 435.345 ) );
+    p += dot( p, p + 34.23 );
+    return fract( p.x * p.y );
+  }
+  float noise2( vec2 p ) {
+    vec2 i = floor( p );
+    vec2 f = fract( p );
+    f = f * f * ( 3.0 - 2.0 * f );
+    float a = hash21( i );
+    float b = hash21( i + vec2( 1.0, 0.0 ) );
+    float c = hash21( i + vec2( 0.0, 1.0 ) );
+    float d = hash21( i + vec2( 1.0, 1.0 ) );
+    return mix( mix( a, b, f.x ), mix( c, d, f.x ), f.y );
+  }
+  float fbm( vec2 p ) {
+    float v = 0.0; float a = 0.5;
+    mat2 m = mat2( 0.8, 0.6, -0.6, 0.8 );
+    for ( int i = 0; i < 4; i++ ) { v += a * noise2( p ); p = m * p * 2.02; a *= 0.5; }
+    return v;
+  }
+  float starLayer( vec2 uv, float scale, float speed ) {
+    vec2 gv = fract( uv * scale ) - 0.5;
+    vec2 id = floor( uv * scale );
+    float h = hash21( id );
+    if ( h < 0.82 ) return 0.0;
+    vec2 offset = vec2( hash21( id + 7.1 ), hash21( id + 13.7 ) ) - 0.5;
+    float d = length( gv - offset * 0.65 );
+    float twinkle = 0.55 + 0.45 * sin( uTime * speed + h * 40.0 );
+    float size = mix( 0.04, 0.14, fract( h * 19.3 ) );
+    return smoothstep( size, 0.0, d ) * twinkle;
+  }
+  void main() {
+    vec3 N = normalize( vNormalWorld );
+    vec3 V = normalize( vViewDir );
+    // Nebulosa en espacio de pantalla: ventana dimensional al universo.
+    vec2 uv = gl_FragCoord.xy * 0.0042;
+    vec2 drift = vec2( uTime * 0.045, -uTime * 0.03 );
+    float n1 = fbm( uv * 1.4 + drift );
+    float n2 = fbm( uv * 2.2 - drift * 1.3 + n1 * 0.85 );
+    vec3 col = uDeepColor;
+    col = mix( col, uNebulaA, smoothstep( 0.34, 0.78, n1 ) * 0.85 );
+    col = mix( col, uNebulaB, smoothstep( 0.44, 0.86, n2 ) * 0.75 );
+    float stars = starLayer( uv + drift * 0.35, 16.0, 2.4 ) * 0.9
+                + starLayer( uv - drift * 0.20, 28.0, 3.6 ) * 1.25;
+    col += mix( vec3( 1.0 ), uRimColor, 0.35 ) * stars;
+    float fresnel = pow( 1.0 - max( dot( N, V ), 0.0 ), 2.6 );
+    col += uRimColor * smoothstep( 0.25, 0.9, fresnel ) * 0.65;
+    // Flash de impacto del boss (uEmissiveBoost, gestionado por el manager).
+    col += uRimColor * uEmissiveBoost * 0.4;
+    gl_FragColor = vec4( col, uOpacity );
+  }
+`;
+
+/** Material 'SOLAR RIFT': discos de los Portales Cósmicos (Fase 3+). */
+export function createKronosSolarRiftMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    vertexShader: kronosCosmosVert,
+    fragmentShader: kronosCosmosFrag,
+    uniforms: {
+      uDeepColor: { value: new THREE.Color(KRONOS_SOLAR_RIFT_PALETTE.deep) },
+      uNebulaA: { value: new THREE.Color(KRONOS_SOLAR_RIFT_PALETTE.nebulaA) },
+      uNebulaB: { value: new THREE.Color(KRONOS_SOLAR_RIFT_PALETTE.nebulaB) },
+      uRimColor: { value: new THREE.Color(KRONOS_SOLAR_RIFT_PALETTE.rim) },
+      uTime: { value: 0 },
+      uOpacity: { value: 0.92 },
+      uEmissiveBoost: { value: 0 },
+    },
+    transparent: true,
+    depthWrite: true,
+    side: THREE.DoubleSide,
+  });
+}
+
+/** Material 'VOID COSMOS': cuerpo de KRONOS en Fase 4 (invulnerable). */
+export function createKronosVoidCosmosMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    vertexShader: kronosCosmosVert,
+    fragmentShader: kronosCosmosFrag,
+    uniforms: {
+      uDeepColor: { value: new THREE.Color(KRONOS_VOID_COSMOS_PALETTE.deep) },
+      uNebulaA: { value: new THREE.Color(KRONOS_VOID_COSMOS_PALETTE.nebulaA) },
+      uNebulaB: { value: new THREE.Color(KRONOS_VOID_COSMOS_PALETTE.nebulaB) },
+      uRimColor: { value: new THREE.Color(KRONOS_VOID_COSMOS_PALETTE.rim) },
+      uTime: { value: 0 },
+      uOpacity: { value: 0.9 },
+      uEmissiveBoost: { value: 0 },
+    },
+    transparent: true,
+    depthWrite: true,
+    side: THREE.FrontSide,
+  });
+}
+
+/**
+ * Fase 4 de KRONOS: sustituye la carne nebulosa del boss por el shader
+ * 'VOID COSMOS' (material nuevo por instancia; el uniform `uEmissiveBoost`
+ * sigue respondiendo al flash de impacto). Devuelve el material de cuerpo
+ * nuevo (o null si no había carne nebulosa que sustituir).
+ */
+export function swapKronosFleshToVoidCosmos(
+  root: THREE.Object3D,
+  animatedMaterials: THREE.ShaderMaterial[],
+): THREE.ShaderMaterial | null {
+  const cosmos = createKronosVoidCosmosMaterial();
+  let body: THREE.ShaderMaterial | null = null;
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) {
+      return;
+    }
+    const material = mesh.material as THREE.Material;
+    if (!(material instanceof THREE.ShaderMaterial) || !material.uniforms.uColorA) {
+      return;
+    }
+    // La carne nebulosa pasa a VOID COSMOS; se sustituye también en la lista
+    // de materiales animados para que el uTime siga avanzando el universo
+    // (cada malla de carne tiene su propio material de instancia).
+    const idx = animatedMaterials.indexOf(material);
+    if (idx >= 0) {
+      animatedMaterials[idx] = cosmos;
+    }
+    if (!body) {
+      body = cosmos;
+    }
+    material.dispose();
+    mesh.material = cosmos;
+  });
+  return body;
+}
+
+// ---------------------------------------------------------------------------
+// Portal Cósmico de KRONOS ('SOLAR RIFT'): disco de ~14 m de diámetro con
+// apertura elástica. La escala/rotación de vórtice las anima el comportamiento.
+// ---------------------------------------------------------------------------
+
+export interface KronosPortalVisual {
+  group: THREE.Group;
+  /** Disco interior con el shader SOLAR RIFT (rota en vórtice). */
+  disk: THREE.Mesh;
+  diskMaterial: THREE.ShaderMaterial;
+  /** Aro exterior brillante que enmarca la fisura. */
+  rim: THREE.Mesh;
+  rimMaterial: THREE.MeshBasicMaterial;
+}
+
+const kronosPortalDiskGeometry = new THREE.CircleGeometry(1, 64);
+const kronosPortalRimGeometry = new THREE.TorusGeometry(1, 0.045, 10, 72);
+
+/** Instancia un portal: el grupo mira su +Z hacia la dirección de cruce. */
+export function createKronosPortalVisual(): KronosPortalVisual {
+  const group = new THREE.Group();
+  const diskMaterial = createKronosSolarRiftMaterial();
+  const disk = new THREE.Mesh(kronosPortalDiskGeometry, diskMaterial);
+  disk.renderOrder = 3;
+  disk.frustumCulled = false;
+  group.add(disk);
+  const rimMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffd27a,
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const rim = new THREE.Mesh(kronosPortalRimGeometry, rimMaterial);
+  rim.renderOrder = 4;
+  rim.frustumCulled = false;
+  group.add(rim);
+  group.visible = false;
+  return { group, disk, diskMaterial, rim, rimMaterial };
+}
+
+/** Libera las geometrías compartidas de los portales (dispose del manager). */
+export function disposeKronosPortalShared(): void {
+  kronosPortalDiskGeometry.dispose();
+  kronosPortalRimGeometry.dispose();
 }

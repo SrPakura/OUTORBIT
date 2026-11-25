@@ -145,6 +145,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   const floatingSlabs = new DomeFloatingSlabManager(scene);
   const sphereTiles = new DomeSphereTileManager(scene);
   const waveMgr = new DomeWaveManager(scene);
+  // (V_base de KRONOS se fija al crear el controller con getBaseMaxSpeed();
+  // el manager ya usa FLOAT_MAX_SPEED = 28 m/s como valor por defecto.)
   const pickups = new DomePickupManager(scene);
   const skillExecutor = new DomeSkillExecutor(scene);
   const progression = new DomeProgressionManager();
@@ -394,6 +396,15 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       controller?.punchCamera(Math.min(1.3, 0.35 + impulseLen / 26 + amount * 0.003));
     }
 
+    // Leviatán KRONOS: las habilidades gravitatorias (Campo Gravitacional,
+    // agujero negro, Implosión legendaria...) rompen UNA Estrella Dorsal a
+    // lo sumo por uso — con la invulnerabilidad de transición del manager
+    // limitando a las skills de daño continuo. Sin daño genérico de HP.
+    if (enemy.entity.archetype === 'kronos_leviathan') {
+      waveMgr.tryBreakKronosStarFromSkill(enemy);
+      runTracker.recordDamage(amount);
+      return;
+    }
     enemy.entity.position.copy(enemy.position);
     const res = combat.computeKineticImpact(
       enemy.entity,
@@ -448,6 +459,18 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     );
     const managed = waveMgr.getActiveEnemies().find((e) => e.id === enemy.id);
     if (managed && managed.entity.alive) {
+      // Leviatán KRONOS: su vida son 4 Estrellas Dorsales, no HP genérico.
+      // Un impacto de alta velocidad (Patada Taladro o velocidad > umbral
+      // cinético) rompe UNA estrella con las puertas anti-skip del manager
+      // (nunca más de 1 por uso: el daño cinético clásico no se aplica).
+      if (managed.entity.archetype === 'kronos_leviathan') {
+        waveMgr.tryBreakKronosStar(
+          managed,
+          impactSpeed ?? 14,
+          isDrill,
+        );
+        return;
+      }
       // Gólem Rompesuelos: la pared maciza del bloqueo absorbe los impactos
       // frontales (0 daño) y DEVUELVE la patada con la MISMA mecánica y
       // animación que el rebote de pared (Sentadilla Cinética, ver
@@ -517,6 +540,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         gamepad,
       );
       controller.setViewportSize(window.innerWidth, window.innerHeight);
+      // KRONOS lee la física del mundo: V_base = velocidad máxima de Nyx
+      // SIN pasivas (getBaseMaxSpeed() = FLOAT_MAX_SPEED = 28 m/s). Las
+      // fases del boss se escalan sobre ese valor exacto.
+      waveMgr.setKronosBaseMaxSpeed(controller.getBaseMaxSpeed());
       // Gravity Shift: el material de nebulosa de Nyx se enciende en vuelo.
       controller.attachNyxMaterial(nyx.universeMat);
       controller.onDomeBounceDamage = () => {
@@ -952,6 +979,27 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         syncPayload.slots[i].maxCooldown = slot.maxCooldown;
       }
       controller.syncProgression(syncPayload);
+
+      // --- Leviatán KRONOS → controller: efectos de cosmos_fusion sobre
+      // Nyx (Fase 4) y el slow-mo global continuo (timeScale 0.75). El
+      // manager es la única fuente de verdad; el controller solo aplica.
+      const kronosFx = waveMgr.getKronosNyxEffects();
+      controller.setKronosDeformed(kronosFx.deformActive);
+      controller.setKronosCameraShake(kronosFx.cameraShake);
+      controller.setKronosControlsInverted(kronosFx.controlsInverted);
+      controller.setKronosSlowMoScale(kronosFx.phase4 ? 0.75 : 1);
+      if (kronosFx.shakePulse > 0) {
+        // Rugido/apertura de portal de KRONOS: sacudida puntual + señal sonora.
+        controller.punchCamera(Math.min(1.3, kronosFx.shakePulse));
+        audio.playWarning();
+        kronosFx.shakePulse = 0;
+      }
+      if (kronosFx.voidFlashPulse > 0) {
+        // cosmos_fusion: destello void cosmos en HUD/pantalla + impacto seco.
+        controller.punchCamera(1.2);
+        audio.playBossHit();
+        kronosFx.voidFlashPulse = 0;
+      }
 
       controller.update(
         effRawDt,

@@ -150,8 +150,12 @@ export const DOME_ENEMY_ARCHETYPES: Record<EnemyArchetype, EnemyArchetypeStats> 
   giant_sparrow: { maxHp: 320, radius: 4.5, fleshThickness: 60, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 2, evasive: true },
   // Prisma Necroz (Élite): 1 cristal en el pecho, saca pinchos de frente.
   prisma_necroz: { maxHp: 300, radius: 3.8, fleshThickness: 65, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 1, evasive: true },
-  // Leviatán KRONOS (Boss): estrellas vitales cada 3 segmentos del cuerpo.
-  kronos_leviathan: { maxHp: 900, radius: 6.5, fleshThickness: 90, expValue: 10.0, isElite: false, isBoss: true, weakPoints: 6, evasive: false },
+  // Leviatán KRONOS (Boss, rediseño): la barra genérica de HP NO existe — su
+  // vida son 4 Estrellas Dorsales (hp 4 = 1 punto por estrella; se rompen en
+  // el manager con las reglas anti-skip, jamás vía computeKineticImpact).
+  // El radio de su esfera es el de la CABEZA: el resto del cuerpo son las
+  // hitboxes segmentadas reales de la cadena (domeKronosBehavior).
+  kronos_leviathan: { maxHp: 4, radius: 3.2, fleshThickness: 90, expValue: 10.0, isElite: false, isBoss: true, weakPoints: 4, evasive: false },
 };
 
 /**
