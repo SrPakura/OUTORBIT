@@ -389,7 +389,10 @@ export class NyxDomeController {
   // --- Parry del Gólem: la ventana apunta al aro dorado, no a un evasivo
   private parryWindowActive = false;
   private parryDashUsed = false;
-  /** Punto de la estrella dorada (junto al brazo malo): destino del dash. */
+  private parryStarHovered = false;
+  private kickRecoverFromAttack = false;
+  private wallRepelledThisHit = false;
+  /** Punto de la estrella dorada (junto al brazo fino): destino del dash. */
   private readonly parryStarPoint = new THREE.Vector3();
   private reticleLockState: ReticleLockState = 'none';
   // Enemigo lockeado proyectado a <= RETICLE_LOCK_RADIUS_PX del centro del
@@ -850,7 +853,10 @@ export class NyxDomeController {
    * esté golpeando/rebotando, aunque esté a menos de 5 m.
    */
   isPlayerInKickAnim(): boolean {
-    return this.mode === 'speed_attack' || this.mode === 'kick_recover';
+    return (
+      this.mode === 'speed_attack' ||
+      (this.mode === 'kick_recover' && this.kickRecoverFromAttack)
+    );
   }
 
   /**
@@ -936,8 +942,12 @@ export class NyxDomeController {
    * HACIA DENTRO del gólem, igual que en `onHitEnemy`.
    */
   applyWallRepel(hitDirIntoEnemy: THREE.Vector3, speed: number): void {
-    this.velocity.addScaledVector(hitDirIntoEnemy, -speed);
-    this.shake = Math.max(this.shake, 0.2);
+    this.wallRepelledThisHit = true;
+    this.velocity
+      .copy(hitDirIntoEnemy)
+      .multiplyScalar(-Math.max(speed, 16))
+      .addScaledVector(this.up, 3.5);
+    this.shake = Math.max(this.shake, 0.25);
     this.impactFlash = Math.max(this.impactFlash, 0.55);
   }
 
@@ -1002,6 +1012,7 @@ export class NyxDomeController {
       pointerLocked: this.pointerLocked,
       gamepadConnected: this.isGamepadConnected(),
       reticleLockState: this.reticleLockState,
+      parryStarHovered: this.parryStarHovered,
       kineticBounceState:
         this.kinetic.phase === 'committed' || this.mode === 'kinetic_bounce'
           ? 'committed'
@@ -1187,7 +1198,7 @@ export class NyxDomeController {
         this.updateDashing(simDt);
         break;
       case 'speed_attack':
-        this.updateSpeedAttack(simDt, onHitEnemy);
+        this.updateSpeedAttack(simDt, onHitEnemy, enemies);
         break;
       case 'kick_recover':
         this.updateKickRecover(simDt);
@@ -1222,6 +1233,26 @@ export class NyxDomeController {
       }
       // --- Cúpula: una sola comprobación por frame (no depende del avance)
       this.resolveDomeBound();
+      // --- Separación física contra enemigos fuera de speed_attack: evita
+      // empujar o arrastrar enemigos por la arena (ej. contra el brazo en
+      // bloqueo o al rozarlos en dash/flotación).
+      if (enemies && this.mode !== 'speed_attack' && !this.parryDashUsed) {
+        for (const enemy of enemies) {
+          this.tmpA.subVectors(this.nyxRoot.position, enemy.position);
+          const d = this.tmpA.length();
+          const minSep = PLAYER_RADIUS + enemy.radius + 0.15;
+          if (d < minSep) {
+            if (d < 1e-4) this.tmpA.copy(this.up);
+            else this.tmpA.multiplyScalar(1 / d);
+            this.nyxRoot.position.copy(enemy.position).addScaledVector(this.tmpA, minSep);
+            const into = this.velocity.dot(this.tmpA);
+            if (into < 0) {
+              // Rebote físico suave contra el cuerpo/escudo enemigo
+              this.velocity.addScaledVector(this.tmpA, -into * 1.45);
+            }
+          }
+        }
+      }
     }
 
     const speed = this.velocity.length();
@@ -1323,6 +1354,7 @@ export class NyxDomeController {
   ): void {
     this.lockedEnemyScreenPos = null;
     this.lockedEnemyInReticle = false;
+    this.parryStarHovered = false;
     if (this.redirectTargetEnemy && (!enemies || enemies.indexOf(this.redirectTargetEnemy) < 0)) {
       this.redirectTargetEnemy = null;
       this.parryWindowActive = false;
@@ -1343,6 +1375,16 @@ export class NyxDomeController {
     const height = this.viewportH;
     const cx = width * 0.5;
     const cy = height * 0.5;
+
+    // Estrella del parry: detectar si la mira apunta sobre la estrella dorada
+    if (this.parryWindowActive && this.redirectTargetEnemy) {
+      if (this.projectToScreen(this.parryStarPoint, camera, width, height)) {
+        const starDistPx = Math.hypot(this.screenPos.x - cx, this.screenPos.y - cy);
+        if (starDistPx <= RETICLE_LOCK_RADIUS_PX * 1.25) {
+          this.parryStarHovered = true;
+        }
+      }
+    }
 
     if (this.lockedEnemy) {
       const onScreen = this.projectToScreen(this.lockedEnemy.position, camera, width, height);
@@ -1383,6 +1425,9 @@ export class NyxDomeController {
         bestDist = d;
         best = enemy;
       }
+    }
+    if (!best && this.parryStarHovered && this.redirectTargetEnemy) {
+      best = this.redirectTargetEnemy;
     }
     this.candidateEnemy = best;
     this.reticleLockState = best ? 'can_lock' : 'none';
@@ -1647,9 +1692,10 @@ export class NyxDomeController {
       this.velocity.length() >= 12.0
     ) {
       // Freno físico aéreo (sin gastar Edén): quita 70% de velocidad y hace 1 flip.
+      // NO cuenta como ataque (fromAttack = false) para no provocar bloqueos/parry.
       this.velocity.multiplyScalar(0.30);
       this.dashTimer = 0;
-      this.startKickRecover(1);
+      this.startKickRecover(1, false);
     }
     // En 'kick_recover' o vuelo lento (< 12 m/s): Espacio NO hace nada.
   }
@@ -1967,6 +2013,36 @@ export class NyxDomeController {
     this.animLock = null;
     this.attackElapsed = 0;
 
+    if (
+      this.parryWindowActive &&
+      this.redirectTargetEnemy &&
+      (this.parryStarHovered || this.parryDashUsed)
+    ) {
+      // Remate directo sobre la estrella / cabeza del Gólem en ventana de parry:
+      // siempre sale como taladro descendente hacia el objetivo sin resbalar.
+      this.lockedEnemy = this.redirectTargetEnemy;
+      this.reticleLockState = 'locked';
+      this.speedAttackKind = 'spiral_drill_kick';
+      this.animator.setState('spiral_drill_kick');
+      this.tmpA
+        .copy(this.redirectTargetEnemy.position)
+        .addScaledVector(this.up, this.redirectTargetEnemy.radius * 0.45)
+        .sub(this.nyxRoot.position);
+      if (this.tmpA.lengthSq() > 1e-4) {
+        this.facing.copy(this.tmpA.normalize());
+        this.aimForward.copy(this.facing);
+      }
+      const parrySpeed = Math.max(speed, (DRILL_SPEED_THRESHOLD + 6.0) * this.speedMultiplier);
+      this.velocity.copy(this.facing).multiplyScalar(parrySpeed);
+      this.mode = 'speed_attack';
+      this.dashTimer = 0;
+      this.startCamTug();
+      this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
+      this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
+      this.audio?.playSpinKick();
+      return;
+    }
+
     if (this.reticleLockState === 'can_lock' && this.candidateEnemy) {
       // Patada con lock-in: taladro si la velocidad instantánea ya es >= 14.5 m/s.
       this.lockedEnemy = this.candidateEnemy;
@@ -2005,10 +2081,11 @@ export class NyxDomeController {
    * 2 flips en taladro espiral (clip `nyx_kick_flip_drill`, que trae los dos
    * encadenados en una sola reproducción).
    */
-  private startKickRecover(flips: 1 | 2): void {
+  private startKickRecover(flips: 1 | 2, fromAttack = true): void {
     this.flipsTotal = flips;
     this.flipsPlayed = 0;
     this.recoverElapsed = 0;
+    this.kickRecoverFromAttack = fromAttack;
     this.wantAttack = false;
     this.lockedEnemy = null;
     // Durante el parry del Gólem la ventana SOBREVIVE al rebote de la patada
@@ -2031,6 +2108,7 @@ export class NyxDomeController {
     // más fuerza tienen el knockback, el hit-stop, el shake y el FOV punch.
     const impactSpeed = this.velocity.length();
     const kineticMult = Math.max(0.6, Math.pow(impactSpeed / 14, 1.35));
+    this.wallRepelledThisHit = false;
     onHitEnemy?.(enemy, this.tmpE.copy(this.facing), isDrill, impactSpeed);
     this.vfx.spawnBurst(enemy.position, this.facing, 0xffc24d, 30);
     this.shake = Math.max(this.shake, 0.34 * kineticMult);
@@ -2051,15 +2129,17 @@ export class NyxDomeController {
     this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, Math.min(1.3, kineticMult));
     this.lockedEnemy = null;
     this.speedAttackKind = null;
-    this.startKickRecover(isDrill ? 2 : 1);
-    // Rebote acrobático en arco: invierte el golpe al 32% y suma un impulso
-    // hacia arriba proporcional a la energía cinética del impacto, así la
-    // voltereta sale despegada en vez de frenar en seco.
-    this.velocity.multiplyScalar(-ENEMY_BOUNCE_KEEP);
-    this.velocity.addScaledVector(
-      this.up,
-      Math.min(ENEMY_BOUNCE_LIFT_MAX, impactSpeed * ENEMY_BOUNCE_LIFT_K),
-    );
+    this.startKickRecover(isDrill ? 2 : 1, true);
+    if (!this.wallRepelledThisHit) {
+      // Rebote acrobático en arco: invierte el golpe al 32% y suma un impulso
+      // hacia arriba proporcional a la energía cinética del impacto, así la
+      // voltereta sale despegada en vez de frenar en seco.
+      this.velocity.multiplyScalar(-ENEMY_BOUNCE_KEEP);
+      this.velocity.addScaledVector(
+        this.up,
+        Math.min(ENEMY_BOUNCE_LIFT_MAX, impactSpeed * ENEMY_BOUNCE_LIFT_K),
+      );
+    }
     // Dutch roll cinético: alterna el lado en cada golpe para que la voltereta
     // nunca se sienta repetida.
     this.impactRollSign = -this.impactRollSign;
@@ -2232,7 +2312,11 @@ export class NyxDomeController {
     }
   }
 
-  private updateSpeedAttack(dt: number, onHitEnemy: HitEnemyCallback | undefined): void {
+  private updateSpeedAttack(
+    dt: number,
+    onHitEnemy: HitEnemyCallback | undefined,
+    enemies: TestEnemySphere[] | undefined,
+  ): void {
     this.attackElapsed += dt;
     this.eden = Math.max(0, this.eden - EDEN_ATTACK_DRAIN * dt);
 
@@ -2288,6 +2372,18 @@ export class NyxDomeController {
         ) {
           this.redirectTargetEnemy = this.lockedEnemy;
           this.redirectWindowTimer = this.computeRedirectWindowSec(this.lockedEnemy);
+        }
+      }
+    } else if (enemies && enemies.length > 0) {
+      // Sin lock (ej. void_fall o tras perder lock): si Nyx toca cualquier
+      // enemigo en pleno ataque, el impacto/bloqueo se resuelve al instante
+      // en el primer contacto (nunca empujar al enemigo por la arena).
+      for (const enemy of enemies) {
+        const dist = this.nyxRoot.position.distanceTo(enemy.position);
+        if (dist <= PLAYER_RADIUS + enemy.radius + 0.45) {
+          this.lockedEnemy = enemy;
+          this.impactEnemy(onHitEnemy);
+          return;
         }
       }
     }

@@ -351,13 +351,15 @@ function isThreatToGolem(
       return true;
     }
   }
-  // Trayectoria entrante: velocidad alta APUNTADA al gólem (el vuelo del
-  // ataque tras soltar no puede despistar a la pared).
-  const speed = info.vel.length();
-  if (speed > GOLEM_INCOMING_SPEED) {
-    _targetVel.copy(info.vel).divideScalar(speed);
-    if (_targetVel.dot(_aimDir) > 0.75) {
-      return true;
+  // Trayectoria entrante: velocidad alta APUNTADA al gólem (solo a media/larga
+  // distancia; a bocajarro sin ataque activo, el gólem prefiere el puñetazo).
+  if (dist > GOLEM_PUNCH_TRIGGER_DISTANCE) {
+    const speed = info.vel.length();
+    if (speed > GOLEM_INCOMING_SPEED) {
+      _targetVel.copy(info.vel).divideScalar(speed);
+      if (_targetVel.dot(_aimDir) > 0.75) {
+        return true;
+      }
     }
   }
   return false;
@@ -562,6 +564,8 @@ export function updateGolemEnemy(
   if (
     antiEmbedState !== 'thin_spiral' &&
     antiEmbedState !== 'thick_spiral' &&
+    antiEmbedState !== 'block_guard' &&
+    antiEmbedState !== 'punch_smash' &&
     antiEmbedState !== 'parried'
   ) {
     _toPlayer.subVectors(enemy.position, playerPos);
@@ -1041,14 +1045,18 @@ export function updateGolemAttack(
       // mientras aceche de cerca, la pared no se baja por cortesía. Sin
       // ninguna de las dos, el piso de GOLEM_BLOCK_FLOOR_SEC (5 s) manda y
       // luego la cola de GOLEM_BLOCK_RELAX_SEC.
-      if (isThreatToGolem(enemy, playerPos, info) || dist < 9.0) {
+      if (isThreatToGolem(enemy, playerPos, info)) {
         internal.golemTimer = Math.max(internal.golemTimer, GOLEM_BLOCK_HOLD_SEC);
       }
       if (internal.golemTimer <= 0 || internal.golemStamina <= 0) {
         // Pared trabajada: tras bajarla, un rato SIN poder izarla otra vez
         // (ventana de castigo honesta; el herido la ignora).
         internal.golemBlockCooldown = GOLEM_BLOCK_REACT_COOLDOWN;
-        settleGolem(enemy, internal, playerPos);
+        if (dist < GOLEM_PUNCH_TRIGGER_DISTANCE && !isThreatToGolem(enemy, playerPos, info)) {
+          startGolemPunch(enemy, internal);
+        } else {
+          settleGolem(enemy, internal, playerPos);
+        }
       }
       return;
     }
@@ -1180,21 +1188,21 @@ function tryStartGolemBlock(
     if (internal.golemStamina < GOLEM_BLOCK_FLOOR_SEC * GOLEM_STAMINA_DRAIN_BLOCK) {
       return false;
     }
-    // Time-to-impact honesto: hacia dónde cierro distancia y a qué ritmo.
-    const dist = enemy.position.distanceTo(playerPos);
-    _aimDir.subVectors(playerPos, enemy.position);
-    if (_aimDir.lengthSq() < 1e-4) {
-      startGolemBlock(enemy, internal);
-      return true;
-    }
-    _aimDir.normalize();
-    // Velocidad de cierre = Nyx viajando HACIA el gólem + el gólem HACIA Nyx.
-    const closing =
-      Math.max(0, -info.vel.dot(_aimDir)) + Math.max(0, enemy.velocity.dot(_aimDir));
-    const tti = dist / Math.max(4.0, closing);
-    if (tti < GOLEM_BLOCK_RAISE_NEED_SEC) {
-      // Sin tiempo: mejor no enseñar la pared a medias.
-      return false;
+    // Si Nyx NO está atacando activamente, exigir margen de tiempo para no
+    // alzar la pared tarde por pura velocidad de paso. Si SÍ ataca, bloquea
+    // de inmediato en lugar de caer al ataque giratorio.
+    if (!info.attacking) {
+      const dist = enemy.position.distanceTo(playerPos);
+      _aimDir.subVectors(playerPos, enemy.position);
+      if (_aimDir.lengthSq() >= 1e-4) {
+        _aimDir.normalize();
+        const closing =
+          Math.max(0, -info.vel.dot(_aimDir)) + Math.max(0, enemy.velocity.dot(_aimDir));
+        const tti = dist / Math.max(4.0, closing);
+        if (tti < GOLEM_BLOCK_RAISE_NEED_SEC) {
+          return false;
+        }
+      }
     }
   }
   startGolemBlock(enemy, internal);

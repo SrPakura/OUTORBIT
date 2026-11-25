@@ -51,6 +51,7 @@ const INITIAL_HUD: DomeHudState = {
   speedAttackKind: null,
   pointerLocked: false,
   reticleLockState: 'none',
+  parryStarHovered: false,
   kineticBounceState: 'none',
   lockedEnemyScreenPos: null,
   bulletTimeActive: false,

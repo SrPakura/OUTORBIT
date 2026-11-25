@@ -50,29 +50,41 @@ function DomeHudSketchInner({
   // azul brillante + glow (rebote adjudicado)
   const starStroke = kineticCommitted
     ? '#00d0ff'
-    : kinetic === 'available' && lock === 'none'
-      ? '#7fd8ff'
-      : lock === 'none'
-        ? '#ffffff'
-        : lock === 'can_lock'
-          ? '#ff4040'
-          : '#ff0000';
-  const starFill = isLocked ? 'rgba(255, 0, 0, 0.24)' : kineticCommitted ? 'rgba(0, 208, 255, 0.28)' : 'none';
-  const starStyle =
-    lock === 'locked' && !kineticCommitted
-      ? { filter: 'drop-shadow(0 0 10px #ff0000) drop-shadow(0 0 22px rgba(255,0,0,0.85))' }
+    : hud.parryStarHovered
+      ? '#ffd54f'
+      : kinetic === 'available' && lock === 'none'
+        ? '#7fd8ff'
+        : lock === 'none'
+          ? '#ffffff'
+          : lock === 'can_lock'
+            ? '#ff4040'
+            : '#ff0000';
+  const starFill = hud.parryStarHovered && !kineticCommitted
+    ? 'rgba(255, 213, 79, 0.30)'
+    : isLocked
+      ? 'rgba(255, 0, 0, 0.24)'
       : kineticCommitted
-        ? { filter: 'drop-shadow(0 0 12px #00d0ff) drop-shadow(0 0 26px rgba(0,208,255,0.9))' }
-        : undefined;
+        ? 'rgba(0, 208, 255, 0.28)'
+        : 'none';
+  const starStyle =
+    hud.parryStarHovered && !kineticCommitted
+      ? { filter: 'drop-shadow(0 0 12px #ffd54f) drop-shadow(0 0 26px rgba(255,213,79,0.95))' }
+      : lock === 'locked' && !kineticCommitted
+        ? { filter: 'drop-shadow(0 0 10px #ff0000) drop-shadow(0 0 22px rgba(255,0,0,0.85))' }
+        : kineticCommitted
+          ? { filter: 'drop-shadow(0 0 12px #00d0ff) drop-shadow(0 0 26px rgba(0,208,255,0.9))' }
+          : undefined;
   const dotFill = kineticCommitted
     ? '#00d0ff'
-    : kinetic === 'available' && lock === 'none'
-      ? '#7fd8ff'
-      : lock === 'none'
-        ? '#ffffff'
-        : lock === 'can_lock'
-          ? '#ff4040'
-          : '#ff0000';
+    : hud.parryStarHovered
+      ? '#ffd54f'
+      : kinetic === 'available' && lock === 'none'
+        ? '#7fd8ff'
+        : lock === 'none'
+          ? '#ffffff'
+          : lock === 'can_lock'
+            ? '#ff4040'
+            : '#ff0000';
 
   const enemyPos =
     hud.lockedEnemyScreenPos != null && (lock === 'locked' || lock === 'can_lock')

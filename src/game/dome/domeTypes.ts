@@ -93,6 +93,8 @@ export interface DomeHudState {
   /** Hay un mando (Gamepad API) conectado: el HUD muestra el aviso. */
   gamepadConnected?: boolean;
   reticleLockState: ReticleLockState;
+  /** True cuando la mira apunta sobre la estrella dorada del parry del Gólem. */
+  parryStarHovered?: boolean;
   /** Sentadilla Cinética: disponible (azul clarito) o adjudicada (azul brillante). */
   kineticBounceState: KineticBounceUiState;
   lockedEnemyScreenPos: { x: number; y: number } | null;

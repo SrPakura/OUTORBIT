@@ -1523,9 +1523,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     // Gólem Rompesuelos (rediseño §7.4): remate, bloqueo y flinch.
     if (internal.enemy.entity.archetype === 'ground_golem' && internal.enemy.entity.alive) {
-      if (isDrill && hitDir.y <= GOLEM_PARRY_MAX_Y_HIT_DIR) {
+      const parryWindowOpenForThis =
+        this.golemParryTargetId === enemy.id && this.golemParryTimer > 0;
+      if (isDrill && (parryWindowOpenForThis || hitDir.y <= GOLEM_PARRY_MAX_Y_HIT_DIR)) {
         // Remate desde arriba (parry): taladro descendente sobre la cabeza.
-        if (this.golemParryTargetId === enemy.id && this.golemParryTimer > 0) {
+        if (parryWindowOpenForThis) {
           // Ventana de parry ABIERTA: el remate arrastra el 35% de la vida
           // TOTAL del gólem (aditivo al daño cinético; el kill lo decide el
           // game loop), y la ventana se cierra consumida.
@@ -1544,6 +1546,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         internal.enemy.velocity.copy(_preHitVel);
         internal.enemy.hitFlash = Math.min(internal.enemy.hitFlash, 0.35);
         internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
+        // El parry SOLO se activa cuando un ataque real impacta contra el bloqueo.
+        _aimDir
+          .copy(internal.enemy.position)
+          .addScaledVector(hitDir, -(internal.enemy.radius + 2.0));
+        this.tryOpenGolemParry(internal.enemy, internal, _aimDir);
       } else {
         // Sacudida seca de impacto (golem_hit pisa la FSM mientras dura).
         internal.golemHitTimer = GOLEM_HIT_CLIP_SEC;
@@ -3100,15 +3107,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   }
 
   /**
-   * Punto de la estrella del parry: junto al BRAZO MALO del gólem (el
-   * gigante), sobresaliendo del cuerpo a la altura del hombro real del GLB.
-   * El hueso sabe de qué lado está el brazo — la convención del modelo no.
+   * Punto de la estrella del parry: junto al BRAZO FINO del gólem (izquierdo),
+   * sobresaliendo del cuerpo a una distancia legible respecto al jugador.
    */
   private updateGolemParryStar(enemy: ManagedWaveEnemy, internal: EnemyInternal): void {
-    if (internal.golemRig && internal.golemRig.giantShoulderR) {
-      internal.golemRig.giantShoulderR.bone.getWorldPosition(_starWorld);
+    if (internal.golemRig && internal.golemRig.armLUpper) {
+      internal.golemRig.armLUpper.bone.getWorldPosition(_starWorld);
     } else {
-      _starWorld.set(1.2, 1.5, 0).applyQuaternion(enemy.mesh.quaternion).add(enemy.position);
+      _starWorld.set(-1.2, 1.5, 0).applyQuaternion(enemy.mesh.quaternion).add(enemy.position);
     }
     _starSide.subVectors(_starWorld, enemy.position);
     _starSide.y = 0;
@@ -3279,9 +3285,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         if (internal.currentClipAction !== blockLoop) {
           // Entrada fresca a la guardia (desde helicóptero/windup/etc.):
           // reset forzado de la subida (dos guardias seguidas no quedan
-          // clampadas a media subida).
+          // clampadas a media subida). El parry solo abre al impactar el golpe.
           this.crossfadeEnemyAction(internal, 'golem_block_start', 0.08, true);
-          this.tryOpenGolemParry(enemy, internal, playerPos);
         }
         return; // Ya en el bucle: la pared se sostiene sola.
       } else {
