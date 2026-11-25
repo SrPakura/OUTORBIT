@@ -39,11 +39,14 @@
       "slot3": "Character 3"
     },
     "gamepadActions": {
-      "attack": "Speed Attack / Throw rock",
-      "dash": "Dash / Redirection (bullet time)",
+      "attack": "Speed Attack / Void Fall",
+      "attackAlt": "Speed Attack (alt)",
+      "dash": "Dash / Redirection",
+      "dashAlt": "Dash / Redirection (alt)",
       "jump": "Jump / Take off / Air brake",
-      "skill": "Use skill (active slot)",
-      "cycleSlot": "Change slot (1/2/3)",
+      "slot1": "Skill 1",
+      "slot2": "Skill 2",
+      "slot3": "Skill 3",
       "pause": "Pause"
     }
   },

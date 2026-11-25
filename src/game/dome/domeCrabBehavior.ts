@@ -806,6 +806,9 @@ function aimCrabTurretLimited(
   if (!node) {
     return 0;
   }
+  if (internal.crabTurretAimQuat) {
+    node.quaternion.copy(internal.crabTurretAimQuat);
+  }
   node.updateWorldMatrix(true, false);
   node.getWorldPosition(_muzzlePos);
   _lookDir.subVectors(targetPos, _muzzlePos);
@@ -816,6 +819,7 @@ function aimCrabTurretLimited(
   crabTurretWorldDir(internal, _turretDir);
   const angle = Math.acos(THREE.MathUtils.clamp(_turretDir.dot(_lookDir), -1, 1));
   if (angle < 1e-4) {
+    (internal.crabTurretAimQuat ??= new THREE.Quaternion()).copy(node.quaternion);
     return 0;
   }
   // Orientación mundial deseada -> espacio local del hueso.
@@ -826,6 +830,7 @@ function aimCrabTurretLimited(
     _targetQuat.premultiply(_invQuat);
   }
   node.quaternion.slerp(_targetQuat, Math.min(1, (maxRadPerSec * dt) / angle));
+  (internal.crabTurretAimQuat ??= new THREE.Quaternion()).copy(node.quaternion);
   return angle;
 }
 

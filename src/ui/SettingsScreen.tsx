@@ -47,10 +47,13 @@ const ACTION_LABEL_KEYS: Record<ControlAction, string> = {
 
 const GAMEPAD_ACTION_LABEL_KEYS: Record<GamepadAction, string> = {
   attack: 'controls.gamepadActions.attack',
+  attackAlt: 'controls.gamepadActions.attackAlt',
   dash: 'controls.gamepadActions.dash',
+  dashAlt: 'controls.gamepadActions.dashAlt',
   jump: 'controls.gamepadActions.jump',
-  skill: 'controls.gamepadActions.skill',
-  cycleSlot: 'controls.gamepadActions.cycleSlot',
+  slot1: 'controls.gamepadActions.slot1',
+  slot2: 'controls.gamepadActions.slot2',
+  slot3: 'controls.gamepadActions.slot3',
   pause: 'controls.gamepadActions.pause',
 };
 

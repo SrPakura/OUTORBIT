@@ -47,15 +47,27 @@ export const CONTROL_ACTIONS: ControlAction[] = [
  * Acciones rebindables del mando dentro de la Cúpula (Gamepad API estándar).
  * Compatible con mandos estándar vía mapeo W3C.
  */
-export type GamepadAction = 'attack' | 'dash' | 'jump' | 'skill' | 'cycleSlot' | 'pause';
+export type GamepadAction =
+  | 'attack'
+  | 'attackAlt'
+  | 'dash'
+  | 'dashAlt'
+  | 'jump'
+  | 'slot1'
+  | 'slot2'
+  | 'slot3'
+  | 'pause';
 
 /** Orden estable de las acciones de mando (validación, saneado y menú). */
 export const GAMEPAD_ACTIONS: GamepadAction[] = [
   'attack',
+  'attackAlt',
   'dash',
+  'dashAlt',
   'jump',
-  'skill',
-  'cycleSlot',
+  'slot1',
+  'slot2',
+  'slot3',
   'pause',
 ];
 
@@ -127,16 +139,19 @@ export const DEFAULT_BINDINGS: Record<ControlAction, string> = {
 
 /**
  * Bindings de mando por defecto (mapeo W3C estándar):
- * R2 (7) ataca, R1 (5) dashea, Cruz (0) salta/despega, Triángulo (3) usa la
- * habilidad de la ranura activa, D-Pad Abajo (13) cambia de ranura y
- * Options (9) pausa.
+ * R2 (7) y R1 (5) atacan, L1 (4) y L2 (6) dashean, Cruz (0) salta/frena,
+ * Cuadrado (2) = Habilidad 1, Triángulo (3) = Habilidad 2, Círculo (1) = Habilidad 3,
+ * Options (9) pausa. Share/L3/R3/PS/Touchpad sin asignar.
  */
 export const DEFAULT_GAMEPAD_BINDINGS: Record<GamepadAction, GamepadButtonIndex> = {
   attack: 7,
-  dash: 5,
+  attackAlt: 5,
+  dash: 4,
+  dashAlt: 6,
   jump: 0,
-  skill: 3,
-  cycleSlot: 13,
+  slot1: 2,
+  slot2: 3,
+  slot3: 1,
   pause: 9,
 };
 
@@ -245,12 +260,12 @@ function sanitizeSettings(raw: unknown): GameSettings {
   const rawGamepadBindings = (source.gamepadBindings ?? {}) as Partial<
     Record<GamepadAction, GamepadButtonIndex>
   >;
+  const hasNewSchema = typeof rawGamepadBindings.slot1 === 'number';
   const gamepadBindings = {} as Record<GamepadAction, GamepadButtonIndex>;
   for (const action of GAMEPAD_ACTIONS) {
-    gamepadBindings[action] = clampButtonIndex(
-      rawGamepadBindings[action],
-      DEFAULT_GAMEPAD_BINDINGS[action],
-    );
+    gamepadBindings[action] = hasNewSchema
+      ? clampButtonIndex(rawGamepadBindings[action], DEFAULT_GAMEPAD_BINDINGS[action])
+      : DEFAULT_GAMEPAD_BINDINGS[action];
   }
   return {
     language: source.language === 'en' ? 'en' : 'es',

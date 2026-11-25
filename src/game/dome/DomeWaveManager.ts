@@ -718,6 +718,8 @@ export interface EnemyInternal {
   starMaterials: THREE.ShaderMaterial[];
   /** Cangrejo: material cel del cañón (chispazo/carga del telegraph). */
   cannonMaterial: THREE.ShaderMaterial | null;
+  /** Cangrejo: orientación local persistente de la torreta (evita que mixer.update la pise). */
+  crabTurretAimQuat?: THREE.Quaternion;
   /** Ave: huesos del GLB para aleteo, cuello/cabeza, cola y jaw. */
   sparrowRig: SparrowRig | null;
   /** Ave: fase integrada del aleteo (la velocidad cambia sin saltos). */
@@ -2137,6 +2139,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         }
       }
       internal.mixer?.update(dt);
+      if (
+        enemy.entity.archetype === 'crab_gunner' &&
+        internal.turretNode &&
+        internal.crabTurretAimQuat &&
+        !internal.jump
+      ) {
+        internal.turretNode.quaternion.copy(internal.crabTurretAimQuat);
+      }
 
       // --- Dash evasivo: rompe el lock-in de los arquetipos escurridizos ---
       if (

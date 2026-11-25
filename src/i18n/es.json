@@ -39,11 +39,14 @@
       "slot3": "Personaje 3"
     },
     "gamepadActions": {
-      "attack": "Ataque de Velocidad / Lanzar roca",
-      "dash": "Dash / Redirección (cámara lenta)",
+      "attack": "Ataque de Velocidad / Caída al Vacío",
+      "attackAlt": "Ataque de Velocidad (alternativo)",
+      "dash": "Dash / Redirección",
+      "dashAlt": "Dash / Redirección (alternativo)",
       "jump": "Salto / Despegue / Freno aéreo",
-      "skill": "Usar habilidad (ranura activa)",
-      "cycleSlot": "Cambiar ranura (1/2/3)",
+      "slot1": "Habilidad 1",
+      "slot2": "Habilidad 2",
+      "slot3": "Habilidad 3",
       "pause": "Pausa"
     }
   },

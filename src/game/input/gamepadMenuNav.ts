@@ -43,8 +43,9 @@ export function useGamepadMenuNav({
     let raf = 0;
     const held: Record<GamepadMenuDirection, boolean> = { up: false, down: false, left: false, right: false };
     const nextRepeat: Record<GamepadMenuDirection, number> = { up: 0, down: 0, left: 0, right: 0 };
-    let prevConfirm = false;
-    let prevBack = false;
+    const initPad = readConnectedGamepad();
+    let prevConfirm = !!initPad?.buttons[0]?.pressed;
+    let prevBack = !!initPad?.buttons[1]?.pressed;
 
     const poll = (): void => {
       raf = requestAnimationFrame(poll);

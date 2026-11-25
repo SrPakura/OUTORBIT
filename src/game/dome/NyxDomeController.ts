@@ -975,17 +975,18 @@ export class NyxDomeController {
     this.gpLeftY = ls.y;
 
     // Botones configurados: flanco = one-shot, held = continuo.
-    if (gp.justPressedAction('attack')) this.wantAttack = true;
-    this.gpAttackHeld = gp.heldAction('attack');
-    if (gp.justPressedAction('dash')) this.wantDash = true;
-    this.gpDashHeld = gp.heldAction('dash');
-    if (gp.justPressedAction('jump')) this.wantJump = true;
-    // Habilidad: dispara la ranura activa (equivalente a pulsar 1/2/3).
-    if (gp.justPressedAction('skill')) this.wantSlot = this.activeSlot;
-    // Cambiar ranura: cicla 1 -> 2 -> 3 -> 1 sin disparar la habilidad.
-    if (gp.justPressedAction('cycleSlot')) {
-      this.activeSlot = ((this.activeSlot % 3) + 1) as 1 | 2 | 3;
+    if (gp.justPressedAction('attack') || gp.justPressedAction('attackAlt')) {
+      this.wantAttack = true;
     }
+    this.gpAttackHeld = gp.heldAction('attack') || gp.heldAction('attackAlt');
+    if (gp.justPressedAction('dash') || gp.justPressedAction('dashAlt')) {
+      this.wantDash = true;
+    }
+    this.gpDashHeld = gp.heldAction('dash') || gp.heldAction('dashAlt');
+    if (gp.justPressedAction('jump')) this.wantJump = true;
+    if (gp.justPressedAction('slot1')) this.wantSlot = 1;
+    if (gp.justPressedAction('slot2')) this.wantSlot = 2;
+    if (gp.justPressedAction('slot3')) this.wantSlot = 3;
   }
 
   /** ¿Hay un mando conectado y activo? (para el aviso del HUD) */
