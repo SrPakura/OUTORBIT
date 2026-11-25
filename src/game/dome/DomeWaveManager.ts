@@ -1652,8 +1652,10 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       }
 
       // Rotación continua de la estrella interior en 2 ejes + vibración de
-      // energía. Con clips embebidos (célula) el núcleo lo anima el GLB.
-      if (!internal.actions) {
+      // energía. Con clips embebidos (célula/gólem) el núcleo lo anima el
+      // GLB. Ojo: actions puede ser un Map VACÍO (GLB cached sin clips),
+      // que es truthy — sin el size check la estrella quedaba congelada.
+      if (!internal.actions || internal.actions.size === 0) {
         for (const star of internal.starCores) {
           star.rotation.y += dt * 2.8;
           star.rotation.x += dt * 2.0;
@@ -2639,8 +2641,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       faceTowards(enemy.mesh, _lookDir, 3.0, dt);
     }
 
-    if (!internal.actions) {
-      // Forma provisional sin clips: la pose la pinta el wobble global.
+    if (!internal.actions || internal.actions.size === 0) {
+      // Forma provisional sin clips (o GLB cached sin ellos: Map vacío):
+      // la pose la pinta el wobble global.
       return;
     }
 
@@ -2967,7 +2970,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       return; // Forma provisional (dodecaedro): el wobble global basta.
     }
 
-    if (internal.actions) {
+    if (internal.actions && internal.actions.size > 0) {
       // --- Cableado de los clips del GLB (crossfade FSM -> acción) ---
       const force = internal.golemRestartPending;
       internal.golemRestartPending = false;

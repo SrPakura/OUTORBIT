@@ -16,7 +16,7 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { DOME_PLAYER_BOUND_RADIUS, type SlabCollider } from './domeTypes';
+import type { SlabCollider } from './domeTypes';
 import { lookAtQuat } from './domeEnemyOrient';
 import type { EnemyInternal, ManagedWaveEnemy } from './DomeWaveManager';
 
@@ -57,13 +57,14 @@ export type CrabAttackState = 'idle' | 'laser_aim' | 'laser_fire' | 'burst' | 'k
 
 // --- Ataque 1: Rayo Láser Continuo (Nyx NO está en el suelo del cangrejo) ---
 export const CRAB_LASER_DPS = 20.0; // 20*dt continuos a Nyx y a cualquier enemigo.
-// Tope de enganche del láser: más allá, el cangrejo ni se molesta (no es un
-// rayo infinito, pero cubre toda la cúpula útil).
-const CRAB_LASER_MAX_DIST = 50.0;
+// Tope de enganche del láser: la cúpula útil mide ~180 m de diámetro; con
+// 200 el cangrejo SIEMPRE puede atacar a Nyx (la longitud real del haz la
+// corta el cruce de la esfera de la Barrera Blanca en raycastCrabLaser).
+const CRAB_LASER_MAX_DIST = 200.0;
 const CRAB_LASER_AIM_SEC = 2.0; // Telegraph completo.
 const CRAB_LASER_AIM_TRACK_SEC = 1.65; // Primeros 1.65 s persigue; luego sella.
-const CRAB_LASER_AIM_TURN_RATE = 1.8; // Velocidad angular máx. de rastreo (rad/s).
-const CRAB_LASER_LEAD_SEC = 0.25; // Predicción ligera durante el rastreo.
+const CRAB_LASER_AIM_TURN_RATE = 2.4; // Velocidad angular máx. de rastreo (rad/s).
+const CRAB_LASER_LEAD_SEC = 0.45; // Predicción durante el rastreo (apunta mejor).
 const CRAB_LASER_FIRE_SEC = 2.0; // Haz grueso continuo.
 const CRAB_LASER_FIRE_TURN_RATE = 0.45; // Barrido con inercia (rad/s).
 const CRAB_LASER_COOLDOWN = 6.0; // Escalable con speedMult.
@@ -756,7 +757,7 @@ function flapCrabLegs(enemy: ManagedWaveEnemy, internal: EnemyInternal, elapsed:
 // ============================================================================
 
 /** Alcance del haz: la esfera de la Barrera Blanca la corta, no el vacío. */
-const CRAB_LASER_RANGE = DOME_PLAYER_BOUND_RADIUS;
+const CRAB_LASER_RANGE = 200.0;
 const CRAB_BURST_SHOTS = 3;
 
 /**
