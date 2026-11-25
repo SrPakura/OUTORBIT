@@ -1298,21 +1298,28 @@ export function updateKronosPose(
   const turn = signedHeadingTurn(chain.headingPrev, _heading, chain.up[0]);
   chain.headingPrev.copy(_heading);
 
-  // Referencia del eslabón 0: el eslabón recto hacia atrás con la malla ya
-  // girada (la cadena sale de la nuca, no del eje de advance).
-  _v2.copy(chain.restDir[0]).applyQuaternion(chain.meshQuat);
+  // Referencia del cuello: pos[1] (seg_01) está 0.08 m debajo de pos[0] (head),
+  // perpendicular al cuerpo. Se fija rígido con meshQuat y la cadena
+  // serpentina real arranca en link = 1 (seg_01 -> seg_02, hacia atrás -Z).
+  _v1.subVectors(chain.pos[1], chain.pos[0]);
+  chain.dirNew[0].copy(chain.restDir[0]).applyQuaternion(chain.meshQuat);
+  chain.pos[1].copy(chain.pos[0]).addScaledVector(chain.dirNew[0], chain.segLen[0]);
+  chain.up[1].copy(chain.up[0]);
 
-  for (let j = 1; j < KRONOS_CHAIN_POINTS; j++) {
+  // Referencia del primer eslabón serpentino (link 1): recto hacia atrás (-heading).
+  _v2.copy(chain.restDir[1]).applyQuaternion(chain.meshQuat);
+
+  for (let j = 2; j < KRONOS_CHAIN_POINTS; j++) {
     const link = j - 1;
     const dir = chain.dirNew[link];
     dir.subVectors(chain.pos[j], chain.pos[j - 1]);
     if (dir.lengthSq() < 1e-8) {
-      dir.copy(chain.restDir[link]);
+      dir.copy(chain.restDir[link]).applyQuaternion(chain.meshQuat);
     } else {
       dir.normalize();
     }
-    // Rigidez angular: hacia el eslabón anterior (el 0, hacia la nuca).
-    clampDirToRef(dir, link === 0 ? _v2 : chain.dirNew[link - 1], KRONOS_MAX_BEND_RAD);
+    // Rigidez angular: hacia el eslabón anterior (el link 1, hacia -heading).
+    clampDirToRef(dir, link === 1 ? _v2 : chain.dirNew[link - 1], KRONOS_MAX_BEND_RAD);
     // Up transportado en paralelo a lo largo de la cadena.
     const upJ = chain.up[j];
     upJ.copy(chain.up[j - 1]).addScaledVector(dir, -chain.up[j - 1].dot(dir));
@@ -1340,13 +1347,12 @@ export function updateKronosPose(
 
   // 4) Posa real de huesos: local = inv(W_parent) * (R * W_rest).
   for (let j = 0; j < KRONOS_CHAIN_POINTS; j++) {
-    const link = Math.min(j, KRONOS_CHAIN_POINTS - 2);
+    const link = Math.min(Math.max(1, j), KRONOS_CHAIN_POINTS - 2);
     if (j === 0) {
-      // Cabeza alineada con la orientación de la malla (evita que el micro-link
-      // head->seg_01 de 0.08 m tuerza la cabeza) + escrutinio/quebro.
-      _v3.copy(chain.restDir[0]).applyQuaternion(chain.meshQuat);
-      _v4.copy(chain.restUp[0]).applyQuaternion(chain.meshQuat);
-      quatFromBasisPair(chain.restDir[0], chain.restUp[0], _v3, _v4, _q1);
+      // Cabeza alineada con la orientación de la malla + escrutinio/quebro.
+      _v3.copy(chain.restDir[1]).applyQuaternion(chain.meshQuat);
+      _v4.copy(chain.restUp[1]).applyQuaternion(chain.meshQuat);
+      quatFromBasisPair(chain.restDir[1], chain.restUp[1], _v3, _v4, _q1);
       applyHeadScrutiny(k, chain, _q1);
     } else {
       _v3.copy(chain.dirNew[link]);
