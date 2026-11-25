@@ -2138,12 +2138,16 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     if (hit) {
       dist = Math.min(dist, hit.distance);
     }
-    // Cruce de la esfera de la Barrera Blanca (88.6 m): el haz muere ahí.
+    // Cruce de la esfera de la Barrera Blanca (~88.6 m): el haz muere ahí.
+    // |o + t·d|² = R² con |d|=1 => t² + b·t + c = 0. Desde dentro (c < 0) la
+    // raíz de SALIDA es (-b + sqrt(disc))/2; usar -b/2 (punto medio de la
+    // cuerda) dejaba el haz truncado a la proyección |o·d| y el láser moría
+    // decenas de metros antes de Nyx.
     const b = 2 * origin.dot(dir);
     const c = origin.lengthSq() - DOME_BARRIER_RADIUS_SQ;
     if (c < 0) {
       // Origen dentro de la cúpula: primera intersección saliendo.
-      const t = -b * 0.5;
+      const t = (-b + Math.sqrt(b * b - 4 * c)) * 0.5;
       if (t > 0) {
         dist = Math.min(dist, t);
       }

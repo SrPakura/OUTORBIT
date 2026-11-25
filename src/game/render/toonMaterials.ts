@@ -38,14 +38,24 @@ export interface ComicCelOptions {
 }
 
 const celVertexShader = /* glsl */ `
+  #include <common>
+  #include <skinning_pars_vertex>
   varying vec3 vNormalWorld;
   varying vec3 vViewDir;
   #ifdef USE_COLOR
     varying vec3 vVertexColor;
   #endif
   void main() {
-    vec4 worldPos = modelMatrix * vec4( position, 1.0 );
-    vNormalWorld = normalize( mat3( modelMatrix ) * normal );
+    // Skinning real para SkinnedMesh (enemigos GLB): con USE_SKINNING los
+    // chunks deforman transformed y objectNormal por los huesos; en mallas
+    // normales compilan sin tocar position/normal.
+    #include <beginnormal_vertex>
+    #include <skinbase_vertex>
+    #include <skinnormal_vertex>
+    #include <begin_vertex>
+    #include <skinning_vertex>
+    vec4 worldPos = modelMatrix * vec4( transformed, 1.0 );
+    vNormalWorld = normalize( mat3( modelMatrix ) * objectNormal );
     vViewDir = normalize( cameraPosition - worldPos.xyz );
     #ifdef USE_COLOR
       vVertexColor = color;
@@ -206,7 +216,11 @@ export function createToonMaterial(
  * Añade un contorno de tinta a `mesh` mediante Inverted Hull: malla BackSide
  * que comparte geometría y extruye los vértices a lo largo de la normal en el
  * vertex shader, con variación de grosor tipo pincel. Grosores finos y limpios
- * en personajes (0.015-0.024). Devuelve la malla de contorno (hija de `mesh`).
+ * en personajes (0.015-0.024). Devuelve la malla de contorno.
+ *
+ * Si `mesh` es una SkinnedMesh el contorno comparte su esqueleto (MISMA
+ * deformación por huesos): sin esto el trazo queda congelado en bind pose y
+ * tapa la animación del cuerpo (gólem/cangrejo/célula estilo estatua).
  *
  * `distanceScale` engorda el trazo con la distancia a cámara (0 = grosor fijo).
  * A partir de ~18 m el contorno deja de ser sub-píxel y la silueta del enemigo
@@ -227,17 +241,26 @@ export function addComicOutline(
       uDistanceScale: { value: distanceScale },
     },
     vertexShader: /* glsl */ `
+      #include <common>
+      #include <skinning_pars_vertex>
       uniform float uThickness;
       uniform float uNoiseAmp;
       uniform float uDistanceScale;
       void main() {
-        // Ruido determinista según posición para simular trazo de pincel irregular.
-        float brushVar = sin( position.x * 7.3 + position.y * 5.1 ) * cos( position.z * 6.7 - position.y * 4.2 );
+        // Skinning del contorno: misma deformacion por huesos que la malla
+        // base (chunks vacios si la geometria no es skinned).
+        #include <beginnormal_vertex>
+        #include <skinbase_vertex>
+        #include <skinnormal_vertex>
+        #include <begin_vertex>
+        #include <skinning_vertex>
+        // Ruido determinista segun posicion para simular trazo de pincel irregular.
+        float brushVar = sin( transformed.x * 7.3 + transformed.y * 5.1 ) * cos( transformed.z * 6.7 - transformed.y * 4.2 );
         float width = max( 0.008, uThickness * ( 1.0 + brushVar * uNoiseAmp ) );
         // Grosor en espacio de mundo: crece con la distancia para conservar
-        // la silueta cuando el enemigo está lejos.
+        // la silueta cuando el enemigo esta lejos.
         float distScale = 1.0 + clamp( -modelViewMatrix[ 3 ].z / 18.0, 0.0, 1.0 ) * uDistanceScale;
-        vec3 extruded = position + normalize( normal ) * width * distScale;
+        vec3 extruded = transformed + normalize( objectNormal ) * width * distScale;
         gl_Position = projectionMatrix * modelViewMatrix * vec4( extruded, 1.0 );
       }
     `,
@@ -249,6 +272,18 @@ export function addComicOutline(
     `,
   });
 
+  const skinned = mesh as THREE.SkinnedMesh;
+  if (skinned.isSkinnedMesh) {
+    // Contorno skinneado: mismo esqueleto/bind que la malla base ( patron del
+    // contorno blanco de NYX ). Un Mesh plano no activa USE_SKINNING y el
+    // trazo quedaria congelado en bind pose sobre el cuerpo animado.
+    const outline = new THREE.SkinnedMesh(mesh.geometry, outlineMat);
+    outline.bind(skinned.skeleton, skinned.bindMatrix);
+    outline.frustumCulled = false;
+    if (skinned.parent) skinned.parent.add(outline);
+    else mesh.add(outline);
+    return outline;
+  }
   const outline = new THREE.Mesh(mesh.geometry, outlineMat);
   mesh.add(outline);
   return outline;

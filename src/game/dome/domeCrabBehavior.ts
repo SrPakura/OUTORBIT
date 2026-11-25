@@ -57,16 +57,20 @@ export type CrabAttackState = 'idle' | 'laser_aim' | 'laser_fire' | 'burst' | 'k
 
 // --- Ataque 1: Rayo Láser Continuo (Nyx NO está en el suelo del cangrejo) ---
 export const CRAB_LASER_DPS = 20.0; // 20*dt continuos a Nyx y a cualquier enemigo.
-// Tope de enganche del láser: la cúpula útil mide ~180 m de diámetro; con
-// 200 el cangrejo SIEMPRE puede atacar a Nyx (la longitud real del haz la
-// corta el cruce de la esfera de la Barrera Blanca en raycastCrabLaser).
-const CRAB_LASER_MAX_DIST = 200.0;
+// Tope de enganche del láser: 500 m deja el haz cubrir la cúpula entera
+// (la longitud real del haz la corta el cruce de la esfera de la Barrera
+// Blanca o el primer slab en raycastCrabLaser).
+const CRAB_LASER_MAX_DIST = 500.0;
 const CRAB_LASER_AIM_SEC = 2.0; // Telegraph completo.
 const CRAB_LASER_AIM_TRACK_SEC = 1.65; // Primeros 1.65 s persigue; luego sella.
-const CRAB_LASER_AIM_TURN_RATE = 2.4; // Velocidad angular máx. de rastreo (rad/s).
-const CRAB_LASER_LEAD_SEC = 0.45; // Predicción durante el rastreo (apunta mejor).
+// Rastreo honesto real: 3.5 rad/s siguen un strafe lateral de 30 m/s hasta
+// ~140 m (v_perp/d), así Nyx no sale gratis del telegraph por moverse.
+const CRAB_LASER_AIM_TURN_RATE = 3.5; // Velocidad angular máx. de rastreo (rad/s).
+const CRAB_LASER_LEAD_SEC = 0.5; // Predicción durante el rastreo (apunta mejor).
 const CRAB_LASER_FIRE_SEC = 2.0; // Haz grueso continuo.
-const CRAB_LASER_FIRE_TURN_RATE = 0.45; // Barrido con inercia (rad/s).
+// Barrido con inercia real (sin homing): 1.2 rad/s mantiene el haz pegado a
+// Nyx parado o con desplazamientos normales, pero sigue siendo arrastrable.
+const CRAB_LASER_FIRE_TURN_RATE = 1.2; // (rad/s).
 const CRAB_LASER_COOLDOWN = 6.0; // Escalable con speedMult.
 const CRAB_LASER_AIM_BLINK_HZ = 14.0; // Parpadeo blanco/rojo del sellado final.
 const CRAB_LASER_HIT_RADIUS = 1.7; // Cuerpo de Nyx contra el haz (m).
@@ -756,8 +760,8 @@ function flapCrabLegs(enemy: ManagedWaveEnemy, internal: EnemyInternal, elapsed:
 // FSM de combate del Cangrejo Artillero (rediseño §7.1)
 // ============================================================================
 
-/** Alcance del haz: la esfera de la Barrera Blanca la corta, no el vacío. */
-const CRAB_LASER_RANGE = 200.0;
+/** Alcance del haz: lo cortan la Barrera y el primer slab, no el vacío. */
+const CRAB_LASER_RANGE = 500.0;
 const CRAB_BURST_SHOTS = 3;
 
 /**
@@ -861,9 +865,10 @@ function showCrabAimLine(
 
 /**
  * Máquina de estados de los 3 ataques del Cangrejo Artillero:
- *  1. Rayo Láser Continuo (dist > 7 m): telegraph de 2.0 s con rastreo a
- *     1.8 rad/s (lead 0.25 s) que se sella los últimos 0.35 s, haz grueso de
- *     2.0 s que barre con inercia (0.45 rad/s) y daña todo lo que cruza.
+ *  1. Rayo Láser Continuo (dist > 5 m): telegraph de 2.0 s con rastreo a
+ *     3.5 rad/s (lead 0.5 s) que se sella los últimos 0.35 s, haz grueso de
+ *     2.0 s que barre con inercia (1.2 rad/s) y daña todo lo que cruza. El
+ *     alcance es 500 m: lo cortan la Barrera y el primer slab.
  *  2. Ráfaga Láser (Nyx en la MISMA plataforma del cangrejo): 3 proyectiles
  *     rectos de 36 m/s sin homing (parryables), intervalo 0.10 s, la torreta
  *     rota a 6 rad/s, sin importar la distancia dentro del suelo.
@@ -1048,7 +1053,7 @@ export function updateCrabAttack(
           enemy.attackTimer = 1.0;
         }
       }
-      // Más allá de 50 m de otra plataforma: fuera del alcance, no ataca.
+      // Más allá de 500 m de otra plataforma: fuera del alcance, no ataca.
       return;
     }
   }

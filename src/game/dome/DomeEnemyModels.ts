@@ -118,15 +118,25 @@ export function setEnemyInkScale(scale: number): void {
 // ============================================================================
 
 const enemyNebulaVert = /* glsl */ `
+  #include <common>
+  #include <skinning_pars_vertex>
   uniform float uTime;
   varying vec3 vNormalWorld;
   varying vec3 vViewDir;
   ${ENERGY_WOBBLE_GLSL}
   void main() {
+    // Skinning real para la carne de los enemigos GLB (golem/cangrejo/celula):
+    // sin estos chunks la SkinnedMesh renderiza en bind pose aunque el mixer
+    // mueva los huesos. En mallas no skinneadas compilan a identidad.
+    #include <beginnormal_vertex>
+    #include <skinbase_vertex>
+    #include <skinnormal_vertex>
+    #include <begin_vertex>
+    #include <skinning_vertex>
     // Energía descontrolada: la superficie entera vibra a alta frecuencia.
-    vec3 pos = position + normal * energyWobble( position, uTime ) * 0.045;
+    vec3 pos = transformed + objectNormal * energyWobble( transformed, uTime ) * 0.045;
     vec4 worldPos = modelMatrix * vec4( pos, 1.0 );
-    vNormalWorld = normalize( mat3( modelMatrix ) * normal );
+    vNormalWorld = normalize( mat3( modelMatrix ) * objectNormal );
     vViewDir = normalize( cameraPosition - worldPos.xyz );
     gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
@@ -247,7 +257,10 @@ export function createEnemyNebulaMaterial(
 /**
  * Contorno de tinta Inverted Hull que vibra con la misma energía descontrolada
  * que la carne (`uTime` compartido): la silueta de tinta acompaña al cuerpo
- * tembloroso en cada frame. Devuelve la malla de contorno (hija de `mesh`).
+ * tembloroso en cada frame. Devuelve la malla de contorno.
+ *
+ * Si `mesh` es una SkinnedMesh el contorno comparte esqueleto y bind: sin
+ * esto la tinta queda congelada en bind pose tapando la animación de clips.
  */
 function addVibratingInkOutline(
   mesh: THREE.Mesh,
@@ -266,20 +279,29 @@ function addVibratingInkOutline(
       uDistanceScale: { value: INK_DISTANCE_SCALE },
     },
     vertexShader: /* glsl */ `
+      #include <common>
+      #include <skinning_pars_vertex>
       uniform float uThickness;
       uniform float uNoiseAmp;
       uniform float uTime;
       uniform float uDistanceScale;
       ${ENERGY_WOBBLE_GLSL}
       void main() {
+        // Skinning del contorno: misma deformacion por huesos que la carne
+        // (chunks vacios si la geometria no es skinned).
+        #include <beginnormal_vertex>
+        #include <skinbase_vertex>
+        #include <skinnormal_vertex>
+        #include <begin_vertex>
+        #include <skinning_vertex>
         // La tinta vibra exactamente igual que la superficie de la carne.
-        vec3 pos = position + normal * energyWobble( position, uTime ) * 0.045;
+        vec3 pos = transformed + objectNormal * energyWobble( transformed, uTime ) * 0.045;
         // Grosor de pincel irregular (mismo trazo que addComicOutline).
-        float brushVar = sin( position.x * 7.3 + position.y * 5.1 ) * cos( position.z * 6.7 - position.y * 4.2 );
+        float brushVar = sin( transformed.x * 7.3 + transformed.y * 5.1 ) * cos( transformed.z * 6.7 - transformed.y * 4.2 );
         float width = max( 0.008, uThickness * ( 1.0 + brushVar * uNoiseAmp ) );
         // El trazo engorda con la distancia: la silueta aguanta en el fondo.
         float distScale = 1.0 + clamp( -modelViewMatrix[ 3 ].z / 18.0, 0.0, 1.0 ) * uDistanceScale;
-        vec3 extruded = pos + normalize( normal ) * width * distScale;
+        vec3 extruded = pos + normalize( objectNormal ) * width * distScale;
         gl_Position = projectionMatrix * modelViewMatrix * vec4( extruded, 1.0 );
       }
     `,
@@ -291,6 +313,15 @@ function addVibratingInkOutline(
     `,
   });
 
+  const skin = mesh as THREE.SkinnedMesh;
+  if (skin.isSkinnedMesh) {
+    const outline = new THREE.SkinnedMesh(mesh.geometry, outlineMat);
+    outline.bind(skin.skeleton, skin.bindMatrix);
+    outline.frustumCulled = false;
+    if (skin.parent) skin.parent.add(outline);
+    else mesh.add(outline);
+    return outline;
+  }
   const outline = new THREE.Mesh(mesh.geometry, outlineMat);
   mesh.add(outline);
   return outline;
