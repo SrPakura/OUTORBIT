@@ -110,10 +110,12 @@ export const GOLEM_PARRY_EDEN_RATIO = 0.06;
 /** Daño del remate en la ventana: fracción de la vida TOTAL del gólem. */
 export const GOLEM_PARRY_CRIT_RATIO = 0.35;
 /**
- * Distancia máxima de Nyx para abrir la oportunidad (m); con un ataque en
- * vuelo basta cualquier distancia de bloqueo (la pared sale a recibirlo).
+ * Distancia máxima de Nyx (desde el CENTRO del gólem) para abrir la
+ * oportunidad (m); con un ataque en vuelo basta cualquier distancia de
+ * bloqueo (la pared sale a recibirlo). Playtest: habían 2 m menos desde la
+ * piel del hitbox y el slow-mo pillaba a Nyx ya metida — +2 m de margen.
  */
-export const GOLEM_PARRY_TRIGGER_DIST = 14.0;
+export const GOLEM_PARRY_TRIGGER_DIST = 16.0;
 /** Estrella del parry: cuánto sobresale del cuerpo el punto de dash (m). */
 export const GOLEM_PARRY_STAR_OUT = 3.6;
 /** Estrella del parry: altura sobre el hombro del brazo gigante (m). */
