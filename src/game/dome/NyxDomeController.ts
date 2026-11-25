@@ -23,7 +23,6 @@ import {
   type SlabContact,
 } from '@/game/dome/DomeSlabs';
 import { KINETIC_BOUNCE, KineticBounceState } from '@/game/dome/nyxKineticBounce';
-import { GOLEM_PARRY_WINDOW_SEC } from '@/game/dome/domeGolemBehavior';
 import { NyxAnimator, type NyxAnimParams, type NyxAnimState } from '@/game/render/nyxAnimator';
 import type { NyxWalkPlayer } from '@/game/render/nyxWalkPlayer';
 import type { NyxClips } from '@/game/render/nyxModelLoader';
@@ -199,6 +198,20 @@ const REDIRECT_TIME_SCALE = 0.25;
 // --- Parry del Gólem: slow-mo propio, un pelín más lento que el de
 // redirección — el remate necesita dash + apuntado + taladro completos.
 const PARRY_TIME_SCALE = 0.18;
+/**
+ * Tope de SEGURIDAD (s REALES) del slow-mo del parry: la ventana la abre y la
+ * cierra el MANAGER por DISTANCIA (α+6 → α+2, ver DomeWaveManager) y el game
+ * loop llama a closeParryWindow() — este tope solo recorta ventanas que, por
+ * cualquier bug, no llegaran a cerrarse (10 s > 1.5 s de mundo / 0.18 ≈ 8.3 s).
+ */
+const PARRY_WINDOW_SAFETY_REAL_SEC = 10.0;
+/**
+ * Rebote contra el brazo del Gólem en bloqueo: suelo de la velocidad de
+ * SALIDA (m/s) — aunque el golpe llegara lento, 300 kg de brazo macizo
+ * expulsan lejos ("corto, pronunciado y lejano"). No afecta al rebote de
+ * paredes/suelos (aquellos conservan el 100% de la entrada).
+ */
+const GOLEM_GUARD_BOUNCE_MIN_EXIT = 24.0;
 const REDIRECT_WINDOW_MIN = 1.25;
 const REDIRECT_WINDOW_MAX = 2.6;
 const REDIRECT_REARM_COOLDOWN = 0.9;
@@ -391,8 +404,17 @@ export class NyxDomeController {
   private parryDashUsed = false;
   private parryStarHovered = false;
   private kickRecoverFromAttack = false;
-  private wallRepelledThisHit = false;
-  private wallRepelFastExit = false;
+  /**
+   * El golpe de Nyx rebotó contra el brazo del Gólem en bloqueo (rebote de
+   * Sentadilla Cinética): impactEnemy NO debe encadenar kick_flip ni el
+   * arco acrobático — el modo ya es `kinetic_bounce`.
+   */
+  private guardBouncedThisHit = false;
+  /**
+   * Suelo de velocidad de salida aplicado SOLO al próximo lanzamiento del
+   * rebote cinético (0 = sin suelo; lo activa bounceOffGolemGuard).
+   */
+  private kineticExitFloor = 0;
   /** Punto de la estrella dorada (junto al brazo fino): destino del dash. */
   private readonly parryStarPoint = new THREE.Vector3();
   private reticleLockState: ReticleLockState = 'none';
@@ -644,16 +666,18 @@ export class NyxDomeController {
   }
 
   /**
-   * Ventana de parry del Gólem: abre el slow-mo (PARRY_TIME_SCALE) apuntando
-   * al gólem que acaba de izar la pared, SIN romper el lock. `starPos` es la
-   * estrella dorada junto a su brazo malo: la cámara SE LATIGUEA hacia ella
-   * al abrir (suele caer en una esquina fuera del visor) y el Dash del parry
-   * viaja directo a ese punto. La duración real es la equivalencia de los
-   * GOLEM_PARRY_WINDOW_SEC de mundo del manager (caducan juntos).
+   * Ventana de parry del Gólem (abierta por el MANAGER al cruzar Nyx la banda
+   * α+6 → α+2 con la guardia alzada): abre el slow-mo (PARRY_TIME_SCALE)
+   * apuntando al gólem, SIN romper el lock. `starPos` es la estrella dorada
+   * junto a su brazo malo: la cámara SE LATIGUEA hacia ella al abrir (suele
+   * caer en una esquina fuera del visor) y el Dash del parry viaja directo a
+   * ese punto. El TIEMPO ya no manda — la ventana es ESPACIAL y la cierra el
+   * manager vía domeGameLoop → closeParryWindow(); este timer es solo un
+   * tope de seguridad alto.
    */
   openParryWindow(target: TestEnemySphere, starPos: THREE.Vector3): void {
     this.redirectTargetEnemy = target;
-    this.redirectWindowTimer = GOLEM_PARRY_WINDOW_SEC / PARRY_TIME_SCALE;
+    this.redirectWindowTimer = PARRY_WINDOW_SAFETY_REAL_SEC;
     this.parryWindowActive = true;
     this.parryDashUsed = false;
     this.parryStarPoint.copy(starPos);
@@ -670,6 +694,30 @@ export class NyxDomeController {
         this.startCamTug();
       }
     }
+  }
+
+  /**
+   * El MANAGER cerró la ventana del parry (Nyx llegó a α+2 sin ejecutar, se
+   * alejó de α+6, el gólem bajó la guardia o el remate conectó): apaga el
+   * slow-mo YA. Sin tocar `lockedEnemy` — la decisión de reapertura es
+   * EXCLUSIVA del manager (el controller nunca decide cierres).
+   */
+  closeParryWindow(): void {
+    if (!this.parryWindowActive) {
+      return;
+    }
+    this.redirectWindowTimer = 0;
+    this.parryWindowActive = false;
+    this.parryDashUsed = false;
+  }
+
+  /**
+   * ¿Usó Nyx ya el dash del remate dentro de la ventana de parry abierta?
+   * El MANAGER lo encuesta (via domeGameLoop) para marcar el parry como
+   * EJECUTADO — ahí (y solo ahí) arranca el cooldown largo de 18 s.
+   */
+  isParryDashUsed(): boolean {
+    return this.parryWindowActive && this.parryDashUsed;
   }
 
   onMouseMove(dx: number, dy: number): void {
@@ -941,20 +989,37 @@ export class NyxDomeController {
   }
 
   /**
-   * Rebote contra la pared del Gólem: la patada frontal contra 300 kg de
-   * brazo macizo se DEVUELVE — impulso en dirección CONTRARIA al golpe, sin
-   * stagger (no es daño: es física). `hitDirIntoEnemy` es unit y apunta
-   * HACIA DENTRO del gólem, igual que en `onHitEnemy`.
+   * Rebote contra el BRAZO del Gólem en bloqueo: MISMA mecánica y animación
+   * que el rebote contra pared/iceberg — Sentadilla Cinética (`kinetic_squat`
+   * → `launchKineticBounce`), 0 Edén, rebote FORZADO (sin adjudicación ni
+   * antirrebote). `golemPos`/`golemRadius` definen la esfera del brazo: la
+   * normal de contacto es radial (hacia Nyx) y el punto, α exacto del centro.
    */
-  applyWallRepel(hitDirIntoEnemy: THREE.Vector3, speed: number): void {
-    this.wallRepelledThisHit = true;
-    this.wallRepelFastExit = true;
-    this.velocity
-      .copy(hitDirIntoEnemy)
-      .multiplyScalar(-Math.max(speed, 28))
-      .addScaledVector(this.up, 5.5);
-    this.shake = Math.max(this.shake, 0.3);
-    this.impactFlash = Math.max(this.impactFlash, 0.55);
+  bounceOffGolemGuard(golemPos: THREE.Vector3, golemRadius: number): void {
+    const entrySpeed = this.velocity.length();
+    // Normal de contacto: del centro del gólem hacia Nyx (fuera de la esfera).
+    this.tmpA.subVectors(this.nyxRoot.position, golemPos);
+    if (this.tmpA.lengthSq() < 1e-4) {
+      this.tmpA.copy(this.up);
+    } else {
+      this.tmpA.normalize();
+    }
+    this.tmpB.copy(golemPos).addScaledVector(this.tmpA, golemRadius);
+    // El ataque muere contra el brazo… pero la ventana de parry la cierra
+    // EXCLUSIVAMENTE el manager (domeGameLoop): si está abierta, SOBREVIVE
+    // al rebote — el remate se lanza justo después de rebotar.
+    this.guardBouncedThisHit = true;
+    this.lockedEnemy = null;
+    this.speedAttackKind = null;
+    this.attackElapsed = 0;
+    if (!this.parryWindowActive) {
+      this.redirectTargetEnemy = null;
+      this.redirectWindowTimer = 0;
+    }
+    this.beginKineticSquat(this.tmpB, this.tmpA, entrySpeed);
+    // Salida mínima garantizada: el brazo expulsa lejos aunque el golpe
+    // llegara lento, sin tocar el rebote contra suelos/icebergs.
+    this.kineticExitFloor = GOLEM_GUARD_BOUNCE_MIN_EXIT;
   }
 
   triggerSkillAnim(anim: NyxAnimState): void {
@@ -1400,25 +1465,13 @@ export class NyxDomeController {
     const cx = width * 0.5;
     const cy = height * 0.5;
 
-    // Estrella del parry: detectar si la mira apunta sobre la estrella dorada
-    // dentro de la banda válida [r + 2 .. r + 6] (4 m de margen tras el choque).
-    // Invariante estricto: si Nyx ya salió del rebote (`kick_recover`) sin
-    // haber lanzado el dash de parry, la ventana se cierra de inmediato.
-    if (this.parryWindowActive && this.redirectTargetEnemy) {
-      const targetDist = this.nyxRoot.position.distanceTo(this.redirectTargetEnemy.position);
-      const bounceEnded = !this.parryDashUsed && this.mode !== 'kick_recover';
-      if (bounceEnded || (!this.parryDashUsed && targetDist > this.redirectTargetEnemy.radius + 6.0)) {
-        this.parryWindowActive = false;
-        this.redirectWindowTimer = 0;
-        this.redirectTargetEnemy = null;
-      } else if (
-        (this.parryDashUsed || targetDist >= this.redirectTargetEnemy.radius + 2.0) &&
-        this.projectToScreen(this.parryStarPoint, camera, width, height)
-      ) {
-        const starDistPx = Math.hypot(this.screenPos.x - cx, this.screenPos.y - cy);
-        if (starDistPx <= RETICLE_LOCK_RADIUS_PX * 1.25) {
-          this.parryStarHovered = true;
-        }
+    // Estrella del parry: hover del visor SOLO mientras la ventana del
+    // manager esté ABIERTA (quién abre/cierra es decisión exclusiva del
+    // manager vía domeGameLoop; aquí solo se marca el punto del dash).
+    if (this.parryWindowActive && this.projectToScreen(this.parryStarPoint, camera, width, height)) {
+      const starDistPx = Math.hypot(this.screenPos.x - cx, this.screenPos.y - cy);
+      if (starDistPx <= RETICLE_LOCK_RADIUS_PX * 1.25) {
+        this.parryStarHovered = true;
       }
     }
 
@@ -1747,20 +1800,16 @@ export class NyxDomeController {
     // ni el dash de redirección hacia el cuerpo). Cancela el ataque en
     // curso, mantiene la cámara lenta y deja a Nyx por encima de la cabeza
     // lista para el taladro descendente. Solo el primero de la ventana.
+    // LA BANDA [α+2, α+6] la garantiza el MANAGER (la ventana solo existe
+    // mientras Nyx está dentro): aquí no se re-comprueba la distancia.
     if (
       this.parryWindowActive &&
       !this.parryDashUsed &&
       this.redirectTargetEnemy &&
       this.eden >= EDEN_DASH_COST
     ) {
-      const targetDist = this.nyxRoot.position.distanceTo(this.redirectTargetEnemy.position);
-      if (
-        targetDist >= this.redirectTargetEnemy.radius + 2.0 &&
-        targetDist <= this.redirectTargetEnemy.radius + 6.0
-      ) {
-        this.parryDashUp(this.redirectTargetEnemy);
-        return;
-      }
+      this.parryDashUp(this.redirectTargetEnemy);
+      return;
     }
     // --- Sentadilla Cinética optativa: pared en la mira (estrella azul
     // clarito) + velocidad mínima → el clic se consume en el rebote. Sin
@@ -1949,7 +1998,8 @@ export class NyxDomeController {
     // como Caída al Vacío (el flujo de can_lock es quien convierte el ataque
     // en TALADRO). Nyx mira a la cabeza mientras sube y el ataque entra por
     // el lock normal, con la velocidad del dash (31 m/s >= umbral de taladro).
-    // La cámara lenta NO se corta: la ventana de GOLEM_PARRY_WINDOW_SEC sigue.
+    // La cámara lenta NO se corta: tras ejecutar el dash, la ventana del
+    // manager sobrevive un margen corto para que el remate conecte.
   }
 
   private isRedirectDashDir(f: number, r: number, target: TestEnemySphere): boolean {
@@ -2128,9 +2178,6 @@ export class NyxDomeController {
     this.flipsPlayed = 0;
     this.recoverElapsed = 0;
     this.kickRecoverFromAttack = fromAttack;
-    if (!this.wallRepelledThisHit) {
-      this.wallRepelFastExit = false;
-    }
     this.wantAttack = false;
     this.lockedEnemy = null;
     // Durante el parry del Gólem la ventana SOBREVIVE al rebote de la patada
@@ -2153,7 +2200,7 @@ export class NyxDomeController {
     // más fuerza tienen el knockback, el hit-stop, el shake y el FOV punch.
     const impactSpeed = this.velocity.length();
     const kineticMult = Math.max(0.6, Math.pow(impactSpeed / 14, 1.35));
-    this.wallRepelledThisHit = false;
+    this.guardBouncedThisHit = false;
     onHitEnemy?.(enemy, this.tmpE.copy(this.facing), isDrill, impactSpeed);
     this.vfx.spawnBurst(enemy.position, this.facing, 0xffc24d, 30);
     this.shake = Math.max(this.shake, 0.34 * kineticMult);
@@ -2174,8 +2221,12 @@ export class NyxDomeController {
     this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, Math.min(1.3, kineticMult));
     this.lockedEnemy = null;
     this.speedAttackKind = null;
-    this.startKickRecover(isDrill ? 2 : 1, true);
-    if (!this.wallRepelledThisHit) {
+    if (!this.guardBouncedThisHit) {
+      // Rebote NORMAL contra carne: voltereta de frenado + arco acrobático.
+      // El rebote contra el BRAZO del Gólem en bloqueo NO llega aquí: salió
+      // como Sentadilla Cinética (mode = kinetic_bounce) y esa patada no
+      // encadena kick_flip.
+      this.startKickRecover(isDrill ? 2 : 1, true);
       // Rebote acrobático en arco: invierte el golpe al 32% y suma un impulso
       // hacia arriba proporcional a la energía cinética del impacto, así la
       // voltereta sale despegada en vez de frenar en seco.
@@ -2470,30 +2521,13 @@ export class NyxDomeController {
 
   private updateKickRecover(dt: number): void {
     this.recoverElapsed += dt;
-    // Frena suavemente hasta casi 0 mientras reproduce la voltereta. Si viene
-    // de un rebote contra el bloqueo del Gólem, sale lejos y corta antes (0.35 s).
-    const brakeRate = this.wallRepelFastExit ? KICK_RECOVER_BRAKE * 0.25 : KICK_RECOVER_BRAKE;
-    this.velocity.multiplyScalar(Math.exp(-brakeRate * dt));
+    // Frena suavemente hasta casi 0 mientras reproduce la voltereta.
+    this.velocity.multiplyScalar(Math.exp(-KICK_RECOVER_BRAKE * dt));
     const st = this.animator.getState();
-    const flipDone = this.wallRepelFastExit
-      ? this.recoverElapsed >= 0.22
-      : ((st === 'kick_flip' || st === 'kick_flip_drill') && this.animator.isFinished()) ||
-        this.recoverElapsed >= KICK_RECOVER_MAX_TIME_PER_FLIP * this.flipsTotal;
+    const flipDone =
+      ((st === 'kick_flip' || st === 'kick_flip_drill') && this.animator.isFinished()) ||
+      this.recoverElapsed >= KICK_RECOVER_MAX_TIME_PER_FLIP * this.flipsTotal;
     if (!flipDone) return;
-    if (this.wallRepelFastExit) {
-      this.wallRepelFastExit = false;
-      // Al terminar el rebote, si el jugador no lanzó el dash de parry, la
-      // ventana de parry caduca de inmediato (no puede seguir abierta después).
-      if (this.parryWindowActive && !this.parryDashUsed) {
-        this.parryWindowActive = false;
-        this.redirectWindowTimer = 0;
-        this.redirectTargetEnemy = null;
-      }
-      this.mode = 'floating';
-      this.animator.setState('zero_g_float');
-      this.startAirDrift();
-      return;
-    }
     this.flipsPlayed = st === 'kick_flip_drill' ? this.flipsTotal : this.flipsPlayed + 1;
     if (this.flipsPlayed < this.flipsTotal) {
       this.animator.setState('kick_flip');
@@ -2591,20 +2625,32 @@ export class NyxDomeController {
   /**
    * Arranca la compresión en el contacto real con la pared: clava la esfera
    * sobre el punto de contacto, limpia el estado de ataque previo y entra en
-   * el modo `kinetic_bounce` con el clip `kinetic_squat`.
+   * el modo `kinetic_bounce` con el clip `kinetic_squat`. El punto/normal se
+   * reciben como parámetro (pared de un slab O brazo del Gólem en bloqueo),
+   * ya no se lee siempre de `this.contact`.
    */
-  private beginKineticSquat(entrySpeed: number): void {
+  private beginKineticSquat(
+    point: THREE.Vector3,
+    normal: THREE.Vector3,
+    entrySpeed: number,
+  ): void {
     const kb = this.kinetic;
     kb.beginSquat(
-      this.contact.normal,
+      normal,
       this.tmpE.copy(this.velocity).multiplyScalar(1 / Math.max(entrySpeed, 1e-4)),
       entrySpeed,
     );
+    // El suelo de salida de un rebote anterior nunca contamina este.
+    this.kineticExitFloor = 0;
     // La patada/caída termina contra la pared: el rebote conserva el impulso.
     if (this.mode === 'speed_attack') {
       this.lockedEnemy = null;
-      this.redirectTargetEnemy = null;
-      this.redirectWindowTimer = 0;
+      // La ventana de parry la cierra SOLO el manager: si está abierta
+      // (rebote contra el brazo del Gólem), sobrevive a la sentadilla.
+      if (!this.parryWindowActive) {
+        this.redirectTargetEnemy = null;
+        this.redirectWindowTimer = 0;
+      }
       this.speedAttackKind = null;
     }
     this.mode = 'kinetic_bounce';
@@ -2614,10 +2660,10 @@ export class NyxDomeController {
     this.airDriftTimer = 0;
     // Esfera clavada sobre el punto de contacto real (radio + margen).
     this.nyxRoot.position
-      .copy(this.contact.point)
-      .addScaledVector(this.contact.normal, PLAYER_RADIUS + 0.02);
+      .copy(point)
+      .addScaledVector(normal, PLAYER_RADIUS + 0.02);
     this.playOneShot('kinetic_squat');
-    this.vfx.spawnDustBurst(this.nyxRoot.position, this.contact.normal, 'land');
+    this.vfx.spawnDustBurst(this.nyxRoot.position, normal, 'land');
     this.audio?.playLand();
     // Impacto frenético: micro hit-stop + shake + zoom puntual + tambaleo de
     // compresión (sin hit_stagger ni daño: la amortiguación es limpia).
@@ -2633,7 +2679,7 @@ export class NyxDomeController {
     // Cámara de rebote: anclada donde estaba, mirando a Nyx hacer la
     // sentadilla y girar; vuelve a seguirla al salir del radio del impacto.
     this.bounceCamHold = true;
-    this.bounceCamImpact.copy(this.contact.point);
+    this.bounceCamImpact.copy(point);
   }
 
   /**
@@ -2643,6 +2689,11 @@ export class NyxDomeController {
   private launchKineticBounce(): void {
     const kb = this.kinetic;
     kb.beginLaunch();
+    if (this.kineticExitFloor > 0) {
+      // Rebote contra el brazo del Gólem: la salida nunca sale floja.
+      kb.exitSpeed = Math.max(kb.exitSpeed, this.kineticExitFloor);
+      this.kineticExitFloor = 0;
+    }
     this.velocity.copy(kb.exitDir).multiplyScalar(kb.exitSpeed);
     // Marco de vuelo hacia la salida: la normal de la pared proyectada
     // perpendicular a la salida (si el impacto fue frontal, la tangente del
@@ -2728,7 +2779,11 @@ export class NyxDomeController {
         // pedido gana al aterrizaje. La velocidad mínima se validó al
         // adjudicar. Coste 0 de Edén: intrínseca.
         if (this.kinetic.phase === 'committed' && this.bounceCooldown <= 0) {
-          this.beginKineticSquat(this.velocity.length());
+          this.beginKineticSquat(
+            this.contact.point,
+            this.contact.normal,
+            this.velocity.length(),
+          );
           return;
         }
         // Suelos oneSidedTop: solo la cara superior (+Y del slab) es pisable;

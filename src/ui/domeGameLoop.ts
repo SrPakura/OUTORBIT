@@ -449,12 +449,13 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     const managed = waveMgr.getActiveEnemies().find((e) => e.id === enemy.id);
     if (managed && managed.entity.alive) {
       // Gólem Rompesuelos: la pared maciza del bloqueo absorbe los impactos
-      // frontales (0 daño) y DEVUELVE la patada — rebote físico sin daño,
-      // como estrellarse contra 300 kg de brazo (obliga a flanquear,
-      // provocar o rematar desde arriba).
-      if (waveMgr.isGolemGuardBlocking(enemy, hitDir)) {
+      // frontales (0 daño) y DEVUELVE la patada con la MISMA mecánica y
+      // animación que el rebote de pared (Sentadilla Cinética, ver
+      // NyxDomeController.bounceOffGolemGuard) — como estrellarse contra
+      // 300 kg de brazo (obliga a flanquear, provocar o rematar desde arriba).
+      if (waveMgr.isGolemGuardBlocking(enemy)) {
         controller?.punchCamera(0.3);
-        controller?.applyWallRepel(hitDir, 16);
+        controller?.bounceOffGolemGuard(enemy.position, enemy.radius);
         return;
       }
       const res = combat.computeKineticImpact(
@@ -834,18 +835,16 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         onSlabSmash,
         controller.getHp() / controller.getMaxHp(),
         controller.getEden() / controller.getMaxEden(),
+        controller.isParryDashUsed(),
       );
       if (didEnemyEvadeDash) {
         controller.notifyEnemyEvaded();
       }
       if (golemParryTarget && golemParryStarPos) {
-        // Parry del Gólem: slow-mo propio con latigazo de cámara hacia la
+        // Parry del Gólem (apertura por DISTANCIA: Nyx cruzó α+6 con la
+        // guardia alzada): slow-mo propio con latigazo de cámara hacia la
         // estrella y ventaja de dash directo al punto del remate.
         controller.openParryWindow(golemParryTarget, golemParryStarPos);
-      } else if (!controller.isParryWindowActive()) {
-        // Si Nyx cerró la ventana (ej. terminó el rebote o salió de la banda
-        // de 4 m), oculta la estrella 3D al instante.
-        waveMgr.closeGolemParry();
       }
 
       waveMgr.fillActiveEnemies(activeEnemies);
@@ -952,6 +951,14 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         activeEnemies,
         onControllerHitEnemy,
       );
+
+      // El MANAGER es la única fuente de verdad de la ventana del parry:
+      // cuando la cierra (α+2 sin ejecutar, alejamiento de α+6, guardia
+      // bajada, remate conectado o gólem muerto), apaga el slow-mo del
+      // controller al instante. El controller nunca decide cierres.
+      if (waveMgr.consumeGolemParryClose()) {
+        controller.closeParryWindow();
+      }
 
       runTracker.tick(worldDt);
       runTracker.recordSpeed(controller.getCurrentSpeed());
