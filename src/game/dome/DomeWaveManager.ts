@@ -1773,7 +1773,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     // Velocidad ANTES del knockback: si la pared del gólem absorbe el golpe,
     // se restaura (300 kg de brazo macizo no se apartan tras cada patada).
     _preHitVel.copy(internal.enemy.velocity);
-    internal.enemy.velocity.addScaledVector(hitDir, baseKnockback * kineticMult);
+    if (internal.enemy.entity.archetype !== 'kronos_leviathan') {
+      internal.enemy.velocity.addScaledVector(hitDir, baseKnockback * kineticMult);
+    }
     internal.enemy.hitFlash = Math.min(1.8, kineticMult);
     internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
     // Un golpe interrumpe la embestida en curso.

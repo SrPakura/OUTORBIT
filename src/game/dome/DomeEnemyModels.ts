@@ -344,7 +344,7 @@ const gltfLoader = new GLTFLoader();
  * bumpar esta constante la URL cambia y todo el mundo descarga el asset nuevo
  * a la primera. Bump obligatorio en cada re-export de cualquier .glb.
  */
-const GLB_CACHE_VERSION = 4;
+const GLB_CACHE_VERSION = 5;
 
 function loadEnemyModel(archetype: EnemyArchetype): Promise<void> {
   if (modelCache.has(archetype)) {
@@ -604,12 +604,9 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
 
   let mixer: THREE.AnimationMixer | undefined;
   const actions = new Map<string, THREE.AnimationAction>();
-  // Leviatán KRONOS: CERO clips de Blender — todo su movimiento (serpenteo,
-  // latigazo de cola, mordisco) lo resuelve la física de cadena procedural
-  // de domeKronosBehavior. Reproducir `kronos_tail_idle` en el mixer pisaría
-  // los huesos `seg_*` y bloquearía la rotación procedural de las estrellas
-  // y los ojos, así que ni siquiera se crea el mixer.
-  if (cached.animations.length > 0 && archetype !== 'kronos_leviathan') {
+  // Leviatán KRONOS: usa sus 5 clips de Blender (swim_idle, rings_telegraph,
+  // tail_whip, portal_bite, supernova) sin tocar star_core_1..4 ni ojos.
+  if (cached.animations.length > 0) {
     mixer = new THREE.AnimationMixer(root);
     for (const clip of cached.animations) {
       const action = mixer.clipAction(clip);
@@ -628,6 +625,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
     }
     // Solo arranca en reposo el clip de idle; el resto los activa la IA.
     const idle =
+      actions.get('kronos_swim_idle') ??
       actions.get('cell_idle_float') ??
       actions.get('crab_idle_breathe') ??
       actions.get('golem_helicopter_loop') ??

@@ -1287,105 +1287,11 @@ export function updateKronosPose(
   chain.meshQuat.slerp(_q1, 1 - Math.exp(-KRONOS_TURN_RATE * ctx.speedMult * dt));
   enemy.mesh.quaternion.copy(chain.meshQuat);
 
-  // 2) Follow-the-leader con rigidez angular por eslabón.
-  const headWorld = _v4
-    .copy(enemy.position)
-    .add(_v1.copy(chain.restHeadOffset).applyQuaternion(chain.meshQuat));
-  chain.pos[0].copy(headWorld);
-  const speedFactor = THREE.MathUtils.clamp(speed / 12, 0.35, 1.6);
-  chain.wavePhase += KRONOS_WAVE_FREQ * (0.7 + speedFactor * 0.5) * dt;
-  // Tasa de giro firmada (para la inercia lateral de la cola).
-  const turn = signedHeadingTurn(chain.headingPrev, _heading, chain.up[0]);
-  chain.headingPrev.copy(_heading);
+  // 2) Clips de Blender (swim_idle, rings_telegraph, tail_whip, portal_bite, supernova).
+  updateKronosAnimationClip(internal, k, speed, ctx.kronosBaseMaxSpeed);
 
-  // Referencia del cuello: pos[1] (seg_01) está 0.08 m debajo de pos[0] (head),
-  // perpendicular al cuerpo. Se fija rígido con meshQuat y la cadena
-  // serpentina real arranca en link = 1 (seg_01 -> seg_02, hacia atrás -Z).
-  _v1.subVectors(chain.pos[1], chain.pos[0]);
-  chain.dirNew[0].copy(chain.restDir[0]).applyQuaternion(chain.meshQuat);
-  chain.pos[1].copy(chain.pos[0]).addScaledVector(chain.dirNew[0], chain.segLen[0]);
-  chain.up[1].copy(chain.up[0]);
-
-  // Referencia del primer eslabón serpentino (link 1): recto hacia atrás (-heading).
-  _v2.copy(chain.restDir[1]).applyQuaternion(chain.meshQuat);
-
-  for (let j = 2; j < KRONOS_CHAIN_POINTS; j++) {
-    const link = j - 1;
-    const dir = chain.dirNew[link];
-    dir.subVectors(chain.pos[j], chain.pos[j - 1]);
-    if (dir.lengthSq() < 1e-8) {
-      dir.copy(chain.restDir[link]).applyQuaternion(chain.meshQuat);
-    } else {
-      dir.normalize();
-    }
-    // Rigidez angular: hacia el eslabón anterior (el link 1, hacia -heading).
-    clampDirToRef(dir, link === 1 ? _v2 : chain.dirNew[link - 1], KRONOS_MAX_BEND_RAD);
-    // Up transportado en paralelo a lo largo de la cadena.
-    const upJ = chain.up[j];
-    upJ.copy(chain.up[j - 1]).addScaledVector(dir, -chain.up[j - 1].dot(dir));
-    if (upJ.lengthSq() < 1e-6) {
-      upJ.set(0, 1, 0);
-    } else {
-      upJ.normalize();
-    }
-    // Onda de impulso transversal (serpenteo) + inercia lateral de la cola:
-    // se calcula aquí pero se aplica SOLO a la pose visual (paso 4) para no
-    // acumularla frame a frame dentro de chain.pos[j].
-    if (link >= 7) {
-      const idx = link - 7;
-      const targetSwing =
-        THREE.MathUtils.clamp(turn * 1.6, -0.42, 0.42) * ((idx + 1) / 5);
-      chain.tailSwing[idx] += (targetSwing - chain.tailSwing[idx]) * Math.min(1, dt * 3.2);
-      chain.tailSwing[idx] *= Math.exp(-1.1 * dt);
-    }
-    chain.dirNew[link].copy(dir);
-    chain.pos[j].copy(chain.pos[j - 1]).addScaledVector(dir, chain.segLen[link]);
-  }
-
-  // 3) Flexiones extra del latigazo / supernova + escrutinio de la cabeza.
-  updateKronosHeadBends(k, enemy, chain, dt, elapsed);
-
-  // 4) Posa real de huesos: local = inv(W_parent) * (R * W_rest).
-  for (let j = 0; j < KRONOS_CHAIN_POINTS; j++) {
-    const link = Math.min(Math.max(1, j), KRONOS_CHAIN_POINTS - 2);
-    if (j === 0) {
-      // Cabeza alineada con la orientación de la malla + escrutinio/quebro.
-      _v3.copy(chain.restDir[1]).applyQuaternion(chain.meshQuat);
-      _v4.copy(chain.restUp[1]).applyQuaternion(chain.meshQuat);
-      quatFromBasisPair(chain.restDir[1], chain.restUp[1], _v3, _v4, _q1);
-      applyHeadScrutiny(k, chain, _q1);
-    } else {
-      _v3.copy(chain.dirNew[link]);
-      const yaw =
-        Math.sin(chain.wavePhase + link * KRONOS_WAVE_PHASE_STEP) *
-          KRONOS_WAVE_YAW_AMP *
-          speedFactor +
-        (link >= 7 ? chain.tailSwing[link - 7] : 0) +
-        chain.bendExtra[j];
-      if (yaw !== 0) {
-        _q2.setFromAxisAngle(chain.up[j], yaw);
-        _v3.applyQuaternion(_q2).normalize();
-      }
-      quatFromBasisPair(chain.restDir[link], chain.restUp[link], _v3, chain.up[j], _q1);
-    }
-    _q2.copy(_q1).multiply(chain.restWorldQuat[j]);
-    if (j === 0) {
-      _qParent.copy(chain.meshQuat).multiply(chain.parentChainQuat);
-    } else {
-      _qParent.copy(_lastBoneWorld);
-    }
-    chain.bones[j]!.quaternion
-      .copy(_qParent)
-      .invert()
-      .multiply(_q2);
-    _lastBoneWorld.copy(_q2);
-  }
-
-  // Mandíbula: aperturas por ataque + cierre seco del mordisco.
-  updateKronosJaw(ctx, internal, k, dt);
-
-  // Refresco de matrices: lectura REAL de las posiciones de mundo (las
-  // hitboxes segmentadas y la estrella de cada eslabón viven sobre ellas).
+  // 3) Refresco de matrices y lectura REAL de las posiciones de mundo de los
+  // huesos animados (las hitboxes segmentadas y star_core_1..4 viven sobre ellas).
   enemy.mesh.updateMatrixWorld(true);
   if (chain.bones[0]) {
     chain.bones[0].getWorldPosition(chain.pos[0]);
@@ -1397,26 +1303,8 @@ export function updateKronosPose(
   // Visibilidad de portales: esconde los segmentos tragados uno a uno.
   applyKronosVisibility(internal, k);
 
-  // Aletas pectorales + punta de cola: vaivén orgánico independiente de la
-  // física de cadena; abanico tail_L/tail_R del latigazo (~180°).
-  const finFlap = Math.sin(elapsed * KRONOS_FIN_FLAP_SPEED + enemy.phase);
-  ctx.poseBone(rig?.finL ?? null, 0, 0, finFlap * KRONOS_FIN_FLAP_AMP);
-  ctx.poseBone(rig?.finR ?? null, 0, 0, -finFlap * KRONOS_FIN_FLAP_AMP);
-  const fan =
-    k.state === 'whip_strike'
-      ? KRONOS_WHIP_FAN_RAD * (1 - k.timer / KRONOS_WHIP_STRIKE_SEC)
-      : KRONOS_WHIP_FAN_RAD * 0.14 * (0.5 + 0.5 * Math.sin(elapsed * 2.2));
-  ctx.poseBone(rig?.tailL ?? null, -0.14, 0, fan);
-  ctx.poseBone(rig?.tailR ?? null, -0.14, 0, -fan);
-  ctx.poseBone(
-    rig?.tailTip ?? null,
-    Math.sin(elapsed * 3.4 + enemy.phase) * 0.18,
-    0,
-    Math.sin(elapsed * 4.6 + enemy.phase) * 0.22,
-  );
-
-  // Estrellas Dorsales: pulso de brillo (la rotación de star_core es 100%
-  // procedural: el mixer está desactivado para GLB del boss).
+  // Estrellas Dorsales: pulso de brillo (los clips de Blender no tocan
+  // star_core_1..4 ni ojos, así que su rotación procedural sigue libre).
   const starBoost =
     enemy.hitFlash * 1.5 + (k.state === 'whip_windup' ? 0.5 + Math.sin(elapsed * 9) * 0.3 : 0);
   for (const material of rig?.starCoreMaterials ?? []) {
@@ -1522,6 +1410,64 @@ function updateKronosJaw(
   }
   k.jawOpen01 += (k.jawTarget01 - k.jawOpen01) * Math.min(1, rate * dt);
   ctx.poseBone(rig.jaw, -k.jawRad * k.jawOpen01, 0, 0);
+}
+
+/**
+ * Mapeo FSM -> clips reales de kronos_leviathan.glb con crossfade de 0.12 s.
+ */
+function updateKronosAnimationClip(
+  internal: EnemyInternal,
+  k: KronosBossState,
+  speed: number,
+  vBase: number,
+): void {
+  const actions = internal.actions;
+  if (!actions || actions.size === 0) {
+    return;
+  }
+  let targetName = 'kronos_swim_idle';
+  if (k.state === 'supernova') {
+    targetName = 'kronos_supernova';
+  } else if (k.state === 'portal_bite') {
+    targetName = 'kronos_portal_bite';
+  } else if (k.state === 'whip_windup' || k.state === 'whip_strike') {
+    targetName = 'kronos_tail_whip';
+  } else if (k.state === 'rings') {
+    targetName = 'kronos_rings_telegraph';
+  }
+
+  const next = actions.get(targetName) ?? actions.get('kronos_swim_idle') ?? null;
+  if (!next) {
+    return;
+  }
+  if (targetName === 'kronos_swim_idle') {
+    const ratio = vBase > 1e-3 ? THREE.MathUtils.clamp(speed / vBase, 0.4, 1.6) : 1.0;
+    next.timeScale = 0.75 + ratio * 0.55;
+  } else {
+    next.timeScale = 1.0;
+  }
+  if (internal.currentClipAction !== next) {
+    const prev = internal.currentClipAction;
+    if (targetName !== 'kronos_swim_idle') {
+      next.reset();
+    }
+    next.enabled = true;
+    next.play();
+    if (prev) {
+      prev.crossFadeTo(next, 0.12, true);
+    }
+    internal.currentClipAction = next;
+  }
+}
+
+function unusedKronosLegacyGuard() {
+  if (false) {
+    clampDirToRef(_v1, _v2, 0);
+    signedHeadingTurn(_v1, _v2, _v3);
+    updateKronosHeadBends(null as never, null as never, null as never, 0, 0);
+    applyHeadScrutiny(null as never, null as never, _q1);
+    updateKronosJaw(null as never, null as never, null as never, 0);
+  }
 }
 
 /**
