@@ -28,26 +28,28 @@ const TRACK_SOURCES: Record<MusicTrackId, string> = {
 /**
  * Metadatos publicados en la Media Session API (`navigator.mediaSession`):
  * el navegador los expone al sistema (MPRIS en Linux) y con ello el widget de
- * medios del escritorio muestra título/artista/portada y estado de
- * reproducción, como con Spotify web o YouTube. Las portadas viven en
- * `public/audio/covers/` con el mismo nombre que su .mp3.
+ * medios del escritorio muestra título/portada y estado de reproducción,
+ * como con Spotify web o YouTube. Una ÚNICA portada para todo el OST
+ * (`public/audio/covers/cover.webp`, cuadrada, 512px+); cada pista se
+ * distingue en el widget por su título.
  */
-const TRACK_META: Record<MusicTrackId, { title: string; art: string }> = {
-  menu: { title: 'Menú', art: '/audio/covers/menu.jpg' },
-  waveA: { title: 'Nocturnal', art: '/audio/covers/wave-nocturnal.jpg' },
-  waveB: { title: 'Singularity', art: '/audio/covers/wave-singularity.jpg' },
-  boss: { title: 'Boss', art: '/audio/covers/boss.jpg' },
+const COVER_ART = '/audio/covers/cover.webp';
+
+const TRACK_TITLES: Record<MusicTrackId, string> = {
+  menu: 'Menú',
+  waveA: 'Nocturnal',
+  waveB: 'Singularity',
+  boss: 'Boss',
 };
 
 /** Publica la portada y el título de la pista en los controles del sistema. */
 function publishTrackMetadata(track: MusicTrackId): void {
   if (!('mediaSession' in navigator)) return;
-  const meta = TRACK_META[track];
   navigator.mediaSession.metadata = new MediaMetadata({
-    title: meta.title,
+    title: TRACK_TITLES[track],
     artist: 'OUTORBIT',
     album: 'OUTORBIT OST',
-    artwork: [{ src: meta.art, sizes: '512x512', type: 'image/jpeg' }],
+    artwork: [{ src: COVER_ART, sizes: '512x512', type: 'image/webp' }],
   });
 }
 
