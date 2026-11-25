@@ -35,6 +35,20 @@ import {
   type SparrowRig,
 } from './DomeEnemyModels';
 import {
+  GOLEM_EXHAUSTED_TURN_RATE,
+  GOLEM_GUARD_FRONT_DOT,
+  GOLEM_HIT_CLIP_SEC,
+  GOLEM_PARRY_MAX_Y_HIT_DIR,
+  GOLEM_PUNCH_WINDUP_SEC,
+  GOLEM_STAMINA_MAX,
+  GOLEM_THICK_WINDUP_SEC,
+  GOLEM_TURN_RATE,
+  parryGolemHead,
+  updateGolemAttack,
+  updateGolemEnemy,
+  type GolemState,
+} from './domeGolemBehavior';
+import {
   CHARGE_CONTACT_PADDING,
   deactivateKronosRings,
   KRONOS_RING_POOL_SIZE,
@@ -178,17 +192,9 @@ const SPARROW_FLAP_SPEED_DIVE = 15.0;
 const SPARROW_JAW_OPEN_RAD = 0.55;
 const SPARROW_TURN_RATE = 2.4;
 
-// --- Gólem Rompesuelos: manotazo brutal con telegraph de 0.75 s ---
-const GOLEM_SMASH_TRIGGER_DISTANCE = 13.0;
-const GOLEM_SMASH_WINDUP_SEC = 0.75;
-const GOLEM_SMASH_SWING_SEC = 0.22;
-const GOLEM_SMASH_RECOVER_SEC = 0.9;
-const GOLEM_SMASH_REACH = 4.2;
-const GOLEM_SMASH_HIT_RADIUS = 4.6;
-const GOLEM_SMASH_DAMAGE = 14;
-const GOLEM_SLAB_BREAK_RADIUS = 8.0;
+// --- Gólem Rompesuelos (rediseño §7.4): constantes de FSM/movimiento en
+// domeGolemBehavior.ts; aquí solo queda el telegraph material del puño. ---
 const GOLEM_FIST_NEON_RIM = 0x39ffb0;
-const GOLEM_TURN_RATE = 1.8;
 const NECROZMA_TURN_RATE = 2.6;
 
 // --- Leviatán KRONOS (Boss): serpenteo con huesos + 3 patrones de ataque ---
@@ -257,6 +263,8 @@ const _invQuat = new THREE.Quaternion();
 const _turretWorldQuat = new THREE.Quaternion();
 const _slabUp = new THREE.Vector3();
 const _slabForward = new THREE.Vector3();
+const _guardDir = new THREE.Vector3();
+const _modelUp = new THREE.Vector3(0, 1, 0);
 const _localOffset = new THREE.Vector3();
 const _targetPos = new THREE.Vector3();
 const _muzzlePos = new THREE.Vector3();
@@ -632,15 +640,25 @@ export interface EnemyInternal {
   spikeScale: number;
   /** Gólem: huesos del GLB + malla `detail_fist`. */
   golemRig: GolemRig | null;
-  /** Gólem: fase del manotazo brutal (telegraph -> golpe -> recuperación). */
-  golemPhase: 'idle' | 'windup' | 'smash' | 'recover';
-  /** Gólem: segundos restantes de la fase actual. */
+  /** Gólem: estado de la FSM del rediseño (§7.4, domeGolemBehavior). */
+  golemState: GolemState;
+  /** Gólem: segundos restantes del estado (o del trayecto recto de carga). */
   golemTimer: number;
-  /** Gólem: ángulo del brazo gigante (negativo = alzado, positivo = descargado). */
+  /** Gólem: stamina del rotor (0 => exhausto: ventana real de castigo). */
+  golemStamina: number;
+  /** Gólem: próxima carga en espiral (alterna broca fina / ariete grueso). */
+  golemChargeKind: 'thin' | 'thick';
+  /** Gólem: dirección de deriva sellada al entrar en exhausto. */
+  golemDriftDir: THREE.Vector3;
+  /** Gólem: segundos restantes del flinch `golem_hit`. */
+  golemHitTimer: number;
+  /** Gólem: forzar el reinicio del clip one-shot actual al crossfadear. */
+  golemRestartPending: boolean;
+  /** Gólem: ángulo del brazo gigante (fallback procedural sin clips). */
   golemArmAngle: number;
-  /** Gólem: torsión acumulada de spine/chest durante el manotazo. */
+  /** Gólem: torsión de spine/chest durante el telegraph (fallback). */
   golemTwist: number;
-  /** Gólem: punto de impacto del manotazo en espacio mundo. */
+  /** Gólem: punto de impacto sellado del puñetazo en espacio mundo. */
   golemImpact: THREE.Vector3;
   /** KRONOS: huesos del GLB (cadena seg_01..12, head/jaw, aletas, estrellas). */
   kronosRig: KronosRig | null;
@@ -1165,8 +1183,13 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       necrozmaRig: archetype === 'prisma_necrozma' ? collectNecrozmaRig(mesh) : null,
       spikeScale: 1,
       golemRig: archetype === 'ground_golem' ? collectGolemRig(mesh) : null,
-      golemPhase: 'idle',
+      golemState: 'helicopter',
       golemTimer: 0,
+      golemStamina: GOLEM_STAMINA_MAX,
+      golemChargeKind: 'thin',
+      golemDriftDir: new THREE.Vector3(0, 0, 1),
+      golemHitTimer: 0,
+      golemRestartPending: false,
       golemArmAngle: 0,
       golemTwist: 0,
       golemImpact: new THREE.Vector3(),
@@ -1309,8 +1332,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal.chargeTimer = 0;
     internal.burstTimer = 0;
     internal.burstShotsLeft = 0;
-    internal.golemPhase = 'idle';
+    internal.golemState = 'helicopter';
     internal.golemTimer = 0;
+    internal.golemChargeKind = 'thin';
+    internal.golemDriftDir.set(0, 0, 1);
+    internal.golemHitTimer = 0;
     if (internal.enemy.entity.archetype === 'crab_gunner') {
       resetCrabAttack(this, internal.enemy, internal);
       internal.crabPostKickGrace = 0;
@@ -1391,6 +1417,38 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     if (internal.enemy.entity.archetype === 'abyssal_cell' && internal.actions) {
       internal.cellHitTimer = 0.2;
     }
+    // Gólem Rompesuelos (rediseño §7.4): remate, bloqueo y flinch.
+    if (internal.enemy.entity.archetype === 'ground_golem' && internal.enemy.entity.alive) {
+      if (isDrill && hitDir.y <= GOLEM_PARRY_MAX_Y_HIT_DIR) {
+        // Remate desde arriba (parry): taladro descendente sobre la cabeza.
+        parryGolemHead(internal.enemy, internal);
+      } else if (this.isGolemGuardBlocking(internal.enemy, hitDir)) {
+        // Pared maciza: el golpe frontal se queda en el brazo gigante
+        // (domeGameLoop consulta el bloqueo y anula el daño cinético).
+        internal.enemy.velocity.multiplyScalar(0.15);
+        internal.enemy.hitFlash = Math.min(internal.enemy.hitFlash, 0.35);
+        internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
+      } else {
+        // Sacudida seca de impacto (golem_hit pisa la FSM mientras dura).
+        internal.golemHitTimer = GOLEM_HIT_CLIP_SEC;
+        internal.golemRestartPending = true;
+      }
+    }
+  }
+
+  /**
+   * ¿Está este enemigo absorbiendo un impacto frontal con la pared maciza del
+   * brazo gigante? Lo consulta el game loop ANTES de computeKineticImpact:
+   * true significa 0 daño (obliga a flanquear, provocar el ataque con la
+   * cercanía o rematar desde arriba con el taladro).
+   */
+  isGolemGuardBlocking(enemy: TestEnemySphere, hitDir: THREE.Vector3): boolean {
+    const internal = this.internals.get(enemy.id);
+    if (!internal || internal.golemState !== 'block_guard') {
+      return false;
+    }
+    _guardDir.set(0, 0, 1).applyQuaternion(internal.enemy.mesh.quaternion);
+    return _guardDir.dot(hitDir) < GOLEM_GUARD_FRONT_DOT;
   }
 
   /**
@@ -1672,6 +1730,17 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           activeSlabs,
           onPlayerHit,
         );
+      } else if (enemy.entity.archetype === 'ground_golem') {
+        // Gólem Rompesuelos: el rotor sostiene los 300 kg — su movimiento es
+        // propiedad de su FSM (helicóptero, cargas selladas, exhausto).
+        updateGolemEnemy(
+          enemy,
+          internal,
+          dt,
+          elapsed,
+          playerPos,
+          this.enemiesPassive,
+        );
       } else {
         this.applyFloatMovement(enemy, internal, dt, elapsed);
       }
@@ -1698,11 +1767,17 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       // (KRONOS en plena embestida los devora: los rompe en su lugar.)
       const kronosCharging =
         enemy.entity.archetype === 'kronos_leviathan' && internal.kronosState === 'charge';
+      // Gólem en plena carga en espiral: la FSM resuelve la colisión con los
+      // slabs (la broca se clava; el ariete los rompe y sigue arando).
+      const golemSpiral =
+        enemy.entity.archetype === 'ground_golem' &&
+        (internal.golemState === 'thin_spiral' || internal.golemState === 'thick_spiral');
       const crabOnSlab = isCrab && (internal.jump !== null || internal.attachedSlabId !== null);
       if (
         activeSlabs &&
         !crabOnSlab &&
         !kronosCharging &&
+        !golemSpiral &&
         resolveSphereSlabCollision(activeSlabs, enemy.position, enemy.radius, _slabContact)
       ) {
         enemy.position.addScaledVector(_slabContact.normal, _slabContact.depth);
@@ -1855,9 +1930,19 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       return;
     }
 
-    // Gólem Rompesuelos: máquina de estados del manotazo brutal.
+    // Gólem Rompesuelos: FSM del rediseño §7.4 (helicóptero/fatiga, dos cargas
+    // en espiral honestas, puñetazo bruto, bloqueo y remate en cabeza).
     if (archetype === 'ground_golem') {
-      this.updateGolemAttack(enemy, internal, dt, playerPos, activeSlabs, onGolemSmash, onSlabSmash);
+      updateGolemAttack(
+        this,
+        enemy,
+        internal,
+        dt,
+        playerPos,
+        activeSlabs,
+        onGolemSmash,
+        onSlabSmash,
+      );
       return;
     }
 
@@ -2009,98 +2094,6 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       spreadRad,
       _muzzlePos,
     );
-  }
-
-  /**
-   * Gólem Rompesuelos: manotazo brutal con telegraph de 0.75 s (torsión de
-   * spine/chest + brazo gigante alzado + detail_fist pulsando neón), golpe
-   * rápido contra el punto de impacto y recuperación. Si alcanza a Nyx la
-   * empuja con hit_stagger (vía `onGolemSmash`) y si rompe un suelo flotante
-   * cercano lo destroza (vía `onSlabSmash`).
-   */
-  private updateGolemAttack(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    dt: number,
-    playerPos: THREE.Vector3,
-    activeSlabs: SlabCollider[] | undefined,
-    onGolemSmash?: (damage: number, pushDir: THREE.Vector3) => void,
-    onSlabSmash?: (slab: SlabCollider) => void,
-  ): void {
-    switch (internal.golemPhase) {
-      case 'windup':
-        internal.golemTimer -= dt;
-        if (internal.golemTimer <= 0) {
-          // Fija el punto de impacto: delante del golem hacia Nyx.
-          _aimDir.subVectors(playerPos, enemy.position);
-          if (_aimDir.lengthSq() < 1e-4) {
-            _aimDir.set(0, 0, 1);
-          } else {
-            _aimDir.normalize();
-          }
-          internal.golemImpact
-            .copy(enemy.position)
-            .addScaledVector(_aimDir, enemy.radius + GOLEM_SMASH_REACH);
-          internal.golemPhase = 'smash';
-          internal.golemTimer = GOLEM_SMASH_SWING_SEC;
-        }
-        return;
-
-      case 'smash':
-        internal.golemTimer -= dt;
-        if (internal.golemTimer <= 0) {
-          // El manotazo alcanza a Nyx: empuje + breve aturdimiento.
-          if (playerPos.distanceTo(internal.golemImpact) < GOLEM_SMASH_HIT_RADIUS) {
-            _aimDir.subVectors(playerPos, internal.golemImpact);
-            if (_aimDir.lengthSq() < 1e-4) {
-              _aimDir.set(0, 1, 0);
-            } else {
-              _aimDir.normalize();
-            }
-            onGolemSmash?.(GOLEM_SMASH_DAMAGE, _aimDir);
-          }
-          // Rompe el suelo flotante más cercano al punto de impacto.
-          if (activeSlabs && onSlabSmash) {
-            let best: SlabCollider | null = null;
-            let bestDist = GOLEM_SLAB_BREAK_RADIUS;
-            for (const slab of activeSlabs) {
-              const d = slab.center.distanceTo(internal.golemImpact);
-              if (d < bestDist) {
-                best = slab;
-                bestDist = d;
-              }
-            }
-            if (best) {
-              onSlabSmash(best);
-            }
-          }
-          internal.golemPhase = 'recover';
-          internal.golemTimer = GOLEM_SMASH_RECOVER_SEC;
-          enemy.attackTimer = 3.4 / this.speedMult;
-        }
-        return;
-
-      case 'recover':
-        internal.golemTimer -= dt;
-        if (internal.golemTimer <= 0) {
-          internal.golemPhase = 'idle';
-        }
-        return;
-
-      case 'idle':
-      default:
-        if (
-          enemy.attackTimer <= 0 &&
-          enemy.position.distanceTo(playerPos) < GOLEM_SMASH_TRIGGER_DISTANCE
-        ) {
-          internal.golemPhase = 'windup';
-          internal.golemTimer = GOLEM_SMASH_WINDUP_SEC;
-          enemy.hitFlash = Math.max(enemy.hitFlash, 0.2);
-        } else if (enemy.attackTimer <= 0) {
-          enemy.attackTimer = 0.4;
-        }
-        return;
-    }
   }
 
   // -------------------------------------------------------------------------
@@ -2686,22 +2679,30 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.crossfadeEnemyAction(internal, clipName, 0.12);
   }
 
-  /** Crossfade suave entre clips de un enemigo (solo cuando cambia de clip). */
+  /**
+   * Crossfade suave entre clips de un enemigo. Con `force` reinicia el clip
+   * aunque ya se esté reproduciendo (one-shots que la FSM re-dispara, como
+   * dos puñetazos seguidos del Gólem sin otro clip de por medio).
+   */
   private crossfadeEnemyAction(
     internal: EnemyInternal,
     clipName: string,
     fadeSec: number,
+    force = false,
   ): void {
     const actions = internal.actions;
     if (!actions) {
       return;
     }
     const next = actions.get(clipName);
-    if (!next || next === internal.currentClipAction) {
+    if (!next) {
+      return;
+    }
+    if (next === internal.currentClipAction && !force) {
       return;
     }
     const prev = internal.currentClipAction;
-    if (prev) {
+    if (prev && prev !== next) {
       prev.fadeOut(fadeSec);
     }
     next.reset();
@@ -2887,10 +2888,13 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   }
 
   /**
-   * Gólem Rompesuelos: gira lento hacia Nyx; durante el telegraph del manotazo
-   * torsiona spine/chest, alza el brazo gigante y hace brillar/pulsar
-   * `detail_fist` con intensidad neón; el swing descarga el golpe y la
-   * recuperación devuelve los huesos a su pose de reposo.
+   * Gólem Rompesuelos (rediseño §7.4): orientación honesta por estado — el
+   * helicóptero encara a Nyx, las cargas inclinan el cuerpo 90° hacia su
+   * vector de avance sellado (el clip solo pone la pose + el giro
+   * longitudinal sobre `root`), el exhausto gira a 10°/s reales y el remate
+   * congela el cuerpo — más el cableado de los 8 clips del GLB con
+   * crossfades y el telegraph material del puño neón `detail_fist`. Sin GLB
+   * de clips cae al fallback procedural de poseBone (como el cangrejo).
    */
   private updateGolemPose(
     enemy: ManagedWaveEnemy,
@@ -2899,61 +2903,191 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     elapsed: number,
     playerPos: THREE.Vector3,
   ): void {
+    if (internal.golemHitTimer > 0) {
+      internal.golemHitTimer = Math.max(0, internal.golemHitTimer - dt);
+    }
+    const state = internal.golemState;
+
+    // --- Orientación honesta del grupo raíz (los clips NUNCA la tocan) ---
     _lookDir.subVectors(playerPos, enemy.position);
     if (_lookDir.lengthSq() < 1e-6) {
-      _lookDir.set(0, 0, 1);
+      _lookDir.set(0, 1, 0);
     } else {
       _lookDir.normalize();
     }
-    faceTowards(enemy.mesh, _lookDir, GOLEM_TURN_RATE, dt);
+    switch (state) {
+      case 'parried':
+        // Aplastamiento vertical: el cuerpo queda congelado por el golpe.
+        break;
+
+      case 'thin_windup':
+      case 'thick_windup':
+      case 'thin_spiral':
+      case 'thick_spiral':
+        // Cuerpo inclinado 90° siguiendo el vector de avance: el eje
+        // corporal (falda → cabeza, bind +Y) se alinea con la dirección
+        // SELLADA de la carga (en windup apunta a Nyx). Con ello la falda
+        // queda atrás como propulsor y la broca/el ariete lideran. El giro
+        // longitudinal (roll del taladro) lo pone el clip sobre `root`.
+        _aimDir.copy(state === 'thin_spiral' || state === 'thick_spiral' ? internal.chargeDir : _lookDir);
+        if (_aimDir.lengthSq() < 1e-6) {
+          _aimDir.set(0, 0, 1);
+        }
+        _targetQuat.setFromUnitVectors(_modelUp, _aimDir);
+        enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-8 * dt));
+        break;
+
+      case 'exhausted':
+        // Giro honesto de 10°/s exactos (ventana real de castigo).
+        lookAtQuat(_lookDir, _up, _targetQuat);
+        {
+          const angle = 2 * Math.acos(Math.min(1, Math.abs(enemy.mesh.quaternion.dot(_targetQuat))));
+          if (angle < 1e-4) {
+            break;
+          }
+          enemy.mesh.quaternion.slerp(
+            _targetQuat,
+            Math.min(1, (GOLEM_EXHAUSTED_TURN_RATE * dt) / angle),
+          );
+        }
+        break;
+
+      case 'block_guard':
+        // La pared debe quedar perpendicular a Nyx: giro lento pesado.
+        faceTowards(enemy.mesh, _lookDir, 1.0, dt);
+        break;
+
+      default:
+        faceTowards(enemy.mesh, _lookDir, GOLEM_TURN_RATE, dt);
+        break;
+    }
 
     const rig = internal.golemRig;
     if (!rig) {
-      return;
+      return; // Forma provisional (dodecaedro): el wobble global basta.
     }
 
-    // Objetivos de pose por fase: ángulo del brazo gigante (negativo = alzado)
-    // y torsión de spine/chest. El swing es mucho más rápido que el telegraph.
-    let armTarget = 0;
-    let twistTarget = 0;
-    let lambda = 3;
-    if (internal.golemPhase === 'windup') {
-      armTarget = -1.15;
-      twistTarget = -0.55;
-      lambda = 5.5;
-    } else if (internal.golemPhase === 'smash') {
-      armTarget = 0.62;
-      twistTarget = 0.28;
-      lambda = 26;
-    } else if (internal.golemPhase === 'recover') {
-      lambda = 3.5;
+    if (internal.actions) {
+      // --- Cableado de los clips del GLB (crossfade FSM -> acción) ---
+      const force = internal.golemRestartPending;
+      internal.golemRestartPending = false;
+      let clipName: string;
+      let fadeSec = 0.12;
+      if (state === 'parried') {
+        clipName = 'golem_parried_head_hit';
+        fadeSec = 0.04;
+      } else if (internal.golemHitTimer > 0) {
+        clipName = 'golem_hit';
+        fadeSec = 0.06;
+      } else if (state === 'exhausted') {
+        clipName = 'golem_exhausted_loop';
+        fadeSec = 0.3;
+      } else if (state === 'thin_windup' || state === 'thin_spiral') {
+        clipName = 'golem_thin_spiral';
+      } else if (state === 'thick_windup' || state === 'thick_spiral') {
+        clipName = 'golem_thick_spiral';
+      } else if (
+        state === 'punch_windup' ||
+        state === 'punch_smash' ||
+        state === 'punch_recover'
+      ) {
+        clipName = 'golem_brute_punch';
+        fadeSec = force ? 0.08 : 0.12;
+      } else if (state === 'block_guard') {
+        clipName = 'golem_block_guard';
+      } else {
+        clipName = 'golem_helicopter_loop';
+        fadeSec = 0.3; // El rotor tarda en arrancar/pararse: fundido largo.
+      }
+      this.crossfadeEnemyAction(internal, clipName, fadeSec, force);
+    } else {
+      // --- Fallback procedural sin clips (pose por estado) ---
+      let armTarget = 0;
+      let twistTarget = 0;
+      let lambda = 3;
+      switch (state) {
+        case 'punch_windup':
+          armTarget = -1.15;
+          twistTarget = -0.55;
+          lambda = 5;
+          break;
+        case 'punch_smash':
+          armTarget = 0.62;
+          twistTarget = 0.28;
+          lambda = 26;
+          break;
+        case 'block_guard':
+          armTarget = -0.35;
+          twistTarget = 0.5;
+          lambda = 5;
+          break;
+        case 'parried':
+          armTarget = -0.9;
+          lambda = 12;
+          break;
+        case 'exhausted':
+          armTarget = 0.25;
+          lambda = 2;
+          break;
+        default:
+          break;
+      }
+      const blend = 1 - Math.exp(-lambda * dt);
+      internal.golemArmAngle += (armTarget - internal.golemArmAngle) * blend;
+      internal.golemTwist += (twistTarget - internal.golemTwist) * blend;
+      const arm = internal.golemArmAngle;
+      const twist = internal.golemTwist;
+      // Falda estrellada como rotor: giro continuo en helicóptero (1 vuelta
+      // cada 1.2 s) y drill longitudinal en las cargas; parado en exhausto.
+      let skirtSpin = 0;
+      if (state === 'helicopter') {
+        skirtSpin = (elapsed * 5.24) % (Math.PI * 2);
+      } else if (state === 'thin_spiral') {
+        skirtSpin = (elapsed * 31.4) % (Math.PI * 2);
+      } else if (state === 'thick_spiral') {
+        skirtSpin = (elapsed * 12.6) % (Math.PI * 2);
+      }
+      this.poseBone(rig.root, 0, skirtSpin, 0);
+      this.poseBone(rig.spine, Math.abs(twist) * 0.25, twist, 0);
+      this.poseBone(rig.chest, 0, twist * 0.55, 0);
+      this.poseBone(rig.head, Math.sin(elapsed * 0.7 + enemy.phase) * 0.08, -twist * 0.45, 0);
+      this.poseBone(rig.giantShoulderR, arm, 0, 0);
+      this.poseBone(rig.giantArmR, arm * 0.5, 0, 0);
+      this.poseBone(rig.giantFistR, arm * 0.3, 0, 0);
+      if (state === 'thin_windup' || state === 'thin_spiral') {
+        // Broca: brazo izquierdo estirado al frente.
+        this.poseBone(rig.armLUpper, -1.35, 0, 0);
+        this.poseBone(rig.armLLower, -0.15, 0, 0);
+      } else {
+        this.poseBone(rig.armLUpper, 0, 0, Math.sin(elapsed * 0.9 + enemy.phase) * 0.05);
+        this.poseBone(rig.armLLower, Math.sin(elapsed * 1.2 + enemy.phase) * 0.06, 0, 0);
+      }
     }
-    const blend = 1 - Math.exp(-lambda * dt);
-    internal.golemArmAngle += (armTarget - internal.golemArmAngle) * blend;
-    internal.golemTwist += (twistTarget - internal.golemTwist) * blend;
 
-    const arm = internal.golemArmAngle;
-    const twist = internal.golemTwist;
-    this.poseBone(rig.spine, Math.abs(twist) * 0.25, twist, 0);
-    this.poseBone(rig.chest, 0, twist * 0.55, 0);
-    this.poseBone(rig.head, Math.sin(elapsed * 0.7 + enemy.phase) * 0.08, -twist * 0.45, 0);
-    this.poseBone(rig.giantShoulderR, arm, 0, 0);
-    this.poseBone(rig.giantArmR, arm * 0.5, 0, 0);
-    this.poseBone(rig.giantFistR, arm * 0.3, 0, 0);
-    this.poseBone(rig.armLUpper, 0, 0, Math.sin(elapsed * 0.9 + enemy.phase) * 0.05);
-    this.poseBone(rig.armLLower, Math.sin(elapsed * 1.2 + enemy.phase) * 0.06, 0, 0);
-
-    // detail_fist: pulso neón creciente durante el telegraph y flash al descargar.
+    // detail_fist: telegraph material (neón creciente) — SIEMPRE en código,
+    // clips prohibidos de tocar emisivo/escala del puño.
     const fist = rig.fist;
     if (fist) {
       let boost = 0.05;
       let pulse = 1;
-      if (internal.golemPhase === 'windup') {
-        const w = 1 - internal.golemTimer / GOLEM_SMASH_WINDUP_SEC;
+      if (state === 'punch_windup') {
+        const w = 1 - internal.golemTimer / GOLEM_PUNCH_WINDUP_SEC;
         boost = 0.35 + w * (1.15 + Math.sin(elapsed * 20) * 0.45);
         pulse = 1 + w * 0.15;
-      } else if (internal.golemPhase === 'smash') {
+      } else if (state === 'punch_smash') {
         boost = 1.6;
+      } else if (state === 'thick_windup') {
+        const w = 1 - internal.golemTimer / GOLEM_THICK_WINDUP_SEC;
+        boost = 0.9 + w * 0.5;
+        pulse = 1 + w * 0.12;
+      } else if (state === 'thick_spiral') {
+        // Ariete: puño neón encendido al máximo.
+        boost = 1.45 + Math.sin(elapsed * 18) * 0.15;
+        pulse = 1 + Math.sin(elapsed * 18) * 0.08;
+      } else if (state === 'parried') {
+        boost = 1.2;
+      } else if (state === 'block_guard') {
+        boost = 0.35;
       }
       fist.mesh.scale.setScalar(fist.restScale * pulse);
       if (fist.material) {

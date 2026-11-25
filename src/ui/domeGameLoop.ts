@@ -443,6 +443,13 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     );
     const managed = waveMgr.getActiveEnemies().find((e) => e.id === enemy.id);
     if (managed && managed.entity.alive) {
+      // Gólem Rompesuelos: la pared maciza del bloqueo absorbe los impactos
+      // frontales (0 daño; obliga a flanquear, provocar o rematar desde
+      // arriba). El knockback/flash ya se han tapado dentro de onHitEnemy.
+      if (waveMgr.isGolemGuardBlocking(enemy, hitDir)) {
+        controller?.punchCamera(0.3);
+        return;
+      }
       const res = combat.computeKineticImpact(
         managed.entity,
         impactSpeed ?? 14,

@@ -568,10 +568,12 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
     mixer = new THREE.AnimationMixer(root);
     for (const clip of cached.animations) {
       const action = mixer.clipAction(clip);
-      // Bucles (idle/sneak/flee/duplicate...) frente a one-shots
-      // (windup/lunge/recover/hit): estos últimos se congelan en su último
-      // frame hasta que el comportamiento los reinicie con reset().
-      if (/loop|idle|float|duplicate/.test(clip.name)) {
+      // Bucles (idle/sneak/flee/duplicate e interiores de carga del gólem)
+      // frente a one-shots (windup/lunge/recover/hit): estos últimos se
+      // congelan en su último frame hasta que el comportamiento los
+      // reinicie con reset(). Las espirales y la guardia del gólem son
+      // bucles sostenidos ("Bucle + Pose" de enemigos_base.md §7.4).
+      if (/loop|idle|float|duplicate|spiral|guard/.test(clip.name)) {
         action.setLoop(THREE.LoopRepeat, Infinity);
       } else {
         action.setLoop(THREE.LoopOnce, 1);
@@ -583,6 +585,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
     const idle =
       actions.get('cell_idle_float') ??
       actions.get('crab_idle_breathe') ??
+      actions.get('golem_helicopter_loop') ??
       actions.values().next().value ??
       null;
     if (idle) {
@@ -738,6 +741,8 @@ export function collectNecrozmaRig(root: THREE.Object3D): NecrozmaRig {
 // --- Gólem Rompesuelos (ground_golem.glb, 9 joints + detail_fist) ---
 
 export interface GolemRig {
+  /** Falda estrellada: rotor de helicóptero (giro continuo en bucle). */
+  root: EnemyBone | null;
   spine: EnemyBone | null;
   chest: EnemyBone | null;
   head: EnemyBone | null;
@@ -746,13 +751,14 @@ export interface GolemRig {
   giantFistR: EnemyBone | null;
   armLUpper: EnemyBone | null;
   armLLower: EnemyBone | null;
-  /** Puño gigante: brilla/pulsa neón durante el telegraph del manotazo. */
+  /** Puño gigante: brilla/pulsa neón durante los telegraphs (código). */
   fist: EnemyDetailMesh | null;
 }
 
-/** Huesos del Gólem Rompesuelos + malla `detail_fist`. */
+/** Huesos del Gólem Rompesuelos (falda-rotor incluida) + malla `detail_fist`. */
 export function collectGolemRig(root: THREE.Object3D): GolemRig {
   return {
+    root: findBone(root, 'root'),
     spine: findBone(root, 'spine'),
     chest: findBone(root, 'chest'),
     head: findBone(root, 'head'),
