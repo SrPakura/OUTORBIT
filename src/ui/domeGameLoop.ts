@@ -811,7 +811,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       sphereTiles.update(worldDt, elapsed);
       refillActiveSlabs();
 
-      const { didEnemyEvadeDash } = waveMgr.update(
+      const { didEnemyEvadeDash, golemParryTarget } = waveMgr.update(
         worldDt,
         elapsed,
         controller.getPosition(),
@@ -832,6 +832,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       );
       if (didEnemyEvadeDash) {
         controller.notifyEnemyEvaded();
+      }
+      if (golemParryTarget) {
+        // Parry del Gólem: slow-mo de redirección sin romper el lock.
+        controller.openParryWindow(golemParryTarget);
       }
 
       waveMgr.fillActiveEnemies(activeEnemies);

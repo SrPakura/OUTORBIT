@@ -96,6 +96,18 @@ export const GOLEM_THREAT_RANGE = 20.0;
 /** Trabajada la pared: tras bajarla, este tiempo SIN poder re-levantarla (s). */
 export const GOLEM_BLOCK_REACT_COOLDOWN = 1.8;
 
+// --- Parry de la pared (ventana de remate en slow-mo) ---
+/** Segundos de MUNDO que dura la oportunidad abierta al izar la pared (s). */
+export const GOLEM_PARRY_WINDOW_SEC = 2.4;
+/** Cooldown POR GÓLEM entre oportunidades de parry (s). */
+export const GOLEM_PARRY_COOLDOWN_SEC = 12.0;
+/** Eden necesario para la oportunidad: los 2 dashes del remate (ratio). */
+export const GOLEM_PARRY_EDEN_RATIO = 0.06;
+/** Daño del remate en la ventana: fracción de la vida TOTAL del gólem. */
+export const GOLEM_PARRY_CRIT_RATIO = 0.35;
+/** Distancia máxima de Nyx para abrir la oportunidad (m). */
+export const GOLEM_PARRY_TRIGGER_DIST = 40.0;
+
 // --- Descanso voluntario (stamina) ---
 /** Bajo esto, con Nyx pasiva, se retira a descansar en vez de pelear en seco. */
 export const GOLEM_REST_STAMINA = 25.0;
@@ -587,6 +599,9 @@ export function updateGolemAttack(
   const playerLow = info.hpRatio <= GOLEM_PLAYER_LOW_RATIO;
   if (internal.golemBlockCooldown > 0) {
     internal.golemBlockCooldown = Math.max(0, internal.golemBlockCooldown - dt);
+  }
+  if (internal.golemParryCd > 0) {
+    internal.golemParryCd = Math.max(0, internal.golemParryCd - dt);
   }
   switch (internal.golemState) {
     // ------------------------------------------------------------------

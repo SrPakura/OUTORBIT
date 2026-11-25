@@ -625,6 +625,17 @@ export class NyxDomeController {
     }
   }
 
+  /**
+   * Ventana de parry del Gólem: abre la Cámara Lenta de Redirección apuntando
+   * al gólem que acaba de izar la pared, SIN romper el lock (a diferencia de
+   * `notifyEnemyEvaded`) — la oportunidad existe para quien tenga Eden para
+   * los 2 dashes del remate en cabeza.
+   */
+  openParryWindow(target: TestEnemySphere): void {
+    this.redirectTargetEnemy = target;
+    this.redirectWindowTimer = this.computeRedirectWindowSec(target);
+  }
+
   onMouseMove(dx: number, dy: number): void {
     if (!this.pointerLocked) return;
     const sens = 0.0023 * this.settings.mouseSensitivity;
