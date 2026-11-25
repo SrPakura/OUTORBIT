@@ -46,6 +46,7 @@ import {
   parryGolemHead,
   updateGolemAttack,
   updateGolemEnemy,
+  type GolemPlayerInfo,
   type GolemState,
 } from './domeGolemBehavior';
 import {
@@ -657,6 +658,12 @@ export interface EnemyInternal {
   golemHitTimer: number;
   /** Gólem: forzar el reinicio del clip one-shot actual al crossfadear. */
   golemRestartPending: boolean;
+  /**
+   * Gólem: modo PRESIÓN — con Nyx junto a la esfera (o ambos a la que salga)
+   * la espiral no es segura, así que contrae el anillo de lectura hasta el
+   * rango del puñetazo y castiga con el cuerpo.
+   */
+  golemPress: boolean;
   /** Gólem: ángulo del brazo gigante (fallback procedural sin clips). */
   golemArmAngle: number;
   /** Gólem: torsión de spine/chest durante el telegraph (fallback). */
@@ -853,6 +860,18 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   speedMult = 1;
   /** Modo Entrenamiento: los enemigos no atacan ni esquivan (sacos de boxeo). */
   private enemiesPassive = false;
+
+  /**
+   * Foto de Nyx que LEE el Gólem cada frame (información perfecta, uso
+   * honesto): velocidad (lead de las cargas), aim (amenaza), ataque en curso
+   * y nivel de vida. Se rellena UNA vez por `update` (cero allocations).
+   */
+  private readonly golemInfo: GolemPlayerInfo = {
+    vel: new THREE.Vector3(),
+    aimForward: new THREE.Vector3(0, 0, 1),
+    hpRatio: 1,
+    attacking: false,
+  };
 
   private readonly unsubModelLoaded: () => void;
 
@@ -1193,6 +1212,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       golemDriftDir: new THREE.Vector3(0, 0, 1),
       golemHitTimer: 0,
       golemRestartPending: false,
+      golemPress: false,
       golemArmAngle: 0,
       golemTwist: 0,
       golemImpact: new THREE.Vector3(),
@@ -1340,6 +1360,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal.golemChargeKind = 'thin';
     internal.golemDriftDir.set(0, 0, 1);
     internal.golemHitTimer = 0;
+    internal.golemPress = false;
     if (internal.enemy.entity.archetype === 'crab_gunner') {
       resetCrabAttack(this, internal.enemy, internal);
       internal.crabPostKickGrace = 0;
@@ -1595,9 +1616,15 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     onOctopusInk: () => void,
     onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
     onSlabSmash?: (slab: SlabCollider) => void,
+    playerHpRatio = 1,
   ): { didEnemyEvadeDash: boolean } {
     let didEnemyEvadeDash = false;
     this.waveTime += dt;
+    // Foto de Nyx para la IA observadora del Gólem (una por frame).
+    this.golemInfo.vel.copy(playerVel);
+    this.golemInfo.aimForward.copy(playerAimForward);
+    this.golemInfo.hpRatio = THREE.MathUtils.clamp(playerHpRatio, 0, 1);
+    this.golemInfo.attacking = playerAttackTime > 0.15 || playerKickAnim;
     this.updateDying(dt);
     const lockedId = lockedEnemy?.id ?? null;
 
@@ -1944,6 +1971,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         internal,
         dt,
         playerPos,
+        this.golemInfo,
         activeSlabs,
         onGolemSmash,
         onSlabSmash,

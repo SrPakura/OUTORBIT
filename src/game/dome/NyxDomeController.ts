@@ -824,6 +824,11 @@ export class NyxDomeController {
     return this.hp;
   }
 
+  /** Tope de vida de Nyx: la IA del Gólem lo usa para leer su ratio. */
+  getMaxHp(): number {
+    return this.maxHp;
+  }
+
   getEden(): number {
     return this.eden;
   }
