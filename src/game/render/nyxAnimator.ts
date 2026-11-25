@@ -6,6 +6,7 @@ import {
   type PoseWriter,
 } from './nyxAnimsCombat';
 import {
+  GRAVITY_FALL_LOOP,
   GRAVITY_KICK_LOOP,
   KICK_FLIP_CLIP,
   KICK_FLIP_DRILL_CLIP,
@@ -18,7 +19,6 @@ import {
   DOME_BOUNCE_DURATION,
   WALL_SHIFT_FLIP_DURATION,
   poseDomeBounce,
-  poseGravityFall,
   poseVictoryFloat,
   poseWallShiftFlip,
 } from './nyxAnimsTraversal';
@@ -605,7 +605,15 @@ export class NyxAnimator {
         this.sampleClip(ZERO_G_FLOAT_LOOP, t % ZERO_G_FLOAT_LOOP.duration);
         break;
       }
-      case 'gravity_fall': poseGravityFall(this.writer, g, this.vVel, this.hasVVel); break;
+      case 'gravity_fall': {
+        // Clip aerodinámico horneado desde Blender + capa reactiva a velocidad,
+        // aceleración y giro direccional (banking de alas/cuerpo y contra-giro).
+        const c = GRAVITY_FALL_LOOP;
+        const speedScale = 0.85 + 0.55 * this.speed;
+        this.sampleClip(c, (t * speedScale) % c.duration);
+        this.applyGravityFallReactivity(g);
+        break;
+      }
       case 'air_dash': poseAirDash(this.writer, t, g, this.dashDir); break;
       case 'gravity_kick': {
         // Bucle de la pose de lanza (0.8 s): turbulencia de alta velocidad.
@@ -662,6 +670,48 @@ export class NyxAnimator {
    * exponencial de `update` suaviza el escalón). `rotations` es frame-major:
    * índice = (frame * BONE_COUNT + boneIndex) * 3, dos bloques contiguos.
    */
+  /**
+   * Capa reactiva sobre GRAVITY_FALL_LOOP: adapta el picado a la velocidad
+   * instantánea (`this.speed`), la aceleración (`this.speedAcc`) y el giro
+   * direccional (`this.turn`) para que Nyx banquee con los brazos como alas.
+   */
+  private applyGravityFallReactivity(g: number): void {
+    const sp = this.speed;
+    const bank = clamp(this.turn * 0.24, -0.55, 0.55);
+    const acc = clamp(this.speedAcc * 0.04, -0.14, 0.2);
+    const flutter = Math.sin(g * 18.5) * 0.045 * sp;
+    const flutterOpp = Math.sin(g * 18.5 + 1.4) * 0.045 * sp;
+
+    // Más velocidad/aceleración => torso más tendido en picado; cabeza compensa
+    this.tgt[HIPS * 3] += 0.16 * sp + acc;
+    this.tgt[HIPS * 3 + 1] += bank * 0.35;
+    this.tgt[HIPS * 3 + 2] += bank;
+
+    this.tgt[SPINE * 3] -= 0.05 * sp;
+    this.tgt[CHEST * 3] -= 0.06 * sp;
+    this.tgt[CHEST * 3 + 2] += bank * 0.25;
+    this.tgt[NECK * 3] -= 0.06 * sp;
+    this.tgt[HEAD * 3] -= 0.08 * sp;
+    this.tgt[HEAD * 3 + 2] -= bank * 0.55; // mantiene la mirada en el horizonte
+
+    // Brazos como alerones: se barren más atrás con la velocidad y banqueen con el giro
+    this.tgt[UA_L * 3] += 0.12 * sp + acc * 0.6 + flutter;
+    this.tgt[UA_L * 3 + 1] -= 0.14 * sp;
+    this.tgt[UA_L * 3 + 2] += bank * 0.45;
+    this.tgt[FA_L * 3] += flutterOpp;
+
+    this.tgt[UA_R * 3] += 0.12 * sp + acc * 0.6 + flutterOpp;
+    this.tgt[UA_R * 3 + 1] += 0.14 * sp;
+    this.tgt[UA_R * 3 + 2] += bank * 0.45;
+    this.tgt[FA_R * 3] += flutter;
+
+    // Piernas: vibración ligera del viento y ligera asimetría al girar
+    this.tgt[TH_L * 3] += flutter * 0.8 + bank * 0.18;
+    this.tgt[TH_R * 3] += flutterOpp * 0.8 - bank * 0.18;
+    this.tgt[SH_L * 3] += 0.12 * sp + flutterOpp;
+    this.tgt[SH_R * 3] += 0.12 * sp + flutter;
+  }
+
   private sampleClip(clip: NyxBakedClip, t: number): void {
     const times = clip.times;
     const n = clip.frameCount;

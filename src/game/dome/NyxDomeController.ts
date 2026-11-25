@@ -649,7 +649,10 @@ export class NyxDomeController {
     // primer frame del lag elástico.
     this.camLookSmooth.copy(nyxRoot.position).addScaledVector(this.up, CAM_LOOK_HEIGHT);
     // Estado inicial: flotando en 0G donde la escena haya colocado a Nyx.
+    // Evaluamos un tick inmediato para que no aparezca en T-pose si el juego
+    // arranca pausado (p. ej. con el tutorial inicial abierto).
     this.animator.setState('zero_g_float');
+    this.animator.update(0.016);
   }
 
   // ==========================================================================

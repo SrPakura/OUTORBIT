@@ -167,6 +167,7 @@ const CLIPS = [
   ['GRAVITY_KICK_LOOP', 'nyx_gravity_kick.glb'],
   ['SPIRAL_DRILL_KICK_LOOP', 'nyx_spiral_drill_kick.glb'],
   ['ZERO_G_FLOAT_LOOP', 'nyx_zero_g_float.glb'],
+  ['GRAVITY_FALL_LOOP', 'nyx_gravity_fall.glb'],
   ['KINETIC_SQUAT_CLIP', 'nyx_kinetic_squat.glb'],
 ];
 
