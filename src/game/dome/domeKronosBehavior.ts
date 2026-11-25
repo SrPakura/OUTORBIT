@@ -473,8 +473,18 @@ function quatFromBasisPair(
   out: THREE.Quaternion,
 ): void {
   _xRest.crossVectors(upRest, dirRest);
+  if (_xRest.lengthSq() < 1e-8) {
+    _xRest.set(1, 0, 0);
+  } else {
+    _xRest.normalize();
+  }
   _basisRest.makeBasis(_xRest, upRest, dirRest);
   _xCur.crossVectors(upCur, dirCur);
+  if (_xCur.lengthSq() < 1e-8) {
+    _xCur.set(1, 0, 0);
+  } else {
+    _xCur.normalize();
+  }
   _basisCur.makeBasis(_xCur, upCur, dirCur);
   out.setFromRotationMatrix(_basisCur);
   _q2.setFromRotationMatrix(_basisRest).invert();
@@ -1311,24 +1321,15 @@ export function updateKronosPose(
     } else {
       upJ.normalize();
     }
-    // Onda de impulso transversal (serpenteo) + inercia lateral de la cola.
-    let yaw =
-      Math.sin(chain.wavePhase + link * KRONOS_WAVE_PHASE_STEP) *
-      KRONOS_WAVE_YAW_AMP *
-      speedFactor;
+    // Onda de impulso transversal (serpenteo) + inercia lateral de la cola:
+    // se calcula aquí pero se aplica SOLO a la pose visual (paso 4) para no
+    // acumularla frame a frame dentro de chain.pos[j].
     if (link >= 7) {
       const idx = link - 7;
       const targetSwing =
         THREE.MathUtils.clamp(turn * 1.6, -0.42, 0.42) * ((idx + 1) / 5);
       chain.tailSwing[idx] += (targetSwing - chain.tailSwing[idx]) * Math.min(1, dt * 3.2);
       chain.tailSwing[idx] *= Math.exp(-1.1 * dt);
-      yaw += chain.tailSwing[idx] + chain.bendExtra[j];
-    } else {
-      yaw += chain.bendExtra[j];
-    }
-    if (yaw !== 0) {
-      _q2.setFromAxisAngle(upJ, yaw);
-      dir.applyQuaternion(_q2).normalize();
     }
     chain.dirNew[link].copy(dir);
     chain.pos[j].copy(chain.pos[j - 1]).addScaledVector(dir, chain.segLen[link]);
@@ -1340,11 +1341,26 @@ export function updateKronosPose(
   // 4) Posa real de huesos: local = inv(W_parent) * (R * W_rest).
   for (let j = 0; j < KRONOS_CHAIN_POINTS; j++) {
     const link = Math.min(j, KRONOS_CHAIN_POINTS - 2);
-    const dirCur = chain.dirNew[link];
-    quatFromBasisPair(chain.restDir[link], chain.restUp[link], dirCur, chain.up[j], _q1);
-    // Escrutinio/quebro aplicado sobre el hueso head (j = 0).
     if (j === 0) {
+      // Cabeza alineada con la orientación de la malla (evita que el micro-link
+      // head->seg_01 de 0.08 m tuerza la cabeza) + escrutinio/quebro.
+      _v3.copy(chain.restDir[0]).applyQuaternion(chain.meshQuat);
+      _v4.copy(chain.restUp[0]).applyQuaternion(chain.meshQuat);
+      quatFromBasisPair(chain.restDir[0], chain.restUp[0], _v3, _v4, _q1);
       applyHeadScrutiny(k, chain, _q1);
+    } else {
+      _v3.copy(chain.dirNew[link]);
+      const yaw =
+        Math.sin(chain.wavePhase + link * KRONOS_WAVE_PHASE_STEP) *
+          KRONOS_WAVE_YAW_AMP *
+          speedFactor +
+        (link >= 7 ? chain.tailSwing[link - 7] : 0) +
+        chain.bendExtra[j];
+      if (yaw !== 0) {
+        _q2.setFromAxisAngle(chain.up[j], yaw);
+        _v3.applyQuaternion(_q2).normalize();
+      }
+      quatFromBasisPair(chain.restDir[link], chain.restUp[link], _v3, chain.up[j], _q1);
     }
     _q2.copy(_q1).multiply(chain.restWorldQuat[j]);
     if (j === 0) {
