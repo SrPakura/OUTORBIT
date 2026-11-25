@@ -1546,11 +1546,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         internal.enemy.velocity.copy(_preHitVel);
         internal.enemy.hitFlash = Math.min(internal.enemy.hitFlash, 0.35);
         internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
-        // El parry SOLO se activa cuando un ataque real impacta contra el bloqueo.
-        _aimDir
-          .copy(internal.enemy.position)
-          .addScaledVector(hitDir, -(internal.enemy.radius + 2.0));
-        this.tryOpenGolemParry(internal.enemy, internal, _aimDir);
+        // El parry SOLO se activa cuando un ataque real impacta contra el bloqueo
+        // (y no en las últimas décimas mientras baja el brazo).
+        if (internal.golemTimer > 0.25) {
+          _aimDir
+            .copy(internal.enemy.position)
+            .addScaledVector(hitDir, -(internal.enemy.radius + 2.0));
+          this.tryOpenGolemParry(internal.enemy, internal, _aimDir);
+        }
       } else {
         // Sacudida seca de impacto (golem_hit pisa la FSM mientras dura).
         internal.golemHitTimer = GOLEM_HIT_CLIP_SEC;
@@ -1565,6 +1568,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
    * true significa 0 daño (obliga a flanquear, provocar el ataque con la
    * cercanía o rematar desde arriba con el taladro).
    */
+  closeGolemParry(): void {
+    if (this.golemParryTimer <= 0 && this.golemParryTargetId === null) return;
+    this.golemParryTimer = 0;
+    this.golemParryTargetId = null;
+    this.golemParryEnemy = null;
+    this.golemParryHalo.visible = false;
+  }
+
   isGolemGuardBlocking(enemy: TestEnemySphere, hitDir: THREE.Vector3): boolean {
     const internal = this.internals.get(enemy.id);
     if (!internal || internal.golemState !== 'block_guard') {
@@ -1730,7 +1741,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       this.golemParryTimer -= dt;
       const owner = this.golemParryEnemy;
       const ownerGone = !owner || !owner.entity.alive || owner.entity.hp <= 0;
-      if (this.golemParryTimer <= 0 || ownerGone) {
+      const outOfBand =
+        owner !== null &&
+        owner.position.distanceTo(playerPos) > owner.radius + 6.0 &&
+        _aimDir.subVectors(playerPos, owner.position).dot(playerVel) > 0;
+      if (this.golemParryTimer <= 0 || ownerGone || outOfBand) {
         this.golemParryTimer = 0;
         this.golemParryTargetId = null;
         this.golemParryEnemy = null;

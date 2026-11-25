@@ -837,6 +837,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         // Parry del Gólem: slow-mo propio con latigazo de cámara hacia la
         // estrella y ventaja de dash directo al punto del remate.
         controller.openParryWindow(golemParryTarget, golemParryStarPos);
+      } else if (!controller.isParryWindowActive()) {
+        // Si Nyx cerró la ventana (ej. terminó el rebote o salió de la banda
+        // de 4 m), oculta la estrella 3D al instante.
+        waveMgr.closeGolemParry();
       }
 
       waveMgr.fillActiveEnemies(activeEnemies);

@@ -102,7 +102,7 @@ export const GOLEM_BLOCK_REACT_COOLDOWN = 1.8;
  * controller abre su slow-mo equivalente en tiempo REAL
  * (GOLEM_PARRY_WINDOW_SEC / REDIRECT_TIME_SCALE) para que ambos caduquen juntos.
  */
-export const GOLEM_PARRY_WINDOW_SEC = 1.6;
+export const GOLEM_PARRY_WINDOW_SEC = 0.55;
 /** Cooldown POR GÓLEM entre oportunidades de parry (s). */
 export const GOLEM_PARRY_COOLDOWN_SEC = 18.0;
 /** Eden necesario para la oportunidad: los 2 dashes del remate (ratio). */
@@ -556,10 +556,9 @@ export function updateGolemEnemy(
       break;
   }
 
-  // Anti-empotramiento: Nyx NO puede quedarse DENTRO de los 300 kg (fuera
-  // de las espirales, cuyo contacto lo resuelve su propia FSM). El cuerpo
-  // se repliega a radius+1.2 de ella y pierde la componente de velocidad
-  // que lo mete dentro — perseguirla ya no significa solaparse con ella.
+  // Anti-empotramiento: solo cuando Nyx NO está atacando (si ataca, Nyx debe
+  // poder alcanzar radius+0.90 para registrar el golpe/bloqueo en lugar de
+  // empujar al gólem hacia atrás antes del impacto).
   const antiEmbedState = internal.golemState;
   if (
     antiEmbedState !== 'thin_spiral' &&
@@ -570,7 +569,7 @@ export function updateGolemEnemy(
   ) {
     _toPlayer.subVectors(enemy.position, playerPos);
     const bodyDist = _toPlayer.length();
-    const minDist = enemy.radius + 1.2;
+    const minDist = enemy.radius + 0.5;
     if (bodyDist < minDist) {
       if (bodyDist < 1e-4) {
         _toPlayer.set(0, 0, 1);
@@ -882,6 +881,16 @@ export function updateGolemAttack(
         thin ? GOLEM_THIN_AIM_TURN_RATE : GOLEM_THICK_AIM_TURN_RATE,
         dt,
       );
+      // Si Nyx ataca al gólem mientras está cargando una espiral (windup),
+      // cancela la espiral y levanta la pared en lugar de girar bloqueando.
+      if (
+        internal.golemTimer > 0.12 &&
+        info.attacking &&
+        isThreatToGolem(enemy, playerPos, info) &&
+        tryStartGolemBlock(enemy, internal, playerPos, info)
+      ) {
+        return;
+      }
       if (internal.golemTimer <= 0) {
         // Dirección SELLADA con PREDICCIÓN: apunta a donde Nyx VA a estar
         // (lead honesto capado por GOLEM_LEAD_MAX_SEC), no a su posición

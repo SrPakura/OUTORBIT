@@ -392,6 +392,7 @@ export class NyxDomeController {
   private parryStarHovered = false;
   private kickRecoverFromAttack = false;
   private wallRepelledThisHit = false;
+  private wallRepelFastExit = false;
   /** Punto de la estrella dorada (junto al brazo fino): destino del dash. */
   private readonly parryStarPoint = new THREE.Vector3();
   private reticleLockState: ReticleLockState = 'none';
@@ -859,6 +860,10 @@ export class NyxDomeController {
     );
   }
 
+  isParryWindowActive(): boolean {
+    return this.parryWindowActive;
+  }
+
   /**
    * Suelo flotante sobre el que Nyx está anclada AHORA MISMO (o null si está
    * volando/floating, en mitad de una patada o pegada a la esfera). El Cangrejo
@@ -943,11 +948,12 @@ export class NyxDomeController {
    */
   applyWallRepel(hitDirIntoEnemy: THREE.Vector3, speed: number): void {
     this.wallRepelledThisHit = true;
+    this.wallRepelFastExit = true;
     this.velocity
       .copy(hitDirIntoEnemy)
-      .multiplyScalar(-Math.max(speed, 16))
-      .addScaledVector(this.up, 3.5);
-    this.shake = Math.max(this.shake, 0.25);
+      .multiplyScalar(-Math.max(speed, 28))
+      .addScaledVector(this.up, 5.5);
+    this.shake = Math.max(this.shake, 0.3);
     this.impactFlash = Math.max(this.impactFlash, 0.55);
   }
 
@@ -1231,6 +1237,24 @@ export class NyxDomeController {
         // --- Colisiones con slabs (aterrizaje en cualquier superficie)
         this.resolveGround(slabs);
       }
+      // --- Comprobación post-avance en speed_attack: garantiza impacto
+      // inmediato tras el movimiento del frame sin llegar a empujar enemigos.
+      if (this.mode === 'speed_attack' && enemies && enemies.length > 0) {
+        const hitTarget = this.lockedEnemy;
+        if (hitTarget) {
+          if (this.nyxRoot.position.distanceTo(hitTarget.position) <= PLAYER_RADIUS + hitTarget.radius + 0.45) {
+            this.impactEnemy(onHitEnemy);
+          }
+        } else {
+          for (const enemy of enemies) {
+            if (this.nyxRoot.position.distanceTo(enemy.position) <= PLAYER_RADIUS + enemy.radius + 0.45) {
+              this.lockedEnemy = enemy;
+              this.impactEnemy(onHitEnemy);
+              break;
+            }
+          }
+        }
+      }
       // --- Cúpula: una sola comprobación por frame (no depende del avance)
       this.resolveDomeBound();
       // --- Separación física contra enemigos fuera de speed_attack: evita
@@ -1377,8 +1401,17 @@ export class NyxDomeController {
     const cy = height * 0.5;
 
     // Estrella del parry: detectar si la mira apunta sobre la estrella dorada
+    // dentro de la banda válida [r + 2 .. r + 6] (4 m de margen tras el choque).
     if (this.parryWindowActive && this.redirectTargetEnemy) {
-      if (this.projectToScreen(this.parryStarPoint, camera, width, height)) {
+      const targetDist = this.nyxRoot.position.distanceTo(this.redirectTargetEnemy.position);
+      if (!this.parryDashUsed && targetDist > this.redirectTargetEnemy.radius + 6.0) {
+        this.parryWindowActive = false;
+        this.redirectWindowTimer = 0;
+        this.redirectTargetEnemy = null;
+      } else if (
+        (this.parryDashUsed || targetDist >= this.redirectTargetEnemy.radius + 2.0) &&
+        this.projectToScreen(this.parryStarPoint, camera, width, height)
+      ) {
         const starDistPx = Math.hypot(this.screenPos.x - cx, this.screenPos.y - cy);
         if (starDistPx <= RETICLE_LOCK_RADIUS_PX * 1.25) {
           this.parryStarHovered = true;
@@ -1717,8 +1750,14 @@ export class NyxDomeController {
       this.redirectTargetEnemy &&
       this.eden >= EDEN_DASH_COST
     ) {
-      this.parryDashUp(this.redirectTargetEnemy);
-      return;
+      const targetDist = this.nyxRoot.position.distanceTo(this.redirectTargetEnemy.position);
+      if (
+        targetDist >= this.redirectTargetEnemy.radius + 2.0 &&
+        targetDist <= this.redirectTargetEnemy.radius + 6.0
+      ) {
+        this.parryDashUp(this.redirectTargetEnemy);
+        return;
+      }
     }
     // --- Sentadilla Cinética optativa: pared en la mira (estrella azul
     // clarito) + velocidad mínima → el clic se consume en el rebote. Sin
@@ -2086,6 +2125,9 @@ export class NyxDomeController {
     this.flipsPlayed = 0;
     this.recoverElapsed = 0;
     this.kickRecoverFromAttack = fromAttack;
+    if (!this.wallRepelledThisHit) {
+      this.wallRepelFastExit = false;
+    }
     this.wantAttack = false;
     this.lockedEnemy = null;
     // Durante el parry del Gólem la ventana SOBREVIVE al rebote de la patada
@@ -2425,15 +2467,30 @@ export class NyxDomeController {
 
   private updateKickRecover(dt: number): void {
     this.recoverElapsed += dt;
-    // Frena suavemente hasta casi 0 mientras reproduce la voltereta. El clip
-    // drill ya encadena los 2 flips, así que una reproducción = flipsTotal.
-    // recoverElapsed es un seguro anti-atasco si isFinished() falla.
-    this.velocity.multiplyScalar(Math.exp(-KICK_RECOVER_BRAKE * dt));
+    // Frena suavemente hasta casi 0 mientras reproduce la voltereta. Si viene
+    // de un rebote contra el bloqueo del Gólem, sale lejos y corta antes (0.35 s).
+    const brakeRate = this.wallRepelFastExit ? KICK_RECOVER_BRAKE * 0.25 : KICK_RECOVER_BRAKE;
+    this.velocity.multiplyScalar(Math.exp(-brakeRate * dt));
     const st = this.animator.getState();
-    const flipDone =
-      ((st === 'kick_flip' || st === 'kick_flip_drill') && this.animator.isFinished()) ||
-      this.recoverElapsed >= KICK_RECOVER_MAX_TIME_PER_FLIP * this.flipsTotal;
+    const flipDone = this.wallRepelFastExit
+      ? this.recoverElapsed >= 0.22
+      : ((st === 'kick_flip' || st === 'kick_flip_drill') && this.animator.isFinished()) ||
+        this.recoverElapsed >= KICK_RECOVER_MAX_TIME_PER_FLIP * this.flipsTotal;
     if (!flipDone) return;
+    if (this.wallRepelFastExit) {
+      this.wallRepelFastExit = false;
+      // Al terminar el rebote, si el jugador no lanzó el dash de parry, la
+      // ventana de parry caduca de inmediato (no puede seguir abierta después).
+      if (this.parryWindowActive && !this.parryDashUsed) {
+        this.parryWindowActive = false;
+        this.redirectWindowTimer = 0;
+        this.redirectTargetEnemy = null;
+      }
+      this.mode = 'floating';
+      this.animator.setState('zero_g_float');
+      this.startAirDrift();
+      return;
+    }
     this.flipsPlayed = st === 'kick_flip_drill' ? this.flipsTotal : this.flipsPlayed + 1;
     if (this.flipsPlayed < this.flipsTotal) {
       this.animator.setState('kick_flip');
