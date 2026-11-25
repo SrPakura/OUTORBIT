@@ -26,6 +26,38 @@ const TRACK_SOURCES: Record<MusicTrackId, string> = {
 };
 
 /**
+ * Metadatos publicados en la Media Session API (`navigator.mediaSession`):
+ * el navegador los expone al sistema (MPRIS en Linux) y con ello el widget de
+ * medios del escritorio muestra título/artista/portada y estado de
+ * reproducción, como con Spotify web o YouTube. Las portadas viven en
+ * `public/audio/covers/` con el mismo nombre que su .mp3.
+ */
+const TRACK_META: Record<MusicTrackId, { title: string; art: string }> = {
+  menu: { title: 'Menú', art: '/audio/covers/menu.jpg' },
+  waveA: { title: 'Nocturnal', art: '/audio/covers/wave-nocturnal.jpg' },
+  waveB: { title: 'Singularity', art: '/audio/covers/wave-singularity.jpg' },
+  boss: { title: 'Boss', art: '/audio/covers/boss.jpg' },
+};
+
+/** Publica la portada y el título de la pista en los controles del sistema. */
+function publishTrackMetadata(track: MusicTrackId): void {
+  if (!('mediaSession' in navigator)) return;
+  const meta = TRACK_META[track];
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: meta.title,
+    artist: 'OUTORBIT',
+    album: 'OUTORBIT OST',
+    artwork: [{ src: meta.art, sizes: '512x512', type: 'image/jpeg' }],
+  });
+}
+
+/** Estado de reproducción para el widget (none = sin medio activo). */
+function setMediaPlayback(state: MediaSessionPlaybackState): void {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.playbackState = state;
+}
+
+/**
  * Volumen base de la música; el multiplicador de ajustes se aplica encima.
  * Se queda por debajo de los efectos para que las alertas del HUD (vida,
  * Edén, subida de nivel, oleada) se oigan siempre por encima del tema.
@@ -59,6 +91,8 @@ export class MusicPlayer {
   private timer: ReturnType<typeof setInterval> | null = null;
   private blocked: MusicTrackId | null = null;
   private unlockBound = false;
+  /** Botones play/pausa del widget ya registrados (una vez por pestaña). */
+  private mediaActionsBound = false;
 
   /** Pista sonando ahora mismo (null = silencio). */
   get track(): MusicTrackId | null {
@@ -76,6 +110,8 @@ export class MusicPlayer {
     if (this.muted === muted) return;
     this.muted = muted;
     this.startFade();
+    // El volumen a 0 no pausa el audio: el estado del widget se publica a mano.
+    setMediaPlayback(muted ? 'paused' : this.current !== null ? 'playing' : 'none');
   }
 
   /**
@@ -128,6 +164,7 @@ export class MusicPlayer {
     this.pendingSwitch = null;
     this.clearGap();
     this.startFade();
+    setMediaPlayback('none');
   }
 
   dispose(): void {
@@ -141,6 +178,7 @@ export class MusicPlayer {
     this.current = null;
     this.pendingSwitch = null;
     this.queued = null;
+    setMediaPlayback('none');
   }
 
   // --------------------------------------------------------------------------
@@ -156,6 +194,10 @@ export class MusicPlayer {
     el.currentTime = 0;
     this.resume(el, track);
     this.startFade();
+    // Media Session: portada + título en el widget del sistema, estado sonando.
+    publishTrackMetadata(track);
+    setMediaPlayback(this.muted ? 'paused' : 'playing');
+    this.bindMediaSessionActions();
   }
 
   private element(track: MusicTrackId): HTMLAudioElement {
@@ -178,6 +220,7 @@ export class MusicPlayer {
     if (this.current !== track || this.pendingSwitch !== null) return;
     const next = this.queued ?? NATURAL_NEXT[track];
     this.queued = null;
+    setMediaPlayback('paused');
     const gap = GAP_MIN_MS + Math.random() * (GAP_MAX_MS - GAP_MIN_MS);
     this.gapTimer = setTimeout(() => {
       this.gapTimer = null;
@@ -202,8 +245,22 @@ export class MusicPlayer {
     if (!attempt) return;
     attempt.catch(() => {
       this.blocked = track;
+      setMediaPlayback('paused');
       this.bindUnlock();
     });
+  }
+
+  /**
+   * Botones del widget: play/pausa actúan como el silencio del juego (el
+   * audio nunca se congela de verdad — la pista sigue su cola y sus
+   * fundidos). previoustrack/nexttrack no se registran: la música depende del
+   * estado del juego, no del usuario.
+   */
+  private bindMediaSessionActions(): void {
+    if (this.mediaActionsBound || !('mediaSession' in navigator)) return;
+    this.mediaActionsBound = true;
+    navigator.mediaSession.setActionHandler('play', () => this.setMuted(false));
+    navigator.mediaSession.setActionHandler('pause', () => this.setMuted(true));
   }
 
   /** Reintenta la pista bloqueada en el primer gesto del usuario. */
@@ -216,7 +273,10 @@ export class MusicPlayer {
       this.unlockBound = false;
       const track = this.blocked;
       this.blocked = null;
-      if (track && this.current === track) this.resume(this.element(track), track);
+      if (track && this.current === track) {
+        this.resume(this.element(track), track);
+        setMediaPlayback(this.muted ? 'paused' : 'playing');
+      }
     };
     window.addEventListener('pointerdown', retry);
     window.addEventListener('keydown', retry);
