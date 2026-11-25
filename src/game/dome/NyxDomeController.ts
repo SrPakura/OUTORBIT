@@ -200,7 +200,8 @@ const REDIRECT_TIME_SCALE = 0.25;
 const PARRY_TIME_SCALE = 0.10;
 /**
  * Tope de SEGURIDAD (s REALES) del slow-mo del parry: la ventana la abre y la
- * cierra el MANAGER por DISTANCIA (α+6 → α+2, ver DomeWaveManager) y el game
+ * cierra el MANAGER por DISTANCIA en dos fases (α+9 → α+2, ver
+ * DomeWaveManager) y el game
  * loop llama a closeParryWindow() — este tope solo recorta ventanas que, por
  * cualquier bug, no llegaran a cerrarse (10 s > 1.5 s de mundo / 0.18 ≈ 8.3 s).
  */
@@ -401,7 +402,17 @@ export class NyxDomeController {
   private redirectReArm = 0; // antirrebote tras cerrarse la ventana
   // --- Parry del Gólem: la ventana apunta al aro dorado, no a un evasivo
   private parryWindowActive = false;
-  private parryDashUsed = false;
+  /**
+   * Fase EXPLÍCITA de la ventana de parry (sincronizada con el MANAGER):
+   *  - 'parry_decide' (FASE 1): banda [α+2 .. α+9] con la guardia alzada;
+   *    slow-mo + estrella + guía suave de cámara. Hasta que no se dashea,
+   *    la patada que rebota en la pared NO consume la ventana.
+   *  - 'parry_strike' (FASE 2): el dash al star point YA se ejecutó
+   *    (parryDashUp); margen corto para el taladro descendente remate.
+   *  - null: ventana cerrada (la cierra SOLO el manager, vía
+   *    domeGameLoop.closeParryWindow).
+   */
+  private parryPhase: 'parry_decide' | 'parry_strike' | null = null;
   private parryStarHovered = false;
   private kickRecoverFromAttack = false;
   /**
@@ -666,20 +677,21 @@ export class NyxDomeController {
   }
 
   /**
-   * Ventana de parry del Gólem (abierta por el MANAGER al cruzar Nyx la banda
-   * α+6 → α+2 con la guardia alzada): abre el slow-mo (PARRY_TIME_SCALE)
-   * apuntando al gólem, SIN romper el lock. `starPos` es la estrella dorada
-   * junto a su brazo malo: la cámara SE LATIGUEA hacia ella al abrir (suele
-   * caer en una esquina fuera del visor) y el Dash del parry viaja directo a
-   * ese punto. El TIEMPO ya no manda — la ventana es ESPACIAL y la cierra el
-   * manager vía domeGameLoop → closeParryWindow(); este timer es solo un
-   * tope de seguridad alto.
+   * FASE 1 — Ventana de parry del Gólem (abierta por el MANAGER al cruzar
+   * Nyx la banda α+9 → α+2 con la guardia alzada): abre el slow-mo
+   * (PARRY_TIME_SCALE) apuntando al gólem, SIN romper el lock. `starPos` es
+   * la estrella dorada junto a su brazo malo: la cámara SE LATIGUEA hacia
+   * ella al abrir (suele caer en una esquina fuera del visor) y el Dash del
+   * parry viaja directo a ese punto (→ FASE 2, parryPhase = 'parry_strike').
+   * El TIEMPO ya no manda — la ventana es ESPACIAL y la cierra el manager
+   * vía domeGameLoop → closeParryWindow(); este timer es solo un tope de
+   * seguridad alto.
    */
   openParryWindow(target: TestEnemySphere, starPos: THREE.Vector3): void {
     this.redirectTargetEnemy = target;
     this.redirectWindowTimer = PARRY_WINDOW_SAFETY_REAL_SEC;
     this.parryWindowActive = true;
-    this.parryDashUsed = false;
+    this.parryPhase = 'parry_decide';
     this.parryStarPoint.copy(starPos);
     // Ayuda al usuario: giro automático de la mira/cámara hacia la estrella
     // para que el jugador la vea al instante y le resulte natural darle.
@@ -705,10 +717,12 @@ export class NyxDomeController {
   }
 
   /**
-   * El MANAGER cerró la ventana del parry (Nyx llegó a α+2 sin ejecutar, se
-   * alejó de α+6, el gólem bajó la guardia o el remate conectó): apaga el
-   * slow-mo YA. Sin tocar `lockedEnemy` — la decisión de reapertura es
-   * EXCLUSIVA del manager (el controller nunca decide cierres).
+   * El MANAGER cerró la ventana del parry (en la fase que sea: Nyx llegó a
+   * α+2 sin ejecutar, se alejó de α+9, el gólem bajó la guardia, el margen
+   * del remate caducó o EL REMATE CONECTÓ): apaga el slow-mo YA, EN ESTE
+   * FRAME (redirectWindowTimer = 0 — el consumo del evento en
+   * domeGameLoop es inmediato). Sin tocar `lockedEnemy` — la decisión de
+   * reapertura es EXCLUSIVA del manager (el controller nunca decide cierres).
    */
   closeParryWindow(): void {
     if (!this.parryWindowActive) {
@@ -716,16 +730,17 @@ export class NyxDomeController {
     }
     this.redirectWindowTimer = 0;
     this.parryWindowActive = false;
-    this.parryDashUsed = false;
+    this.parryPhase = null;
   }
 
   /**
-   * ¿Usó Nyx ya el dash del remate dentro de la ventana de parry abierta?
-   * El MANAGER lo encuesta (via domeGameLoop) para marcar el parry como
-   * EJECUTADO — ahí (y solo ahí) arranca el cooldown largo de 18 s.
+   * ¿Está el parry en FASE 2 (dash al star point ya EJECUTADO dentro de la
+   * ventana abierta)? El MANAGER lo encuesta (via domeGameLoop) para dos
+   * cosas: marcar la transición parry_decide → parry_strike (aquí arranca el
+   * cooldown largo de 18 s) y arrancar el margen corto del remate.
    */
   isParryDashUsed(): boolean {
-    return this.parryWindowActive && this.parryDashUsed;
+    return this.parryWindowActive && this.parryPhase === 'parry_strike';
   }
 
   onMouseMove(dx: number, dy: number): void {
@@ -1142,9 +1157,9 @@ export class NyxDomeController {
     // re-arma con un antirrebote para no re-abrirla en el mismo acercamiento.
     if (this.redirectWindowTimer > 0) {
       this.redirectWindowTimer = Math.max(0, this.redirectWindowTimer - rawDt);
-      // Mientras la ventana de parry está abierta y aún no se ha dasheado,
-      // guía suavemente la cámara hacia la estrella ("ey, mira esto").
-      if (this.parryWindowActive && !this.parryDashUsed && this.mode !== 'grounded') {
+      // FASE 1 (parry_decide): guía suavemente la cámara hacia la estrella
+      // ("ey, mira esto") mientras el dash del remate siga pendiente.
+      if (this.parryPhase === 'parry_decide' && this.mode !== 'grounded') {
         this.tmpA.copy(this.parryStarPoint).sub(this.nyxRoot.position);
         if (this.tmpA.lengthSq() > 1e-6) {
           this.tmpA.normalize();
@@ -1155,7 +1170,7 @@ export class NyxDomeController {
       if (this.redirectWindowTimer === 0) {
         this.redirectReArm = REDIRECT_REARM_COOLDOWN;
         this.parryWindowActive = false;
-        this.parryDashUsed = false;
+        this.parryPhase = null;
         if (!this.lockedEnemy) this.redirectTargetEnemy = null;
       }
     } else if (this.redirectReArm > 0) {
@@ -1342,8 +1357,9 @@ export class NyxDomeController {
       this.resolveDomeBound();
       // --- Separación física contra enemigos fuera de speed_attack: evita
       // empujar o arrastrar enemigos por la arena (ej. contra el brazo en
-      // bloqueo o al rozarlos en dash/flotación).
-      if (enemies && this.mode !== 'speed_attack' && !this.parryDashUsed) {
+      // bloqueo o al rozarlos en dash/flotación). En FASE 2 (parry_strike)
+      // Nyx vuela hacia el cuerpo para taladrar: sin separación.
+      if (enemies && this.mode !== 'speed_attack' && this.parryPhase !== 'parry_strike') {
         for (const enemy of enemies) {
           this.tmpA.subVectors(this.nyxRoot.position, enemy.position);
           const d = this.tmpA.length();
@@ -1465,7 +1481,7 @@ export class NyxDomeController {
     if (this.redirectTargetEnemy && (!enemies || enemies.indexOf(this.redirectTargetEnemy) < 0)) {
       this.redirectTargetEnemy = null;
       this.parryWindowActive = false;
-      this.parryDashUsed = false;
+      this.parryPhase = null;
       this.redirectWindowTimer = 0;
     }
     if (this.lockedEnemy && (!enemies || enemies.indexOf(this.lockedEnemy) < 0)) {
@@ -1813,16 +1829,17 @@ export class NyxDomeController {
    * Derecho ADJUDICA la Sentadilla Cinética (0 Edén) en vez de dashear.
    */
   private handleDash(f: number, r: number): void {
-    // --- Parry del Gólem: si la ventana del remate está abierta, el Dash va
-    // DIRECTO al aro dorado sobre su cabeza (no es un dash lateral de WASD,
-    // ni el dash de redirección hacia el cuerpo). Cancela el ataque en
-    // curso, mantiene la cámara lenta y deja a Nyx por encima de la cabeza
-    // lista para el taladro descendente. Solo el primero de la ventana.
-    // LA BANDA [α+2, α+6] la garantiza el MANAGER (la ventana solo existe
-    // mientras Nyx está dentro): aquí no se re-comprueba la distancia.
+    // --- Parry del Gólem (FASE 1): si la ventana está abierta y el dash aún
+    // NO se ejecutó, el Dash va DIRECTO al aro dorado junto a su brazo malo
+    // (no es un dash lateral de WASD, ni el dash de redirección hacia el
+    // cuerpo). Cancela el ataque en curso, mantiene la cámara lenta y deja
+    // a Nyx por encima de la cabeza lista para el taladro descendente.
+    // Solo el primero de la ventana. LA BANDA [α+2, α+9] la garantiza el
+    // MANAGER (la ventana solo existe mientras Nyx está dentro): aquí no
+    // se re-comprueba la distancia.
     if (
       this.parryWindowActive &&
-      !this.parryDashUsed &&
+      this.parryPhase === 'parry_decide' &&
       this.redirectTargetEnemy &&
       this.eden >= EDEN_DASH_COST
     ) {
@@ -1971,15 +1988,16 @@ export class NyxDomeController {
    * el cuerpo debe girar respecto a su vector de velocidad para alcanzarlo?
    */
   /**
-   * Dash del parry del Gólem: impulso directo hacia la ESTRELLA dorada que
-   * flota junto a su brazo malo (no un dash lateral de WASD ni el dash de
-   * redirección hacia el cuerpo). Cancela ataques y volteretas en curso,
-   * desde cualquier modo, y mantiene el slow-mo: la ventana sigue abierta
-   * para que el taladro descendente se lance en el mismo slow-mo.
+   * FASE 2 — Dash del parry del Gólem: impulso directo hacia la ESTRELLA
+   * dorada que flota junto a su brazo malo (no un dash lateral de WASD ni el
+   * dash de redirección hacia el cuerpo). Cancela ataques y volteretas en
+   * curso, desde cualquier modo, y mantiene el slow-mo: la fase pasa a
+   * 'parry_strike' (remate pendiente) y el manager arranca aquí su margen
+   * corto — la ventana SOLO la cierran el golpe conectado o ese margen.
    */
   private parryDashUp(target: TestEnemySphere): void {
     this.eden -= EDEN_DASH_COST;
-    this.parryDashUsed = true;
+    this.parryPhase = 'parry_strike';
     // Objetivo: la estrella junto al brazo malo (guardada al abrir la
     // ventana). Sin ella (imposible salvo bug), la cabeza como respaldo.
     this.tmpA.copy(this.parryStarPoint);
@@ -2126,7 +2144,7 @@ export class NyxDomeController {
     if (
       this.parryWindowActive &&
       this.redirectTargetEnemy &&
-      (this.parryStarHovered || this.parryDashUsed)
+      (this.parryStarHovered || this.parryPhase === 'parry_strike')
     ) {
       // Remate directo sobre la estrella / cabeza del Gólem en ventana de parry:
       // siempre sale como taladro descendente hacia el objetivo sin resbalar.

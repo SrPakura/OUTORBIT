@@ -694,12 +694,6 @@ export interface EnemyInternal {
   /** Gólem: forzar el reinicio del clip one-shot actual al crossfadear. */
   golemRestartPending: boolean;
   /**
-   * Gólem: cooldown de la pared reactiva — tras bajar la guardia, este
-   * tiempo (s) sin poder izarla otra vez (ventana de castigo honesta; el
-   * herido lo ignora).
-   */
-  golemBlockCooldown: number;
-  /**
    * Gólem: carga de APUESTA (banda 20-30 m) — la espiral ignora el aborto
    * anti-Barrera y el gólem puede inmolarse contra la esfera si hace falta
    * para cruzar a Nyx. Se apaga al terminar/contactar.
@@ -913,8 +907,15 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private golemParryTimer = 0;
   /** Gólem con la ventana abierta (para cerrarla si muere sin remate). */
   private golemParryEnemy: ManagedWaveEnemy | null = null;
-  /** El dash del remate ya se EJECUTÓ dentro de la ventana abierta. */
-  private golemParryExecuted = false;
+  /**
+   * Fase EXPLÍCITA del parry mientras la ventana está abierta:
+   *  - `parry_decide`: Nyx dentro de la banda [α+2 .. α+9] con la guardia
+   *    alzada — slow-mo, estrella visible y Dash pendiente.
+   *  - `parry_strike`: el dash al star point YA se ejecutó (aquí arranca el
+   *    cooldown de GOLEM_PARRY_COOLDOWN_SEC); margen corto de mundo para el
+   *    taladro descendente. El golpe conectado cierra TODO al instante.
+   */
+  private golemParryPhase: 'parry_decide' | 'parry_strike' | null = null;
   /** Cierre de ventana pendiente de consumir por domeGameLoop (closeParryWindow). */
   private golemParryClosedFlag = false;
   /** Posición de Nyx del frame actual (cara real para isGolemGuardBlocking). */
@@ -1321,7 +1322,6 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       golemDriftDir: new THREE.Vector3(0, 0, 1),
       golemHitTimer: 0,
       golemRestartPending: false,
-      golemBlockCooldown: 0,
       golemGambling: false,
       golemParryCd: 0,
       golemParryLockout: 0,
@@ -1475,7 +1475,6 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal.golemChargeKind = 'thin';
     internal.golemDriftDir.set(0, 0, 1);
     internal.golemHitTimer = 0;
-    internal.golemBlockCooldown = 0;
     internal.golemGambling = false;
     internal.golemParryCd = 0;
     internal.golemParryLockout = 0;
@@ -1568,21 +1567,24 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     // Gólem Rompesuelos (rediseño §7.4): remate, bloqueo y flinch.
     if (internal.enemy.entity.archetype === 'ground_golem' && internal.enemy.entity.alive) {
       const parryWindowOpenForThis = this.golemParryTargetId === enemy.id;
+      const strikePhase = parryWindowOpenForThis && this.golemParryPhase === 'parry_strike';
       const descending = hitDir.y <= GOLEM_PARRY_MAX_Y_HIT_DIR;
-      if (isDrill && parryWindowOpenForThis && this.golemParryExecuted && descending) {
-        // REMATE del parry EJECUTADO (dash al star point + taladro
+      if (isDrill && strikePhase && descending) {
+        // FASE 2 — REMATE CONECTADO (dash al star point + taladro
         // descendente): arranca el 35% de la vida TOTAL (aditivo al daño
-        // cinético; el kill lo decide el game loop) y la ventana se consuma.
+        // cinético; el kill lo decide el game loop). La ventana se cierra AQUÍ,
+        // EN ESTE MISMO FRAME: golemParryClosedFlag llega a domeGameLoop, que
+        // llama a controller.closeParryWindow() en el mismo bucle — el
+        // slow-mo NUNCA sobrevive al golpe de remate.
         internal.enemy.entity.hp -= internal.enemy.entity.maxHp * GOLEM_PARRY_CRIT_RATIO;
         internal.enemy.entity.hitFlash = 1.8;
         internal.golemParryCd = GOLEM_PARRY_COOLDOWN_SEC;
         this.closeGolemParryWindow(0);
         parryGolemHead(internal.enemy, internal);
       } else if (isDrill && descending) {
-        // Taladro descendente: remate en cabeza. Dentro de la ventana sin
-        // dash previo, el remate conectado TAMBIÉN cuenta como parry
-        // ejecutado (cooldown largo, ventana consumida); el crítico del
-        // 35% es SOLO del parry con dash.
+        // Taladro descendente: remate en cabeza. Dentro de la ventana (en la
+        // fase que sea), el remate conectado TAMBIÉN consume la ventana
+        // (cooldown largo); el crítico del 35% es SOLO del parry con dash.
         if (parryWindowOpenForThis) {
           internal.golemParryCd = GOLEM_PARRY_COOLDOWN_SEC;
           this.closeGolemParryWindow(0);
@@ -1592,13 +1594,24 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         // Pared maciza (block_guard o gracia del brazo): el golpe frontal se
         // queda en el brazo gigante y la masa ni se inmuta — domeGameLoop
         // consulta el bloqueo (0 daño cinético) y el rebote de Nyx es la
-        // SENTADILLA CINÉTICA contra el brazo. La ventana de parry NO se
-        // consume: el golpe frontal a la pared solo rebota.
+        // SENTADILLA CINÉTICA contra el brazo.
+        if (strikePhase) {
+          // En FASE 2 el golpe ya conectó contra el brazo: la ventana muere
+          // EN ESTE FRAME (nada de slow-mo colgando tras golpear). En FASE 1
+          // la ventana SOBREVIVE al rebote de la patada (el dash sale
+          // justo después de rebotar en la pared).
+          this.closeGolemParryWindow(0);
+        }
         internal.enemy.velocity.copy(_preHitVel);
         internal.enemy.hitFlash = Math.min(internal.enemy.hitFlash, 0.35);
         internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
       } else {
         // Sacudida seca de impacto (golem_hit pisa la FSM mientras dura).
+        if (strikePhase) {
+          // FASE 2: cualquier golpe conectado cierra la ventana YA — el
+          // slow-mo nunca sigue tras haber golpeado el remate.
+          this.closeGolemParryWindow(0);
+        }
         internal.golemHitTimer = GOLEM_HIT_CLIP_SEC;
         internal.golemRestartPending = true;
       }
@@ -3159,12 +3172,21 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
    * de clips cae al fallback procedural de poseBone (como el cangrejo).
    */
   /**
-   * Parry por DISTANCIA (regla 2): la ventana NO vive del impacto ni del
-   * reloj — se abre cuando Nyx CRUZA hacia dentro d = α + GOLEM_PARRY_OPEN_DIST
-   * con el gólem en block_guard y la guardia ya alzada, y la oportunidad
-   * muere al llegar a d = α + GOLEM_PARRY_CLOSE_DIST (lockout de
-   * GOLEM_PARRY_LOCKOUT_SEC para ese gólem). El manager es la ÚNICA fuente de
-   * verdad: el controller solo obedece (openParryWindow/closeParryWindow).
+   * Parry por DISTANCIA en DOS FASES explícitas. El MANAGER es la única
+   * fuente de verdad; el controller solo obedece (openParryWindow /
+   * closeParryWindow vía domeGameLoop):
+   *
+   *  - FASE 1 (`parry_decide`): se abre cuando Nyx CRUZA hacia dentro
+   *    d = α + GOLEM_PARRY_OPEN_DIST (α+9) con el gólem en block_guard y la
+   *    guardia ya alzada. Slow-mo + estrella + latigazo de cámara.
+   *    Salidas: llega a d <= α+2 sin Dash (lockout de 5 s, SIN cooldown
+   *    largo), sale de α+9 hacia fuera o el gólem baja la guardia (cierran
+   *    al instante, sin castigo), o Dash hacia la estrella → FASE 2.
+   *  - FASE 2 (`parry_strike`): arranca al ejecutarse el dash al star point
+   *    (AQUÍ arranca el cooldown de 18 s). Margen corto de mundo
+   *    (GOLEM_PARRY_EXECUTE_SEC) para el taladro descendente. El golpe
+   *    conectado cierra TODO en ese mismo frame (ver onHitEnemy); si no,
+   *    solo el margen puede cerrarla.
    */
   private updateGolemParryWindow(
     enemy: ManagedWaveEnemy,
@@ -3182,43 +3204,48 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       internal.golemBlockGuardElapsed >= GOLEM_BLOCK_RAISE_CLIP_SEC;
 
     if (this.golemParryTargetId === enemy.id) {
-      // Ventana abierta SOBRE este gólem.
+      // Ventana abierta SOBRE este gólem: reloj de seguridad de mundo.
       this.golemParryTimer = Math.max(0, this.golemParryTimer - dt);
-      if (!this.golemParryExecuted && playerParryDashUsed) {
-        // Parry EJECUTADO (dash al star point): AQUÍ (y solo aquí) arranca
-        // el cooldown largo de GOLEM_PARRY_COOLDOWN_SEC. La ventana sobrevive
-        // un margen corto (GOLEM_PARRY_EXECUTE_SEC de mundo) para que el
-        // taladro descendente conecte aunque Nyx ya esté a < α+2.
-        this.golemParryExecuted = true;
-        this.golemParryTimer = GOLEM_PARRY_EXECUTE_SEC;
-        internal.golemParryCd = GOLEM_PARRY_COOLDOWN_SEC;
-      }
-      if (this.golemParryExecuted) {
-        // Ejecutado: solo remate conectado (onHitEnemy) o timeout corto.
+      if (this.golemParryPhase === 'parry_decide') {
+        if (playerParryDashUsed) {
+          // FASE 2 — Remate: arranca al EJECUTAR el dash al star point
+          // (AQUÍ, y solo aquí, arranca el cooldown largo de 18 s) y vive el
+          // margen corto GOLEM_PARRY_EXECUTE_SEC de mundo para que el
+          // taladro descendente conecte aunque Nyx ya esté a < α+2.
+          this.golemParryPhase = 'parry_strike';
+          this.golemParryTimer = GOLEM_PARRY_EXECUTE_SEC;
+          internal.golemParryCd = GOLEM_PARRY_COOLDOWN_SEC;
+        } else if (dist <= closeBand) {
+          // FASE 1: llegó al cuerpo SIN ejecutar (α+2): ventana muerta al
+          // instante y lockout de 5 s — SIN cooldown largo, de diseño no
+          // puede reaparecer tras el rebote.
+          this.closeGolemParryWindow(GOLEM_PARRY_LOCKOUT_SEC);
+        } else if (dist > openBand) {
+          // FASE 1: se fue hacia fuera de α+9: cierra SIN lockout y
+          // permite reabrir al volver a cruzar la banda en guardia.
+          this.closeGolemParryWindow(0);
+        } else if (!guardUp) {
+          // FASE 1: el gólem bajó la guardia: la oportunidad se esfuma.
+          this.closeGolemParryWindow(0);
+        } else if (this.golemParryTimer <= 0) {
+          // Tope de seguridad: la oportunidad caducó de largo en la banda.
+          this.closeGolemParryWindow(GOLEM_PARRY_LOCKOUT_SEC);
+        }
+      } else {
+        // FASE 2 (`parry_strike`): solo el remate conectado (onHitEnemy,
+        // que cierra y apaga el slow-mo EN ESE FRAME) o el fin del margen
+        // corto pueden cerrar la ventana — la distancia ya no manda (el
+        // dash lleva a Nyx por dentro de α+2 para golpear).
         if (this.golemParryTimer <= 0) {
           this.closeGolemParryWindow(0);
         }
-      } else if (dist <= closeBand) {
-        // Llegó al cuerpo SIN ejecutar (α+2): ventana muerta al instante y
-        // lockout de 5 s — de diseño, no puede reaparecer tras el rebote.
-        this.closeGolemParryWindow(GOLEM_PARRY_LOCKOUT_SEC);
-      } else if (dist > openBand) {
-        // Se fue hacia fuera de la banda: cierra SIN lockout y permite
-        // reabrir al volver a cruzar α+6 en guardia.
-        this.closeGolemParryWindow(0);
-      } else if (!guardUp) {
-        // El gólem bajó la guardia: la oportunidad se esfuma con su pared.
-        this.closeGolemParryWindow(0);
-      } else if (this.golemParryTimer <= 0) {
-        // Tope de seguridad: la oportunidad caducó de largo dentro de la banda.
-        this.closeGolemParryWindow(GOLEM_PARRY_LOCKOUT_SEC);
       }
       internal.golemPrevPlayerDist = dist;
       return;
     }
 
-    // Sin ventana sobre este gólem: ¿cruza hacia dentro la banda viniendo
-    // hacia él (regla: cruce α+6 con la guardia ya alzada)?
+    // FASE 1 — Apertura: ¿cruza hacia dentro la banda viniendo hacia él
+    // (regla: cruce α+9 con la guardia ya alzada)?
     if (
       guardUp &&
       this.golemParryTargetId === null &&
@@ -3255,7 +3282,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.golemParryTargetId = enemy.id;
     this.golemParryEnemy = enemy;
     this.golemParryTimer = GOLEM_PARRY_WINDOW_SEC; // tope de seguridad de mundo
-    this.golemParryExecuted = false;
+    this.golemParryPhase = 'parry_decide'; // FASE 1: decisión/lectura
     this.pendingParryEnemy = enemy;
     // La estrella YA existe en el frame de apertura (el harvest del update
     // clona la foto de este mismo frame, no una posición stale o a cero).
@@ -3279,15 +3306,17 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.golemParryTargetId = null;
     this.golemParryEnemy = null;
     this.golemParryTimer = 0;
-    this.golemParryExecuted = false;
+    this.golemParryPhase = null;
     this.golemParryHalo.visible = false;
     this.golemParryClosedFlag = true;
   }
 
   /**
    * Cierre de la ventana de parry pendiente de consumir (una sola vez).
-   * Lo encuesta domeGameLoop tras controller.update para llamar a
-   * closeParryWindow() — el controller nunca decide cierres.
+   * Lo encuesta domeGameLoop DOS veces por frame —antes y después de
+   * controller.update— para llamar a closeParryWindow() EN EL MISMO FRAME
+   * en que se produjo: cierres de la FSM del manager en su propio update y
+   * golpes de remate conectados en onHitEnemy apagan el slow-mo al instante.
    */
   consumeGolemParryClose(): boolean {
     const closed = this.golemParryClosedFlag;

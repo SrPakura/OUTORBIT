@@ -840,10 +840,19 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       if (didEnemyEvadeDash) {
         controller.notifyEnemyEvaded();
       }
+      // El MANAGER es la única fuente de verdad de la ventana del parry:
+      // si su FSM la cerró en este update (Nyx llegó a α+2 sin dash, se fue
+      // de α+9, el gólem bajó la guardia, caducó el margen del remate o
+      // murió), el slow-mo se apaga EN ESTE MISMO FRAME — antes de que el
+      // controller vuelva a leer su timeScale. El controller nunca decide
+      // cierres.
+      if (waveMgr.consumeGolemParryClose()) {
+        controller.closeParryWindow();
+      }
       if (golemParryTarget && golemParryStarPos) {
-        // Parry del Gólem (apertura por DISTANCIA: Nyx cruzó α+6 con la
-        // guardia alzada): slow-mo propio con latigazo de cámara hacia la
-        // estrella y ventaja de dash directo al punto del remate.
+        // Parry del Gólem (FASE 1 — apertura por DISTANCIA: Nyx cruzó α+9
+        // con la guardia alzada): slow-mo propio con latigazo de cámara
+        // hacia la estrella y ventaja de dash directo al punto del remate.
         controller.openParryWindow(golemParryTarget, golemParryStarPos);
       }
 
@@ -952,10 +961,11 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         onControllerHitEnemy,
       );
 
-      // El MANAGER es la única fuente de verdad de la ventana del parry:
-      // cuando la cierra (α+2 sin ejecutar, alejamiento de α+6, guardia
-      // bajada, remate conectado o gólem muerto), apaga el slow-mo del
-      // controller al instante. El controller nunca decide cierres.
+      // Segunda encuesta del MISMO evento: los golpes conectados DURANTE
+      // controller.update (el remate del parry en onHitEnemy) cierran la
+      // ventana del manager y marcan golemParryClosed — aquí se consume y el
+      // slow-mo se apaga EN ESTE MISMO FRAME, nunca en el siguiente.
+      // (α+2 sin dash, alejamiento de α+9, guardia baja o remate conectado).
       if (waveMgr.consumeGolemParryClose()) {
         controller.closeParryWindow();
       }

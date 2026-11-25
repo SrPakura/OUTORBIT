@@ -101,10 +101,8 @@ export const GOLEM_THREAT_RANGE = 32.0;
 export const GOLEM_THREAT_CLOSING_SPEED = 8.0;
 /** …y apuntar de verdad al gólem (dot de la velocidad normalizada). */
 export const GOLEM_THREAT_APPROACH_DOT = 0.6;
-/** Trabajada la pared: tras bajarla, este tiempo SIN poder re-levantarla (s). */
-export const GOLEM_BLOCK_REACT_COOLDOWN = 0.6;
 
-// --- Parry por DISTANCIA (banda espacial α+6 → α+2 con la guardia alzada) ---
+// --- Parry por DISTANCIA (banda espacial α+9 → α+2 con la guardia alzada) ---
 /**
  * Tope de SEGURIDAD de la ventana (s de MUNDO): la abre y la cierra la
  * DISTANCIA (el MANAGER en DomeWaveManager), no el reloj — pero una Nyx
@@ -134,7 +132,7 @@ export const GOLEM_PARRY_LOCKOUT_SEC = 5.0;
  * mientras el gólem bloquea con la guardia ya alzada. Es a la vez la
  * proximidad que sostiene la guardia (block_guard se rearma con Nyx dentro).
  */
-export const GOLEM_PARRY_OPEN_DIST = 8.0;
+export const GOLEM_PARRY_OPEN_DIST = 9.0;
 /** Banda del parry: la oportunidad TERMINA al llegar a d = α + CLOSE_DIST. */
 export const GOLEM_PARRY_CLOSE_DIST = 2.0;
 /** Eden necesario para la oportunidad: los 2 dashes del remate (ratio). */
@@ -142,7 +140,7 @@ export const GOLEM_PARRY_EDEN_RATIO = 0.06;
 /** Daño del remate en la ventana: fracción de la vida TOTAL del gólem. */
 export const GOLEM_PARRY_CRIT_RATIO = 0.35;
 /** Estrella del parry: cuánto sobresale del cuerpo el punto de dash (m). */
-export const GOLEM_PARRY_STAR_OUT = 3.6;
+export const GOLEM_PARRY_STAR_OUT = 4.4;
 /** Estrella del parry: altura sobre el hombro del brazo gigante (m). */
 export const GOLEM_PARRY_STAR_UP = 2.2;
 // --- Descanso voluntario (stamina) ---
@@ -196,7 +194,6 @@ export const GOLEM_PUNCH_REACH = 4.6;
 export const GOLEM_PUNCH_HIT_RADIUS = 3.8;
 export const GOLEM_PUNCH_DAMAGE = 16;
 export const GOLEM_PUNCH_PUSH = 24.0;
-export const GOLEM_PUNCH_COOLDOWN = 2.4;
 /** Todo slab con centro a <8 m del punto de impacto se destroza. */
 export const GOLEM_SLAB_BREAK_RADIUS = 8.0;
 /** Aplastamiento a bocajarro: dentro de este margen del cuerpo el puño da igual. */
@@ -269,9 +266,6 @@ export const GOLEM_PARRY_VULN_SEC = 1.8;
 /** Taladro descendente que remata: componente vertical máxima de hitDir. */
 export const GOLEM_PARRY_MAX_Y_HIT_DIR = -0.45;
 export const GOLEM_HIT_CLIP_SEC = 0.3;
-
-/** Cooldown de decisión en helicóptero cuando Nyx está fuera de alcance. */
-const GOLEM_DECISION_RETRY_SEC = 0.35;
 
 /**
  * Máquina de estados del Gólem Rompesuelos. `parried` se inyecta desde el
@@ -664,9 +658,6 @@ export function updateGolemAttack(
   onSlabSmash?: (slab: SlabCollider) => void,
 ): void {
   const playerLow = info.hpRatio <= GOLEM_PLAYER_LOW_RATIO;
-  if (internal.golemBlockCooldown > 0) {
-    internal.golemBlockCooldown = Math.max(0, internal.golemBlockCooldown - dt);
-  }
   if (internal.golemBlockGraceTimer > 0) {
     internal.golemBlockGraceTimer = Math.max(0, internal.golemBlockGraceTimer - dt);
   }
@@ -692,9 +683,9 @@ export function updateGolemAttack(
       if (shouldRaiseGuard(enemy, internal, playerPos, info)) {
         return;
       }
-      if (enemy.attackTimer > 0) {
-        return;
-      }
+      // CERO tiempos muertos: la decisión sale cada frame según la
+      // distancia/stamina reales (los únicos ritmos físicos son los windups,
+      // las inercias y el exhausto).
       const dist = enemy.position.distanceTo(playerPos);
       if (dist < GOLEM_PUNCH_TRIGGER_DISTANCE) {
         // < 5 m: castigo físico SIEMPRE, sin esperar a nadie.
@@ -738,13 +729,11 @@ export function updateGolemAttack(
           startGolemChargeWindup(enemy, internal, playerPos, 'thin');
           return;
         }
-        // Cooldown/stamina no listos o apuesta mala: sigue acercándose
-        // (perseguirá sin parar hasta entrar en las bandas interiores).
-        enemy.attackTimer = GOLEM_DECISION_RETRY_SEC;
+        // Apuesta mala: sigue acercándose (perseguirá sin parar hasta
+        // entrar en las bandas interiores).
         return;
       }
       // > 30 m: persigue al rotor a 15 m/s — nunca "se queda mirando".
-      enemy.attackTimer = GOLEM_DECISION_RETRY_SEC;
       return;
     }
 
@@ -816,8 +805,8 @@ export function updateGolemAttack(
       }
       const rested = internal.golemStamina >= GOLEM_REST_TARGET_STAMINA;
       if (rested) {
+        // Descanso completo: vuelve al ruedo YA (cero tiempos muertos).
         internal.golemState = 'helicopter';
-        enemy.attackTimer = 0.35;
       }
       return;
     }
@@ -833,7 +822,6 @@ export function updateGolemAttack(
         internal.golemTimer > 0.08 &&
         shouldRaiseGuard(enemy, internal, playerPos, info)
       ) {
-        enemy.attackTimer = 0.4;
         return;
       }
       // El windup aún rastrea a Nyx (torpe y pesado); al terminar, la
@@ -892,9 +880,11 @@ export function updateGolemAttack(
         onGolemSmash?.(GOLEM_PUNCH_DAMAGE, _toPlayer, GOLEM_PUNCH_PUSH);
       }
       smashSlabsNearPoint(activeSlabs, internal.golemImpact, onSlabSmash);
+      // Inercia física del latigazo (punch_recover) y YA: la siguientes
+      // decisión sale al instante al terminar la inercia — cero cooldown
+      // artificial tras el golpe.
       internal.golemState = 'punch_recover';
       internal.golemTimer = GOLEM_PUNCH_RECOVER_SEC;
-      enemy.attackTimer = GOLEM_PUNCH_COOLDOWN / ctx.speedMult;
       return;
     }
 
@@ -1005,7 +995,7 @@ export function updateGolemAttack(
           _toPlayer,
           thin ? GOLEM_THIN_PUSH : GOLEM_THICK_PUSH,
         );
-        endGolemCharge(enemy, internal, ctx);
+        endGolemCharge(enemy, internal);
         return;
       }
 
@@ -1021,7 +1011,7 @@ export function updateGolemAttack(
           if (thin) {
             // La broca SE CLAVA contra el suelo y rebota amortiguada.
             enemy.velocity.copy(internal.chargeDir).multiplyScalar(-6.0);
-            endGolemCharge(enemy, internal, ctx);
+            endGolemCharge(enemy, internal);
             return;
           }
           // El ariete ROMPE el slab tocado y sigue arando (§7.4).
@@ -1053,10 +1043,10 @@ export function updateGolemAttack(
       if (!internal.golemGambling) {
         const boundStop = DOME_PLAYER_BOUND_RADIUS - enemy.radius - GOLEM_BARRIER_STOP_MARGIN;
         if (enemy.position.length() > boundStop || internal.golemTimer <= 0) {
-          endGolemCharge(enemy, internal, ctx);
+          endGolemCharge(enemy, internal);
         }
       } else if (internal.golemTimer <= 0) {
-        endGolemCharge(enemy, internal, ctx);
+        endGolemCharge(enemy, internal);
       }
       return;
     }
@@ -1069,8 +1059,8 @@ export function updateGolemAttack(
         if (shouldRaiseGuard(enemy, internal, playerPos, info)) {
           return;
         }
+        // Tras la inercia: decisión INMEDIATA (cero tiempo muerto post-carga).
         settleGolem(enemy, internal, playerPos);
-        enemy.attackTimer = Math.max(enemy.attackTimer, 0.4);
       }
       return;
     }
@@ -1105,16 +1095,11 @@ export function updateGolemAttack(
         internal.golemTimer = GOLEM_BLOCK_HOLD_SEC;
       }
       if (internal.golemTimer <= 0 || internal.golemStamina <= 0) {
-        // Pared trabajada: tras bajarla, un rato SIN poder izarla otra vez
-        // (ventana de castigo honesta; el herido la ignora).
-        internal.golemBlockCooldown = GOLEM_BLOCK_REACT_COOLDOWN;
         // Gracia del brazo: durante golem_block_end (~0.27 s) la pared SIGUE
-        // bloqueando (0 daño) hasta que el brazo baja del todo.
+        // bloqueando (0 daño) hasta que el brazo baja del todo; el clip es el
+        // ÚNICO ritmo que queda (la exclusión mutua bloqueo/ataque la impone
+        // el propio estado, no un attackTimer muerto).
         internal.golemBlockGraceTimer = GOLEM_BLOCK_GRACE_SEC;
-        // Antes de pasar de bloqueo a ataque, la guardia debe estar bajada
-        // del TODO (regla de exclusión mutua): nada de puñetazo en el frame
-        // en que la pared empieza a bajar — la decisión espera ~0.45 s.
-        enemy.attackTimer = Math.max(enemy.attackTimer, GOLEM_BLOCK_GRACE_SEC + 0.15);
         settleGolem(enemy, internal, playerPos);
       }
       return;
@@ -1129,11 +1114,11 @@ export function updateGolemAttack(
         GOLEM_STAMINA_MAX * (1 - Math.max(0, internal.golemTimer) / GOLEM_EXHAUSTED_SEC),
       );
       if (internal.golemTimer <= 0) {
-        // Rotor rearma: vuelve a la persecución con la stamina a tope.
+        // Rotor rearma: vuelve a la persecución YA, con la stamina a tope
+        // (el exhausto YA fue la ventana de castigo física).
         internal.golemStamina = GOLEM_STAMINA_MAX;
         internal.golemState = 'helicopter';
         internal.golemTimer = 0;
-        enemy.attackTimer = 0.5;
       }
       return;
     }
@@ -1142,7 +1127,7 @@ export function updateGolemAttack(
     case 'parried': {
       internal.golemTimer -= dt;
       if (internal.golemTimer <= 0) {
-        enemy.attackTimer = 2.0;
+        // El aplastamiento YA fue el stagger físico: decisión inmediata.
         settleGolem(enemy, internal, playerPos);
       }
       return;
@@ -1204,24 +1189,21 @@ function startGolemChargeWindup(
 function endGolemCharge(
   enemy: ManagedWaveEnemy,
   internal: EnemyInternal,
-  ctx: GolemBehaviorContext,
 ): void {
   internal.chargeTimer = 0;
   internal.golemGambling = false;
   internal.golemState = 'charge_end';
   internal.golemTimer = GOLEM_CHARGE_END_SEC;
-  enemy.attackTimer = 1.6 / ctx.speedMult;
 }
 
 /**
- * Pared reactiva CON COOLDOWN: tras bajar la guardia el gólem tarda
- * GOLEM_BLOCK_REACT_COOLDOWN en poder izarla otra vez (se puede castigar la
- * pared bajada). El herido ignora el cooldown: sin vida, cubrirse es lo
- * único que le queda. Devuelve false si NO la levantó.
+ * Pared reactiva SIN cooldowns artificiales: la puede izar en cuanto la
+ * amenaza real lo pida (la gracia de la bajada y la stamina son los únicos
+ * límites físicos). Devuelve false si NO la levantó.
  *
  * La aproximación se detecta a ≤ GOLEM_THREAT_RANGE (32 m): a esa distancia
  * la guardia SIEMPRE llega a tiempo antes de que Nyx cruce la banda del
- * parry (α+6); el único caso en que izarla ya no sirve es la llegada TARDÍA,
+ * parry (α+9); el único caso en que izarla ya no sirve es la llegada TARDÍA,
  * con Nyx metida dentro de α + GOLEM_BLOCK_LATE_DIST (que decida el puñetazo
  * o nada).
  */
@@ -1231,9 +1213,6 @@ function tryStartGolemBlock(
   playerPos: THREE.Vector3,
   info: GolemPlayerInfo,
 ): boolean {
-  if (internal.golemBlockCooldown > 0 && !golemIsWounded(enemy)) {
-    return false;
-  }
   if (!golemIsWounded(enemy)) {
     // Requiere un mínimo de stamina para no bloquear completamente seco.
     if (internal.golemStamina < 6.0) {
@@ -1313,7 +1292,6 @@ export function parryGolemHead(
     enemy.entity.vulnerableTimer ?? 0,
     GOLEM_PARRY_VULN_SEC,
   );
-  enemy.attackTimer = 2.0;
   enemy.hitFlash = Math.max(enemy.hitFlash, 1.5);
   // One-shot: forzar el reinicio del clip de aplastamiento.
   internal.golemRestartPending = true;
