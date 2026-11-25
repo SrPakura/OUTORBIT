@@ -1,3 +1,13 @@
+import {
+  ensureTutorialStorageInitialized,
+  loadButtonMappingArray,
+  loadOtherSettingsArray,
+  loadStoredLanguage,
+  saveButtonMappingArray,
+  saveOtherSettingsArray,
+  saveStoredLanguage,
+} from './localStorageState';
+
 // ============================================================================
 // Ajustes persistentes del juego (controles, cámara, audio y estilo visual)
 // ============================================================================
@@ -78,11 +88,11 @@ export const GAMEPAD_ACTIONS: GamepadAction[] = [
  */
 export type GamepadButtonIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17;
 
-/** Idioma de la interfaz (español base, inglés como plantilla). */
+/** Idioma de la interfaz ('en' por defecto, 'es' como alternativa). */
 export type Language = 'es' | 'en';
 
 export interface GameSettings {
-  /** Idioma de la UI ('es' por defecto, persistido en localStorage). */
+  /** Idioma de la UI ('en' por defecto, persistido en localStorage). */
   language: Language;
   /** Multiplicador de sensibilidad del ratón (0.25 .. 2.5). */
   mouseSensitivity: number;
@@ -156,7 +166,7 @@ export const DEFAULT_GAMEPAD_BINDINGS: Record<GamepadAction, GamepadButtonIndex>
 };
 
 export const DEFAULT_SETTINGS: GameSettings = {
-  language: 'es',
+  language: 'en',
   mouseSensitivity: 1.0,
   invertY: false,
   baseFov: 70,
@@ -268,7 +278,7 @@ function sanitizeSettings(raw: unknown): GameSettings {
       : DEFAULT_GAMEPAD_BINDINGS[action];
   }
   return {
-    language: source.language === 'en' ? 'en' : 'es',
+    language: source.language === 'es' ? 'es' : 'en',
     mouseSensitivity: clampNumber(
       source.mouseSensitivity,
       SETTINGS_LIMITS.mouseSensitivity.min,
@@ -323,20 +333,72 @@ function sanitizeSettings(raw: unknown): GameSettings {
 
 /** Lee los ajustes guardados (o los de fábrica si no hay nada válido). */
 export function loadGameSettings(): GameSettings {
+  ensureTutorialStorageInitialized();
+  let base: GameSettings = cloneGameSettings(DEFAULT_SETTINGS);
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (!stored) return cloneGameSettings(DEFAULT_SETTINGS);
-    return sanitizeSettings(JSON.parse(stored));
+    if (stored) {
+      base = sanitizeSettings(JSON.parse(stored));
+    }
   } catch {
     // localStorage bloqueado o JSON corrupto: la partida arranca por defecto.
-    return cloneGameSettings(DEFAULT_SETTINGS);
   }
+
+  // Aplicar entradas estructuradas si existen en localStorage.
+  const storedLang = loadStoredLanguage();
+  if (storedLang) {
+    base.language = storedLang;
+  } else {
+    saveStoredLanguage(base.language);
+  }
+
+  const buttonArray = loadButtonMappingArray();
+  if (buttonArray) {
+    for (const entry of buttonArray) {
+      if (entry.device === 'pc' && CONTROL_ACTIONS.includes(entry.action as ControlAction)) {
+        if (typeof entry.binding === 'string' && entry.binding.length > 0) {
+          base.bindings[entry.action as ControlAction] = entry.binding;
+        }
+      } else if (
+        entry.device === 'gamepad' &&
+        GAMEPAD_ACTIONS.includes(entry.action as GamepadAction)
+      ) {
+        if (typeof entry.binding === 'number') {
+          base.gamepadBindings[entry.action as GamepadAction] = clampButtonIndex(
+            entry.binding,
+            base.gamepadBindings[entry.action as GamepadAction],
+          );
+        }
+      }
+    }
+  } else {
+    saveButtonMappingArray(base.bindings, base.gamepadBindings);
+  }
+
+  const otherArray = loadOtherSettingsArray();
+  if (otherArray) {
+    const patch: Record<string, unknown> = {};
+    for (const entry of otherArray) {
+      if (entry && typeof entry.key === 'string') {
+        patch[entry.key] = entry.value;
+      }
+    }
+    base = sanitizeSettings({ ...base, ...patch });
+  } else {
+    saveOtherSettingsArray(base);
+  }
+
+  return base;
 }
 
 /** Guarda los ajustes saneados (silencioso si el navegador bloquea el storage). */
 export function saveGameSettings(settings: GameSettings): void {
+  const clean = sanitizeSettings(settings);
+  saveStoredLanguage(clean.language);
+  saveButtonMappingArray(clean.bindings, clean.gamepadBindings);
+  saveOtherSettingsArray(clean);
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitizeSettings(settings)));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
   } catch {
     // Modo privado / cuota llena: los ajustes viven solo en esta sesión.
   }

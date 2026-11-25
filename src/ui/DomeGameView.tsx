@@ -10,6 +10,11 @@ import type { EnemyArchetype } from '@/game/dome/DomeCombatSystem';
 import { DomeRunTracker, submitDomeRunToLeaderboard } from '@/game/dome/DomeRunStats';
 import type { DomeHudState } from '@/game/dome/domeTypes';
 import type { GameSettings } from '@/game/settings';
+import {
+  loadTutorialProgress,
+  setTutorialCompleted,
+  type TutorialProgressId,
+} from '@/game/localStorageState';
 import { SynthAudio } from '@/game/audio/SynthAudio';
 import { musicPlayer } from '@/game/audio/MusicPlayer';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
@@ -21,6 +26,7 @@ import SettingsScreen from '@/ui/SettingsScreen';
 import DomeBattleReport, { type DomeBattleReportData } from '@/ui/DomeBattleReport';
 import DomePauseModal from '@/ui/DomePauseModal';
 import DomeTrainingPanel, { type TrainingSlotInfo } from '@/ui/DomeTrainingPanel';
+import DomeTutorialCard from '@/ui/DomeTutorialCard';
 
 interface DomeGameViewProps {
   settings: GameSettings;
@@ -103,6 +109,15 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsOpenRef = useRef(false);
   settingsOpenRef.current = settingsOpen;
+  // Tutorial inicial de movimiento (una sola vez por jugador salvo reset).
+  const [activeTutorial, setActiveTutorial] = useState<TutorialProgressId | null>(() => {
+    if (training) return null;
+    const progress = loadTutorialProgress();
+    const mov = progress.find((entry) => entry.id === 'tutorial_de_movimiento');
+    return mov && !mov.completed ? 'tutorial_de_movimiento' : null;
+  });
+  const tutorialOpenRef = useRef(false);
+  tutorialOpenRef.current = activeTutorial !== null;
   // Recuerda si el jugador ya bloqueó el ratón en esta run: permite abrir la
   // pausa desde pointerlockchange aunque el navegador consuma la tecla ESC.
   const hadPointerLockRef = useRef(false);
@@ -260,6 +275,75 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
     trainingBridgeRef.current?.refillResources();
   }, []);
 
+  // Tutorial de rebotes: salta la primera vez que la mira se pone azul
+  // (suficiente velocidad apuntando a un suelo o iceberg).
+  useEffect(() => {
+    if (
+      training ||
+      activeTutorial !== null ||
+      isPauseOpen ||
+      levelUpState.isOpen ||
+      battleReport !== null ||
+      hud.kineticBounceState !== 'available'
+    ) {
+      return;
+    }
+    const progress = loadTutorialProgress();
+    const rebotes = progress.find((entry) => entry.id === 'tutorial_de_rebotes');
+    if (rebotes && !rebotes.completed) {
+      tutorialOpenRef.current = true;
+      if (document.pointerLockElement) {
+        document.exitPointerLock?.();
+      }
+      setActiveTutorial('tutorial_de_rebotes');
+    }
+  }, [
+    training,
+    activeTutorial,
+    isPauseOpen,
+    levelUpState.isOpen,
+    battleReport,
+    hud.kineticBounceState,
+  ]);
+
+  // Tutorial de slow-mo: salta la primera vez que el juego entra en cámara lenta.
+  useEffect(() => {
+    if (
+      training ||
+      activeTutorial !== null ||
+      isPauseOpen ||
+      levelUpState.isOpen ||
+      battleReport !== null ||
+      !hud.bulletTimeActive
+    ) {
+      return;
+    }
+    const progress = loadTutorialProgress();
+    const slowMo = progress.find((entry) => entry.id === 'tutorial_de_slow_mo');
+    if (slowMo && !slowMo.completed) {
+      tutorialOpenRef.current = true;
+      if (document.pointerLockElement) {
+        document.exitPointerLock?.();
+      }
+      setActiveTutorial('tutorial_de_slow_mo');
+    }
+  }, [
+    training,
+    activeTutorial,
+    isPauseOpen,
+    levelUpState.isOpen,
+    battleReport,
+    hud.bulletTimeActive,
+  ]);
+
+  const handleDismissTutorial = useCallback(() => {
+    if (activeTutorial) {
+      setTutorialCompleted(activeTutorial, true);
+    }
+    setActiveTutorial(null);
+    canvasRef.current?.requestPointerLock?.();
+  }, [activeTutorial]);
+
   const handleSubmitScore = useCallback(async (playerName: string) => {
     const tracker = runTrackerRef.current;
     const prog = progressionRef.current;
@@ -295,6 +379,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
       pauseOpenRef,
       settingsOpenRef,
       debugPanelOpenRef,
+      tutorialOpenRef,
       hadPointerLockRef,
     });
   }, [runSeed, training]);
@@ -318,9 +403,15 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
       <DomeDarkMatterRings controllerRef={controllerRef} />
       <DomeHudSketch
         hud={hud}
-        hidePointerLockPrompt={levelUpState.isOpen || battleReport !== null || isPauseOpen || (training && debugPanelOpen)}
+        hidePointerLockPrompt={
+          levelUpState.isOpen ||
+          battleReport !== null ||
+          isPauseOpen ||
+          activeTutorial !== null ||
+          (training && debugPanelOpen)
+        }
         audioRef={audioRef}
-        alertsEnabled={!isPauseOpen && !levelUpState.isOpen && battleReport === null}
+        alertsEnabled={!isPauseOpen && !levelUpState.isOpen && battleReport === null && activeTutorial === null}
       />
       {training && (debugPanelOpen || isPauseOpen) && (
         <DomeTrainingPanel
@@ -382,6 +473,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
           onSubmitScore={handleSubmitScore}
         />
       )}
+      <DomeTutorialCard tutorialId={activeTutorial} onDismiss={handleDismissTutorial} />
     </div>
   );
 }

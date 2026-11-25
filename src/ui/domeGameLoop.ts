@@ -92,6 +92,7 @@ export interface DomeGameLoopParams {
   pauseOpenRef: { current: boolean };
   settingsOpenRef: { current: boolean };
   debugPanelOpenRef: { current: boolean };
+  tutorialOpenRef: { current: boolean };
   hadPointerLockRef: { current: boolean };
 }
 
@@ -121,6 +122,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     pauseOpenRef,
     settingsOpenRef,
     debugPanelOpenRef,
+    tutorialOpenRef,
     hadPointerLockRef,
   } = params;
 
@@ -729,6 +731,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
 
   const onCanvasClick = () => {
     audio.unlock();
+    if (tutorialOpenRef.current) return;
     if (document.pointerLockElement !== canvas) {
       canvas.requestPointerLock?.();
     }
@@ -756,7 +759,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       !levelUpOpenRef.current &&
       !battleReportOpenRef.current &&
       !pauseOpenRef.current &&
-      !debugPanelOpenRef.current
+      !debugPanelOpenRef.current &&
+      !tutorialOpenRef.current
     ) {
       // El navegador consumió ESC para soltar el pointer lock: abre la pausa.
       setIsPauseOpen(true);
@@ -819,7 +823,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     if (e.code === 'Escape' || e.code === 'KeyP') {
       // Con la pantalla de ajustes abierta, ESC la cierra a ella (su propio
       // listener); el menú de pausa que hay debajo no debe moverse.
-      if (settingsOpenRef.current) return;
+      if (settingsOpenRef.current || tutorialOpenRef.current) return;
       if (levelUpOpenRef.current || battleReportOpenRef.current) return;
       if (pauseOpenRef.current) {
         // Cerrar la pausa con teclado: NO se pide el pointer lock aquí. La
@@ -838,7 +842,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       }
       return;
     }
-    if (pauseOpenRef.current) return;
+    if (pauseOpenRef.current || tutorialOpenRef.current) return;
     // Tab (Radar de enemigos, fuera de Training Mode): sin preventDefault el
     // navegador robaría el foco del canvas al pulsarla.
     if (e.code === 'Tab') e.preventDefault();
@@ -895,7 +899,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       }
     }
     if (gamepad.justPressedAction('pause')) {
-      if (!levelUpOpenRef.current && !battleReportOpenRef.current && !settingsOpenRef.current) {
+      if (
+        !levelUpOpenRef.current &&
+        !battleReportOpenRef.current &&
+        !settingsOpenRef.current &&
+        !tutorialOpenRef.current
+      ) {
         if (pauseOpenRef.current) {
           // Reanudar con mando NO captura el ratón: se puede seguir jugando
           // solo con el mando y el puntero libre.
@@ -911,7 +920,11 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       setIsPauseOpen(false);
     }
 
-    const menuPaused = levelUpOpenRef.current || battleReportOpenRef.current || pauseOpenRef.current;
+    const menuPaused =
+      levelUpOpenRef.current ||
+      battleReportOpenRef.current ||
+      pauseOpenRef.current ||
+      tutorialOpenRef.current;
     const isPaused = menuPaused || implosionCinematic !== null;
     const effRawDt = isPaused ? 0 : rawDt;
     const timeScale = controller ? controller.getTimeScale() : 1.0;

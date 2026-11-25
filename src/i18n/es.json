@@ -118,6 +118,7 @@
     "sfxVolume": "Volumen de sonidos y efectos",
     "invertY": "Invertir eje Y",
     "halftone": "Trama halftone (cómic)",
+    "skipTutorials": "Omitir tutoriales",
     "language": "Idioma",
     "restoreAll": "RESTAURAR TODO POR DEFECTO"
   },
@@ -172,6 +173,9 @@
     "saveError": "ERROR · REINTENTAR",
     "saveErrorHint": "NO SE PUDO CONTACTAR CON EL LEADERBOARD · REINTENTA",
     "saveHint": "SIN LOGIN OBLIGATORIO · RANKING GLOBAL",
+    "autoUploadingHint": "NUEVO RÉCORD PERSONAL · SUBIENDO COMO {{name}}...",
+    "autoUploadedHint": "NUEVO RÉCORD ({{score}}) · SUBIDO AUTOMÁTICAMENTE COMO {{name}}",
+    "belowRecordHint": "PILOTO {{name}} · RÉCORD PERSONAL: {{best}}",
     "savedOutOfTop": "MARCA REGISTRADA · {{name}} ({{score}}) FUERA DEL TOP 5",
     "playAgain": "JUGAR DE NUEVO",
     "mainMenu": "MENÚ PRINCIPAL"
@@ -196,6 +200,45 @@
     "title": "TUTORIALES",
     "subtitle": "Una mecánica por nivel · 5 lecciones jugables",
     "play": "JUGAR TUTORIAL"
+  },
+  "domeTutorial": {
+    "badge": "TUTORIAL",
+    "continueKey": "ESPACIO",
+    "continueAction": "Continuar",
+    "tutorial_de_movimiento": {
+      "number": "01",
+      "title": "MOVIMIENTO",
+      "wasdLabel": "WASD",
+      "spaceLabel": "ESPACIO",
+      "dashLabel": "CLIC DERECHO",
+      "attackLabel": "CLIC IZQUIERDO",
+      "legendMove": "MOVER 0G",
+      "legendBrake": "FRENAR",
+      "legendAttack": "ATAQUE / CAÍDA",
+      "legendDash": "DASH",
+      "paragraph1": "Muévete con WASD en un entorno de gravedad 0 frenético donde puedes alcanzar velocidades altísimas, y frena usando ESPACIO.",
+      "paragraph2": "Además, puedes ejecutar dashes en cualquier dirección con CLIC DERECHO, y con CLIC IZQUIERDO ataques a enemigos con auto-aim, o caídas al vacío para ganar gran velocidad si no apuntas a ningún enemigo."
+    },
+    "tutorial_de_rebotes": {
+      "number": "02",
+      "title": "REBOTES CINÉTICOS",
+      "reticleLabel": "MIRA AZUL",
+      "dashLabel": "CLIC DERECHO",
+      "legendReticle": "VELOCIDAD LISTA",
+      "legendBounce": "REBOTAR",
+      "paragraph1": "Cuando vas a la suficiente velocidad y apuntas a un suelo flotante o a su iceberg, la mira se pone azul.",
+      "paragraph2": "Pulsa CLIC DERECHO para rebotar contra la superficie y encadenar impulso, permitiéndote ganar muchísima velocidad."
+    },
+    "tutorial_de_slow_mo": {
+      "number": "03",
+      "title": "SLOW-MO",
+      "badgeTime": "TIEMPO 0.2x",
+      "chipParry": "PARRY",
+      "chipDodge": "ESQUIVE",
+      "chipSpecial": "MOV. ESPECIALES",
+      "paragraph1": "En el juego, ciertos ataques, parrys, esquives o movimientos especiales activan el modo slow-mo.",
+      "paragraph2": "Aprovecha esta ventana de cámara lenta para redirigir tu trayectoria con un dash o preparar el siguiente golpe."
+    }
   },
   "mobile": {
     "title": "SOLO PARA PC",

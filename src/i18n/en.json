@@ -118,6 +118,7 @@
     "sfxVolume": "Sounds & effects volume",
     "invertY": "Invert Y axis",
     "halftone": "Halftone pattern (comic)",
+    "skipTutorials": "Skip tutorials",
     "language": "Language",
     "restoreAll": "RESTORE ALL DEFAULTS"
   },
@@ -172,6 +173,9 @@
     "saveError": "ERROR · RETRY",
     "saveErrorHint": "COULD NOT CONTACT THE LEADERBOARD · RETRY",
     "saveHint": "NO LOGIN REQUIRED · GLOBAL RANKING",
+    "autoUploadingHint": "NEW PERSONAL BEST · UPLOADING AS {{name}}...",
+    "autoUploadedHint": "NEW RECORD ({{score}}) · AUTO-UPLOADED AS {{name}}",
+    "belowRecordHint": "PILOT {{name}} · PERSONAL BEST: {{best}}",
     "savedOutOfTop": "SCORE RECORDED · {{name}} ({{score}}) OUTSIDE TOP 5",
     "playAgain": "PLAY AGAIN",
     "mainMenu": "MAIN MENU"
@@ -196,6 +200,45 @@
     "title": "TUTORIALS",
     "subtitle": "One mechanic per level · 5 playable lessons",
     "play": "PLAY TUTORIAL"
+  },
+  "domeTutorial": {
+    "badge": "TUTORIAL",
+    "continueKey": "SPACE",
+    "continueAction": "Continue",
+    "tutorial_de_movimiento": {
+      "number": "01",
+      "title": "MOVEMENT",
+      "wasdLabel": "WASD",
+      "spaceLabel": "SPACE",
+      "dashLabel": "RIGHT CLICK",
+      "attackLabel": "LEFT CLICK",
+      "legendMove": "MOVE 0G",
+      "legendBrake": "BRAKE",
+      "legendAttack": "ATTACK / VOID FALL",
+      "legendDash": "DASH",
+      "paragraph1": "Move with WASD in a frenetic zero-G arena where you can reach extreme speeds, and brake using SPACE.",
+      "paragraph2": "Execute dashes in any direction with RIGHT CLICK, and use LEFT CLICK for auto-aim attacks on enemies — or Void Fall to gain massive speed when not aiming at any enemy."
+    },
+    "tutorial_de_rebotes": {
+      "number": "02",
+      "title": "KINETIC BOUNCE",
+      "reticleLabel": "BLUE RETICLE",
+      "dashLabel": "RIGHT CLICK",
+      "legendReticle": "SPEED READY",
+      "legendBounce": "BOUNCE",
+      "paragraph1": "When you're moving fast enough and aim at a floating slab or its iceberg, the reticle turns blue.",
+      "paragraph2": "Press RIGHT CLICK to bounce off the surface and chain momentum, letting you gain massive speed."
+    },
+    "tutorial_de_slow_mo": {
+      "number": "03",
+      "title": "SLOW-MO",
+      "badgeTime": "0.2x TIME",
+      "chipParry": "PARRY",
+      "chipDodge": "DODGE",
+      "chipSpecial": "SPECIAL MOVES",
+      "paragraph1": "In the game, certain attacks, parries, dodges, or special moves activate slow-mo mode.",
+      "paragraph2": "Use this dilated time window to redirect your trajectory with a dash or line up your next strike."
+    }
   },
   "mobile": {
     "title": "PC ONLY",

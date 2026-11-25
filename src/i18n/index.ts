@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { loadGameSettings, saveGameSettings, type Language } from '@/game/settings';
+import { loadStoredLanguage, saveStoredLanguage } from '@/game/localStorageState';
 import es from './es.json';
 import en from './en.json';
 
@@ -55,12 +56,12 @@ export interface I18nContextValue {
   t: (key: string, params?: TranslationParams) => string;
 }
 
-/** Contexto por defecto (sin provider): español y no-ops, nunca rompe la UI. */
+/** Contexto por defecto (sin provider): inglés y no-ops, nunca rompe la UI. */
 const DEFAULT_CONTEXT: I18nContextValue = {
-  language: 'es',
+  language: 'en',
   setLanguage: () => {},
   toggleLanguage: () => {},
-  t: (key, params) => interpolate(String(resolvePath(es, key) ?? key), params),
+  t: (key, params) => interpolate(String(resolvePath(en, key) ?? resolvePath(es, key) ?? key), params),
 };
 
 const I18nContext = createContext<I18nContextValue>(DEFAULT_CONTEXT);
@@ -68,15 +69,16 @@ const I18nContext = createContext<I18nContextValue>(DEFAULT_CONTEXT);
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState<Language>(() => {
     try {
-      return loadGameSettings().language;
+      return loadStoredLanguage() ?? loadGameSettings().language;
     } catch {
-      return 'es';
+      return 'en';
     }
   });
 
   const setLanguage = useCallback((next: Language) => {
     setLanguageState(next);
     try {
+      saveStoredLanguage(next);
       // Persiste SOLO el idioma sobre los ajustes ya guardados (no toca el resto).
       saveGameSettings({ ...loadGameSettings(), language: next });
     } catch {
@@ -88,6 +90,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     setLanguageState((prev) => {
       const next: Language = prev === 'es' ? 'en' : 'es';
       try {
+        saveStoredLanguage(next);
         saveGameSettings({ ...loadGameSettings(), language: next });
       } catch {
         // Sin persistencia: cambio solo en memoria.

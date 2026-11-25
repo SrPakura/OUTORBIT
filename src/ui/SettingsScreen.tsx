@@ -14,6 +14,7 @@ import {
   type GameSettings,
 } from '@/game/settings';
 import { getConnectedGamepadName, readConnectedGamepad } from '@/game/input/GamepadInput';
+import { areAllTutorialsCompleted, setAllTutorialsCompleted } from '@/game/localStorageState';
 import { useI18n } from '@/i18n';
 
 // ============================================================================
@@ -140,6 +141,7 @@ function ToggleRow({
 export default function SettingsScreen({ settings, onClose, onUpdateSettings }: SettingsScreenProps) {
   const { t, language, toggleLanguage } = useI18n();
   const [tab, setTab] = useState<SettingsTab>('general');
+  const [skipTutorials, setSkipTutorials] = useState<boolean>(() => areAllTutorialsCompleted());
   const [capturing, setCapturing] = useState<ControlAction | null>(null);
   const [capturingPad, setCapturingPad] = useState<GamepadAction | null>(null);
   const [padName, setPadName] = useState<string | null>(() => getConnectedGamepadName());
@@ -366,6 +368,15 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                 accent="#fbbf24"
                 checked={settings.halftonesEnabled}
                 onChange={(checked) => patch((draft) => ({ ...draft, halftonesEnabled: checked }))}
+              />
+              <ToggleRow
+                label={t('settings.skipTutorials')}
+                accent="#fbbf24"
+                checked={skipTutorials}
+                onChange={(checked) => {
+                  setAllTutorialsCompleted(checked);
+                  setSkipTutorials(checked);
+                }}
               />
               <div className="set-row set-row--toggle">
                 <span className="set-row__label">{t('settings.language')}</span>

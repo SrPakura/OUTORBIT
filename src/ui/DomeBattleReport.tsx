@@ -7,6 +7,12 @@ import {
   type ReactNode,
 } from 'react';
 import { fetchTopLeaderboard } from '@/api/leaderboard';
+import {
+  loadPersonalBestScore,
+  loadPilotNickname,
+  savePersonalBestScore,
+  savePilotNickname,
+} from '@/game/localStorageState';
 import type { LeaderboardEntryRecord } from '@/game/types';
 import { useI18n } from '@/i18n';
 
@@ -46,23 +52,6 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 /** Filas del Top que se muestran como preview del ranking global. */
 const BOARD_PREVIEW_LIMIT = 5;
-const PILOT_NAME_STORAGE_KEY = 'outorbit_pilot_name';
-
-function loadStoredPilotName(): string {
-  try {
-    return window.localStorage.getItem(PILOT_NAME_STORAGE_KEY) ?? '';
-  } catch {
-    return '';
-  }
-}
-
-function storePilotName(name: string): void {
-  try {
-    window.localStorage.setItem(PILOT_NAME_STORAGE_KEY, name);
-  } catch {
-    // localStorage opcional: ignorar si está bloqueado.
-  }
-}
 
 function formatTime(totalSec: number): string {
   const safe = Number.isFinite(totalSec) ? Math.max(0, totalSec) : 0;
@@ -126,7 +115,13 @@ export function DomeBattleReport({
   onExitToMenu,
   onSubmitScore,
 }: DomeBattleReportProps) {
-  const [playerName, setPlayerName] = useState<string>(loadStoredPilotName);
+  const [storedNickname] = useState<string>(() => loadPilotNickname().trim());
+  const hasStoredNickname = storedNickname.length > 0;
+  const [personalBest, setPersonalBest] = useState<number>(() => loadPersonalBestScore());
+  const [beatRecordOnMount] = useState<boolean>(
+    () => hasStoredNickname && Math.round(data.score) > loadPersonalBestScore(),
+  );
+  const [playerName, setPlayerName] = useState<string>(storedNickname);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   /** Nombre realmente enviado: resalta su fila en el preview del ranking. */
   const [savedName, setSavedName] = useState<string | null>(null);
@@ -135,10 +130,12 @@ export function DomeBattleReport({
   const [boardReloadKey, setBoardReloadKey] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const playAgainRef = useRef<HTMLButtonElement | null>(null);
+  const autoSubmittedRef = useRef(false);
   const { t, language } = useI18n();
 
   const locale = language === 'es' ? 'es-ES' : 'en-US';
   const formatScore = (value: number): string => Math.round(value).toLocaleString(locale);
+  const roundedRunScore = Math.round(data.score);
 
   // Preview del ranking: se recarga al montar y tras guardar la marca propia.
   useEffect(() => {
@@ -191,7 +188,11 @@ export function DomeBattleReport({
         setSaveState('error');
         return;
       }
-      storePilotName(name);
+      savePilotNickname(name);
+      if (roundedRunScore > personalBest) {
+        savePersonalBestScore(roundedRunScore);
+        setPersonalBest(roundedRunScore);
+      }
       setPlayerName(name);
       setSaveState('saved');
       setSavedName(name);
@@ -201,9 +202,35 @@ export function DomeBattleReport({
     } catch {
       setSaveState('error');
     }
-  }, [onSubmitScore, playerName, saveState, t]);
+  }, [onSubmitScore, personalBest, playerName, roundedRunScore, saveState, t]);
 
-  const roundedRunScore = Math.round(data.score);
+  // Si ya tiene apodo guardado y supera su récord personal, auto-sube sin clicks.
+  useEffect(() => {
+    if (!onSubmitScore || !beatRecordOnMount || autoSubmittedRef.current) return;
+    autoSubmittedRef.current = true;
+    let cancelled = false;
+    setSaveState('saving');
+    onSubmitScore(storedNickname)
+      .then((ok) => {
+        if (cancelled) return;
+        if (!ok) {
+          setSaveState('error');
+          return;
+        }
+        savePersonalBestScore(roundedRunScore);
+        setPersonalBest(roundedRunScore);
+        setSaveState('saved');
+        setSavedName(storedNickname);
+        setBoardReloadKey((key) => key + 1);
+      })
+      .catch(() => {
+        if (!cancelled) setSaveState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [beatRecordOnMount, onSubmitScore, roundedRunScore, storedNickname]);
+
   const isOwnRow = (entry: LeaderboardEntryRecord): boolean => {
     if (savedName === null) return false;
     const sameName = entry.player_name.trim().toLowerCase() === savedName.trim().toLowerCase();
@@ -298,7 +325,7 @@ export function DomeBattleReport({
                 ) : undefined
               }
             >
-              {onSubmitScore && (
+              {onSubmitScore && !hasStoredNickname && (
                 <form
                   className="brep-form"
                   onSubmit={(event) => {
@@ -333,6 +360,37 @@ export function DomeBattleReport({
                       : t('battleReport.saveHint')}
                   </p>
                 </form>
+              )}
+
+              {onSubmitScore && hasStoredNickname && (
+                <div className="brep-form">
+                  {saveState === 'error' && (
+                    <div className="brep-form__row">
+                      <button
+                        type="button"
+                        onClick={() => void handleSave()}
+                        className="brep-save is-error"
+                      >
+                        {t(SAVE_LABEL_KEYS.error)}
+                      </button>
+                    </div>
+                  )}
+                  <p className={`brep-hint${saveState === 'error' ? ' is-error' : ''}`}>
+                    {saveState === 'error'
+                      ? t('battleReport.saveErrorHint')
+                      : beatRecordOnMount
+                        ? saveState === 'saved'
+                          ? t('battleReport.autoUploadedHint', {
+                              name: storedNickname,
+                              score: formatScore(data.score),
+                            })
+                          : t('battleReport.autoUploadingHint', { name: storedNickname })
+                        : t('battleReport.belowRecordHint', {
+                            name: storedNickname,
+                            best: formatScore(personalBest),
+                          })}
+                  </p>
+                </div>
               )}
 
               {onSubmitScore && (
