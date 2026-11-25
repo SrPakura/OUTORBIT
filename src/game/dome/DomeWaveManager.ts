@@ -2253,10 +2253,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         enemy.entity.archetype === 'ground_golem' &&
         (internal.golemState === 'thin_spiral' || internal.golemState === 'thick_spiral');
       const crabOnSlab = isCrab && (internal.jump !== null || internal.attachedSlabId !== null);
+      const isKronos = enemy.entity.archetype === 'kronos_leviathan';
       if (
         activeSlabs &&
         !crabOnSlab &&
         !golemSpiral &&
+        !isKronos &&
         resolveSphereSlabCollision(activeSlabs, enemy.position, enemy.radius, _slabContact)
       ) {
         if (enemy.entity.archetype === 'ground_golem' && _slabContact.slab && onSlabSmash) {

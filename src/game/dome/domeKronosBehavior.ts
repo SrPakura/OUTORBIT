@@ -1115,10 +1115,11 @@ export function updateKronosMovement(
           } else {
             _v2.normalize();
           }
-          enemy.velocity
+          _toTarget
             .copy(_v2)
             .multiplyScalar(phaseSpeed * k.dodgeSign)
             .addScaledVector(_v1, phaseSpeed * 0.4);
+          enemy.velocity.lerp(_toTarget, 0.55);
           k.dodgeSign = k.dodgeSign === 1 ? -1 : 1;
           k.dodgeCd = KRONOS_DODGE_COOLDOWN;
           enemy.hitFlash = Math.max(enemy.hitFlash, 0.15);
