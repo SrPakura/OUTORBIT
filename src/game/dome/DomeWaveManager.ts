@@ -41,6 +41,7 @@ import {
   GOLEM_PARRY_COOLDOWN_SEC,
   GOLEM_PARRY_CRIT_RATIO,
   GOLEM_PARRY_EDEN_RATIO,
+  GOLEM_PARRY_HALO_HEIGHT,
   GOLEM_PARRY_MAX_Y_HIT_DIR,
   GOLEM_PARRY_TRIGGER_DIST,
   GOLEM_PARRY_WINDOW_SEC,
@@ -261,6 +262,7 @@ const _up = new THREE.Vector3(0, 1, 0);
 const _flat = new THREE.Vector3();
 const _shotDir = new THREE.Vector3();
 const _lookDir = new THREE.Vector3();
+const _preHitVel = new THREE.Vector3();
 const _aimDir = new THREE.Vector3();
 const _basisX = new THREE.Vector3();
 const _targetQuat = new THREE.Quaternion();
@@ -847,7 +849,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private readonly crabDangerRings: CrabDangerRing[] = [];
   private readonly crabDangerRingGeometry = new THREE.RingGeometry(0.92, 1, 64);
   /** Halo dorado sobre la cabeza del gólem durante la ventana de parry. */
-  private readonly golemParryHaloGeometry = new THREE.RingGeometry(1.1, 1.45, 64);
+  private readonly golemParryHaloGeometry = new THREE.RingGeometry(1.45, 2.1, 64);
   private readonly golemParryHaloMaterial: THREE.MeshBasicMaterial;
   private readonly golemParryHalo: THREE.Mesh;
   /** Id del gólem con la ventana de parry ABIERTA (null = ninguna). */
@@ -1474,6 +1476,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     const kineticMult = Math.max(0.6, Math.pow((impactSpeed ?? 16) / 14, 1.35));
     const baseKnockback = isDrill ? HIT_KNOCKBACK_DRILL : HIT_KNOCKBACK;
+    // Velocidad ANTES del knockback: si la pared del gólem absorbe el golpe,
+    // se restaura (300 kg de brazo macizo no se apartan tras cada patada).
+    _preHitVel.copy(internal.enemy.velocity);
     internal.enemy.velocity.addScaledVector(hitDir, baseKnockback * kineticMult);
     internal.enemy.hitFlash = Math.min(1.8, kineticMult);
     internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
@@ -1507,9 +1512,10 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         }
         parryGolemHead(internal.enemy, internal);
       } else if (this.isGolemGuardBlocking(internal.enemy, hitDir)) {
-        // Pared maciza: el golpe frontal se queda en el brazo gigante
-        // (domeGameLoop consulta el bloqueo y anula el daño cinético).
-        internal.enemy.velocity.multiplyScalar(0.15);
+        // Pared maciza: el golpe frontal se queda en el brazo gigante y la
+        // masa ni se inmuta (domeGameLoop consulta el bloqueo y anula el
+        // daño cinético; el rebote de Nyx lo pone applyWallRepel).
+        internal.enemy.velocity.copy(_preHitVel);
         internal.enemy.hitFlash = Math.min(internal.enemy.hitFlash, 0.35);
         internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
       } else {
@@ -3044,10 +3050,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       return; // Cooldown por gólem tras su última oportunidad.
     }
     if (this.golemInfo.edenRatio < GOLEM_PARRY_EDEN_RATIO) {
-      return; // Nyx sin Eden no puede rematar: la ventana sería un blur.
+      return; // Nyx sin Eden no puede rematar: la ventana sería un bluff.
     }
-    if (enemy.position.distanceTo(playerPos) > GOLEM_PARRY_TRIGGER_DIST) {
-      return; // Demasiado lejos para el remate de 2 dashes.
+    const dist = enemy.position.distanceTo(playerPos);
+    if (dist > GOLEM_PARRY_TRIGGER_DIST && !this.golemInfo.attacking) {
+      return; // Lejos y sin ataque en vuelo: la ventana no va a ningún sitio.
     }
     this.golemParryTargetId = enemy.id;
     this.golemParryEnemy = enemy;
@@ -3073,7 +3080,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     if (isParryTarget) {
       this.golemParryHalo.visible = true;
       this.golemParryHalo.position.copy(enemy.position);
-      this.golemParryHalo.position.y += enemy.radius + 2.2;
+      this.golemParryHalo.position.y += enemy.radius + GOLEM_PARRY_HALO_HEIGHT;
       this.golemParryHalo.scale.setScalar(1 + 0.12 * Math.sin(elapsed * 9));
       this.golemParryHaloMaterial.opacity = 0.55 + 0.3 * Math.sin(elapsed * 9);
     } else if (this.golemParryTimer <= 0) {

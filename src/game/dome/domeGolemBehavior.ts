@@ -97,17 +97,25 @@ export const GOLEM_THREAT_RANGE = 20.0;
 export const GOLEM_BLOCK_REACT_COOLDOWN = 1.8;
 
 // --- Parry de la pared (ventana de remate en slow-mo) ---
-/** Segundos de MUNDO que dura la oportunidad abierta al izar la pared (s). */
-export const GOLEM_PARRY_WINDOW_SEC = 2.4;
+/**
+ * Segundos de MUNDO que dura la oportunidad abierta al izar la pared (s). El
+ * controller abre su slow-mo equivalente en tiempo REAL
+ * (GOLEM_PARRY_WINDOW_SEC / REDIRECT_TIME_SCALE) para que ambos caduquen juntos.
+ */
+export const GOLEM_PARRY_WINDOW_SEC = 1.6;
 /** Cooldown POR GÓLEM entre oportunidades de parry (s). */
-export const GOLEM_PARRY_COOLDOWN_SEC = 12.0;
+export const GOLEM_PARRY_COOLDOWN_SEC = 18.0;
 /** Eden necesario para la oportunidad: los 2 dashes del remate (ratio). */
 export const GOLEM_PARRY_EDEN_RATIO = 0.06;
 /** Daño del remate en la ventana: fracción de la vida TOTAL del gólem. */
 export const GOLEM_PARRY_CRIT_RATIO = 0.35;
-/** Distancia máxima de Nyx para abrir la oportunidad (m). */
-export const GOLEM_PARRY_TRIGGER_DIST = 40.0;
-
+/**
+ * Distancia máxima de Nyx para abrir la oportunidad (m); con un ataque en
+ * vuelo basta cualquier distancia de bloqueo (la pared sale a recibirlo).
+ */
+export const GOLEM_PARRY_TRIGGER_DIST = 14.0;
+/** Altura del aro dorado sobre el centro del gólem, en radios (m). */
+export const GOLEM_PARRY_HALO_HEIGHT = 3.0;
 // --- Descanso voluntario (stamina) ---
 /** Bajo esto, con Nyx pasiva, se retira a descansar en vez de pelear en seco. */
 export const GOLEM_REST_STAMINA = 25.0;
@@ -1021,7 +1029,11 @@ export function updateGolemAttack(
         internal.golemStamina -= GOLEM_STAMINA_DRAIN_BLOCK * dt;
       }
       const dist = enemy.position.distanceTo(playerPos);
-      if (dist < GOLEM_BLOCK_DROP_PUNCH_DIST) {
+      // Provocación HONESTA: el puñetazo solo suelta la guardia si Nyx NO
+      // tiene un ataque en vuelo — una patada/taladro en curso (info.
+      // attacking) debe estrellarse contra la pared y rebotar, no contra
+      // una panza que se descubre sola justo antes del impacto.
+      if (dist < GOLEM_BLOCK_DROP_PUNCH_DIST && !info.attacking) {
         // Nyx provoca el ataque: la guardia se suelta en un puñetazo.
         startGolemPunch(enemy, internal);
         return;

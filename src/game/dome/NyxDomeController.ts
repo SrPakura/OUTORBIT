@@ -23,6 +23,7 @@ import {
   type SlabContact,
 } from '@/game/dome/DomeSlabs';
 import { KINETIC_BOUNCE, KineticBounceState } from '@/game/dome/nyxKineticBounce';
+import { GOLEM_PARRY_WINDOW_SEC } from '@/game/dome/domeGolemBehavior';
 import { NyxAnimator, type NyxAnimParams, type NyxAnimState } from '@/game/render/nyxAnimator';
 import type { NyxWalkPlayer } from '@/game/render/nyxWalkPlayer';
 import type { NyxClips } from '@/game/render/nyxModelLoader';
@@ -382,6 +383,9 @@ export class NyxDomeController {
   private redirectTargetEnemy: TestEnemySphere | null = null;
   private redirectWindowTimer = 0; // segundos REALES de ventana restantes
   private redirectReArm = 0; // antirrebote tras cerrarse la ventana
+  // --- Parry del Gólem: la ventana apunta al aro dorado, no a un evasivo
+  private parryWindowActive = false;
+  private parryDashUsed = false;
   private reticleLockState: ReticleLockState = 'none';
   // Enemigo lockeado proyectado a <= RETICLE_LOCK_RADIUS_PX del centro del
   // visor este frame (se recalcula en updateReticle, antes de la física).
@@ -614,6 +618,9 @@ export class NyxDomeController {
    * un Dash todavía puede curvar el golpe para alcanzarlo.
    */
   notifyEnemyEvaded(): void {
+    // Durante el parry del Gólem la ventana YA está abierta y apuntada: un
+    // dash evasivo de OTRO enemigo no debe robarle el objetivo ni el lock.
+    if (this.parryWindowActive) return;
     const target = this.lockedEnemy ?? this.redirectTargetEnemy;
     if (target) {
       this.redirectTargetEnemy = target;
@@ -626,14 +633,18 @@ export class NyxDomeController {
   }
 
   /**
-   * Ventana de parry del Gólem: abre la Cámara Lenta de Redirección apuntando
-   * al gólem que acaba de izar la pared, SIN romper el lock (a diferencia de
-   * `notifyEnemyEvaded`) — la oportunidad existe para quien tenga Eden para
-   * los 2 dashes del remate en cabeza.
+   * Ventana de parry del Gólem: abre la Cámara Lenta apuntando al gólem que
+   * acaba de izar la pared, SIN romper el lock (a diferencia de
+   * `notifyEnemyEvaded`). La duración es FIJA y en tiempo REAL equivalente a
+   * los GOLEM_PARRY_WINDOW_SEC de mundo del manager (los dos caducan juntos),
+   * no la ventana corta del dash de redirección: el remate necesita dash +
+   * apuntado + taladro completo dentro del slow-mo.
    */
   openParryWindow(target: TestEnemySphere): void {
     this.redirectTargetEnemy = target;
-    this.redirectWindowTimer = this.computeRedirectWindowSec(target);
+    this.redirectWindowTimer = GOLEM_PARRY_WINDOW_SEC / REDIRECT_TIME_SCALE;
+    this.parryWindowActive = true;
+    this.parryDashUsed = false;
   }
 
   onMouseMove(dx: number, dy: number): void {
@@ -1022,6 +1033,8 @@ export class NyxDomeController {
       this.redirectWindowTimer = Math.max(0, this.redirectWindowTimer - rawDt);
       if (this.redirectWindowTimer === 0) {
         this.redirectReArm = REDIRECT_REARM_COOLDOWN;
+        this.parryWindowActive = false;
+        this.parryDashUsed = false;
         if (!this.lockedEnemy) this.redirectTargetEnemy = null;
       }
     } else if (this.redirectReArm > 0) {
@@ -1291,6 +1304,9 @@ export class NyxDomeController {
     this.lockedEnemyInReticle = false;
     if (this.redirectTargetEnemy && (!enemies || enemies.indexOf(this.redirectTargetEnemy) < 0)) {
       this.redirectTargetEnemy = null;
+      this.parryWindowActive = false;
+      this.parryDashUsed = false;
+      this.redirectWindowTimer = 0;
     }
     if (this.lockedEnemy && (!enemies || enemies.indexOf(this.lockedEnemy) < 0)) {
       this.breakLock(this.mode === 'speed_attack' && this.lockedEnemy !== null);
@@ -1566,6 +1582,9 @@ export class NyxDomeController {
     const prev = this.lockedEnemy;
     this.lockedEnemy = null;
     this.reticleLockState = 'none'; // se recalcula a 'can_lock'/'none' en el mismo frame
+    // Con el parry del Gólem abierto, romper el lock NO abre la ventana corta
+    // de evasivo (machacaría el objetivo del remate); solo rompe el lock.
+    if (this.parryWindowActive) return;
     if (wasAttacking && prev) {
       this.redirectTargetEnemy = prev;
       this.redirectWindowTimer = this.computeRedirectWindowSec(prev);
@@ -1620,6 +1639,20 @@ export class NyxDomeController {
    * Derecho ADJUDICA la Sentadilla Cinética (0 Edén) en vez de dashear.
    */
   private handleDash(f: number, r: number): void {
+    // --- Parry del Gólem: si la ventana del remate está abierta, el Dash va
+    // DIRECTO al aro dorado sobre su cabeza (no es un dash lateral de WASD,
+    // ni el dash de redirección hacia el cuerpo). Cancela el ataque en
+    // curso, mantiene la cámara lenta y deja a Nyx por encima de la cabeza
+    // lista para el taladro descendente. Solo el primero de la ventana.
+    if (
+      this.parryWindowActive &&
+      !this.parryDashUsed &&
+      this.redirectTargetEnemy &&
+      this.eden >= EDEN_DASH_COST
+    ) {
+      this.parryDashUp(this.redirectTargetEnemy);
+      return;
+    }
     // --- Sentadilla Cinética optativa: pared en la mira (estrella azul
     // clarito) + velocidad mínima → el clic se consume en el rebote. Sin
     // velocidad o sin pared, cae al dash normal: el botón nunca muere.
@@ -1761,6 +1794,51 @@ export class NyxDomeController {
    * ¿Apunta el Dash W/A/D hacia el enemigo (frente) o hacia el lado por el que
    * el cuerpo debe girar respecto a su vector de velocidad para alcanzarlo?
    */
+  /**
+   * Dash del parry del Gólem: impulso directo hacia la cabeza del gólem
+   * (el aro dorado), parta de donde parta Nyx y sin importar el modo en el
+   * que esté (cancela ataques en curso). A diferencia del dash de redirección
+   * NO corta la cámara lenta: la ventana del remate sigue abierta para que
+   * el taladro descendente se lance en el mismo slow-mo.
+   */
+  private parryDashUp(target: TestEnemySphere): void {
+    this.eden -= EDEN_DASH_COST;
+    this.parryDashUsed = true;
+    // Objetivo: la zona de la cabeza (donde flota el aro), nunca el centro.
+    this.tmpA.copy(target.position);
+    this.tmpA.y += target.radius + 2.0;
+    this.tmpA.sub(this.nyxRoot.position);
+    if (this.tmpA.lengthSq() < 1e-6) {
+      this.tmpA.copy(this.camFwd);
+    } else {
+      this.tmpA.normalize();
+    }
+    const dashSpd = DASH_SPEED * this.speedMultiplier;
+    // Cancela cualquier ataque en curso: el remate se lanza desde arriba.
+    this.speedAttackKind = null;
+    this.attackElapsed = 0;
+    this.animLock = null;
+    this.velocity.copy(this.tmpA).multiplyScalar(dashSpd);
+    this.dashDir.copy(this.tmpA);
+    this.dashSpeed = dashSpd;
+    this.dashIsForward = false;
+    this.dashSideRoll = 0;
+    this.dashWobbleImpulse = 1.2;
+    this.mode = 'dashing';
+    this.dashTimer = DASH_DURATION;
+    this.animator.setState('air_dash');
+    this.startCamTug();
+    this.shake = Math.max(this.shake, 0.2);
+    this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
+    this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
+    this.audio?.playGravityShift();
+    // NO se fuerza el lock: si se fijara aquí, el LMB del remate saldría
+    // como Caída al Vacío (el flujo de can_lock es quien convierte el ataque
+    // en TALADRO). Nyx mira a la cabeza mientras sube y el ataque entra por
+    // el lock normal, con la velocidad del dash (31 m/s >= umbral de taladro).
+    // La cámara lenta NO se corta: la ventana de GOLEM_PARRY_WINDOW_SEC sigue.
+  }
+
   private isRedirectDashDir(f: number, r: number, target: TestEnemySphere): boolean {
     const toEnemy = this.tmpB.copy(target.position).sub(this.nyxRoot.position);
     if (toEnemy.lengthSq() < 1e-6) return false;
