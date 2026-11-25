@@ -878,7 +878,6 @@ export default function DomeLevelUpSequence({
 
           <main className="lu-stage">
             {choices.map((option, i) => {
-              const isUpgrade = option.nextLevel > option.currentLevel;
               return (
                 <div key={option.id} className="lu-card-slot">
                   <div
@@ -922,7 +921,6 @@ export default function DomeLevelUpSequence({
                     <span className="lu-card__key">[{i + 1}]</span>
                     <div className="lu-shock" />
                     <div className="lu-stamp">{t('levelUp.chosen')}</div>
-                    {isUpgrade && <span className="lu-card__upgrade">{t(`levelUp.kind.${option.kind}`)}</span>}
                   </div>
                 </div>
               );

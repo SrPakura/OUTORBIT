@@ -51,7 +51,7 @@ function DomeSkillSlotsHudInner({ slots }: DomeSkillSlotsHudProps) {
       style={{
         left: 'calc(20px + min(420px, 30vw) * (100 / 420))',
         top: 'calc(20px + min(420px, 30vw) * (200 / 420) + 6px)',
-        gap: 'clamp(8px, 0.9vw, 13px)',
+        gap: 'clamp(12px, 1.25vw, 18px)',
       }}
     >
       {slots.map((slot, i) => {
@@ -215,9 +215,12 @@ function DomeSkillSlotsHudInner({ slots }: DomeSkillSlotsHudProps) {
               </text>
             </svg>
 
-            {/* Pips de nivel de habilidad (abajo a la izquierda) */}
+            {/* Pips de nivel de habilidad (centrados bajo el círculo) */}
             {equipped && slot.level > 0 && (
-              <div className="absolute -bottom-0.5 left-0.5 z-20 flex gap-[3px]">
+              <div
+                className="absolute left-1/2 z-20 flex -translate-x-1/2 gap-[4px]"
+                style={{ top: 'calc(100% + 2px)' }}
+              >
                 {Array.from({ length: slot.level }, (_, idx) => (
                   <span
                     key={idx}
