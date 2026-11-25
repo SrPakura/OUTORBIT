@@ -15,6 +15,12 @@
 // Autoplay: los navegadores bloquean `play()` sin un gesto previo del usuario.
 // Si la promesa se rechaza, la pista queda pendiente y se reintenta en el
 // primer pointerdown/keydown.
+//
+// MPRIS (widget multimedia del escritorio): un ÚNICO `<audio>` oculto montado
+// en `document.body` que cambia de `src` entre pistas. Elementos sueltos sin
+// DOM (o saltar de elemento en elemento) hacen que Firefox/Linux pierda la
+// sesión del widget; portada en URL absoluta y duración vía
+// `setPositionState` para que salga el reloj en vez de `--:-- / --:--`.
 
 export type MusicTrackId = 'menu' | 'waveA' | 'waveB' | 'boss';
 
@@ -32,8 +38,12 @@ const TRACK_SOURCES: Record<MusicTrackId, string> = {
  * como con Spotify web o YouTube. Una ÚNICA portada para todo el OST
  * (`public/audio/covers/cover.webp`, cuadrada, 512px+); cada pista se
  * distingue en el widget por su título.
+ *
+ * URL ABSOLUTA deliberada: los puentes MPRIS de Linux (Firefox) descartan
+ * portadas con ruta relativa — la portada se resuelve contra el origen real
+ * de la página, vale igual en dev (localhost) y en producción (base44.app).
  */
-const COVER_ART = '/audio/covers/cover.webp';
+const COVER_ART = new URL('/audio/covers/cover.webp', window.location.origin).href;
 
 const TRACK_TITLES: Record<MusicTrackId, string> = {
   menu: 'Menú',
@@ -60,6 +70,26 @@ function setMediaPlayback(state: MediaSessionPlaybackState): void {
 }
 
 /**
+ * Duración/posición de la pista para el widget: sin estado de posición,
+ * muchos widgets MPRIS muestran `--:-- / --:--` (portada y título salen,
+ * pero el reloj no). Se publica al `loadedmetadata` de cada pista.
+ */
+function publishPositionState(el: HTMLAudioElement): void {
+  if (!('mediaSession' in navigator)) return;
+  const duration = Number.isFinite(el.duration) ? el.duration : 0;
+  if (duration <= 0 || el.playbackRate <= 0) return;
+  try {
+    navigator.mediaSession.setPositionState({
+      duration,
+      playbackRate: el.playbackRate,
+      position: Math.min(el.currentTime, duration),
+    });
+  } catch {
+    // Duración/posición fuera de rango (metadata a medias): se ignora.
+  }
+}
+
+/**
  * Volumen base de la música; el multiplicador de ajustes se aplica encima.
  * Se queda por debajo de los efectos para que las alertas del HUD (vida,
  * Edén, subida de nivel, oleada) se oigan siempre por encima del tema.
@@ -80,7 +110,15 @@ const NATURAL_NEXT: Record<MusicTrackId, MusicTrackId> = {
 };
 
 export class MusicPlayer {
-  private readonly elements = new Map<MusicTrackId, HTMLAudioElement>();
+  /**
+   * ÚNICO `<audio>` de la música, OCULTO y MONTADO en `document.body`.
+   * Firefox sobre Linux solo expone al widget MPRIS los elementos de audio
+   * que viven en el DOM, y saltar de elemento en elemento al cambiar de
+   * pista (el viejo Map con un `<audio>` por canción) le hacía perder la
+   * sesión: con un único elemento que cambia de `src` el controlador no
+   * pierde el foco nunca (pasa como con el reproductor de Spotify web).
+   */
+  private el: HTMLAudioElement | null = null;
   private current: MusicTrackId | null = null;
   /** Pista pedida mientras suena otra (no jefe): suena al terminar la actual. */
   private queued: MusicTrackId | null = null;
@@ -172,11 +210,12 @@ export class MusicPlayer {
   dispose(): void {
     this.stopTimer();
     this.clearGap();
-    for (const el of this.elements.values()) {
-      el.pause();
-      el.removeAttribute('src');
+    if (this.el !== null) {
+      this.el.pause();
+      this.el.removeAttribute('src');
+      this.el.remove();
+      this.el = null;
     }
-    this.elements.clear();
     this.current = null;
     this.pendingSwitch = null;
     this.queued = null;
@@ -187,13 +226,39 @@ export class MusicPlayer {
   // Interno
   // --------------------------------------------------------------------------
 
+  /**
+   * Crea (una sola vez) el `<audio>` del reproductor y lo MONTA oculto en
+   * `document.body`: sin DOM, Firefox/Linux no lo ve para MPRIS.
+   */
+  private element(): HTMLAudioElement {
+    if (this.el !== null) return this.el;
+    const el = new Audio();
+    // Sin loop: la pista vive de inicio a fin y el `ended` decide qué
+    // viene después (silencio aleatorio + siguiente).
+    el.loop = false;
+    el.preload = 'auto';
+    el.hidden = true;
+    document.body.appendChild(el);
+    el.addEventListener('ended', () => this.onTrackEnded());
+    // El reloj del widget: sin esto, Media Session arranca sin duración y
+    // el sistema muestra `--:-- / --:--` hasta que algo la refresque.
+    el.addEventListener('loadedmetadata', () => publishPositionState(el));
+    this.el = el;
+    return el;
+  }
+
   /** Arranca una pista desde el principio con fundido de entrada. */
   private startTrack(track: MusicTrackId): void {
     this.current = track;
     this.queued = null;
     this.pendingSwitch = null;
-    const el = this.element(track);
+    const el = this.element();
+    // Mismo `<audio>`, nueva `src`: reciclar elemento (no crear otro) es lo
+    // que mantiene viva la sesión MPRIS entre pistas.
+    el.src = TRACK_SOURCES[track];
     el.currentTime = 0;
+    // Entrada desde nada: el fundido de arranque sube hasta el objetivo.
+    el.volume = 0.01;
     this.resume(el, track);
     this.startFade();
     // Media Session: portada + título en el widget del sistema, estado sonando.
@@ -202,24 +267,10 @@ export class MusicPlayer {
     this.bindMediaSessionActions();
   }
 
-  private element(track: MusicTrackId): HTMLAudioElement {
-    let el = this.elements.get(track);
-    if (!el) {
-      el = new Audio(TRACK_SOURCES[track]);
-      // Sin loop: la pista vive de inicio a fin y el `ended` decide qué
-      // viene después (silencio aleatorio + siguiente).
-      el.loop = false;
-      el.preload = 'auto';
-      el.volume = 0.01;
-      el.addEventListener('ended', () => this.onTrackEnded(track));
-      this.elements.set(track, el);
-    }
-    return el;
-  }
-
   /** Fin natural de una pista: silencio de 3-6 s y luego la siguiente. */
-  private onTrackEnded(track: MusicTrackId): void {
-    if (this.current !== track || this.pendingSwitch !== null) return;
+  private onTrackEnded(): void {
+    const track = this.current;
+    if (track === null || this.pendingSwitch !== null) return;
     const next = this.queued ?? NATURAL_NEXT[track];
     this.queued = null;
     setMediaPlayback('paused');
@@ -276,7 +327,7 @@ export class MusicPlayer {
       const track = this.blocked;
       this.blocked = null;
       if (track && this.current === track) {
-        this.resume(this.element(track), track);
+        this.resume(this.element(), track);
         setMediaPlayback(this.muted ? 'paused' : 'playing');
       }
     };
@@ -296,23 +347,35 @@ export class MusicPlayer {
   }
 
   private tick(): void {
-    const target = this.targetVolume();
-    // Durante una interrupción, la pista pendiente es la que sube: la actual
-    // se funde a cero aunque siga siendo `current` hasta el relevo.
-    const rising = this.pendingSwitch ?? this.current;
-    let moving = false;
-    for (const [id, el] of this.elements) {
-      const goal = id === rising ? target : 0;
-      const diff = goal - el.volume;
-      if (Math.abs(diff) <= FADE_STEP) {
-        if (el.volume !== goal) el.volume = goal;
-        if (id !== this.current && !el.paused) el.pause();
-        continue;
-      }
-      el.volume = Math.min(1, Math.max(0, el.volume + Math.sign(diff) * FADE_STEP));
-      moving = true;
+    const el = this.el;
+    if (el === null) {
+      this.stopTimer();
+      return;
     }
-    if (moving) return;
+    const target = this.targetVolume();
+    // Interrupción en curso: la pista ACTUAL se funde a cero (el relevo
+    // sube ya como `current` con su propio cambio de src). Tras stop():
+    // fundido a cero y pausa. El resto de cambios (multiplicador/mute) solo
+    // persiguen el objetivo sobre la pista que suena.
+    const goal =
+      this.pendingSwitch !== null || this.current === null ? 0 : target;
+    const diff = goal - el.volume;
+    if (Math.abs(diff) > FADE_STEP) {
+      el.volume = Math.min(1, Math.max(0, el.volume + Math.sign(diff) * FADE_STEP));
+      return;
+    }
+    if (el.volume !== goal) el.volume = goal;
+    // Muteado NO pausa: la pista sigue avanzando a volumen 0 (el unmute
+    // cae en el compás real). Solo se congela al interrumpir o parar,
+    // cuando el elemento ya va a cambiar de src o callar para siempre.
+    if (
+      goal === 0 &&
+      this.pendingSwitch === null &&
+      this.current === null &&
+      !el.paused
+    ) {
+      el.pause();
+    }
     this.stopTimer();
     // El fundido de interrupción terminó: arranca la pista pendiente.
     if (this.pendingSwitch !== null) {
