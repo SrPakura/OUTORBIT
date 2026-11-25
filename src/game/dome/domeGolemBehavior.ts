@@ -181,13 +181,21 @@ export const GOLEM_CHARGE_END_SEC = 0.5;
 
 // --- Bloqueo (pared maciza frontal, reactivo) ---
 /**
- * La pared SE MANTIENE mientras Nyx sea una amenaza (apunte/ataque en
- * serio): cada frame de amenaza rearma el timer. Sin amenaza, baja sola
- * tras GOLEM_BLOCK_RELAX_SEC. El tope absoluto lo pone la stamina (-4/s).
+ * La pared sigue el INTERVALO DEL INTERCAMBIO: una vez izada tiene un PISO
+ * de GOLEM_BLOCK_FLOOR_SEC que NADA acorta (ni que la amenaza desaparezca
+ * en el primer frame — el hit llega después del agresivo terminar), y se
+ * REARMA mientras Nyx siga siendo amenaza (ataque en curso o trayectoria
+ * entrante). Sin amenaza tras el piso, cola de GOLEM_BLOCK_RELAX_SEC y
+ * baja. El tope absoluto lo pone la stamina (-4/s).
  */
-export const GOLEM_BLOCK_HOLD_SEC = 0.78;
-/** Sin amenaza: la pared baja tras este tiempo (s). */
-export const GOLEM_BLOCK_RELAX_SEC = 0.78;
+export const GOLEM_BLOCK_FLOOR_SEC = 2.0;
+export const GOLEM_BLOCK_HOLD_SEC = 0.9;
+/** Sin amenaza y piso vencido: cola de bajada (s). */
+export const GOLEM_BLOCK_RELAX_SEC = 0.9;
+/** Anticipación honesta: sin este time-to-impacto no vale izar la pared. */
+export const GOLEM_BLOCK_RAISE_NEED_SEC = 0.55;
+/** Trayectoria entrante: velocidad mínima de Nyx hacia el gólem (m/s). */
+export const GOLEM_INCOMING_SPEED = 10.0;
 /** Provocación: si Nyx entra aquí durante la guardia, la suelta y puñetea. */
 export const GOLEM_BLOCK_DROP_PUNCH_DIST = 8.0;
 /**
@@ -293,20 +301,17 @@ function turnTowardsHonest(
 }
 
 /**
- * ¿Es Nyx una amenaza REAL para este gólem? SOLO cuenta un ataque EN CURSO
- * apuntándole: la mirada YA NO BLOQUEA — antes levantaba la pared por un
- * apunte fino aunque Nyx no estuviera haciendo nada ("bloquea si lo miro",
- * incluso lejos). Herido, el cono se relaja: el que va perdiendo se cubre
- * antes.
+ * ¿Es Nyx una amenaza REAL para este gólem? Cuenta un ataque EN CURSO
+ * apuntándole O una TRAYECTORIA ENTRANTE lanzada hacia él (el modo
+ * speed_attack puede terminar ANTES del contacto: la wall no debe caer
+ * mientras Nyx vuela hacia el impacto). La mirada quieta NO bloquea.
+ * Herido, el cono se relaja: el que va perdiendo se cubre antes.
  */
 function isThreatToGolem(
   enemy: ManagedWaveEnemy,
   playerPos: THREE.Vector3,
   info: GolemPlayerInfo,
 ): boolean {
-  if (!info.attacking) {
-    return false;
-  }
   const dist = enemy.position.distanceTo(playerPos);
   if (dist > GOLEM_THREAT_RANGE) {
     return false;
@@ -316,8 +321,22 @@ function isThreatToGolem(
     return true;
   }
   _aimDir.normalize();
-  const cone = golemIsWounded(enemy) ? GOLEM_THREAT_WOUNDED_DOT : GOLEM_THREAT_ATTACK_DOT;
-  return info.aimForward.dot(_aimDir) > cone;
+  if (info.attacking) {
+    const cone = golemIsWounded(enemy) ? GOLEM_THREAT_WOUNDED_DOT : GOLEM_THREAT_ATTACK_DOT;
+    if (info.aimForward.dot(_aimDir) > cone) {
+      return true;
+    }
+  }
+  // Trayectoria entrante: velocidad alta APUNTADA al gólem (el vuelo del
+  // ataque tras soltar no puede despistar a la pared).
+  const speed = info.vel.length();
+  if (speed > GOLEM_INCOMING_SPEED) {
+    _targetVel.copy(info.vel).divideScalar(speed);
+    if (_targetVel.dot(_aimDir) > 0.75) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** ¿Va tan bajo el gólem que un intercambio le sale caro? */
@@ -550,7 +569,7 @@ export function updateGolemAttack(
         return;
       }
       // Amenaza REAL (ataque en curso hacia él): pared ANTES de comérselo.
-      if (isThreatToGolem(enemy, playerPos, info) && tryStartGolemBlock(enemy, internal)) {
+      if (isThreatToGolem(enemy, playerPos, info) && tryStartGolemBlock(enemy, internal, playerPos, info)) {
         return;
       }
       if (enemy.attackTimer > 0) {
@@ -624,7 +643,7 @@ export function updateGolemAttack(
         return;
       }
       // Me está atacando apuntándome: pared si puede (cooldown mediante).
-      if (isThreatToGolem(enemy, playerPos, info) && tryStartGolemBlock(enemy, internal)) {
+      if (isThreatToGolem(enemy, playerPos, info) && tryStartGolemBlock(enemy, internal, playerPos, info)) {
         return;
       }
       if (internal.golemTimer > 0) {
@@ -680,7 +699,7 @@ export function updateGolemAttack(
       }
       if (threat) {
         // Nyx le corta el descanso atacándolo: pared (si puede) o al ruedo YA.
-        if (tryStartGolemBlock(enemy, internal)) {
+        if (tryStartGolemBlock(enemy, internal, playerPos, info)) {
           return;
         }
         internal.golemState = 'helicopter';
@@ -920,7 +939,7 @@ export function updateGolemAttack(
         // Tras la inercia: la pared SOLO si Nyx es amenaza real (antes la
         // alzaba SIEMPRE y se leía como "bloquea después de un ataque").
         if (isThreatToGolem(enemy, playerPos, info)) {
-          tryStartGolemBlock(enemy, internal);
+          tryStartGolemBlock(enemy, internal, playerPos, info);
         } else {
           settleGolem(enemy, internal, playerPos);
           enemy.attackTimer = Math.max(enemy.attackTimer, 0.4);
@@ -1056,9 +1075,42 @@ function endGolemCharge(
  * pared bajada). El herido ignora el cooldown: sin vida, cubrirse es lo
  * único que le queda. Devuelve false si NO la levantó.
  */
-function tryStartGolemBlock(enemy: ManagedWaveEnemy, internal: EnemyInternal): boolean {
+/**
+ * Pared reactiva CON JUICIO TEMPORAL: además del cooldown, SOLO la iza si le
+ * da tiempo — con la velocidad de cierre actual, el impacto debe llegar
+ * dentro de GOLEM_BLOCK_RAISE_NEED_SEC o más. Si Nyx ya está encima
+ * (time-to-impact corto), levantar el muro a medias solo sirve para
+ * mostrar la pared bajándose mientras se come el golpe: NO bloquea.
+ * El herido lo intenta igualmente (sin vida, cubrirse es lo único que le
+ * queda). Tras bajar la guardia, GOLEM_BLOCK_REACT_COOLDOWN sin poder izarla
+ * otra vez (ventana de castigo honesta; el herido lo ignora).
+ */
+function tryStartGolemBlock(
+  enemy: ManagedWaveEnemy,
+  internal: EnemyInternal,
+  playerPos: THREE.Vector3,
+  info: GolemPlayerInfo,
+): boolean {
   if (internal.golemBlockCooldown > 0 && !golemIsWounded(enemy)) {
     return false;
+  }
+  if (!golemIsWounded(enemy)) {
+    // Time-to-impact honesto: hacia dónde cierro distancia y a qué ritmo.
+    const dist = enemy.position.distanceTo(playerPos);
+    _aimDir.subVectors(playerPos, enemy.position);
+    if (_aimDir.lengthSq() < 1e-4) {
+      startGolemBlock(enemy, internal);
+      return true;
+    }
+    _aimDir.normalize();
+    // Velocidad de cierre = Nyx viajando HACIA el gólem + el gólem HACIA Nyx.
+    const closing =
+      Math.max(0, -info.vel.dot(_aimDir)) + Math.max(0, enemy.velocity.dot(_aimDir));
+    const tti = dist / Math.max(4.0, closing);
+    if (tti < GOLEM_BLOCK_RAISE_NEED_SEC) {
+      // Sin tiempo: mejor no enseñar la pared a medias.
+      return false;
+    }
   }
   startGolemBlock(enemy, internal);
   return true;
@@ -1066,7 +1118,8 @@ function tryStartGolemBlock(enemy: ManagedWaveEnemy, internal: EnemyInternal): b
 
 function startGolemBlock(enemy: ManagedWaveEnemy, internal: EnemyInternal): void {
   internal.golemState = 'block_guard';
-  internal.golemTimer = GOLEM_BLOCK_RELAX_SEC;
+  // PISO del intercambio: la pared no baja antes de esto pase lo que pase.
+  internal.golemTimer = GOLEM_BLOCK_FLOOR_SEC;
   // Reinicio del clip de guardia: la pared sube SIEMPRE (no se reusa pose).
   internal.golemRestartPending = true;
   enemy.hitFlash = Math.max(enemy.hitFlash, 0.12);
