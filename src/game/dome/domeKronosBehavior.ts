@@ -1339,8 +1339,9 @@ export function updateKronosPose(
 
   // 4) Posa real de huesos: local = inv(W_parent) * (R * W_rest).
   for (let j = 0; j < KRONOS_CHAIN_POINTS; j++) {
-    const dirCur = j < KRONOS_CHAIN_POINTS - 1 ? chain.dirNew[j] : chain.dirNew[j - 1];
-    quatFromBasisPair(chain.restDir[j], chain.restUp[j], dirCur, chain.up[j], _q1);
+    const link = Math.min(j, KRONOS_CHAIN_POINTS - 2);
+    const dirCur = chain.dirNew[link];
+    quatFromBasisPair(chain.restDir[link], chain.restUp[link], dirCur, chain.up[j], _q1);
     // Escrutinio/quebro aplicado sobre el hueso head (j = 0).
     if (j === 0) {
       applyHeadScrutiny(k, chain, _q1);
