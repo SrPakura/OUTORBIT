@@ -522,6 +522,26 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     }
   };
 
+  // --- Cinemática de Implosión (pausa el mundo y hace zoom dinámico al objetivo) ---
+  type ImplosionMode = 'one_hit' | 'miniboss_repel' | 'kronos_crystal';
+  interface ImplosionCinematicState {
+    mode: ImplosionMode;
+    enemy: ManagedWaveEnemy;
+    elapsed: number;
+    duration: number;
+    resolved: boolean;
+    savedCamPos: THREE.Vector3;
+    savedCamQuat: THREE.Quaternion;
+    savedFov: number;
+    savedEnemyScale: THREE.Vector3;
+    savedEnemyPos: THREE.Vector3;
+    orbitBaseAngle: number;
+    startDist: number;
+    startHeight: number;
+  }
+  let implosionCinematic: ImplosionCinematicState | null = null;
+  let kronosImplosionUsedOnId: string | null = null;
+
   // --- Payload persistente de syncProgression (cero objetos por frame) ---
   const syncPayload: Parameters<NyxDomeController['syncProgression']>[0] = {
     level: 1,
@@ -622,6 +642,50 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           // tinta ácida del pulpo dentro de su radio EN VEZ de coger rocas.
           captureEnemyProjectiles: (center, radius) =>
             waveMgr.captureInkBallsInRadius(center, radius),
+          onStartImplosion: (target) => {
+            if (implosionCinematic !== null) return false;
+            const managed = waveMgr.getActiveEnemies().find((e) => e.id === target.id);
+            if (!managed || !managed.entity.alive) return false;
+
+            let mode: ImplosionMode = 'one_hit';
+            let duration = 1.15;
+            if (managed.entity.archetype === 'kronos_leviathan') {
+              if (kronosImplosionUsedOnId === managed.id || waveMgr.isKronosPhase4Active()) {
+                return false;
+              }
+              kronosImplosionUsedOnId = managed.id;
+              mode = 'kronos_crystal';
+              duration = 1.2;
+            } else if (managed.entity.isElite) {
+              const hpRatio = managed.entity.hp / Math.max(1, managed.entity.maxHp);
+              if (hpRatio >= 0.5) {
+                mode = 'miniboss_repel';
+                duration = 1.25;
+              }
+            }
+
+            const dx = camera.position.x - managed.position.x;
+            const dz = camera.position.z - managed.position.z;
+            const horizDist = Math.hypot(dx, dz);
+            const startDist = Math.max(4, managed.position.distanceTo(camera.position));
+
+            implosionCinematic = {
+              mode,
+              enemy: managed,
+              elapsed: 0,
+              duration,
+              resolved: false,
+              savedCamPos: camera.position.clone(),
+              savedCamQuat: camera.quaternion.clone(),
+              savedFov: camera.fov,
+              savedEnemyScale: managed.mesh.scale.clone(),
+              savedEnemyPos: managed.mesh.position.clone(),
+              orbitBaseAngle: horizDist > 0.01 ? Math.atan2(dz, dx) : 0,
+              startDist,
+              startHeight: camera.position.y - managed.position.y,
+            };
+            return true;
+          },
         });
         if (res.triggered) {
           controller.spendEden(def.edenCost);
@@ -847,7 +911,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       setIsPauseOpen(false);
     }
 
-    const isPaused = levelUpOpenRef.current || battleReportOpenRef.current || pauseOpenRef.current;
+    const menuPaused = levelUpOpenRef.current || battleReportOpenRef.current || pauseOpenRef.current;
+    const isPaused = menuPaused || implosionCinematic !== null;
     const effRawDt = isPaused ? 0 : rawDt;
     const timeScale = controller ? controller.getTimeScale() : 1.0;
     const worldDt = effRawDt * timeScale;
@@ -1017,7 +1082,11 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         syncPayload.slots[i].level = slot.level;
         syncPayload.slots[i].cooldownRemaining = slot.cooldownRemaining;
         syncPayload.slots[i].maxCooldown = slot.maxCooldown;
-        syncPayload.slots[i].isActive = slot.skillId ? skillExecutor.isSkillActive(slot.skillId) : false;
+        syncPayload.slots[i].isActive = slot.skillId
+          ? slot.skillId === 'implosion'
+            ? implosionCinematic !== null || skillExecutor.isSkillActive('implosion')
+            : skillExecutor.isSkillActive(slot.skillId)
+          : false;
       }
       controller.syncProgression(syncPayload);
 
@@ -1102,6 +1171,149 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     } else if (!controller) {
       camera.position.set(0, 2.8, 7.5);
       camera.lookAt(0, 1.0, 0);
+    }
+
+    // --- Cinemática de Implosión: cámara dinámica + compresión/repulsión/cristal ---
+    if (implosionCinematic !== null && !menuPaused) {
+      const cin = implosionCinematic;
+      cin.elapsed += rawDt;
+      const t = Math.min(1, cin.elapsed / cin.duration);
+      const enemy = cin.enemy;
+      const targetPos = enemy.position;
+
+      // Zoom orbital dinámico sobre el enemigo + estrechamiento de FOV
+      const zoomEase = 1 - Math.pow(1 - Math.min(1, t * 1.35), 2.5);
+      const targetDist = Math.max(4.6, enemy.radius * 2.45);
+      const dist = cin.startDist + (targetDist - cin.startDist) * zoomEase;
+      const angle = cin.orbitBaseAngle + 0.55 * t;
+      const targetHeight = Math.max(0.8, enemy.radius * 0.45);
+      const height = cin.startHeight + (targetHeight - cin.startHeight) * zoomEase;
+
+      camera.position.set(
+        targetPos.x + Math.cos(angle) * dist,
+        targetPos.y + height,
+        targetPos.z + Math.sin(angle) * dist,
+      );
+      camera.lookAt(targetPos);
+      // Ligero ángulo holandés durante la compresión para dar tensión dramática
+      camera.rotateZ(0.055 * Math.sin(t * Math.PI));
+
+      const fovTarget = cin.savedFov - 11 * Math.sin(Math.min(1, t * 1.2) * Math.PI * 0.85);
+      if (Math.abs(camera.fov - fovTarget) > 0.05) {
+        camera.fov = fovTarget;
+        camera.updateProjectionMatrix();
+      }
+
+      if (cin.mode === 'one_hit') {
+        const crushAt = 0.88;
+        if (cin.elapsed < crushAt) {
+          const u = cin.elapsed / crushAt;
+          const s = Math.max(0.015, 1 - Math.pow(u, 1.85));
+          enemy.mesh.scale.copy(cin.savedEnemyScale).multiplyScalar(s);
+          enemy.mesh.rotation.y += rawDt * (3.5 + 22 * u);
+          enemy.hitFlash = 0.5 + 0.5 * Math.sin(u * 26);
+        } else {
+          if (!cin.resolved) {
+            cin.resolved = true;
+            enemy.mesh.scale.setScalar(0.0001);
+            audio.playBossHit();
+            comicVfx.spawnComicExplosion(targetPos, Math.max(2.5, enemy.radius * 1.2));
+            killWaveEnemy(enemy, false);
+          }
+          // Sacudida breve de cámara en el instante del colapso
+          const shake = Math.max(0, 1 - (cin.elapsed - crushAt) / 0.22) * 0.28;
+          if (shake > 0.005) {
+            camera.position.x += Math.sin(cin.elapsed * 95) * shake;
+            camera.position.y += Math.cos(cin.elapsed * 83) * shake;
+          }
+        }
+      } else if (cin.mode === 'miniboss_repel') {
+        const repelAt = 0.65;
+        if (cin.elapsed < repelAt) {
+          const u = cin.elapsed / repelAt;
+          const s = 1 - 0.52 * Math.sin(u * Math.PI * 0.5);
+          enemy.mesh.scale.copy(cin.savedEnemyScale).multiplyScalar(s);
+          enemy.mesh.position.set(
+            cin.savedEnemyPos.x + Math.sin(cin.elapsed * 72) * 0.14 * u,
+            cin.savedEnemyPos.y + Math.cos(cin.elapsed * 64) * 0.12 * u,
+            cin.savedEnemyPos.z + Math.sin(cin.elapsed * 58) * 0.14 * u,
+          );
+          enemy.hitFlash = 0.4 + 0.4 * Math.sin(u * 22);
+        } else {
+          if (!cin.resolved) {
+            cin.resolved = true;
+            const dmg = enemy.entity.maxHp * 0.2;
+            enemy.entity.hp = Math.max(1, enemy.entity.hp - dmg);
+            runTracker.recordDamage(dmg);
+            enemy.hitFlash = 1;
+            audio.playBossHit();
+            comicVfx.spawnComicHit(targetPos, null, 1.35, enemy.radius);
+          }
+          const v = Math.min(1, (cin.elapsed - repelAt) / 0.42);
+          const bounce = 0.48 + 0.52 * (1 + Math.sin(v * Math.PI) * 0.48);
+          enemy.mesh.scale.copy(cin.savedEnemyScale).multiplyScalar(bounce);
+          enemy.mesh.position.set(
+            cin.savedEnemyPos.x,
+            cin.savedEnemyPos.y + Math.sin(v * Math.PI) * 1.1,
+            cin.savedEnemyPos.z,
+          );
+          const shake = Math.max(0, 1 - (cin.elapsed - repelAt) / 0.24) * 0.35;
+          if (shake > 0.005) {
+            camera.position.x += Math.sin(cin.elapsed * 90) * shake;
+            camera.position.y += Math.cos(cin.elapsed * 78) * shake;
+          }
+        }
+      } else {
+        // kronos_crystal: comprime y rompe 1 cristal dorsal para pasar de fase
+        const breakAt = 0.68;
+        if (cin.elapsed < breakAt) {
+          const u = cin.elapsed / breakAt;
+          const s = 1 - 0.2 * Math.sin(u * Math.PI * 0.5);
+          enemy.mesh.scale.copy(cin.savedEnemyScale).multiplyScalar(s);
+          enemy.mesh.position.set(
+            cin.savedEnemyPos.x + Math.sin(cin.elapsed * 68) * 0.16 * u,
+            cin.savedEnemyPos.y + Math.cos(cin.elapsed * 60) * 0.14 * u,
+            cin.savedEnemyPos.z,
+          );
+          enemy.hitFlash = 0.5 + 0.4 * Math.sin(u * 24);
+        } else {
+          if (!cin.resolved) {
+            cin.resolved = true;
+            waveMgr.tryBreakKronosStarFromSkill(enemy);
+            runTracker.recordDamage(1);
+            enemy.hitFlash = 1;
+            audio.playBossHit();
+            comicVfx.spawnComicExplosion(targetPos, Math.max(3.5, enemy.radius * 1.4));
+          }
+          const v = Math.min(1, (cin.elapsed - breakAt) / 0.32);
+          const recoil = 0.8 + 0.2 * (1 + Math.sin(v * Math.PI) * 0.25);
+          enemy.mesh.scale.copy(cin.savedEnemyScale).multiplyScalar(recoil);
+          enemy.mesh.position.copy(cin.savedEnemyPos);
+          const shake = Math.max(0, 1 - (cin.elapsed - breakAt) / 0.26) * 0.4;
+          if (shake > 0.005) {
+            camera.position.x += Math.sin(cin.elapsed * 92) * shake;
+            camera.position.y += Math.cos(cin.elapsed * 80) * shake;
+          }
+        }
+      }
+
+      // Anima los VFX activos durante el freeze cinemático
+      skillExecutor.update(rawDt, [], handleSkillDamageEnemy);
+      comicVfx.update(rawDt, camera);
+
+      if (cin.elapsed >= cin.duration) {
+        if (cin.mode !== 'one_hit' && enemy.entity.alive) {
+          enemy.mesh.scale.copy(cin.savedEnemyScale);
+          enemy.mesh.position.copy(cin.savedEnemyPos);
+        }
+        camera.position.copy(cin.savedCamPos);
+        camera.quaternion.copy(cin.savedCamQuat);
+        if (camera.fov !== cin.savedFov) {
+          camera.fov = cin.savedFov;
+          camera.updateProjectionMatrix();
+        }
+        implosionCinematic = null;
+      }
     }
 
     renderer.render(scene, camera);

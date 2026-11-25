@@ -57,6 +57,11 @@ export interface SkillTriggerContext {
    * (ya fuera del pool de proyectiles enemigo, visibles en escena).
    */
   captureEnemyProjectiles?: (center: THREE.Vector3, radius: number) => THREE.Mesh[];
+  /**
+   * Hook opcional para la cinemática de Implosión: devuelve false si el
+   * objetivo no es válido (p.ej. KRONOS en fase 4 o ya implosionado antes).
+   */
+  onStartImplosion?: (target: SkillTargetEnemy) => boolean;
 }
 
 export interface SkillTriggerResult {
@@ -65,7 +70,7 @@ export interface SkillTriggerResult {
 }
 
 // --- Ajustes de gameplay ---
-const IMPLOSION_RANGE = 35;
+const IMPLOSION_RANGE = Infinity;
 const IMPLOSION_DAMAGE = 9999;
 const GRAVITY_FIELD_RELEASE_RANGE = 60;
 const DOME_KEEP_RADIUS = 86;
@@ -1167,11 +1172,21 @@ export class DomeSkillExecutor {
     return { triggered: true, animOverride: 'stasis_throw' };
   }
 
-  /** Implosión: colapso instantáneo y letal sobre el objetivo. */
+  /** Implosión: colapso instantáneo y letal sobre el objetivo (sin límite de distancia). */
   private triggerImplosion(ctx: SkillTriggerContext): SkillTriggerResult {
     const target =
-      ctx.lockedEnemy ?? nearestEnemy(ctx.playerPos, ctx.enemies, IMPLOSION_RANGE);
+      ctx.lockedEnemy ??
+      findAutoAimTarget(ctx.playerPos, ctx.forwardDir, ctx.enemies) ??
+      nearestEnemy(ctx.playerPos, ctx.enemies, IMPLOSION_RANGE);
     if (target === null) return { triggered: false };
+
+    if (ctx.onStartImplosion) {
+      if (!ctx.onStartImplosion(target)) return { triggered: false };
+      this.spawnImplosion(target.position);
+      this.spawnAreaDome(target.position, 4, 0.7);
+      this.spawnAreaGroundRing(target.position, 4, 0.7, ctx.slabs);
+      return { triggered: true, animOverride: 'eden_absorb' };
+    }
 
     this.spawnImplosion(target.position);
     this.spawnAreaDome(target.position, 4, 0.5);
@@ -1577,7 +1592,7 @@ export class DomeSkillExecutor {
     this.halos.push({ mesh, material, elapsed: 0, duration: 1.2 });
   }
 
-  private spawnImplosion(position: THREE.Vector3): void {
+  spawnImplosion(position: THREE.Vector3): void {
     const material = this.implosionMaterial.clone();
     const mesh = new THREE.Mesh(this.flashGeometry, material);
     mesh.position.copy(position);
