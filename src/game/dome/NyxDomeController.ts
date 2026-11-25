@@ -886,6 +886,18 @@ export class NyxDomeController {
     this.impactFlash = Math.max(this.impactFlash, 0.85);
   }
 
+  /**
+   * Rebote contra la pared del Gólem: la patada frontal contra 300 kg de
+   * brazo macizo se DEVUELVE — impulso en dirección CONTRARIA al golpe, sin
+   * stagger (no es daño: es física). `hitDirIntoEnemy` es unit y apunta
+   * HACIA DENTRO del gólem, igual que en `onHitEnemy`.
+   */
+  applyWallRepel(hitDirIntoEnemy: THREE.Vector3, speed: number): void {
+    this.velocity.addScaledVector(hitDirIntoEnemy, -speed);
+    this.shake = Math.max(this.shake, 0.2);
+    this.impactFlash = Math.max(this.impactFlash, 0.55);
+  }
+
   triggerSkillAnim(anim: NyxAnimState): void {
     this.playOneShot(anim);
   }

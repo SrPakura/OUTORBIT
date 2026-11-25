@@ -150,6 +150,8 @@ export const GOLEM_PUNCH_PUSH = 24.0;
 export const GOLEM_PUNCH_COOLDOWN = 2.4;
 /** Todo slab con centro a <8 m del punto de impacto se destroza. */
 export const GOLEM_SLAB_BREAK_RADIUS = 8.0;
+/** Aplastamiento a bocajarro: dentro de este margen del cuerpo el puño da igual. */
+export const GOLEM_PUNCH_POINT_BLANK = 1.2;
 /** El latigazo arrastra el cuerpo hacia el punto de impacto (m/s). */
 const GOLEM_PUNCH_LUNGE_SPEED = 4.0;
 
@@ -188,7 +190,7 @@ export const GOLEM_CHARGE_END_SEC = 0.5;
  * entrante). Sin amenaza tras el piso, cola de GOLEM_BLOCK_RELAX_SEC y
  * baja. El tope absoluto lo pone la stamina (-4/s).
  */
-export const GOLEM_BLOCK_FLOOR_SEC = 2.0;
+export const GOLEM_BLOCK_FLOOR_SEC = 5.0;
 export const GOLEM_BLOCK_HOLD_SEC = 0.9;
 /** Sin amenaza y piso vencido: cola de bajada (s). */
 export const GOLEM_BLOCK_RELAX_SEC = 0.9;
@@ -530,6 +532,33 @@ export function updateGolemEnemy(
       break;
   }
 
+  // Anti-empotramiento: Nyx NO puede quedarse DENTRO de los 300 kg (fuera
+  // de las espirales, cuyo contacto lo resuelve su propia FSM). El cuerpo
+  // se repliega a radius+1.2 de ella y pierde la componente de velocidad
+  // que lo mete dentro — perseguirla ya no significa solaparse con ella.
+  const antiEmbedState = internal.golemState;
+  if (
+    antiEmbedState !== 'thin_spiral' &&
+    antiEmbedState !== 'thick_spiral' &&
+    antiEmbedState !== 'parried'
+  ) {
+    _toPlayer.subVectors(enemy.position, playerPos);
+    const bodyDist = _toPlayer.length();
+    const minDist = enemy.radius + 1.2;
+    if (bodyDist < minDist) {
+      if (bodyDist < 1e-4) {
+        _toPlayer.set(0, 0, 1);
+      } else {
+        _toPlayer.normalize();
+      }
+      enemy.position.copy(playerPos).addScaledVector(_toPlayer, minDist);
+      const into = enemy.velocity.dot(_toPlayer);
+      if (into < 0) {
+        enemy.velocity.addScaledVector(_toPlayer, -into);
+      }
+    }
+  }
+
   // Contención global anti-barrera también fuera de la persecución: el
   // knockback nunca puede deslizar los 300 kg contra la Barrera Blanca.
   _flat.set(enemy.position.x, 0, enemy.position.z);
@@ -725,17 +754,27 @@ export function updateGolemAttack(
         return;
       }
       // El windup aún rastrea a Nyx (torpe y pesado); al terminar, la
-      // dirección queda SELLADA (sin re-lock durante el golpe).
+      // dirección y la DISTANCIA quedan SELLADAS (sin re-lock durante el
+      // golpe). El punto cae sobre la posición real de Nyx clampada al
+      // alcance: antes quedaba SIEMPRE a radius+reach por delante y una Nyx
+      // pegada al cuerpo salía fuera del radio de impacto (golpear al aire
+      // a bocajarro).
       if (internal.golemTimer <= 0) {
         _toPlayer.subVectors(playerPos, enemy.position);
-        if (_toPlayer.lengthSq() < 1e-4) {
+        const dist = _toPlayer.length();
+        if (dist < 1e-4) {
           _toPlayer.set(0, 0, 1);
         } else {
           _toPlayer.normalize();
         }
+        const impactDist = THREE.MathUtils.clamp(
+          dist,
+          enemy.radius * 0.8,
+          enemy.radius + GOLEM_PUNCH_REACH,
+        );
         internal.golemImpact
           .copy(enemy.position)
-          .addScaledVector(_toPlayer, enemy.radius + GOLEM_PUNCH_REACH);
+          .addScaledVector(_toPlayer, impactDist);
         // El cuerpo se deja arrastrar por el peso del puño.
         enemy.velocity.copy(_toPlayer).multiplyScalar(GOLEM_PUNCH_LUNGE_SPEED);
         internal.golemState = 'punch_smash';
@@ -750,9 +789,18 @@ export function updateGolemAttack(
       if (internal.golemTimer > 0) {
         return;
       }
-      // El latigazo alcanza a Nyx: daño + empuje + rotura de suelo.
-      if (playerPos.distanceTo(internal.golemImpact) < GOLEM_PUNCH_HIT_RADIUS) {
-        _toPlayer.subVectors(playerPos, internal.golemImpact);
+      // El latigazo alcanza a Nyx: daño + empuje + rotura de suelo. Además
+      // del radio de impacto, a BOCAJARRO cuenta el APLASTAMIENTO del cuerpo:
+      // dentro de radius+1.2 del centro, el puño (o la masa que lo arrastra)
+      // la golpea igual — pegarse literalmente al gólem no es un refugio.
+      const bodyDist = playerPos.distanceTo(enemy.position);
+      const inBlast = playerPos.distanceTo(internal.golemImpact) < GOLEM_PUNCH_HIT_RADIUS;
+      if (inBlast || bodyDist < enemy.radius + GOLEM_PUNCH_POINT_BLANK) {
+        if (inBlast) {
+          _toPlayer.subVectors(playerPos, internal.golemImpact);
+        } else {
+          _toPlayer.subVectors(playerPos, enemy.position);
+        }
         if (_toPlayer.lengthSq() < 1e-4) {
           _toPlayer.set(0, 1, 0);
         } else {
@@ -951,17 +999,24 @@ export function updateGolemAttack(
     // ------------------------------------------------------------------
     case 'block_guard': {
       internal.golemTimer -= dt;
-      internal.golemStamina -= GOLEM_STAMINA_DRAIN_BLOCK * dt;
+      // La pared del herido cuesta CERO: le queda poca vida y cubrirse es
+      // lo único que le salva — sin este descuento su wall moría con la
+      // stamina y volvía a "bajarse sola antes de tiempo".
+      if (!golemIsWounded(enemy)) {
+        internal.golemStamina -= GOLEM_STAMINA_DRAIN_BLOCK * dt;
+      }
       const dist = enemy.position.distanceTo(playerPos);
       if (dist < GOLEM_BLOCK_DROP_PUNCH_DIST) {
         // Nyx provoca el ataque: la guardia se suelta en un puñetazo.
         startGolemPunch(enemy, internal);
         return;
       }
-      // Pared REACTIVA: mientras Nyx siga siendo amenaza (ataque en curso
-      // hacia él) el timer SE REARMA. Sin amenaza, cuenta atrás corta y
-      // vuelve al ruedo. El tope absoluto lo marca la stamina.
-      if (isThreatToGolem(enemy, playerPos, info)) {
+      // Pared REACTIVA: se rearma con la amenaza (ataque apuntado o
+      // trayectoria entrante) o SIMPLEMENTE con Nyx en su cara (<9 m):
+      // mientras aceche de cerca, la pared no se baja por cortesía. Sin
+      // ninguna de las dos, el piso de GOLEM_BLOCK_FLOOR_SEC (5 s) manda y
+      // luego la cola de GOLEM_BLOCK_RELAX_SEC.
+      if (isThreatToGolem(enemy, playerPos, info) || dist < 9.0) {
         internal.golemTimer = Math.max(internal.golemTimer, GOLEM_BLOCK_HOLD_SEC);
       }
       if (internal.golemTimer <= 0 || internal.golemStamina <= 0) {
@@ -1095,6 +1150,11 @@ function tryStartGolemBlock(
     return false;
   }
   if (!golemIsWounded(enemy)) {
+    // Pared que no puede honrar su PISO: con stamina justa bajaría a
+    // medias y vuelta a comerse el golpe — mejor no izarla en absoluto.
+    if (internal.golemStamina < GOLEM_BLOCK_FLOOR_SEC * GOLEM_STAMINA_DRAIN_BLOCK) {
+      return false;
+    }
     // Time-to-impact honesto: hacia dónde cierro distancia y a qué ritmo.
     const dist = enemy.position.distanceTo(playerPos);
     _aimDir.subVectors(playerPos, enemy.position);
