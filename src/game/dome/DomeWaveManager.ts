@@ -41,7 +41,8 @@ import {
   GOLEM_PARRY_COOLDOWN_SEC,
   GOLEM_PARRY_CRIT_RATIO,
   GOLEM_PARRY_EDEN_RATIO,
-  GOLEM_PARRY_HALO_HEIGHT,
+  GOLEM_PARRY_STAR_OUT,
+  GOLEM_PARRY_STAR_UP,
   GOLEM_PARRY_MAX_Y_HIT_DIR,
   GOLEM_PARRY_TRIGGER_DIST,
   GOLEM_PARRY_WINDOW_SEC,
@@ -273,6 +274,29 @@ const _slabUp = new THREE.Vector3();
 const _slabForward = new THREE.Vector3();
 const _guardDir = new THREE.Vector3();
 const _modelUp = new THREE.Vector3(0, 1, 0);
+const _starWorld = new THREE.Vector3();
+const _starSide = new THREE.Vector3();
+
+/**
+ * Estrella del parry del Gólem: 4 puntas doradas que caben en la mira del
+ * visor (estrella de 4 puntas, como la del HUD). Punto de dash del remate.
+ */
+function makeGolemParryStarGeometry(): THREE.ShapeGeometry {
+  const outer = 1.0;
+  const inner = 0.38;
+  const points = 4;
+  const shape = new THREE.Shape();
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? outer : inner;
+    const a = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    if (i === 0) shape.moveTo(x, y);
+    else shape.lineTo(x, y);
+  }
+  shape.closePath();
+  return new THREE.ShapeGeometry(shape);
+}
 const _localOffset = new THREE.Vector3();
 const _targetPos = new THREE.Vector3();
 const _muzzlePos = new THREE.Vector3();
@@ -849,7 +873,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private readonly crabDangerRings: CrabDangerRing[] = [];
   private readonly crabDangerRingGeometry = new THREE.RingGeometry(0.92, 1, 64);
   /** Halo dorado sobre la cabeza del gólem durante la ventana de parry. */
-  private readonly golemParryHaloGeometry = new THREE.RingGeometry(1.45, 2.1, 64);
+  /** Estrella dorada del parry junto al brazo malo del gólem. */
+  private readonly golemParryHaloGeometry = makeGolemParryStarGeometry();
   private readonly golemParryHaloMaterial: THREE.MeshBasicMaterial;
   private readonly golemParryHalo: THREE.Mesh;
   /** Id del gólem con la ventana de parry ABIERTA (null = ninguna). */
@@ -858,6 +883,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private golemParryTimer = 0;
   /** Gólem con la ventana abierta (para cerrarla si muere sin remate). */
   private golemParryEnemy: ManagedWaveEnemy | null = null;
+  /** Punto de la estrella en mundo (junto al brazo malo), refrescado por frame. */
+  private readonly golemParryStarPos = new THREE.Vector3();
   /** Gólem cuya ventana abrir; consumido por el game loop en el mismo frame. */
   private pendingParryEnemy: ManagedWaveEnemy | null = null;
   /** Proyectil láser de la ráfaga corta: perla roja brillante parryable. */
@@ -1016,8 +1043,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.golemParryHalo = new THREE.Mesh(this.golemParryHaloGeometry, this.golemParryHaloMaterial);
     this.golemParryHalo.visible = false;
     this.golemParryHalo.frustumCulled = false;
-    // Halo plano y horizontal flotando sobre la cabeza (normal +Y).
-    this.golemParryHalo.rotation.x = -Math.PI / 2;
+    // La estrella es un billboard: cada frame mira hacia Nyx con lookAt.
     this.scene.add(this.golemParryHalo);
   }
 
@@ -1684,7 +1710,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     onSlabSmash?: (slab: SlabCollider) => void,
     playerHpRatio = 1,
     playerEdenRatio = 1,
-  ): { didEnemyEvadeDash: boolean; golemParryTarget: TestEnemySphere | null } {
+  ): {
+    didEnemyEvadeDash: boolean;
+    golemParryTarget: TestEnemySphere | null;
+    golemParryStarPos: THREE.Vector3 | null;
+  } {
     let didEnemyEvadeDash = false;
     this.waveTime += dt;
     // Ventana de parry del gólem: caduca sola si Nyx no remata a tiempo, y se
@@ -1701,6 +1731,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       }
     }
     let golemParryTarget: TestEnemySphere | null = null;
+    let golemParryStarPos: THREE.Vector3 | null = null;
     // Foto de Nyx para la IA observadora del Gólem (una por frame).
     this.golemInfo.vel.copy(playerVel);
     this.golemInfo.aimForward.copy(playerAimForward);
@@ -1950,13 +1981,15 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     updateKronosRings(this, dt, playerPos, onGolemSmash);
 
     // Ventana de parry abierta este frame: el game loop arranca el slow-mo
-    // de redirección apuntando a este gólem (sin romper el lock).
+    // con el gólem y el punto de su estrella (clonado: el manager seguirá
+    // moviéndolo, la ventana usa la foto del momento de apertura).
     if (this.pendingParryEnemy) {
       golemParryTarget = this.pendingParryEnemy;
+      golemParryStarPos = this.golemParryStarPos.clone();
       this.pendingParryEnemy = null;
     }
 
-    return { didEnemyEvadeDash, golemParryTarget };
+    return { didEnemyEvadeDash, golemParryTarget, golemParryStarPos };
   }
 
   dispose(): void {
@@ -3061,6 +3094,33 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.golemParryTimer = GOLEM_PARRY_WINDOW_SEC;
     internal.golemParryCd = GOLEM_PARRY_COOLDOWN_SEC;
     this.pendingParryEnemy = enemy;
+    // La estrella YA existe en el frame de apertura (el harvest del update
+    // clona la foto de este mismo frame, no una posición stale o a cero).
+    this.updateGolemParryStar(enemy, internal);
+  }
+
+  /**
+   * Punto de la estrella del parry: junto al BRAZO MALO del gólem (el
+   * gigante), sobresaliendo del cuerpo a la altura del hombro real del GLB.
+   * El hueso sabe de qué lado está el brazo — la convención del modelo no.
+   */
+  private updateGolemParryStar(enemy: ManagedWaveEnemy, internal: EnemyInternal): void {
+    if (internal.golemRig && internal.golemRig.giantShoulderR) {
+      internal.golemRig.giantShoulderR.bone.getWorldPosition(_starWorld);
+    } else {
+      _starWorld.set(1.2, 1.5, 0).applyQuaternion(enemy.mesh.quaternion).add(enemy.position);
+    }
+    _starSide.subVectors(_starWorld, enemy.position);
+    _starSide.y = 0;
+    if (_starSide.lengthSq() < 1e-4) {
+      _starSide.set(1, 0, 0);
+    } else {
+      _starSide.normalize();
+    }
+    this.golemParryStarPos
+      .copy(enemy.position)
+      .addScaledVector(_starSide, enemy.radius + GOLEM_PARRY_STAR_OUT);
+    this.golemParryStarPos.y = _starWorld.y + GOLEM_PARRY_STAR_UP;
   }
 
   private updateGolemPose(
@@ -3075,16 +3135,23 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     const state = internal.golemState;
 
-    // Halo dorado: solo brilla sobre el gólem con la ventana de parry abierta.
+    // Estrella dorada: solo brilla en el gólem con la ventana de parry
+    // abierta, flotando JUNTO AL BRAZO MALO (el gigante) a un lado y a la
+    // altura de su hombro: el punto de dash del remate. Nunca sobre la
+    // cabeza ni pegada al cuerpo — tiene que quedar hueco para que Nyx
+    // llegue, mire y taladre en diagonal descendente hacia el centro.
     const isParryTarget = this.golemParryTargetId === enemy.id && this.golemParryTimer > 0;
     if (isParryTarget) {
+      this.updateGolemParryStar(enemy, internal);
       this.golemParryHalo.visible = true;
-      this.golemParryHalo.position.copy(enemy.position);
-      this.golemParryHalo.position.y += enemy.radius + GOLEM_PARRY_HALO_HEIGHT;
-      this.golemParryHalo.scale.setScalar(1 + 0.12 * Math.sin(elapsed * 9));
-      this.golemParryHaloMaterial.opacity = 0.55 + 0.3 * Math.sin(elapsed * 9);
+      this.golemParryHalo.position.copy(this.golemParryStarPos);
+      // Billboard hacia Nyx + giro lento de la estrella + pulso.
+      this.golemParryHalo.lookAt(playerPos);
+      this.golemParryHalo.rotateZ(elapsed * 1.5);
+      this.golemParryHalo.scale.setScalar(1.6 * (1 + 0.14 * Math.sin(elapsed * 9)));
+      this.golemParryHaloMaterial.opacity = 0.6 + 0.3 * Math.sin(elapsed * 9);
     } else if (this.golemParryTimer <= 0) {
-      // Ventana cerrada: ningún gólem debe llevar el halo.
+      // Ventana cerrada: ningún gólem debe llevar la estrella.
       this.golemParryHalo.visible = false;
     }
 

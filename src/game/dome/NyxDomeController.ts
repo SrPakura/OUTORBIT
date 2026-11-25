@@ -196,6 +196,9 @@ const BULLET_TIME_DURATION = 1.6;
 
 // --- Cámara Lenta de Redirección (Dash durante speed_attack)
 const REDIRECT_TIME_SCALE = 0.25;
+// --- Parry del Gólem: slow-mo propio, un pelín más lento que el de
+// redirección — el remate necesita dash + apuntado + taladro completos.
+const PARRY_TIME_SCALE = 0.18;
 const REDIRECT_WINDOW_MIN = 1.25;
 const REDIRECT_WINDOW_MAX = 2.6;
 const REDIRECT_REARM_COOLDOWN = 0.9;
@@ -386,6 +389,8 @@ export class NyxDomeController {
   // --- Parry del Gólem: la ventana apunta al aro dorado, no a un evasivo
   private parryWindowActive = false;
   private parryDashUsed = false;
+  /** Punto de la estrella dorada (junto al brazo malo): destino del dash. */
+  private readonly parryStarPoint = new THREE.Vector3();
   private reticleLockState: ReticleLockState = 'none';
   // Enemigo lockeado proyectado a <= RETICLE_LOCK_RADIUS_PX del centro del
   // visor este frame (se recalcula en updateReticle, antes de la física).
@@ -594,7 +599,9 @@ export class NyxDomeController {
 
   /** Escala de tiempo del mundo: 0.20 en redirección, 0.22 en cámara lenta. */
   getTimeScale(): number {
-    if (this.redirectWindowTimer > 0) return REDIRECT_TIME_SCALE;
+    if (this.redirectWindowTimer > 0) {
+      return this.parryWindowActive ? PARRY_TIME_SCALE : REDIRECT_TIME_SCALE;
+    }
     return this.bulletTimeTimer > 0 ? BULLET_TIME_SCALE : 1.0;
   }
 
@@ -633,18 +640,32 @@ export class NyxDomeController {
   }
 
   /**
-   * Ventana de parry del Gólem: abre la Cámara Lenta apuntando al gólem que
-   * acaba de izar la pared, SIN romper el lock (a diferencia de
-   * `notifyEnemyEvaded`). La duración es FIJA y en tiempo REAL equivalente a
-   * los GOLEM_PARRY_WINDOW_SEC de mundo del manager (los dos caducan juntos),
-   * no la ventana corta del dash de redirección: el remate necesita dash +
-   * apuntado + taladro completo dentro del slow-mo.
+   * Ventana de parry del Gólem: abre el slow-mo (PARRY_TIME_SCALE) apuntando
+   * al gólem que acaba de izar la pared, SIN romper el lock. `starPos` es la
+   * estrella dorada junto a su brazo malo: la cámara SE LATIGUEA hacia ella
+   * al abrir (suele caer en una esquina fuera del visor) y el Dash del parry
+   * viaja directo a ese punto. La duración real es la equivalencia de los
+   * GOLEM_PARRY_WINDOW_SEC de mundo del manager (caducan juntos).
    */
-  openParryWindow(target: TestEnemySphere): void {
+  openParryWindow(target: TestEnemySphere, starPos: THREE.Vector3): void {
     this.redirectTargetEnemy = target;
-    this.redirectWindowTimer = GOLEM_PARRY_WINDOW_SEC / REDIRECT_TIME_SCALE;
+    this.redirectWindowTimer = GOLEM_PARRY_WINDOW_SEC / PARRY_TIME_SCALE;
     this.parryWindowActive = true;
     this.parryDashUsed = false;
+    this.parryStarPoint.copy(starPos);
+    // Ayuda al usuario: giro rápido de la mira/cámara hacia la estrella.
+    // En vuelo la cámara va pegada a la espalda: girar aimForward ES girar
+    // la cámara (el cuerpo se alinea elástico detrás, el latigazo visual).
+    if (this.mode !== 'grounded') {
+      this.tmpA.copy(starPos).sub(this.nyxRoot.position);
+      if (this.tmpA.lengthSq() > 1e-6) {
+        this.tmpA.normalize();
+        this.aimForward.copy(this.tmpA);
+        this.prevAimFwd.copy(this.aimForward);
+        this.facing.copy(this.tmpA);
+        this.startCamTug();
+      }
+    }
   }
 
   onMouseMove(dx: number, dy: number): void {
@@ -1795,18 +1816,22 @@ export class NyxDomeController {
    * el cuerpo debe girar respecto a su vector de velocidad para alcanzarlo?
    */
   /**
-   * Dash del parry del Gólem: impulso directo hacia la cabeza del gólem
-   * (el aro dorado), parta de donde parta Nyx y sin importar el modo en el
-   * que esté (cancela ataques en curso). A diferencia del dash de redirección
-   * NO corta la cámara lenta: la ventana del remate sigue abierta para que
-   * el taladro descendente se lance en el mismo slow-mo.
+   * Dash del parry del Gólem: impulso directo hacia la ESTRELLA dorada que
+   * flota junto a su brazo malo (no un dash lateral de WASD ni el dash de
+   * redirección hacia el cuerpo). Cancela ataques y volteretas en curso,
+   * desde cualquier modo, y mantiene el slow-mo: la ventana sigue abierta
+   * para que el taladro descendente se lance en el mismo slow-mo.
    */
   private parryDashUp(target: TestEnemySphere): void {
     this.eden -= EDEN_DASH_COST;
     this.parryDashUsed = true;
-    // Objetivo: la zona de la cabeza (donde flota el aro), nunca el centro.
-    this.tmpA.copy(target.position);
-    this.tmpA.y += target.radius + 2.0;
+    // Objetivo: la estrella junto al brazo malo (guardada al abrir la
+    // ventana). Sin ella (imposible salvo bug), la cabeza como respaldo.
+    this.tmpA.copy(this.parryStarPoint);
+    if (this.tmpA.distanceToSquared(this.nyxRoot.position) < 1e-4) {
+      this.tmpA.copy(target.position);
+      this.tmpA.y += target.radius + 2.0;
+    }
     this.tmpA.sub(this.nyxRoot.position);
     if (this.tmpA.lengthSq() < 1e-6) {
       this.tmpA.copy(this.camFwd);
@@ -1915,8 +1940,15 @@ export class NyxDomeController {
       }
       return;
     }
-    // En kick_recover espera a terminar de frenar, salvo re-lock en cámara lenta.
-    if (this.mode === 'kick_recover' && this.bulletTimeTimer <= 0) return;
+    // En kick_recover espera a terminar de frenar, salvo re-lock en cámara
+    // lenta o ventana de parry del Gólem abierta (el remate se lanza ahí).
+    if (
+      this.mode === 'kick_recover' &&
+      this.bulletTimeTimer <= 0 &&
+      !this.parryWindowActive
+    ) {
+      return;
+    }
     // La Sentadilla Cinética es un estado cerrado de 0.28 s: no se puede
     // interrumpir con un ataque (el impulso sale solo, sin coste de Edén).
     if (this.mode === 'kinetic_bounce') return;
@@ -1979,8 +2011,13 @@ export class NyxDomeController {
     this.recoverElapsed = 0;
     this.wantAttack = false;
     this.lockedEnemy = null;
-    this.redirectTargetEnemy = null;
-    this.redirectWindowTimer = 0;
+    // Durante el parry del Gólem la ventana SOBREVIVE al rebote de la patada
+    // (el remate se lanza justo después de rebotar en la pared, muchas veces
+    // todavía en kick_recover): el objetivo ya está puesto en la estrella.
+    if (!this.parryWindowActive) {
+      this.redirectTargetEnemy = null;
+      this.redirectWindowTimer = 0;
+    }
     this.speedAttackKind = null;
     this.mode = 'kick_recover';
     this.animator.setState(flips === 2 ? 'kick_flip_drill' : 'kick_flip');

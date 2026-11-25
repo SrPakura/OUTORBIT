@@ -114,8 +114,10 @@ export const GOLEM_PARRY_CRIT_RATIO = 0.35;
  * vuelo basta cualquier distancia de bloqueo (la pared sale a recibirlo).
  */
 export const GOLEM_PARRY_TRIGGER_DIST = 14.0;
-/** Altura del aro dorado sobre el centro del gólem, en radios (m). */
-export const GOLEM_PARRY_HALO_HEIGHT = 3.0;
+/** Estrella del parry: cuánto sobresale del cuerpo el punto de dash (m). */
+export const GOLEM_PARRY_STAR_OUT = 3.6;
+/** Estrella del parry: altura sobre el hombro del brazo gigante (m). */
+export const GOLEM_PARRY_STAR_UP = 2.2;
 // --- Descanso voluntario (stamina) ---
 /** Bajo esto, con Nyx pasiva, se retira a descansar en vez de pelear en seco. */
 export const GOLEM_REST_STAMINA = 25.0;
@@ -218,8 +220,6 @@ export const GOLEM_BLOCK_RELAX_SEC = 0.9;
 export const GOLEM_BLOCK_RAISE_NEED_SEC = 0.55;
 /** Trayectoria entrante: velocidad mínima de Nyx hacia el gólem (m/s). */
 export const GOLEM_INCOMING_SPEED = 10.0;
-/** Provocación: si Nyx entra aquí durante la guardia, la suelta y puñetea. */
-export const GOLEM_BLOCK_DROP_PUNCH_DIST = 8.0;
 /**
  * Impacto frontal bloqueado: `hitDir` apunta HACIA DENTRO del gólem, así que
  * un golpe de frente opone ~180° a su +Z: dot(forward, hitDir) < -0.25.
@@ -1029,15 +1029,11 @@ export function updateGolemAttack(
         internal.golemStamina -= GOLEM_STAMINA_DRAIN_BLOCK * dt;
       }
       const dist = enemy.position.distanceTo(playerPos);
-      // Provocación HONESTA: el puñetazo solo suelta la guardia si Nyx NO
-      // tiene un ataque en vuelo — una patada/taladro en curso (info.
-      // attacking) debe estrellarse contra la pared y rebotar, no contra
-      // una panza que se descubre sola justo antes del impacto.
-      if (dist < GOLEM_BLOCK_DROP_PUNCH_DIST && !info.attacking) {
-        // Nyx provoca el ataque: la guardia se suelta en un puñetazo.
-        startGolemPunch(enemy, internal);
-        return;
-      }
+      // SIN provocación a bocajarro: la pared NUNCA se descubre para
+      // puñetazo mientras está izada (el puñetazo llega cuando el piso de
+      // 5 s o la stamina la trabajan). Antes saltaba a los <8 m y soltaba
+      // la guardia justo antes de la patada de Nyx: el "bloqueo que
+      // aparenta y no bloquea" del playtest.
       // Pared REACTIVA: se rearma con la amenaza (ataque apuntado o
       // trayectoria entrante) o SIMPLEMENTE con Nyx en su cara (<9 m):
       // mientras aceche de cerca, la pared no se baja por cortesía. Sin
