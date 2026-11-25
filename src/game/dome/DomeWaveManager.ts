@@ -16,7 +16,7 @@ import {
 import {
   collectGolemRig,
   collectKronosRig,
-  collectNecrozmaRig,
+  collectPrismaNecrozRig,
   collectSparrowRig,
   enemyInkScaleForWave,
   instantiateEnemyVisual,
@@ -31,7 +31,7 @@ import {
   type EnemyBone,
   type GolemRig,
   type KronosRig,
-  type NecrozmaRig,
+  type PrismaNecrozRig,
   type SparrowRig,
 } from './DomeEnemyModels';
 import {
@@ -92,7 +92,7 @@ import { faceTowards, lookAtQuat } from './domeEnemyOrient';
 //   1–4   Básicos (4 → 8 enemigos)            suelos 'basic'
 //   5     Miniboss/Épico 1: giant_sparrow     suelos 'miniboss'
 //   6–9   Básicos (7 → 11)                    suelos 'basic'
-//   10    Miniboss/Épico 2: prisma_necrozma   suelos 'miniboss'
+//   10    Miniboss/Épico 2: prisma_necroz   suelos 'miniboss'
 //   11–14 Básicos (9 → 13)                    suelos 'basic'
 //   15    Boss: kronos_leviathan              suelos 'boss'
 //   16+   Repite el ciclo con +2*cycle enemigos y velocidad 1 + cycle*0.2.
@@ -156,7 +156,7 @@ const EVASIVE_ARCHETYPES: ReadonlySet<EnemyArchetype> = new Set([
   'spiral_octopus',
   'lightning_butterfly',
   'giant_sparrow',
-  'prisma_necrozma',
+  'prisma_necroz',
 ]);
 
 const BASIC_ARCHETYPES: readonly EnemyArchetype[] = [
@@ -169,16 +169,16 @@ const BASIC_ARCHETYPES: readonly EnemyArchetype[] = [
 
 const CYCLE_LENGTH = 15;
 
-// Pinchos del Prisma Necrozma: salen cuando Nyx se acerca de frente (< 10 m) y
+// Pinchos del Prisma Necroz: salen cuando Nyx se acerca de frente (< 10 m) y
 // se retraen en la ventana vulnerable tras su dash evasivo o su ráfaga.
-const NECROZMA_SPIKES_RANGE = 10.0;
-const NECROZMA_VULN_SEC = 1.8;
-const NECROZMA_SPIKES_OUT_SCALE = 1.35;
-const NECROZMA_SPIKES_IN_SCALE = 0.15;
-const NECROZMA_SPIKES_RIM = 0xff3b3b;
-const NECROZMA_BASE_RIM = 0xd9baff;
+const PRISMA_NECROZ_SPIKES_RANGE = 10.0;
+const PRISMA_NECROZ_VULN_SEC = 1.8;
+const PRISMA_NECROZ_SPIKES_OUT_SCALE = 1.35;
+const PRISMA_NECROZ_SPIKES_IN_SCALE = 0.15;
+const PRISMA_NECROZ_SPIKES_RIM = 0xff3b3b;
+const PRISMA_NECROZ_BASE_RIM = 0xd9baff;
 /** Rim de reposo de las mallas detail (DETAIL_RIM de DomeEnemyModels). */
-const NECROZMA_DETAIL_RIM = 0x6b5f8a;
+const PRISMA_NECROZ_DETAIL_RIM = 0x6b5f8a;
 
 // --- Ave Legendaria Cristalizada: ráfaga de 3 esferas con la boca abierta ---
 const SPARROW_BURST_WINDOW_SEC = 1.8;
@@ -195,7 +195,7 @@ const SPARROW_TURN_RATE = 2.4;
 // --- Gólem Rompesuelos (rediseño §7.4): constantes de FSM/movimiento en
 // domeGolemBehavior.ts; aquí solo queda el telegraph material del puño. ---
 const GOLEM_FIST_NEON_RIM = 0x39ffb0;
-const NECROZMA_TURN_RATE = 2.6;
+const PRISMA_NECROZ_TURN_RATE = 2.6;
 
 // --- Leviatán KRONOS (Boss): serpenteo con huesos + 3 patrones de ataque ---
 // Ondulación serpentina progresiva de la cadena seg_01..seg_12.
@@ -326,7 +326,7 @@ function getWavePlan(waveNumber: number): WavePlan {
   } else if (inCycle === 10) {
     label = 'MINIBOSS';
     floorMode = 'miniboss';
-    spawns.push({ archetype: 'prisma_necrozma', count: 1 });
+    spawns.push({ archetype: 'prisma_necroz', count: 1 });
   } else if (inCycle === 15) {
     label = 'BOSS';
     floorMode = 'boss';
@@ -441,11 +441,11 @@ function buildArchetypeVisuals(): Record<EnemyArchetype, ArchetypeVisual> {
       starColor: 0x9ff0ff,
       starScale: 0.4,
     },
-    // Prisma Necrozma (Élite): octaedro prismático violeta.
-    prisma_necrozma: {
+    // Prisma Necroz (Élite): octaedro prismático violeta.
+    prisma_necroz: {
       geometry: new THREE.OctahedronGeometry(3.4),
       color: 0xb06bff,
-      rim: NECROZMA_BASE_RIM,
+      rim: PRISMA_NECROZ_BASE_RIM,
       outlineThickness: 0.06,
       starColor: 0xbafff2,
       starScale: 0.38,
@@ -634,9 +634,9 @@ export interface EnemyInternal {
   burstShotsLeft: number;
   /** Ave: próximo ataque alternado (embestida <-> ráfaga). */
   nextAttack: 'charge' | 'burst';
-  /** Necrozma: huesos del GLB + malla `detail_spikes`. */
-  necrozmaRig: NecrozmaRig | null;
-  /** Necrozma: escala actual de `detail_spikes` (suavizada). */
+  /** Prisma Necroz: huesos del GLB + malla `detail_spikes`. */
+  prismaNecrozRig: PrismaNecrozRig | null;
+  /** Prisma Necroz: escala actual de `detail_spikes` (suavizada). */
   spikeScale: number;
   /** Gólem: huesos del GLB + malla `detail_fist`. */
   golemRig: GolemRig | null;
@@ -1032,8 +1032,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       // Rigs de los élites y el gólem: huesos y mallas detail del GLB real.
       if (enemy.entity.archetype === 'giant_sparrow') {
         internal.sparrowRig = collectSparrowRig(glbVisual.root);
-      } else if (enemy.entity.archetype === 'prisma_necrozma') {
-        internal.necrozmaRig = collectNecrozmaRig(glbVisual.root);
+      } else if (enemy.entity.archetype === 'prisma_necroz') {
+        internal.prismaNecrozRig = collectPrismaNecrozRig(glbVisual.root);
       } else if (enemy.entity.archetype === 'ground_golem') {
         internal.golemRig = collectGolemRig(glbVisual.root);
       } else if (enemy.entity.archetype === 'kronos_leviathan') {
@@ -1180,7 +1180,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       burstTimer: 0,
       burstShotsLeft: 0,
       nextAttack: 'charge',
-      necrozmaRig: archetype === 'prisma_necrozma' ? collectNecrozmaRig(mesh) : null,
+      prismaNecrozRig: archetype === 'prisma_necroz' ? collectPrismaNecrozRig(mesh) : null,
       spikeScale: 1,
       golemRig: archetype === 'ground_golem' ? collectGolemRig(mesh) : null,
       golemState: 'helicopter',
@@ -1566,7 +1566,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   /**
    * Update por frame: flotación, dashes evasivos, ataques (proyectiles
    * oscuros / tinta / embestidas / ráfaga del Ave con boca abierta / manotazo
-   * del Gólem), pinchos y ventana vulnerable de Necrozma, cangrejo pegado a
+   * del Gólem), pinchos y ventana vulnerable de Prisma Necroz, cangrejo pegado a
    * `activeSlabs` (con saltos entre ellos), colisión de voladores contra los
    * icebergs y proyectiles en vuelo.
    *
@@ -1641,7 +1641,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       if (!this.enemiesPassive) {
         enemy.attackTimer -= dt;
       }
-      // Ventana vulnerable del Necrozma (tras dash evasivo o ráfaga).
+      // Ventana vulnerable del Prisma Necroz (tras dash evasivo o ráfaga).
       if ((enemy.entity.vulnerableTimer ?? 0) > 0) {
         enemy.entity.vulnerableTimer = Math.max(0, (enemy.entity.vulnerableTimer ?? 0) - dt);
       }
@@ -1696,12 +1696,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           enemy.evadeCooldown = EVASIVE_COOLDOWN;
           enemy.hitFlash = Math.max(enemy.hitFlash, 0.35);
           didEnemyEvadeDash = true;
-          // Prisma Necrozma: tras el dash evasivo abre su ventana vulnerable
+          // Prisma Necroz: tras el dash evasivo abre su ventana vulnerable
           // (pinchos retraídos, star_core al alcance).
-          if (enemy.entity.archetype === 'prisma_necrozma') {
+          if (enemy.entity.archetype === 'prisma_necroz') {
             enemy.entity.vulnerableTimer = Math.max(
               enemy.entity.vulnerableTimer ?? 0,
-              NECROZMA_VULN_SEC,
+              PRISMA_NECROZ_VULN_SEC,
             );
           }
         }
@@ -1796,8 +1796,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         this.updateOctopusPose(enemy, internal, dt, elapsed, playerPos);
       } else if (enemy.entity.archetype === 'giant_sparrow') {
         this.updateSparrowPose(enemy, internal, dt, elapsed, playerPos);
-      } else if (enemy.entity.archetype === 'prisma_necrozma') {
-        this.updateNecrozmaPose(enemy, internal, dt, elapsed, playerPos);
+      } else if (enemy.entity.archetype === 'prisma_necroz') {
+        this.updatePrismaNecrozPose(enemy, internal, dt, elapsed, playerPos);
       } else if (enemy.entity.archetype === 'ground_golem') {
         this.updateGolemPose(enemy, internal, dt, elapsed, playerPos);
       } else if (enemy.entity.archetype === 'kronos_leviathan') {
@@ -1824,9 +1824,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       if (internal.material) {
         if (enemy.entity.spikesActive) {
           emissive += 0.5;
-          internal.material.uniforms.uRimColor.value.setHex(NECROZMA_SPIKES_RIM);
-        } else if (enemy.entity.archetype === 'prisma_necrozma') {
-          internal.material.uniforms.uRimColor.value.setHex(NECROZMA_BASE_RIM);
+          internal.material.uniforms.uRimColor.value.setHex(PRISMA_NECROZ_SPIKES_RIM);
+        } else if (enemy.entity.archetype === 'prisma_necroz') {
+          internal.material.uniforms.uRimColor.value.setHex(PRISMA_NECROZ_BASE_RIM);
         }
         internal.material.uniforms.uEmissiveBoost.value = emissive;
       }
@@ -1902,11 +1902,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       enemy.entity.mouthOpen = false;
     }
 
-    // Prisma Necrozma: saca los pinchos cuando Nyx se acerca de frente
+    // Prisma Necroz: saca los pinchos cuando Nyx se acerca de frente
     // (< 10 m); en su ventana vulnerable (tras dash o ráfaga) los retrae.
-    if (archetype === 'prisma_necrozma') {
+    if (archetype === 'prisma_necroz') {
       const vulnerable = (enemy.entity.vulnerableTimer ?? 0) > 0;
-      const near = enemy.position.distanceTo(playerPos) < NECROZMA_SPIKES_RANGE;
+      const near = enemy.position.distanceTo(playerPos) < PRISMA_NECROZ_SPIKES_RANGE;
       enemy.entity.spikesActive = near && !vulnerable;
     }
 
@@ -2014,14 +2014,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         }
         break;
 
-      case 'prisma_necrozma': {
+      case 'prisma_necroz': {
         // Élite: ráfaga prismática de 2 esferas; tras disparar abre su
         // ventana vulnerable (pinchos retraídos, star_core rematable).
         this.fireProjectile(enemy, playerPos, 'dark', 10, 11 * mult, -0.14);
         this.fireProjectile(enemy, playerPos, 'dark', 10, 11 * mult, 0.14);
         enemy.entity.vulnerableTimer = Math.max(
           enemy.entity.vulnerableTimer ?? 0,
-          NECROZMA_VULN_SEC,
+          PRISMA_NECROZ_VULN_SEC,
         );
         enemy.attackTimer = 2.4 / mult;
         break;
@@ -2827,12 +2827,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   }
 
   /**
-   * Prisma Necrozma: flotación amenazante encarando a Nyx, balanceo de brazos
+   * Prisma Necroz: flotación amenazante encarando a Nyx, balanceo de brazos
    * y garras prismáticas, giro de cabeza y pinchos (`detail_spikes`) que se
    * escalan hacia fuera con brillo intenso al acercarse Nyx de frente y se
    * retraen (apagados) en la ventana vulnerable.
    */
-  private updateNecrozmaPose(
+  private updatePrismaNecrozPose(
     enemy: ManagedWaveEnemy,
     internal: EnemyInternal,
     dt: number,
@@ -2845,9 +2845,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     } else {
       _lookDir.normalize();
     }
-    faceTowards(enemy.mesh, _lookDir, NECROZMA_TURN_RATE, dt);
+    faceTowards(enemy.mesh, _lookDir, PRISMA_NECROZ_TURN_RATE, dt);
 
-    const rig = internal.necrozmaRig;
+    const rig = internal.prismaNecrozRig;
     if (!rig) {
       return;
     }
@@ -2869,18 +2869,18 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     if (spikes) {
       const vulnerable = (enemy.entity.vulnerableTimer ?? 0) > 0;
       const target = vulnerable
-        ? NECROZMA_SPIKES_IN_SCALE
+        ? PRISMA_NECROZ_SPIKES_IN_SCALE
         : enemy.entity.spikesActive
-          ? NECROZMA_SPIKES_OUT_SCALE
+          ? PRISMA_NECROZ_SPIKES_OUT_SCALE
           : 1;
       internal.spikeScale += (target - internal.spikeScale) * Math.min(1, dt * 6);
       spikes.mesh.scale.setScalar(spikes.restScale * internal.spikeScale);
       if (spikes.material) {
         if (enemy.entity.spikesActive) {
-          spikes.material.uniforms.uRimColor.value.setHex(NECROZMA_SPIKES_RIM);
+          spikes.material.uniforms.uRimColor.value.setHex(PRISMA_NECROZ_SPIKES_RIM);
           spikes.material.uniforms.uEmissiveBoost.value = 0.85 + Math.sin(elapsed * 11) * 0.4;
         } else {
-          spikes.material.uniforms.uRimColor.value.setHex(NECROZMA_DETAIL_RIM);
+          spikes.material.uniforms.uRimColor.value.setHex(PRISMA_NECROZ_DETAIL_RIM);
           spikes.material.uniforms.uEmissiveBoost.value = 0.05;
         }
       }

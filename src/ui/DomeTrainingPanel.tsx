@@ -29,7 +29,7 @@ export const TRAINING_ENEMY_ORDER: readonly EnemyArchetype[] = [
   'ground_golem',
   'lightning_butterfly',
   'giant_sparrow',
-  'prisma_necrozma',
+  'prisma_necroz',
   'kronos_leviathan',
 ];
 
@@ -40,7 +40,7 @@ const ENEMY_LABELS: Readonly<Record<EnemyArchetype, string>> = {
   ground_golem: 'Gólem Rompesuelos',
   lightning_butterfly: 'Mariposa Relámpago',
   giant_sparrow: 'Gorrión Gigante',
-  prisma_necrozma: 'Prisma Necrozma',
+  prisma_necroz: 'Prisma Necroz',
   kronos_leviathan: 'Leviatán KRONOS',
 };
 

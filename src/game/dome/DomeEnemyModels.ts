@@ -33,7 +33,7 @@ export const ENEMY_MODEL_COLORS: Record<EnemyArchetype, EnemyModelPalette> = {
   ground_golem: { color: 0x3b0f54, rim: 0x1e40af },
   lightning_butterfly: { color: 0x831843, rim: 0xff2a9d },
   giant_sparrow: { color: 0x7f1d1d, rim: 0x2563eb },
-  prisma_necrozma: { color: 0x4c1d95, rim: 0xff2a9d },
+  prisma_necroz: { color: 0x4c1d95, rim: 0xff2a9d },
   kronos_leviathan: { color: 0x31105c, rim: 0x1d4ed8 },
 };
 
@@ -706,9 +706,9 @@ export function collectSparrowRig(root: THREE.Object3D): SparrowRig {
   };
 }
 
-// --- Prisma Necrozma (prisma_necrozma.glb, 11 joints + detail_spikes) ---
+// --- Prisma Necroz (prisma_necroz.glb, 11 joints + detail_spikes) ---
 
-export interface NecrozmaRig {
+export interface PrismaNecrozRig {
   torso: EnemyBone | null;
   head: EnemyBone | null;
   tail: EnemyBone | null;
@@ -722,8 +722,8 @@ export interface NecrozmaRig {
   spikes: EnemyDetailMesh | null;
 }
 
-/** Huesos del Prisma Necrozma + malla `detail_spikes`. */
-export function collectNecrozmaRig(root: THREE.Object3D): NecrozmaRig {
+/** Huesos del Prisma Necroz + malla `detail_spikes`. */
+export function collectPrismaNecrozRig(root: THREE.Object3D): PrismaNecrozRig {
   return {
     torso: findBone(root, 'torso'),
     head: findBone(root, 'head'),

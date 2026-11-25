@@ -19,7 +19,7 @@ export type EnemyArchetype =
   | 'ground_golem'
   | 'lightning_butterfly'
   | 'giant_sparrow'
-  | 'prisma_necrozma'
+  | 'prisma_necroz'
   | 'kronos_leviathan';
 
 /** Enemigo de la cúpula desacoplado de cualquier modelo 3D concreto. */
@@ -40,19 +40,19 @@ export interface DomeEnemyEntity {
   expValue: number;
   isElite: boolean;
   isBoss: boolean;
-  /** Puntos débiles restantes (1 normales/Necrozma, 2 Gorrión, N Kronos). */
+  /** Puntos débiles restantes (1 normales/Prisma Necroz, 2 Gorrión, N Kronos). */
   weakPointsRemaining: number;
   evasive: boolean;
   evadeCooldown: number;
   /** Flash de impacto 0..1 (decae en el update visual del caller). */
   hitFlash: number;
   stunTimer: number;
-  /** Pinchos activos (Prisma Necrozma): repelen cualquier golpe cuerpo a cuerpo. */
+  /** Pinchos activos (Prisma Necroz): repelen cualquier golpe cuerpo a cuerpo. */
   spikesActive?: boolean;
   /** Boca abierta (Gorrión): habilita golpear el cristal interior. */
   mouthOpen?: boolean;
   /**
-   * Segundos restantes de ventana vulnerable (Prisma Necrozma tras su dash
+   * Segundos restantes de ventana vulnerable (Prisma Necroz tras su dash
    * evasivo o su ráfaga): los golpes penetran directo al star_core.
    */
   vulnerableTimer?: number;
@@ -115,7 +115,7 @@ const INK_DAMAGE_TOTAL = 12;
 const INK_DAMAGE_DURATION = 4.0;
 const INK_DAMAGE_PER_SEC = INK_DAMAGE_TOTAL / INK_DAMAGE_DURATION;
 /**
- * Daño que recibe Nyx al golpear cuerpo a cuerpo al Prisma Necrozma con los
+ * Daño que recibe Nyx al golpear cuerpo a cuerpo al Prisma Necroz con los
  * pinchos sacados (además de la repulsión del `thorns_repel`).
  */
 export const THORNS_DAMAGE_TO_NYX = 8;
@@ -148,8 +148,8 @@ export const DOME_ENEMY_ARCHETYPES: Record<EnemyArchetype, EnemyArchetypeStats> 
   lightning_butterfly: { maxHp: 25, radius: 1.2, fleshThickness: 8, expValue: 1.5, isElite: false, isBoss: false, weakPoints: 1, evasive: true },
   // Gorrión Gigante (Élite): 2 cristales — pecho y boca (solo con mouthOpen).
   giant_sparrow: { maxHp: 320, radius: 4.5, fleshThickness: 60, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 2, evasive: true },
-  // Prisma Necrozma (Élite): 1 cristal en el pecho, saca pinchos de frente.
-  prisma_necrozma: { maxHp: 300, radius: 3.8, fleshThickness: 65, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 1, evasive: true },
+  // Prisma Necroz (Élite): 1 cristal en el pecho, saca pinchos de frente.
+  prisma_necroz: { maxHp: 300, radius: 3.8, fleshThickness: 65, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 1, evasive: true },
   // Leviatán KRONOS (Boss): estrellas vitales cada 3 segmentos del cuerpo.
   kronos_leviathan: { maxHp: 900, radius: 6.5, fleshThickness: 90, expValue: 10.0, isElite: false, isBoss: true, weakPoints: 6, evasive: false },
 };
@@ -236,8 +236,8 @@ export class DomeCombatSystem {
    * Fuerza = f(velocidad) (sección 3.2): calcula el resultado de un impacto
    * cinético contra la carne/estrella de un enemigo.
    *
-   * - Pinchos activos (Necrozma de frente): repelen sin daño (`thorns_repel`).
-   * - Boca abierta del Gorrión o ventana vulnerable del Necrozma: el golpe
+   * - Pinchos activos (Prisma Necroz de frente): repelen sin daño (`thorns_repel`).
+   * - Boca abierta del Gorrión o ventana vulnerable del Prisma Necroz: el golpe
    *   penetra directo a la estrella (daño pleno) sin importar la fuerza.
    * - Si `bypassFlesh` (habilidad) o la fuerza supera `fleshThickness`, el
    *   golpe penetra hasta la estrella: destruye 1 punto débil y hace daño
@@ -265,7 +265,7 @@ export class DomeCombatSystem {
 
     const kineticForce = impactSpeed * speedForceMultiplier * (isDrill ? DRILL_FORCE_MULTIPLIER : 1.0);
 
-    // Prisma Necrozma con pinchos sacados: nada cuerpo a cuerpo le hace daño.
+    // Prisma Necroz con pinchos sacados: nada cuerpo a cuerpo le hace daño.
     if (enemy.spikesActive) {
       return {
         damage: 0,
@@ -283,7 +283,7 @@ export class DomeCombatSystem {
     let reason: KineticImpactResult['reason'] = isDrill ? 'drill' : 'normal';
 
     // Boca abierta del Gorrión (star_core_mouth expuesto) o ventana vulnerable
-    // del Necrozma (pinchos retraídos): la carne se ignora y el golpe alcanza
+    // del Prisma Necroz (pinchos retraídos): la carne se ignora y el golpe alcanza
     // la estrella con daño pleno.
     const mouthExposed = enemy.archetype === 'giant_sparrow' && enemy.mouthOpen === true;
     const vulnerable = (enemy.vulnerableTimer ?? 0) > 0;

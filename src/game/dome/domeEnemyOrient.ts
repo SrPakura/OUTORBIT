@@ -3,7 +3,7 @@
 // ============================================================================
 // lookAtQuat y faceTowards extraídas de DomeWaveManager (P6): el patrón
 // "cuaternión que mira hacia una dirección + slerp suavizado" se repetía en
-// las poses de KRONOS, cangrejo, pulpo, gorrion, Necrozma y gólem.
+// las poses de KRONOS, cangrejo, pulpo, gorrion, Prisma Necroz y gólem.
 // Scratch de módulo: cero allocations por frame.
 // ============================================================================
 

@@ -456,7 +456,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         progression.getModifiers().forceMultiplier,
         isDrill,
       );
-      // Pinchos del Necrozma: el golpe queda mitigado y Nyx recibe
+      // Pinchos del Prisma Necroz: el golpe queda mitigado y Nyx recibe
       // daño de represalia (la repulsión la da el recoilBounce).
       if (res.reason === 'thorns_repel') {
         applyDamageToNyx(THORNS_DAMAGE_TO_NYX);
