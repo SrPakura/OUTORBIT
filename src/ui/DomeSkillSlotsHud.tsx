@@ -37,18 +37,23 @@ function DomeSkillSlotsHudInner({ slots, activeSlot }: DomeSkillSlotsHudProps) {
         const progress = onCooldown ? Math.max(0, Math.min(1, 1 - cdRemaining / maxCd)) : 1;
         const dashOffset = RING_CIRCUMFERENCE * (1 - progress);
         const isActive = activeSlot === slotNum;
+        const ringColor = isActive && equipped ? '#22D3EE' : '#E11D48';
+        const trackColor =
+          isActive && equipped ? 'rgba(34, 211, 238, 0.22)' : 'rgba(225, 29, 72, 0.16)';
 
         return (
           <div
             key={slotNum}
-            className="relative flex items-center justify-center rounded-full"
+            className="relative flex items-center justify-center rounded-full transition-transform duration-150"
             style={{
               width: 'clamp(68px, 5.8vw, 88px)',
               height: 'clamp(68px, 5.8vw, 88px)',
               opacity: equipped ? 1 : 0.25,
-              boxShadow: isActive && equipped
-                ? '0 0 14px rgba(34, 211, 238, 0.45), 0 4px 12px rgba(0, 0, 0, 0.45)'
-                : '0 4px 12px rgba(0, 0, 0, 0.4)',
+              transform: isActive && equipped ? 'scale(1.07)' : 'scale(1)',
+              boxShadow:
+                isActive && equipped
+                  ? '0 0 0 3px #22D3EE, 0 0 24px rgba(34, 211, 238, 0.9), 0 0 42px rgba(34, 211, 238, 0.45), 0 4px 12px rgba(0, 0, 0, 0.45)'
+                  : '0 4px 12px rgba(0, 0, 0, 0.4)',
             }}
           >
             <svg
@@ -63,7 +68,7 @@ function DomeSkillSlotsHudInner({ slots, activeSlot }: DomeSkillSlotsHudProps) {
                   cy="60"
                   r={RING_RADIUS}
                   fill="none"
-                  stroke="rgba(225, 29, 72, 0.16)"
+                  stroke={trackColor}
                   strokeWidth="8"
                 />
               )}
@@ -72,7 +77,7 @@ function DomeSkillSlotsHudInner({ slots, activeSlot }: DomeSkillSlotsHudProps) {
                 cy="60"
                 r={RING_RADIUS}
                 fill="none"
-                stroke="#E11D48"
+                stroke={ringColor}
                 strokeWidth="8"
                 strokeLinecap="butt"
                 strokeDasharray={RING_CIRCUMFERENCE}
