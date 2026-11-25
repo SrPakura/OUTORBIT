@@ -462,6 +462,9 @@ function buildArchetypeVisuals(): Record<EnemyArchetype, ArchetypeVisual> {
   };
 }
 
+/** Avisos one-shot de clips pedidos por la FSM y ausentes en el GLB. */
+const warnedMissingActions = new Set<string>();
+
 // ---------------------------------------------------------------------------
 // Internos por enemigo (materiales y estado de comportamiento)
 // ---------------------------------------------------------------------------
@@ -2699,6 +2702,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     const next = actions.get(clipName);
     if (!next) {
+      // Diagnóstico (una vez por nombre): la FSM pide un clip que el GLB no
+      // trae — GLB viejo cacheado o nombre mal exportado.
+      if (!warnedMissingActions.has(clipName)) {
+        warnedMissingActions.add(clipName);
+        console.warn('[DomeWaveManager] missing animation action:', clipName);
+      }
       return;
     }
     if (next === internal.currentClipAction && !force) {

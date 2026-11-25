@@ -306,6 +306,15 @@ const modelCache = new Map<EnemyArchetype, CachedEnemyModel | null>();
 const pendingLoads = new Map<EnemyArchetype, Promise<void>>();
 const gltfLoader = new GLTFLoader();
 
+/**
+ * Versión de los GLB en la URL (`?v=N`): la ruta por archetype es FIJA, así
+ * que tras re-exportar un modelo (p. ej. añadirle clips) los navegadores y el
+ * CDN seguirían sirviendo la copia vieja de la caché con su misma URL. Al
+ * bumpar esta constante la URL cambia y todo el mundo descarga el asset nuevo
+ * a la primera. Bump obligatorio en cada re-export de cualquier .glb.
+ */
+const GLB_CACHE_VERSION = 2;
+
 function loadEnemyModel(archetype: EnemyArchetype): Promise<void> {
   if (modelCache.has(archetype)) {
     return Promise.resolve();
@@ -317,7 +326,7 @@ function loadEnemyModel(archetype: EnemyArchetype): Promise<void> {
 
   const promise = new Promise<void>((resolve) => {
     gltfLoader.load(
-      `/models/enemies/${archetype}.glb`,
+      `/models/enemies/${archetype}.glb?v=${GLB_CACHE_VERSION}`,
       (gltf) => {
         let hasSkinnedMesh = false;
         gltf.scene.traverse((obj) => {
