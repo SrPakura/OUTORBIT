@@ -245,6 +245,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   // Cada apertura del modal tiene su propio id: fuerza el remount de la
   // secuencia (fase y refs internas limpias) incluso para el mismo nivel.
   let levelUpOpenCount = 0;
+  // Ventana de gracia tras cerrar la pausa con teclado: si un keydown de ESC
+  // llegara duplicado (teclado/VM/escritorio remoto) o el navegador
+  // retrasara un unlock, no puede reabrir la pausa al instante.
+  let pauseResumeGraceUntil = 0;
 
   const openLevelUpModal = (levels: number[], skipPlanetAnimation = false) => {
     if (levels.length === 0) return;
@@ -754,9 +758,17 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       if (settingsOpenRef.current) return;
       if (levelUpOpenRef.current || battleReportOpenRef.current) return;
       if (pauseOpenRef.current) {
+        // Cerrar la pausa con teclado: NO se pide el pointer lock aquí. La
+        // tecla ESC no es un gesto válido de activación para el navegador
+        // (o deshace el lock concedido en pleno keydown), y el
+        // `pointerlockchange` de salida resultante reabría la pausa en bucle
+        // sin dejar de cerrarla jamás. La marca queda limpia para que ningún
+        // unlock rezagado pueda reabrirla: el ratón se recaptura con un clic
+        // en el lienzo (gesto válido, siempre funciona), igual que REANUDAR.
+        hadPointerLockRef.current = false;
+        pauseResumeGraceUntil = performance.now() + 250;
         setIsPauseOpen(false);
-        canvas.requestPointerLock?.();
-      } else {
+      } else if (performance.now() >= pauseResumeGraceUntil) {
         setIsPauseOpen(true);
         document.exitPointerLock?.();
       }

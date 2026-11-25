@@ -125,6 +125,13 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
   });
   /** Callbacks vivos dentro del useEffect del juego (solo en entrenamiento). */
   const trainingBridgeRef = useRef<DomeTrainingBridge | null>(null);
+  /**
+   * Contador de re-render para el panel de entrenamiento: equipar/+Nv/vaciar
+   * solo mutan `progression` (fuera de React) y, con la pausa abierta, el loop
+   * congela el `setHud` a 30 Hz, así que sin este bump el panel seguiría
+   * mostrando los valores anteriores hasta cerrar y reabrir la pausa.
+   */
+  const [, setTrainingPanelRev] = useState(0);
 
   useEffect(() => {
     controllerRef.current?.applySettings(settings);
@@ -179,6 +186,11 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
   }, []);
 
   const handlePauseResume = useCallback(() => {
+    // Por si el navegador rechaza el requestPointerLock (cooldown tras un ESC
+    // reciente): con la marca limpia, un unlock rezagado no puede reabrir la
+    // pausa debajo del juego. Si el clic captura el ratón (lo normal),
+    // onPointerLockChange vuelve a marcarla.
+    hadPointerLockRef.current = false;
     setIsPauseOpen(false);
     canvasRef.current?.requestPointerLock?.();
   }, []);
@@ -208,14 +220,17 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
 
   const handleTrainingEquipSkill = useCallback((slot: 0 | 1 | 2, skillId: ActiveSkillId) => {
     trainingBridgeRef.current?.equipSkill(slot, skillId);
+    setTrainingPanelRev((rev) => rev + 1);
   }, []);
 
   const handleTrainingClearSlot = useCallback((slot: 0 | 1 | 2) => {
     trainingBridgeRef.current?.clearSlot(slot);
+    setTrainingPanelRev((rev) => rev + 1);
   }, []);
 
   const handleTrainingUpgradeSlot = useCallback((slot: 0 | 1 | 2) => {
     trainingBridgeRef.current?.upgradeSlot(slot);
+    setTrainingPanelRev((rev) => rev + 1);
   }, []);
 
   const handleTrainingSetPassiveLevel = useCallback((id: PassiveId, level: number) => {
