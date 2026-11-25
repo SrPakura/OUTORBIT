@@ -119,6 +119,91 @@ const _groundHit: SlabRaycastHit = {
 const _ringOrigin = new THREE.Vector3();
 const _ringDir = new THREE.Vector3();
 
+/**
+ * Geometría de onda cortante en media luna (Horizonte de Rebote):
+ * orientada hacia +Z (dirección de `lookAt`), plana en X-Z con filo curvo
+ * adelantado y puntas afiladas en los extremos.
+ */
+function createCrescentSlashGeometry(segments = 24): THREE.BufferGeometry {
+  const halfWidth = 1.45;
+  const frontCurve = 1.05;
+  const backCurve = 0.42;
+  const maxThick = 0.05;
+
+  const positions: number[] = [];
+  const indices: number[] = [];
+
+  for (let i = 0; i <= segments; i++) {
+    const t = -1 + (2 * i) / segments; // -1 .. +1
+    const arch = 1 - t * t;
+    const x = t * halfWidth;
+    const zFront = frontCurve * arch;
+    const zBack = backCurve * arch;
+    const yHalf = maxThick * Math.sqrt(Math.max(0, arch));
+
+    // 4 vértices por sección: filo delantero, borde sup, borde inf, filo trasero
+    positions.push(
+      x, 0, zFront,
+      x, yHalf, (zFront + zBack) * 0.5,
+      x, -yHalf, (zFront + zBack) * 0.5,
+      x, 0, zBack,
+    );
+  }
+
+  for (let i = 0; i < segments; i++) {
+    const a = i * 4;
+    const b = (i + 1) * 4;
+    // Cara superior delantera, cara superior trasera
+    indices.push(a + 0, b + 0, a + 1, b + 0, b + 1, a + 1);
+    indices.push(a + 1, b + 1, a + 3, b + 1, b + 3, a + 3);
+    // Cara inferior delantera, cara inferior trasera
+    indices.push(a + 0, a + 2, b + 0, b + 0, a + 2, b + 2);
+    indices.push(a + 2, a + 3, b + 2, b + 2, a + 3, b + 3);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Busca el mejor enemigo para auto-aim (Horizonte de Rebote Nv2+):
+ * prioriza objetivos en el cono frontal de la mira y, si no hay, el más cercano.
+ */
+function findAutoAimTarget(
+  origin: THREE.Vector3,
+  forward: THREE.Vector3,
+  enemies: SkillTargetEnemy[],
+  excludeIds?: Set<string>,
+): SkillTargetEnemy | null {
+  let bestCone: SkillTargetEnemy | null = null;
+  let bestConeScore = -Infinity;
+  let bestNear: SkillTargetEnemy | null = null;
+  let bestNearDist = 35;
+
+  for (const enemy of enemies) {
+    if (excludeIds?.has(enemy.id)) continue;
+    _v3.subVectors(enemy.position, origin);
+    const dist = _v3.length();
+    if (dist < 0.01 || dist > 75) continue;
+    const dot = _v3.dot(forward) / dist;
+    if (dot > 0.25) {
+      const score = dot * 2.2 - dist / 75;
+      if (score > bestConeScore) {
+        bestConeScore = score;
+        bestCone = enemy;
+      }
+    }
+    if (dist < bestNearDist) {
+      bestNearDist = dist;
+      bestNear = enemy;
+    }
+  }
+  return bestCone ?? bestNear;
+}
+
 function nearestEnemy(
   from: THREE.Vector3,
   enemies: SkillTargetEnemy[],
@@ -194,8 +279,26 @@ interface ProjectileState {
   hitIds: Set<string>;
   pierce: boolean;
   orientToVelocity: boolean;
+  /** Ángulo de inclinación alrededor del eje de vuelo (ondas cortantes). */
+  rollRad?: number;
+  /** True si pertenece a Horizonte de Rebote. */
+  isBounceSlash?: boolean;
   /** Bola de tinta ácida capturada del pulpo: al morir se devuelve al pool. */
   capturedInkBall: boolean;
+}
+
+interface PendingSlashBurst {
+  remaining: number;
+  timer: number;
+  interval: number;
+  level: number;
+  damage: number;
+  speed: number;
+  homingStrength: number;
+  fallbackOrigin: THREE.Vector3;
+  fallbackDir: THREE.Vector3;
+  target: SkillTargetEnemy | null;
+  slashIndex: number;
 }
 
 interface ExpandingWave {
@@ -307,6 +410,7 @@ export class DomeSkillExecutor {
   private readonly scene: THREE.Scene;
 
   private readonly projectiles: ProjectileState[] = [];
+  private readonly slashBursts: PendingSlashBurst[] = [];
   private readonly waves: ExpandingWave[] = [];
   private readonly wells: AttractionWellState[] = [];
   /** Ids vivos del frame actual (updateWells): Set persistente sin GC. */
@@ -328,7 +432,7 @@ export class DomeSkillExecutor {
   // --- Geometrías compartidas ---
   private readonly fragGeometry = new THREE.DodecahedronGeometry(0.34, 0);
   private readonly waveGeometry = new THREE.SphereGeometry(1, 20, 14);
-  private readonly sliceGeometry = new THREE.TorusGeometry(0.95, 0.07, 8, 36);
+  private readonly sliceGeometry = createCrescentSlashGeometry();
   private readonly coreGeometry = new THREE.SphereGeometry(1.05, 20, 16);
   private readonly ringGeometry = new THREE.TorusGeometry(2.1, 0.2, 8, 42);
   private readonly linkGeometry = new THREE.CylinderGeometry(0.05, 0.05, 1, 6, 1, true);
@@ -537,7 +641,7 @@ export class DomeSkillExecutor {
       case 'attraction_well':
         return this.wells.length > 0;
       case 'bounce_horizon':
-        return this.waves.length > 0;
+        return this.slashBursts.length > 0 || this.projectiles.some((p) => p.isBounceSlash);
       case 'black_hole':
         return this.blackHoles.length > 0;
       case 'implosion':
@@ -873,100 +977,165 @@ export class DomeSkillExecutor {
 
   /** Pozo de Atracción: enlaza 2 enemigos (o 2 slabs contra 1 enemigo). */
   private triggerAttractionWell(level: number, ctx: SkillTriggerContext): SkillTriggerResult {
-    const range = 22 + level * 6;
-    const candidates = ctx.enemies
-      .filter((enemy) => enemy.position.distanceTo(ctx.playerPos) <= range)
-      .sort(
-        (a, b) => a.position.distanceTo(ctx.playerPos) - b.position.distanceTo(ctx.playerPos)
-      );
+    const range = 40 + level * 12;
+    const inRange = ctx.enemies.filter(
+      (enemy) => enemy.position.distanceTo(ctx.playerPos) <= range,
+    );
+    if (inRange.length === 0) return { triggered: false };
 
-    if (candidates.length >= 2) {
-      const link = new THREE.Mesh(this.linkGeometry, this.linkMaterial.clone());
-      this.scene.add(link);
-      // Cúpula de área en el punto medio del enlace: marca el radio de acción.
-      _v3.addVectors(candidates[0].position, candidates[1].position).multiplyScalar(0.5);
-      this.spawnAreaDome(_v3, 6 + level, ATTRACTION_DURATION);
-      this.spawnAreaGroundRing(_v3, 6 + level, ATTRACTION_DURATION, ctx.slabs);
-      this.wells.push({
-        mode: 'enemy_pair',
-        level,
-        timer: ATTRACTION_DURATION,
-        link,
-        linkMaterial: link.material as THREE.MeshBasicMaterial,
-        enemyA: candidates[0],
-        enemyB: candidates[1],
-      });
-      return { triggered: true, animOverride: 'stasis_cast' };
+    // Objetivo principal: el bloqueado si está en rango, o el más cercano a la mira/Nyx.
+    let primary: SkillTargetEnemy | null =
+      ctx.lockedEnemy && inRange.some((e) => e.id === ctx.lockedEnemy!.id)
+        ? ctx.lockedEnemy
+        : findAutoAimTarget(ctx.playerPos, ctx.forwardDir, inRange);
+
+    if (primary === null) {
+      inRange.sort(
+        (a, b) => a.position.distanceTo(ctx.playerPos) - b.position.distanceTo(ctx.playerPos),
+      );
+      primary = inRange[0];
     }
 
-    // Con 1 enemigo a rango: aplastamiento con los 2 slabs más cercanos.
-    if (candidates.length === 1) {
-      const slabs = ctx.slabs
-        .filter((slab) => slab.center.distanceTo(ctx.playerPos) <= range + 10)
-        .sort(
-          (a, b) => a.center.distanceTo(ctx.playerPos) - b.center.distanceTo(ctx.playerPos)
-        )
-        .slice(0, 2);
-      if (slabs.length === 2) {
+    if (inRange.length >= 2) {
+      // Segundo objetivo: el enemigo más cercano al principal para que el choque sea natural.
+      let secondary: SkillTargetEnemy | null = null;
+      let bestDist = Infinity;
+      for (const candidate of inRange) {
+        if (candidate.id === primary.id) continue;
+        const d = candidate.position.distanceTo(primary.position);
+        if (d < bestDist) {
+          bestDist = d;
+          secondary = candidate;
+        }
+      }
+      if (secondary !== null) {
         const link = new THREE.Mesh(this.linkGeometry, this.linkMaterial.clone());
         this.scene.add(link);
-        this.spawnAreaDome(candidates[0].position, 5 + level, ATTRACTION_DURATION);
-        this.spawnAreaGroundRing(
-          candidates[0].position,
-          5 + level,
-          ATTRACTION_DURATION,
-          ctx.slabs,
-        );
+        _v3.addVectors(primary.position, secondary.position).multiplyScalar(0.5);
+        this.spawnAreaDome(_v3, 6 + level, ATTRACTION_DURATION);
+        this.spawnAreaGroundRing(_v3, 6 + level, ATTRACTION_DURATION, ctx.slabs);
         this.wells.push({
-          mode: 'slab_crush',
+          mode: 'enemy_pair',
           level,
           timer: ATTRACTION_DURATION,
           link,
           linkMaterial: link.material as THREE.MeshBasicMaterial,
-          crushTarget: candidates[0],
-          slabA: slabs[0],
-          slabB: slabs[1],
-          crushedA: false,
-          crushedB: false,
+          enemyA: primary,
+          enemyB: secondary,
         });
         return { triggered: true, animOverride: 'stasis_cast' };
       }
     }
 
+    // Con 1 enemigo a rango: aplastamiento con los 2 slabs más cercanos al enemigo.
+    const slabs = [...ctx.slabs]
+      .sort(
+        (a, b) =>
+          a.center.distanceTo(primary!.position) - b.center.distanceTo(primary!.position),
+      )
+      .slice(0, 2);
+    if (slabs.length === 2) {
+      const link = new THREE.Mesh(this.linkGeometry, this.linkMaterial.clone());
+      this.scene.add(link);
+      this.spawnAreaDome(primary.position, 5 + level, ATTRACTION_DURATION);
+      this.spawnAreaGroundRing(primary.position, 5 + level, ATTRACTION_DURATION, ctx.slabs);
+      this.wells.push({
+        mode: 'slab_crush',
+        level,
+        timer: ATTRACTION_DURATION,
+        link,
+        linkMaterial: link.material as THREE.MeshBasicMaterial,
+        crushTarget: primary,
+        slabA: slabs[0],
+        slabB: slabs[1],
+        crushedA: false,
+        crushedB: false,
+      });
+      return { triggered: true, animOverride: 'stasis_cast' };
+    }
+
     return { triggered: false };
   }
 
-  /** Horizonte de Rebote: `skillLevel` ondas cortantes en arco (homing Nv2+). */
+  /** Horizonte de Rebote: `skillLevel` ondas cortantes en ráfaga secuencial (auto-aim Nv2+). */
   private triggerBounceHorizon(level: number, ctx: SkillTriggerContext): SkillTriggerResult {
     const count = Math.max(1, level);
-    const speed = 40;
+    const speed = 42;
     const damage = 7 + level * 3;
-    const homingStrength = level >= 2 && ctx.lockedEnemy !== null ? 2.4 : 0;
+    const homingStrength = level >= 2 ? (level >= 3 ? 6.5 : 4.5) : 0;
+    const target =
+      homingStrength > 0
+        ? (ctx.lockedEnemy ?? findAutoAimTarget(ctx.playerPos, ctx.forwardDir, ctx.enemies))
+        : null;
 
-    for (let i = 0; i < count; i++) {
-      const spread = (i - (count - 1) / 2) * THREE.MathUtils.degToRad(14);
-      _v1.copy(ctx.forwardDir).applyAxisAngle(UP, spread).normalize();
-      const material = this.sliceMaterial.clone();
-      const mesh = new THREE.Mesh(this.sliceGeometry, material);
-      mesh.position.copy(ctx.playerPos).addScaledVector(_v1, 1.2);
-      mesh.lookAt(_v2.copy(mesh.position).add(_v1));
-      this.scene.add(mesh);
-      this.projectiles.push({
-        mesh,
-        material,
-        velocity: _v1.clone().multiplyScalar(speed),
-        remainingLife: 2.2,
+    this.spawnBounceSlash(
+      ctx.playerPos,
+      ctx.forwardDir,
+      speed,
+      damage,
+      target,
+      homingStrength,
+      count === 1 ? 0 : -0.42,
+    );
+
+    if (count > 1) {
+      this.slashBursts.push({
+        remaining: count - 1,
+        timer: 0.14,
+        interval: 0.14,
+        level,
         damage,
-        hitRadius: 1.1,
-        homingTarget: homingStrength > 0 ? ctx.lockedEnemy : null,
+        speed,
         homingStrength,
-        hitIds: new Set<string>(),
-        pierce: true,
-        orientToVelocity: true,
-        capturedInkBall: false,
+        fallbackOrigin: ctx.playerPos.clone(),
+        fallbackDir: ctx.forwardDir.clone().normalize(),
+        target,
+        slashIndex: 1,
       });
     }
     return { triggered: true, animOverride: 'air_dash' };
+  }
+
+  private spawnBounceSlash(
+    origin: THREE.Vector3,
+    forwardDir: THREE.Vector3,
+    speed: number,
+    damage: number,
+    target: SkillTargetEnemy | null,
+    homingStrength: number,
+    rollRad: number,
+  ): void {
+    _v1.copy(forwardDir).normalize();
+    if (homingStrength > 0 && target !== null) {
+      _v2.subVectors(target.position, origin);
+      if (_v2.lengthSq() > 1e-6) {
+        _v2.normalize();
+        // Si el objetivo está en el hemisferio frontal, alinea el corte inicial hacia él.
+        if (_v2.dot(_v1) > 0.25) _v1.copy(_v2);
+      }
+    }
+    const material = this.sliceMaterial.clone();
+    const mesh = new THREE.Mesh(this.sliceGeometry, material);
+    mesh.position.copy(origin).addScaledVector(_v1, 1.25);
+    mesh.lookAt(_v2.copy(mesh.position).add(_v1));
+    if (rollRad !== 0) mesh.rotateZ(rollRad);
+    this.scene.add(mesh);
+    this.projectiles.push({
+      mesh,
+      material,
+      velocity: _v1.clone().multiplyScalar(speed),
+      remainingLife: 2.2,
+      damage,
+      hitRadius: 1.35,
+      homingTarget: homingStrength > 0 ? target : null,
+      homingStrength,
+      hitIds: new Set<string>(),
+      pierce: true,
+      orientToVelocity: true,
+      rollRad,
+      isBounceSlash: true,
+      capturedInkBall: false,
+    });
   }
 
   /** Agujero Negro: singularidad lenta con disco de acreción (4.5 s). */
@@ -1026,6 +1195,7 @@ export class DomeSkillExecutor {
     // mientras la Mesh viva en escena).
     this.capturedInkBallMaterial.uniforms.uTime.value += dt;
     this.updateGravityField(dt, playerPos, forwardDir);
+    this.updateSlashBursts(dt, enemies, playerPos, forwardDir);
     this.updateLooseDebris(dt);
     this.updateProjectiles(dt, enemies, onDamageEnemy);
     this.updateWaves(dt);
@@ -1058,6 +1228,47 @@ export class DomeSkillExecutor {
     }
   }
 
+  private updateSlashBursts(
+    dt: number,
+    enemies: SkillTargetEnemy[],
+    playerPos?: THREE.Vector3,
+    forwardDir?: THREE.Vector3,
+  ): void {
+    const SLASH_ROLLS = [-0.42, 0.42, 0] as const;
+    for (let i = this.slashBursts.length - 1; i >= 0; i--) {
+      const burst = this.slashBursts[i];
+      burst.timer -= dt;
+      if (burst.timer <= 0) {
+        const origin = playerPos ?? burst.fallbackOrigin;
+        const dir = forwardDir ?? burst.fallbackDir;
+        let target = burst.target;
+        if (burst.homingStrength > 0) {
+          const alive = target !== null && enemies.some((e) => e.id === target!.id);
+          if (!alive) {
+            target = findAutoAimTarget(origin, dir, enemies);
+            burst.target = target;
+          }
+        }
+        const roll = SLASH_ROLLS[burst.slashIndex % SLASH_ROLLS.length];
+        this.spawnBounceSlash(
+          origin,
+          dir,
+          burst.speed,
+          burst.damage,
+          target,
+          burst.homingStrength,
+          roll,
+        );
+        burst.slashIndex += 1;
+        burst.remaining -= 1;
+        burst.timer += burst.interval;
+        if (burst.remaining <= 0) {
+          this.slashBursts.splice(i, 1);
+        }
+      }
+    }
+  }
+
   private updateProjectiles(
     dt: number,
     enemies: SkillTargetEnemy[],
@@ -1067,22 +1278,38 @@ export class DomeSkillExecutor {
       const p = this.projectiles[i];
       p.remainingLife -= dt;
 
-      // Homing suave hacia el objetivo bloqueado (Horizonte de Rebote Nv2+).
-      if (p.homingTarget !== null && p.homingStrength > 0) {
-        _v1.subVectors(p.homingTarget.position, p.mesh.position);
-        if (_v1.lengthSq() > 1e-6) {
+      // Auto-aim / Homing hacia objetivo vivo sin golpear (Horizonte de Rebote Nv2+).
+      if (p.homingStrength > 0) {
+        const targetAlive =
+          p.homingTarget !== null &&
+          !p.hitIds.has(p.homingTarget.id) &&
+          enemies.some((e) => e.id === p.homingTarget!.id);
+        if (!targetAlive) {
           const speed = p.velocity.length();
-          _v1.normalize();
-          p.velocity
-            .addScaledVector(_v1, speed * p.homingStrength * dt)
-            .normalize()
-            .multiplyScalar(speed);
+          if (speed > 1e-3) {
+            _v2.copy(p.velocity).divideScalar(speed);
+            p.homingTarget = findAutoAimTarget(p.mesh.position, _v2, enemies, p.hitIds);
+          } else {
+            p.homingTarget = null;
+          }
+        }
+        if (p.homingTarget !== null) {
+          _v1.subVectors(p.homingTarget.position, p.mesh.position);
+          if (_v1.lengthSq() > 1e-6) {
+            const speed = p.velocity.length();
+            _v1.normalize();
+            p.velocity
+              .addScaledVector(_v1, speed * p.homingStrength * dt)
+              .normalize()
+              .multiplyScalar(speed);
+          }
         }
       }
 
       p.mesh.position.addScaledVector(p.velocity, dt);
       if (p.orientToVelocity) {
         p.mesh.lookAt(_v2.copy(p.mesh.position).add(p.velocity));
+        if (p.rollRad) p.mesh.rotateZ(p.rollRad);
       }
 
       let killed = false;
@@ -1149,22 +1376,23 @@ export class DomeSkillExecutor {
         if (!aliveIds.has(well.enemyA.id) || !aliveIds.has(well.enemyB.id)) {
           done = true;
         } else {
-          const pullAccel = 30 + well.level * 10;
+          const pullAccel = 70 + well.level * 20;
+          const directSpeed = 14 + well.level * 4;
           _v1.addVectors(well.enemyA.position, well.enemyB.position).multiplyScalar(0.5);
-          this.pullEnemy(well.enemyA, _v1, pullAccel, dt);
-          this.pullEnemy(well.enemyB, _v1, pullAccel, dt);
+          this.pullEnemy(well.enemyA, _v1, pullAccel, dt, directSpeed);
+          this.pullEnemy(well.enemyB, _v1, pullAccel, dt, directSpeed);
           this.orientLink(well.link, well.enemyA.position, well.enemyB.position);
 
           const dist = well.enemyA.position.distanceTo(well.enemyB.position);
-          if (dist <= well.enemyA.radius + well.enemyB.radius + 0.6) {
-            const damage = 10 + well.level * 5;
+          if (dist <= well.enemyA.radius + well.enemyB.radius + 0.8) {
+            const damage = 15 + well.level * 7;
             onDamageEnemy(
               well.enemyA,
               damage,
               _impulse
                 .subVectors(well.enemyB.position, well.enemyA.position)
                 .normalize()
-                .multiplyScalar(10)
+                .multiplyScalar(12)
             );
             onDamageEnemy(
               well.enemyB,
@@ -1172,10 +1400,10 @@ export class DomeSkillExecutor {
               _impulse
                 .subVectors(well.enemyA.position, well.enemyB.position)
                 .normalize()
-                .multiplyScalar(10)
+                .multiplyScalar(12)
             );
             _v3.addVectors(well.enemyA.position, well.enemyB.position).multiplyScalar(0.5);
-            this.spawnExpandingWave(_v3, 3, 0.35, this.flashMaterial);
+            this.spawnExpandingWave(_v3, 3.5, 0.35, this.flashMaterial);
             done = true;
           }
         }
@@ -1183,12 +1411,18 @@ export class DomeSkillExecutor {
         if (!aliveIds.has(well.crushTarget.id)) {
           done = true;
         } else {
-          const crushSpeed = 5 + well.level * 1.5;
-          this.moveSlabToward(well.slabA, well.crushTarget.position, crushSpeed, dt);
-          this.moveSlabToward(well.slabB, well.crushTarget.position, crushSpeed, dt);
+          const distA = well.slabA.center.distanceTo(well.crushTarget.position);
+          const distB = well.slabB.center.distanceTo(well.crushTarget.position);
+          const speedA = Math.max(16 + well.level * 4, distA / 0.9);
+          const speedB = Math.max(16 + well.level * 4, distB / 0.9);
+          this.moveSlabToward(well.slabA, well.crushTarget.position, speedA, dt);
+          this.moveSlabToward(well.slabB, well.crushTarget.position, speedB, dt);
+          // Retiene al enemigo en el punto medio entre ambos suelos mientras se cierran.
+          _v1.addVectors(well.slabA.center, well.slabB.center).multiplyScalar(0.5);
+          this.pullEnemy(well.crushTarget, _v1, 32 + well.level * 8, dt, 6);
           this.orientLink(well.link, well.slabA.center, well.slabB.center);
 
-          const damage = 12 + well.level * 6;
+          const damage = 18 + well.level * 8;
           if (
             !well.crushedA &&
             well.slabA.center.distanceTo(well.crushTarget.position) <=
@@ -1466,11 +1700,18 @@ export class DomeSkillExecutor {
     enemy: SkillTargetEnemy,
     toward: THREE.Vector3,
     accel: number,
-    dt: number
+    dt: number,
+    directSpeed = 0,
   ): void {
     _v3.subVectors(toward, enemy.position);
-    if (_v3.lengthSq() < 1e-6) return;
-    enemy.velocity.addScaledVector(_v3.normalize(), accel * dt);
+    const dist = _v3.length();
+    if (dist < 1e-4) return;
+    _v3.divideScalar(dist);
+    enemy.velocity.addScaledVector(_v3, accel * dt);
+    if (directSpeed > 0) {
+      const step = Math.min(directSpeed * dt, dist * 0.5);
+      enemy.position.addScaledVector(_v3, step);
+    }
   }
 
   private moveSlabToward(
@@ -1483,10 +1724,13 @@ export class DomeSkillExecutor {
     const dist = _v3.length();
     if (dist < 1e-4) return;
     const step = Math.min(speed * dt, dist);
-    slab.basePos.addScaledVector(_v3.normalize(), step);
+    _v3.divideScalar(dist);
+    slab.basePos.addScaledVector(_v3, step);
     if (slab.basePos.length() > DOME_KEEP_RADIUS) {
       slab.basePos.setLength(DOME_KEEP_RADIUS);
     }
+    slab.center.copy(slab.basePos);
+    slab.mesh.position.copy(slab.center);
   }
 
   /** Orienta el cilindro de enlace entre dos puntos (geometría unitaria en Y). */
@@ -1495,7 +1739,7 @@ export class DomeSkillExecutor {
     link.position.copy(_v1);
     _v2.subVectors(b, a);
     const len = _v2.length();
-    link.scale.set(1, Math.max(len, 0.001), 1);
+    link.scale.set(2.4, Math.max(len, 0.001), 2.4);
     if (len > 1e-4) {
       _v2.divideScalar(len);
       link.quaternion.setFromUnitVectors(UP, _v2);
@@ -1526,6 +1770,7 @@ export class DomeSkillExecutor {
       }
     }
     this.projectiles.length = 0;
+    this.slashBursts.length = 0;
     for (const wave of this.waves) {
       this.scene.remove(wave.mesh);
       wave.material.dispose();
