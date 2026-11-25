@@ -181,6 +181,14 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
 
   const handlePlayAgain = useCallback(() => {
     setBattleReport(null);
+    setLevelUpState((prev) => ({
+      isOpen: false,
+      newLevel: 1,
+      pendingLevels: [],
+      choices: null,
+      requiresSlotReplacement: false,
+      openId: prev.openId + 1,
+    }));
     setHud(INITIAL_HUD);
     setRunSeed((s) => s + 1);
   }, []);
@@ -197,6 +205,16 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
 
   const handlePauseRestart = useCallback(() => {
     setIsPauseOpen(false);
+    setBattleReport(null);
+    setLevelUpState((prev) => ({
+      isOpen: false,
+      newLevel: 1,
+      pendingLevels: [],
+      choices: null,
+      requiresSlotReplacement: false,
+      openId: prev.openId + 1,
+    }));
+    setHud(INITIAL_HUD);
     hadPointerLockRef.current = false;
     setRunSeed((s) => s + 1);
   }, []);
@@ -295,7 +313,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[#040510]">
-      <canvas ref={canvasRef} className="block h-full w-full cursor-none" />
+      <canvas key={runSeed} ref={canvasRef} className="block h-full w-full cursor-none" />
       {/* Aros de materia oscura: enemigos lejanos marcados en pantalla (bajo el HUD). */}
       <DomeDarkMatterRings controllerRef={controllerRef} />
       <DomeHudSketch
