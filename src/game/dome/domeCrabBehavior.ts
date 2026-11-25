@@ -930,9 +930,7 @@ export function updateCrabAttack(
 
     case 'laser_fire': {
       internal.crabTimer += dt;
-      // Barrido con inercia: la manguera a alta presión sigue muy despacio,
-      // para que Nyx pueda arrastrar el rayo contra otros enemigos.
-      aimCrabTurretLimited(internal, playerPos, CRAB_LASER_FIRE_TURN_RATE, dt);
+      // En fase de daño el haz queda fijo en la última dirección apuntada.
       if (computeCrabMuzzle(internal, _muzzlePos) && crabTurretWorldDir(internal, _muzzleDir)) {
         const dist = ctx.raycastCrabLaser(activeSlabs, _muzzlePos, _muzzleDir, CRAB_LASER_RANGE);
         ctx.showCrabLaser(enemy.id, true, _muzzlePos, _muzzleDir, dist, false);
