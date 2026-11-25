@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useMemo, useRef } from 'react';
 import type { DomeHudState } from '@/game/dome/domeTypes';
 import { RETICLE_SIZE_PX } from '@/game/dome/domeTypes';
 import type { SynthAudio } from '@/game/audio/SynthAudio';
@@ -34,17 +34,17 @@ function makeInkRng(seed: number): () => number {
   };
 }
 
-/** Blob irregular de tinta con lóbulos marcados (14-18 anclas alternando picos y valles). */
-function inkBlobPath(cx: number, cy: number, baseR: number, rng: () => number): string {
-  const anchors = 14 + Math.floor(rng() * 5);
+/** Blob principal dentado e irregular + agujeros internos (fillRule="evenodd"). */
+function inkMainSplatPath(cx: number, cy: number, baseR: number, rng: () => number): string {
+  const anchors = 28 + Math.floor(rng() * 10);
   const pts: Array<{ x: number; y: number }> = [];
   for (let i = 0; i < anchors; i++) {
-    const a = (i / anchors) * Math.PI * 2 + (rng() - 0.5) * 0.12;
-    const lobe = i % 2 === 0 ? 0.72 + rng() * 0.65 : 0.32 + rng() * 0.32;
-    const r = baseR * lobe;
+    const a = (i / anchors) * Math.PI * 2 + (rng() - 0.5) * 0.14;
+    const isArm = rng() > 0.62;
+    const r = baseR * (isArm ? 0.85 + rng() * 0.78 : 0.38 + rng() * 0.44);
     pts.push({
       x: cx + Math.cos(a) * r,
-      y: cy + Math.sin(a) * r * (0.72 + rng() * 0.52),
+      y: cy + Math.sin(a) * r * (0.72 + rng() * 0.54),
     });
   }
   const firstMidX = (pts[anchors - 1].x + pts[0].x) / 2;
@@ -57,52 +57,136 @@ function inkBlobPath(cx: number, cy: number, baseR: number, rng: () => number): 
     const my = (p.y + n.y) / 2;
     d += `Q ${p.x.toFixed(1)} ${p.y.toFixed(1)} ${mx.toFixed(1)} ${my.toFixed(1)} `;
   }
-  return `${d}Z`;
+  d += 'Z ';
+
+  // Huecos orgánicos internos (espacio negativo como salpicadura real)
+  const holes = 4 + Math.floor(rng() * 4);
+  for (let h = 0; h < holes; h++) {
+    const ha = rng() * Math.PI * 2;
+    const hd = baseR * (0.18 + rng() * 0.42);
+    const hx = cx + Math.cos(ha) * hd;
+    const hy = cy + Math.sin(ha) * hd * 0.85;
+    const hr = 6 + rng() * 18;
+    const hPts = 7;
+    const holeArr: Array<{ x: number; y: number }> = [];
+    for (let j = 0; j < hPts; j++) {
+      const a = (j / hPts) * Math.PI * 2;
+      const rr = hr * (0.6 + rng() * 0.7);
+      holeArr.push({ x: hx + Math.cos(a) * rr, y: hy + Math.sin(a) * rr });
+    }
+    d += `M ${holeArr[0].x.toFixed(1)} ${holeArr[0].y.toFixed(1)} `;
+    for (let j = 1; j < hPts; j++) {
+      d += `L ${holeArr[j].x.toFixed(1)} ${holeArr[j].y.toFixed(1)} `;
+    }
+    d += 'Z ';
+  }
+  return d;
+}
+
+/** Rayo/salpicadura radial afilada con punta bulbosa (estilo tinta lanzada). */
+function inkStreakPath(
+  cx: number,
+  cy: number,
+  angle: number,
+  startR: number,
+  len: number,
+  baseW: number,
+  rng: () => number,
+): string {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const px = -sin;
+  const py = cos;
+  const sx = cx + cos * startR;
+  const sy = cy + sin * startR;
+  const mx = cx + cos * (startR + len * (0.55 + rng() * 0.15));
+  const my = cy + sin * (startR + len * (0.55 + rng() * 0.15));
+  const ex = cx + cos * (startR + len);
+  const ey = cy + sin * (startR + len);
+  const tipW = baseW * (0.28 + rng() * 0.35);
+  return `M ${(sx + px * baseW).toFixed(1)} ${(sy + py * baseW).toFixed(1)} Q ${(mx + px * baseW * 0.25).toFixed(1)} ${(my + py * baseW * 0.25).toFixed(1)} ${(ex + px * tipW).toFixed(1)} ${(ey + py * tipW).toFixed(1)} Q ${(ex + cos * tipW * 2.2).toFixed(1)} ${(ey + sin * tipW * 2.2).toFixed(1)} ${(ex - px * tipW).toFixed(1)} ${(ey - py * tipW).toFixed(1)} Q ${(mx - px * baseW * 0.25).toFixed(1)} ${(my - py * baseW * 0.25).toFixed(1)} ${(sx - px * baseW).toFixed(1)} ${(sy - py * baseW).toFixed(1)} Z`;
 }
 
 /** Chorrete: goteo estrecho que cae bajo una mancha. */
 function inkDripPath(x: number, y: number, len: number, w: number): string {
-  return `M ${x} ${y} C ${x - w} ${y + len * 0.4}, ${x - w * 0.6} ${y + len * 0.75}, ${x} ${y + len} C ${x + w * 0.6} ${y + len * 0.75}, ${x + w} ${y + len * 0.4}, ${x} ${y} Z`;
+  return `M ${x.toFixed(1)} ${y.toFixed(1)} C ${(x - w).toFixed(1)} ${(y + len * 0.4).toFixed(1)}, ${(x - w * 0.6).toFixed(1)} ${(y + len * 0.75).toFixed(1)}, ${x.toFixed(1)} ${(y + len).toFixed(1)} C ${(x + w * 0.6).toFixed(1)} ${(y + len * 0.75).toFixed(1)}, ${(x + w).toFixed(1)} ${(y + len * 0.4).toFixed(1)}, ${x.toFixed(1)} ${y.toFixed(1)} Z`;
 }
 
 interface InkSplashShape {
   blobs: string[];
-  drops: Array<{ x: number; y: number; r: number }>;
+  drops: Array<{ x: number; y: number; rx: number; ry: number; rot: number }>;
   drips: string[];
 }
 
-/** Salpicadura orgánica sobre el lienzo virtual 1600x900 (sin tapar todo como un telón plano). */
-function buildInkSplash(): InkSplashShape {
-  const rng = makeInkRng(69147);
+/** Salpicadura orgánica ALEATORIA sobre el lienzo virtual 1600x900. */
+function buildInkSplash(seed: number): InkSplashShape {
+  const rng = makeInkRng(seed);
   const W = 1600;
   const H = 900;
-  const blobs = [
-    inkBlobPath(W * 0.24, H * 0.30, 175, rng),
-    inkBlobPath(W * 0.74, H * 0.26, 145, rng),
-    inkBlobPath(W * 0.64, H * 0.68, 185, rng),
-    inkBlobPath(W * 0.36, H * 0.68, 130, rng),
-    inkBlobPath(W * 0.48, H * 0.42, 115, rng),
+  const cx = W * (0.34 + rng() * 0.32);
+  const cy = H * (0.34 + rng() * 0.30);
+  const mainR = 190 + rng() * 70;
+
+  const blobs: string[] = [
+    inkMainSplatPath(cx, cy, mainR, rng),
+    inkMainSplatPath(
+      cx + (rng() - 0.5) * 320,
+      cy + (rng() - 0.5) * 220,
+      85 + rng() * 55,
+      rng,
+    ),
   ];
+
+  // 8-12 rayos radiales afilados disparados hacia fuera
+  const streakCount = 8 + Math.floor(rng() * 5);
+  for (let i = 0; i < streakCount; i++) {
+    const a = (i / streakCount) * Math.PI * 2 + (rng() - 0.5) * 0.45;
+    blobs.push(
+      inkStreakPath(
+        cx,
+        cy,
+        a,
+        mainR * (0.5 + rng() * 0.35),
+        90 + rng() * 260,
+        7 + rng() * 14,
+        rng,
+      ),
+    );
+  }
+
+  // 55 gotas y micro-salpicaduras dispersas
   const drops: InkSplashShape['drops'] = [];
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 55; i++) {
+    const a = rng() * Math.PI * 2;
+    const dist = mainR * (0.55 + Math.pow(rng(), 0.7) * 2.2);
+    const rx = 2.5 + Math.pow(rng(), 1.6) * 22;
+    const ry = rx * (0.55 + rng() * 0.9);
     drops.push({
-      x: W * (0.08 + rng() * 0.84),
-      y: H * (0.08 + rng() * 0.84),
-      r: 5 + rng() * 24,
+      x: Math.max(20, Math.min(W - 20, cx + Math.cos(a) * dist)),
+      y: Math.max(20, Math.min(H - 20, cy + Math.sin(a) * dist * 0.75)),
+      rx,
+      ry,
+      rot: (a * 180) / Math.PI,
     });
   }
-  const drips = [
-    inkDripPath(W * 0.22, H * 0.36, 170, 12),
-    inkDripPath(W * 0.47, H * 0.47, 195, 9),
-    inkDripPath(W * 0.65, H * 0.74, 145, 11),
-    inkDripPath(W * 0.75, H * 0.32, 130, 8),
-  ];
+
+  const drips: string[] = [];
+  const dripCount = 3 + Math.floor(rng() * 3);
+  for (let i = 0; i < dripCount; i++) {
+    drips.push(
+      inkDripPath(
+        cx + (rng() - 0.5) * mainR * 1.4,
+        cy + mainR * (0.3 + rng() * 0.4),
+        95 + rng() * 130,
+        6 + rng() * 7,
+      ),
+    );
+  }
   return { blobs, drops, drips };
 }
 
-const INK_SPLASH = buildInkSplash();
-const INK_SPLASH_FILL = 'rgba(5, 2, 10, 0.96)';
-const INK_SPLASH_RIM = 'rgba(135, 14, 48, 0.55)';
+const INK_SPLASH_FILL = 'rgba(4, 2, 8, 0.97)';
+const INK_SPLASH_RIM = 'rgba(135, 14, 48, 0.42)';
 
 const CORNER_MASK = [
   'radial-gradient(circle at 0% 0%, black 0%, transparent 44%)',
@@ -189,6 +273,19 @@ function DomeHudSketchInner({
   const edenPct = hud.maxEden > 0 ? hud.eden / hud.maxEden : 1;
   const edenCritical = edenPct < 0.2;
 
+  // --- Mancha de tinta procedural aleatoria por cada impacto de tinta ---
+  const inkIntensity = hud.inkOverlayIntensity ?? 0;
+  const prevInkRef = useRef(0);
+  const inkGenRef = useRef(1);
+  if (inkIntensity > prevInkRef.current + 0.12 || (prevInkRef.current <= 0.005 && inkIntensity > 0.005)) {
+    inkGenRef.current += 1;
+  }
+  prevInkRef.current = inkIntensity;
+  const inkSplash = useMemo(
+    () => buildInkSplash(inkGenRef.current * 9301 + Math.floor(Math.random() * 100000)),
+    [inkGenRef.current],
+  );
+
   // --- Rayos radiales anime 2D: solo a velocidad terminal (>= 18 m/s).
   const radialLines = Math.max(0, (hud.speedLinesIntensity - 0.5) / 0.5);
 
@@ -267,26 +364,28 @@ function DomeHudSketchInner({
             animation: 'domeHudInkCrawl 2.6s ease-in-out infinite',
           }}
         >
-          {INK_SPLASH.blobs.map((d, i) => (
+          {inkSplash.blobs.map((d, i) => (
             <path
               key={`blob-${i}`}
               d={d}
               fill={INK_SPLASH_FILL}
+              fillRule="evenodd"
               stroke={INK_SPLASH_RIM}
-              strokeWidth={3.5}
+              strokeWidth={2}
               strokeLinejoin="round"
             />
           ))}
-          {INK_SPLASH.drips.map((d, i) => (
+          {inkSplash.drips.map((d, i) => (
             <path key={`drip-${i}`} d={d} fill={INK_SPLASH_FILL} />
           ))}
-          {INK_SPLASH.drops.map((drop, i) => (
+          {inkSplash.drops.map((drop, i) => (
             <ellipse
               key={`drop-${i}`}
               cx={drop.x}
               cy={drop.y}
-              rx={drop.r}
-              ry={drop.r * (0.8 + 0.4 * ((i % 3) / 2))}
+              rx={drop.rx}
+              ry={drop.ry}
+              transform={`rotate(${drop.rot.toFixed(1)} ${drop.x.toFixed(1)} ${drop.y.toFixed(1)})`}
               fill={INK_SPLASH_FILL}
             />
           ))}

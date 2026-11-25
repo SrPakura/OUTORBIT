@@ -88,7 +88,8 @@ const DEBRIS_DRIFT_DAMPING = 0.8;
  * Bolas de Doble Filo: radio de captura de las bolas de tinta del Pulpo
  * Espiral alrededor de Nyx al activar el Campo Gravitacional (m).
  */
-const INK_BALL_CAPTURE_RADIUS = 9;
+const NYX_HITBOX_RADIUS_M = 0.85;
+const INK_BALL_CAPTURE_RADIUS_BY_LEVEL = [2.0, 2.5, 3.0, 4.0, 5.0] as const;
 /**
  * Daño efectivo de una bola capturada: x3 una roca pequeña al impactar.
  * El pipeline de skills convierte el daño en fuerza cinética
@@ -628,10 +629,13 @@ export class DomeSkillExecutor {
     // Capa 1 del trío de área: anillo en el suelo bajo el ancla del campo.
     this.spawnAreaGroundRing(anchor, 4 + level, 0.6, ctx.slabs);
 
-    // Bolas de tinta ácida del pulpo dentro del radio de captura: EN VEZ de
-    // coger rocas (cada bola ocupa un slot del plan; el resto con escombros
-    // y rocas nuevas).
-    const capturedBalls = ctx.captureEnemyProjectiles?.(ctx.playerPos, INK_BALL_CAPTURE_RADIUS) ?? [];
+    // Bolas de tinta ácida del pulpo dentro del radio de captura alrededor de la
+    // hitbox de Nyx (Nv1: 2 m, Nv2: 2.5 m, Nv3: 3 m, Nv4: 4 m, Nv5: 5 m): EN
+    // VEZ de coger rocas.
+    const extraCaptureRadius =
+      INK_BALL_CAPTURE_RADIUS_BY_LEVEL[Math.max(0, Math.min(4, level - 1))];
+    const captureRadius = NYX_HITBOX_RADIUS_M + extraCaptureRadius;
+    const capturedBalls = ctx.captureEnemyProjectiles?.(ctx.playerPos, captureRadius) ?? [];
     const cappedBalls = capturedBalls.slice(0, plan.length);
     for (let i = 0; i < cappedBalls.length; i++) {
       const ballMesh = cappedBalls[i];

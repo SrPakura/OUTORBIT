@@ -2338,7 +2338,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
 
     this.inkProjectileMaterial.uniforms.uTime.value = elapsed;
-    this.updateProjectiles(dt, playerPos, onPlayerHit, onOctopusInk);
+    this.updateProjectiles(dt, playerPos, activeSlabs ?? [], onPlayerHit, onOctopusInk);
     this.updateOctopusSplitBursts(dt, playerPos);
     updateKronosRings(this, dt, playerPos, onGolemSmash);
     updateKronosPortals(this.kronosPortals, dt, elapsed);
@@ -2490,10 +2490,18 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       return;
     }
 
-    // Pulpo Espiral (rediseño): hostigador táctico — bolas rojas de tinta
-    // ácida cada 3.0 s (0.333/s) y Bola Gigante de Dispersión cada 20.0 s.
+    // Pulpo Espiral (rediseño): hostigador táctico — contra-parry proactivo si
+    // Nyx entra en ≤ 3 m de su hitbox atacando con patada en ventana 1.5–0.1 s,
+    // y bolas rojas de tinta ácida (nunca a ≤ 2 m de su hitbox).
     if (archetype === 'spiral_octopus') {
-      this.updateOctopusOffense(enemy, internal, dt, playerPos);
+      this.updateOctopusOffense(
+        enemy,
+        internal,
+        dt,
+        playerPos,
+        playerKickAnim,
+        onOctopusInk,
+      );
       return;
     }
 
@@ -2735,10 +2743,38 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal: EnemyInternal,
     dt: number,
     playerPos: THREE.Vector3,
+    playerKickAnim: boolean,
+    onOctopusInk: (durationSec: number, opacity: number) => void,
   ): void {
+    const distToNyx = enemy.position.distanceTo(playerPos);
+
+    // Contra-Parry proactivo: Nyx atacando con patada dentro de 3.0 m de la
+    // hitbox del pulpo mientras faltan 0.1–1.5 s para su siguiente dash.
+    // El pulpo mira a Nyx, le escupe un chorro de tinta negra a bocajarro y
+    // esquiva LATERALMENTE con un dash más rápido de lo normal.
+    if (
+      playerKickAnim &&
+      distToNyx <= enemy.radius + 3.0 &&
+      internal.octopusDashTimer <= OCTOPUS_DASH_ALERT_SEC &&
+      internal.octopusDashTimer >= 0.1 &&
+      internal.octopusCounterTimer <= 0
+    ) {
+      const inkSec = this.executeOctopusCounterParry(enemy, internal);
+      onOctopusInk(inkSec, INK_COUNTER_OPACITY);
+      return;
+    }
+
+    // Regla de cercanía: mientras Nyx esté a ≤ 2.0 m de la hitbox del pulpo,
+    // NO dispara ninguna bola roja (evita disparos a quemarropa).
+    const tooCloseForBalls = distToNyx <= enemy.radius + 2.0;
+
     // Barra de energía de la Bola Gigante (cada 20.0 s).
     internal.octopusGiantCharge += dt;
-    if (internal.octopusGiantCharge >= OCTOPUS_GIANT_CHARGE_SEC && internal.octopusGiantWindup <= 0) {
+    if (
+      !tooCloseForBalls &&
+      internal.octopusGiantCharge >= OCTOPUS_GIANT_CHARGE_SEC &&
+      internal.octopusGiantWindup <= 0
+    ) {
       internal.octopusGiantCharge = 0;
       internal.octopusGiantWindup = this.octopusClipSec(
         internal,
@@ -2749,7 +2785,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     if (internal.octopusGiantWindup > 0) {
       internal.octopusGiantWindup -= dt;
-      if (internal.octopusGiantWindup <= 0) {
+      if (internal.octopusGiantWindup <= 0 && !tooCloseForBalls) {
         // Lanzamiento de la Bola Gigante Roja desde el frente del manto.
         _muzzleDir.subVectors(playerPos, enemy.position);
         if (_muzzleDir.lengthSq() < 1e-4) {
@@ -2766,7 +2802,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       return; // En windup no hay bolas base (el clip de carga gobierna el manto).
     }
 
-    if (enemy.attackTimer > 0) {
+    if (tooCloseForBalls || enemy.attackTimer > 0) {
       return;
     }
 
@@ -2948,17 +2984,10 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
    * duración devuelta; devuelve 0 si NO puede contra-parry (fuera de la
    * ventana: los primeros 4.0 s del ciclo son la ventana vulnerable real).
    */
-  tryOctopusCounterParry(enemy: TestEnemySphere): number {
-    const internal = this.internals.get(enemy.id);
-    if (
-      !internal ||
-      internal.enemy.entity.archetype !== 'spiral_octopus' ||
-      !internal.enemy.entity.alive ||
-      this.enemiesPassive ||
-      internal.octopusDashTimer > OCTOPUS_DASH_ALERT_SEC
-    ) {
-      return 0;
-    }
+  private executeOctopusCounterParry(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+  ): number {
     // Giro instantáneo: mira a Nyx a la cara en este mismo frame.
     _lookDir.subVectors(this.playerPosCache, internal.enemy.position);
     if (_lookDir.lengthSq() < 1e-6) {
@@ -2968,22 +2997,32 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     lookAtQuat(_lookDir, _up, _targetQuat);
     internal.enemy.mesh.quaternion.copy(_targetQuat);
-    // Clip del contra-parry + dash de escape con el ciclo reiniciado.
+    // Clip del contra-parry + chorro de tinta negra (sin bola roja).
     internal.octopusCounterTimer = this.octopusClipSec(
       internal,
       'octopus_counter_parry',
       OCTOPUS_COUNTER_CLIP_SEC,
     );
     internal.octopusForceRestart = true;
-    _aimDir.subVectors(internal.enemy.position, this.playerPosCache);
-    if (_aimDir.lengthSq() < 1e-4) {
-      _aimDir.set(0, 0, 1);
+    this.onEnemyExplode?.(
+      enemy.position.clone().addScaledVector(_lookDir, enemy.radius * 0.9),
+      enemy.radius * 1.4,
+      0x080310,
+    );
+    // Esquiva LATERAL más rápida que el dash normal (1.6x).
+    _perp.crossVectors(_lookDir, _up);
+    if (_perp.lengthSq() < 1e-4) {
+      _perp.set(1, 0, 0);
     } else {
-      _aimDir.normalize();
-      _aimDir.y += 0.22;
-      _aimDir.normalize();
+      _perp.normalize();
     }
-    internal.enemy.velocity.copy(_aimDir).multiplyScalar(OCTOPUS_DASH_SPEED);
+    const sideSign = internal.rng() < 0.5 ? -1 : 1;
+    _aimDir
+      .copy(_perp)
+      .multiplyScalar(sideSign)
+      .addScaledVector(_up, 0.22)
+      .normalize();
+    internal.enemy.velocity.copy(_aimDir).multiplyScalar(OCTOPUS_DASH_SPEED * 1.6);
     internal.octopusDashActive = OCTOPUS_DASH_TIME;
     internal.octopusDashTimer = OCTOPUS_DASH_COOLDOWN_SEC;
     internal.enemy.hitFlash = Math.max(internal.enemy.hitFlash, 0.35);
@@ -2991,6 +3030,21 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     return (
       INK_COUNTER_MIN_SEC + internal.rng() * (INK_COUNTER_MAX_SEC - INK_COUNTER_MIN_SEC)
     );
+  }
+
+  tryOctopusCounterParry(enemy: TestEnemySphere): number {
+    const internal = this.internals.get(enemy.id);
+    if (
+      !internal ||
+      internal.enemy.entity.archetype !== 'spiral_octopus' ||
+      !internal.enemy.entity.alive ||
+      this.enemiesPassive ||
+      internal.octopusDashTimer > OCTOPUS_DASH_ALERT_SEC ||
+      internal.octopusDashTimer < 0.1
+    ) {
+      return 0;
+    }
+    return this.executeOctopusCounterParry(internal.enemy, internal);
   }
 
   // -------------------------------------------------------------------------
@@ -3444,6 +3498,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private updateProjectiles(
     dt: number,
     playerPos: THREE.Vector3,
+    activeSlabs: SlabCollider[],
     onPlayerHit: (damage: number) => void,
     onOctopusInk: (durationSec: number, opacity: number) => void,
   ): void {
@@ -3478,6 +3533,20 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       }
 
       projectile.mesh.position.addScaledVector(projectile.velocity, dt);
+
+      // Colisión contra suelos flotantes: las bolas no atraviesan los slabs.
+      const ballRadius = projectile.mesh.scale.x * 0.55;
+      if (resolveSphereSlabCollision(activeSlabs, projectile.mesh.position, ballRadius, _slabContact)) {
+        if (projectile.kind === 'ink_ball' || projectile.kind === 'ink_giant') {
+          this.onEnemyExplode?.(
+            projectile.mesh.position.clone(),
+            projectile.kind === 'ink_giant' ? 2.8 : 1.3,
+            OCTOPUS_GIANT_EXPLODE_COLOR,
+          );
+        }
+        this.deactivateProjectile(projectile);
+        continue;
+      }
 
       // Bola Gigante: detonación por proximidad al entrar a ≤ 12.0 m de la
       // hitbox de Nyx — se divide en 15 bolas (5 ráfagas sucesivas de 3).
