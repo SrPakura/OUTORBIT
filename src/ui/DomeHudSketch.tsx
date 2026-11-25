@@ -34,19 +34,22 @@ function makeInkRng(seed: number): () => number {
   };
 }
 
-/** Blob irregular con curvas suaves (9-12 anclas, radio desigual, achatado). */
+/** Blob irregular de tinta con lóbulos marcados (14-18 anclas alternando picos y valles). */
 function inkBlobPath(cx: number, cy: number, baseR: number, rng: () => number): string {
-  const anchors = 9 + Math.floor(rng() * 4);
+  const anchors = 14 + Math.floor(rng() * 5);
   const pts: Array<{ x: number; y: number }> = [];
   for (let i = 0; i < anchors; i++) {
-    const a = (i / anchors) * Math.PI * 2;
-    const r = baseR * (0.45 + rng() * 0.9);
+    const a = (i / anchors) * Math.PI * 2 + (rng() - 0.5) * 0.12;
+    const lobe = i % 2 === 0 ? 0.72 + rng() * 0.65 : 0.32 + rng() * 0.32;
+    const r = baseR * lobe;
     pts.push({
       x: cx + Math.cos(a) * r,
-      y: cy + Math.sin(a) * r * (0.75 + rng() * 0.5),
+      y: cy + Math.sin(a) * r * (0.72 + rng() * 0.52),
     });
   }
-  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)} `;
+  const firstMidX = (pts[anchors - 1].x + pts[0].x) / 2;
+  const firstMidY = (pts[anchors - 1].y + pts[0].y) / 2;
+  let d = `M ${firstMidX.toFixed(1)} ${firstMidY.toFixed(1)} `;
   for (let i = 0; i < anchors; i++) {
     const p = pts[i];
     const n = pts[(i + 1) % anchors];
@@ -68,34 +71,38 @@ interface InkSplashShape {
   drips: string[];
 }
 
-/** Salpicadura completa sobre el lienzo virtual 1600x900 del visor. */
+/** Salpicadura orgánica sobre el lienzo virtual 1600x900 (sin tapar todo como un telón plano). */
 function buildInkSplash(): InkSplashShape {
   const rng = makeInkRng(69147);
   const W = 1600;
   const H = 900;
   const blobs = [
-    inkBlobPath(W * 0.28, H * 0.3, 360, rng),
-    inkBlobPath(W * 0.68, H * 0.62, 330, rng),
-    inkBlobPath(W * 0.47, H * 0.46, 250, rng),
+    inkBlobPath(W * 0.24, H * 0.30, 175, rng),
+    inkBlobPath(W * 0.74, H * 0.26, 145, rng),
+    inkBlobPath(W * 0.64, H * 0.68, 185, rng),
+    inkBlobPath(W * 0.36, H * 0.68, 130, rng),
+    inkBlobPath(W * 0.48, H * 0.42, 115, rng),
   ];
   const drops: InkSplashShape['drops'] = [];
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 24; i++) {
     drops.push({
-      x: rng() * W,
-      y: rng() * H,
-      r: 5 + rng() * 34,
+      x: W * (0.08 + rng() * 0.84),
+      y: H * (0.08 + rng() * 0.84),
+      r: 5 + rng() * 24,
     });
   }
   const drips = [
-    inkDripPath(W * 0.24, H * 0.34, 150, 13),
-    inkDripPath(W * 0.55, H * 0.52, 210, 10),
-    inkDripPath(W * 0.72, H * 0.66, 120, 8),
+    inkDripPath(W * 0.22, H * 0.36, 170, 12),
+    inkDripPath(W * 0.47, H * 0.47, 195, 9),
+    inkDripPath(W * 0.65, H * 0.74, 145, 11),
+    inkDripPath(W * 0.75, H * 0.32, 130, 8),
   ];
   return { blobs, drops, drips };
 }
 
 const INK_SPLASH = buildInkSplash();
-const INK_SPLASH_FILL = 'rgba(8, 3, 16, 0.95)';
+const INK_SPLASH_FILL = 'rgba(5, 2, 10, 0.96)';
+const INK_SPLASH_RIM = 'rgba(135, 14, 48, 0.55)';
 
 const CORNER_MASK = [
   'radial-gradient(circle at 0% 0%, black 0%, transparent 44%)',
@@ -261,7 +268,14 @@ function DomeHudSketchInner({
           }}
         >
           {INK_SPLASH.blobs.map((d, i) => (
-            <path key={`blob-${i}`} d={d} fill={INK_SPLASH_FILL} />
+            <path
+              key={`blob-${i}`}
+              d={d}
+              fill={INK_SPLASH_FILL}
+              stroke={INK_SPLASH_RIM}
+              strokeWidth={3.5}
+              strokeLinejoin="round"
+            />
           ))}
           {INK_SPLASH.drips.map((d, i) => (
             <path key={`drip-${i}`} d={d} fill={INK_SPLASH_FILL} />

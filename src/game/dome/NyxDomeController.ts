@@ -1929,10 +1929,10 @@ export class NyxDomeController {
     // Con el parry del Gólem abierto, romper el lock NO abre la ventana corta
     // de evasivo (machacaría el objetivo del remate); solo rompe el lock.
     if (this.parryWindowActive) return;
-    if (wasAttacking && prev) {
+    if (wasAttacking && prev && !prev.id.includes('spiral_octopus')) {
       this.redirectTargetEnemy = prev;
       this.redirectWindowTimer = this.computeRedirectWindowSec(prev);
-    } else if (wasAttacking) {
+    } else if (wasAttacking && (!prev || !prev.id.includes('spiral_octopus'))) {
       this.bulletTimeTimer = BULLET_TIME_DURATION;
     }
   }
@@ -2411,6 +2411,7 @@ export class NyxDomeController {
       this.lockedEnemy = null;
       this.redirectTargetEnemy = null;
       this.redirectWindowTimer = 0;
+      this.bulletTimeTimer = 0;
       this.vfx.spawnImpactRing(enemy.position, this.facing);
       if (isDrill) this.audio?.playSpinKick();
       else this.audio?.playMelee();
@@ -2679,6 +2680,7 @@ export class NyxDomeController {
         const requiredTurnRate = missAngle / timeToImpact;
         const maxCentripetalTurnRate = VEL_ALIGN_RATE / (1 + speed * CENTRIPETAL_SPEED_K);
         if (
+          !this.lockedEnemy.id.includes('spiral_octopus') &&
           dist >= 4.0 &&
           missAngle >= 0.42 &&
           !this.lockedEnemyInReticle &&

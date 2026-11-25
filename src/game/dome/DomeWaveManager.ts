@@ -248,7 +248,7 @@ const PROJECTILE_BOUND_RADIUS = 88.0;
 // último segundo entra en estado LISTO PARA CONTRA-PARRY (alerta). Fuera de
 // esa ventana no puede esquivar NI contra-parry.
 const OCTOPUS_DASH_COOLDOWN_SEC = 5.0; // Duración del ciclo completo.
-const OCTOPUS_DASH_ALERT_SEC = 1.0; // Ventana de alerta/contra-parry.
+const OCTOPUS_DASH_ALERT_SEC = 1.5; // Ventana de alerta/contra-parry (últimos 1.5 s del ciclo de 5.0 s).
 const OCTOPUS_DASH_SPEED = 30.0; // m/s del impulso del dash.
 const OCTOPUS_DASH_TIME = 0.55; // s de impulso (luego frena suave).
 const OCTOPUS_DRIFT_DAMPING = 0.55; // Fricción de la deriva entre dashes.
@@ -1086,12 +1086,80 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       rimStrength: 0.9,
       emissiveBoost: 0.35,
     });
-    // Bolas Rojas de Tinta Ácida (rediseño del pulpo): esfera roja ácida y
-    // energética — nada de la esfera morada/oscura vieja.
-    this.inkProjectileMaterial = createComicCelMaterial(0xff1626, {
-      rimColor: 0xff9a7a,
-      rimStrength: 1.15,
-      emissiveBoost: 1.45,
+    // Bolas Rojas de Tinta Ácida / Energía Oscura Inestable: shader procedural
+    // 3D de galaxia/plasma rojo carmesí inestable con pulso de vértices y halo
+    // Fresnel (cero costuras UV).
+    this.inkProjectileMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+      },
+      vertexShader: /* glsl */ `
+        uniform float uTime;
+        varying vec3 vLocalPos;
+        varying vec3 vNormalW;
+        varying vec3 vViewDir;
+
+        void main() {
+          float wobble =
+            sin(position.x * 7.5 + uTime * 9.0) *
+            cos(position.y * 7.5 - uTime * 7.5) *
+            sin(position.z * 7.5 + uTime * 8.0);
+          vec3 displaced = position + normal * (wobble * 0.085);
+          vLocalPos = position;
+          vec4 worldPos = modelMatrix * vec4(displaced, 1.0);
+          vNormalW = normalize(mat3(modelMatrix) * normal);
+          vViewDir = normalize(cameraPosition - worldPos.xyz);
+          gl_Position = projectionMatrix * viewMatrix * worldPos;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform float uTime;
+        varying vec3 vLocalPos;
+        varying vec3 vNormalW;
+        varying vec3 vViewDir;
+
+        float hash31(vec3 p) {
+          p = fract(p * 0.1031);
+          p += dot(p, p.yzx + 33.33);
+          return fract((p.x + p.y) * p.z);
+        }
+
+        float turb3D(vec3 p) {
+          float n = 0.0;
+          n += sin(p.x * 3.2 + sin(p.y * 2.7 + uTime * 3.8)) * 0.5;
+          n += cos(p.y * 4.1 - sin(p.z * 3.5 - uTime * 4.6)) * 0.35;
+          n += sin(p.z * 5.3 + cos(p.x * 4.4 + uTime * 5.2)) * 0.25;
+          return n * 0.5 + 0.5;
+        }
+
+        void main() {
+          vec3 dir = normalize(vLocalPos);
+          // Remolino galáctico / energía oscura inestable
+          float swirl = turb3D(dir * 2.4 + vec3(uTime * 0.7, -uTime * 0.9, uTime * 0.5));
+          float veins = turb3D(dir * 5.2 + vec3(swirl * 2.2 - uTime * 1.4));
+          float coreBand = smoothstep(0.48, 0.88, swirl * 0.65 + veins * 0.45);
+          float crackle = smoothstep(0.80, 0.96, veins);
+
+          // Motas estelares galácticas dentro de la energía oscura
+          vec3 starCell = floor(dir * 16.0 + vec3(0.0, uTime * 0.4, 0.0));
+          float star = step(0.955, hash31(starCell));
+
+          vec3 voidCol = vec3(0.035, 0.004, 0.015);
+          vec3 darkCrimson = vec3(0.52, 0.02, 0.09);
+          vec3 acidRed = vec3(1.0, 0.08, 0.20);
+          vec3 hotCore = vec3(1.0, 0.58, 0.42);
+
+          vec3 col = mix(voidCol, darkCrimson, smoothstep(0.18, 0.58, swirl));
+          col = mix(col, acidRed, coreBand);
+          col = mix(col, hotCore, crackle * 0.85);
+          col += vec3(1.0, 0.82, 0.78) * star * 0.9;
+
+          float fresnel = pow(1.0 - max(0.0, dot(normalize(vNormalW), normalize(vViewDir))), 2.1);
+          col += vec3(1.0, 0.14, 0.28) * fresnel * 1.65;
+
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
     });
     // Ráfaga de corta distancia del cangrejo: perla roja muy brillante.
     this.laserProjectileMaterial = createComicCelMaterial(0xff2233, {
@@ -2269,6 +2337,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       }
     }
 
+    this.inkProjectileMaterial.uniforms.uTime.value = elapsed;
     this.updateProjectiles(dt, playerPos, onPlayerHit, onOctopusInk);
     this.updateOctopusSplitBursts(dt, playerPos);
     updateKronosRings(this, dt, playerPos, onGolemSmash);
