@@ -344,7 +344,7 @@ const gltfLoader = new GLTFLoader();
  * bumpar esta constante la URL cambia y todo el mundo descarga el asset nuevo
  * a la primera. Bump obligatorio en cada re-export de cualquier .glb.
  */
-const GLB_CACHE_VERSION = 6;
+const GLB_CACHE_VERSION = 7;
 
 function loadEnemyModel(archetype: EnemyArchetype): Promise<void> {
   if (modelCache.has(archetype)) {
