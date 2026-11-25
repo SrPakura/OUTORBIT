@@ -58,9 +58,9 @@ const INITIAL_HUD: DomeHudState = {
   bulletTimeRemaining: 0,
   activeSlot: 1,
   slots: [
-    { keyLabel: '1', name: null, level: 0 },
-    { keyLabel: '2', name: null, level: 0 },
-    { keyLabel: '3', name: null, level: 0 },
+    { keyLabel: '1', skillId: null, name: null, level: 0 },
+    { keyLabel: '2', skillId: null, name: null, level: 0 },
+    { keyLabel: '3', skillId: null, name: null, level: 0 },
   ],
   domeBounceFlash: 0,
   impactFlash: 0,

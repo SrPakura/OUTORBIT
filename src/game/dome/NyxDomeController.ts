@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { ActiveSkillId } from '@/game/dome/DomeProgression';
 import {
   DARK_RING_APPEAR_RADIUS_PX,
   DARK_RING_NEAR_CUTOFF_M,
@@ -486,13 +487,13 @@ export class NyxDomeController {
   private waveNumber = 1;
   private waveLabel = 'BÁSICOS';
   private slotHudInfo: [
-    { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-    { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-    { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
   ] = [
-    { name: null, level: 0 },
-    { name: null, level: 0 },
-    { name: null, level: 0 },
+    { skillId: null, name: null, level: 0 },
+    { skillId: null, name: null, level: 0 },
+    { skillId: null, name: null, level: 0 },
   ];
   onSlotTriggered?: (slotIndex: 0 | 1 | 2) => void;
   onDomeBounceDamage?: (damage: number) => void;
@@ -1183,9 +1184,9 @@ export class NyxDomeController {
     waveNumber?: number;
     waveLabel?: string;
     slots: [
-      { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-      { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-      { name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+      { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+      { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+      { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
     ];
   }): void {
     if (params.maxHp > this.maxHp) {

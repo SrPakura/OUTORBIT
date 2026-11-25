@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import type { ActiveSkillId } from '@/game/dome/DomeProgression';
 
 export type NyxMovementMode =
   | 'grounded'      // Adherida a un suelo/pared/techo (cámara libre 360º)
@@ -102,9 +103,9 @@ export interface DomeHudState {
   bulletTimeRemaining: number;
   activeSlot: 1 | 2 | 3;
   slots: [
-    { keyLabel: string; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-    { keyLabel: string; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-    { keyLabel: string; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { keyLabel: string; skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { keyLabel: string; skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { keyLabel: string; skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
   ];
   domeBounceFlash: number;
   /**

@@ -532,9 +532,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     waveNumber: undefined,
     waveLabel: undefined,
     slots: [
-      { name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
-      { name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
-      { name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
+      { skillId: null, name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
+      { skillId: null, name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
+      { skillId: null, name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
     ],
   };
 
@@ -998,6 +998,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       syncPayload.waveLabel = training ? undefined : waveInfo.label;
       for (let i = 0; i < 3; i++) {
         const slot = progression.slots[i];
+        syncPayload.slots[i].skillId = slot.skillId;
         syncPayload.slots[i].name = slot.skillId
           ? ACTIVE_SKILLS_CATALOG[slot.skillId].name
           : null;

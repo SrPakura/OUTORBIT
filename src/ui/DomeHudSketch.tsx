@@ -4,6 +4,7 @@ import { RETICLE_SIZE_PX } from '@/game/dome/domeTypes';
 import type { SynthAudio } from '@/game/audio/SynthAudio';
 import { useI18n } from '@/i18n';
 import DomeYinYangHud from '@/ui/DomeYinYangHud';
+import DomeSkillSlotsHud from '@/ui/DomeSkillSlotsHud';
 
 interface DomeHudSketchProps {
   hud: DomeHudState;
@@ -634,46 +635,8 @@ function DomeHudSketchInner({
         alertsEnabled={alertsEnabled}
       />
 
-      {/* 8. Selector inferior de 3 habilidades */}
-      <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 gap-2.5">
-        {hud.slots.map((slot, i) => {
-          const slotNum = (i + 1) as 1 | 2 | 3;
-          const active = hud.activeSlot === slotNum;
-          return (
-            <div
-              key={slotNum}
-              className={`-skew-x-12 border px-3.5 py-1.5 backdrop-blur-sm transition-colors ${
-                active
-                  ? 'border-cyan-300/90 bg-cyan-400/15 shadow-[0_0_16px_rgba(34,211,238,0.45)]'
-                  : 'border-white/25 bg-[#090314]/55'
-              }`}
-            >
-              <div className="flex skew-x-12 items-center gap-2">
-                <span
-                  className={`text-[10px] font-black tracking-widest ${
-                    active ? 'text-cyan-200' : 'text-white/45'
-                  }`}
-                >
-                  {slot.keyLabel}
-                </span>
-                <span
-                  className={`text-[10px] font-bold tracking-[0.22em] ${
-                    slot.name ? 'text-white/90' : 'text-white/30'
-                  }`}
-                >
-                  {slot.name ?? t('hud.emptySlot')}
-                  {slot.name && slot.level > 0 ? ` ${t('hud.levelShort')}${slot.level}` : ''}
-                </span>
-                {slot.cooldownRemaining !== undefined && slot.cooldownRemaining > 0.05 && (
-                  <span className="ml-1 text-[9px] font-bold tabular-nums text-amber-300">
-                    {slot.cooldownRemaining.toFixed(1)}s
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {/* 8. Ranuras circulares de 3 habilidades bajo el Yin-Yang */}
+      <DomeSkillSlotsHud slots={hud.slots} activeSlot={hud.activeSlot} />
 
       {/* 9. Overlay de captura de ratón — única superficie con la guía de controles */}
       {!hud.pointerLocked && !hidePointerLockPrompt && (

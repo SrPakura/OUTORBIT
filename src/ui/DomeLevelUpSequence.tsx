@@ -4,6 +4,7 @@ import { useI18n } from '@/i18n';
 import type { LevelUpCardOption } from '@/game/dome/DomeProgression';
 import type { SynthAudio } from '@/game/audio/SynthAudio';
 import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
+import SkillIcon from '@/ui/SkillIcon';
 
 // ============================================================================
 // Subida de nivel cinemática — secuencia completa de pantalla completa:
@@ -901,7 +902,11 @@ export default function DomeLevelUpSequence({
                     <span className="lu-card__rarity">{t(`levelUp.rarity.${option.rarity}`)}</span>
                     <div className="lu-card__icon">
                       <div className="ring" />
-                      <span className="hint">SVG</span>
+                      <SkillIcon
+                        id={option.skillId ?? option.passiveId}
+                        size={68}
+                        className="lu-card__svg"
+                      />
                     </div>
                     <p className="lu-card__name">{option.title}</p>
                     <p className="lu-card__level">
@@ -1205,15 +1210,12 @@ export default function DomeLevelUpSequence({
           animation: luRingSpin 8s linear infinite;
         }
         @keyframes luRingSpin { to { transform: rotate(360deg); } }
-        .lu-card__icon .hint {
+        .lu-card__svg {
           position: relative;
           z-index: 1;
-          font: 800 9px/1 ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-          letter-spacing: 0.2em;
-          color: #2a2f3d;
-          background: #fbfbf8;
-          padding: 3px 6px;
-          border: 1px solid #2a2f3d;
+          color: #0b0d12;
+          display: block;
+          filter: drop-shadow(2px 2px 0 rgba(11, 13, 18, 0.14));
         }
         .lu-card__name {
           font-size: 21px;
