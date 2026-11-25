@@ -856,8 +856,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       }
       const mods = progression.getModifiers();
       const playerStatus = combat.updatePlayerStatus(effRawDt);
-      if (playerStatus.inkDamageThisFrame > 0) {
-        applyDamageToNyx(playerStatus.inkDamageThisFrame);
+      if (playerStatus.inkDamageThisFrame > 0 && controller) {
+        // DoT ácido silencioso: drena HP sin sacudir la cámara cada 0.25 s.
+        controller.restoreResources(-playerStatus.inkDamageThisFrame, 0);
+        if (training && controller.getHp() < 1) {
+          controller.restoreResources(progression.maxHp, 0);
+        }
       }
 
       // Suelos activos según oleada (flotantes arrancados en básicas / triángulos de esfera en Miniboss y Boss).

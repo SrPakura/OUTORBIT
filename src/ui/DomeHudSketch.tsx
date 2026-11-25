@@ -30,7 +30,7 @@ function makeInkRng(seed: number): () => number {
   let s = (seed * 2654435761 + 1013904223) >>> 0;
   return () => {
     s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 429497296;
+    return s / 4294967296;
   };
 }
 
@@ -361,7 +361,6 @@ function DomeHudSketchInner({
           preserveAspectRatio="xMidYMid slice"
           style={{
             opacity: Math.min(1, hud.inkOverlayIntensity ?? 0),
-            animation: 'domeHudInkCrawl 2.6s ease-in-out infinite',
           }}
         >
           {inkSplash.blobs.map((d, i) => (
