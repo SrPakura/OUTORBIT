@@ -55,6 +55,8 @@ export interface DomeTrainingBridge {
 export interface DomeLevelUpUiState {
   isOpen: boolean;
   newLevel: number;
+  /** Niveles pendientes tras el actual cuando se sube varios niveles a la vez. */
+  pendingLevels: number[];
   choices: LevelUpCardOption[] | null;
   requiresSlotReplacement: boolean;
   /** true en la elección inicial de la partida: sin animación de planeta. */
@@ -239,7 +241,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   // secuencia (fase y refs internas limpias) incluso para el mismo nivel.
   let levelUpOpenCount = 0;
 
-  const openLevelUpModal = (forLevel: number, skipPlanetAnimation = false) => {
+  const openLevelUpModal = (levels: number[], skipPlanetAnimation = false) => {
+    if (levels.length === 0) return;
     if (document.pointerLockElement === canvas) {
       document.exitPointerLock?.();
     }
@@ -247,11 +250,13 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     // del re-render de React; sin esto, onPointerLockChange vería el ref a
     // false y abriría la pausa DEBAJO del modal de subida de nivel.
     levelUpOpenRef.current = true;
-    const choices = progression.generateLevelUpChoices(forLevel);
+    const [firstLevel, ...restLevels] = levels;
+    const choices = progression.generateLevelUpChoices(firstLevel);
     const allSlotsFull = progression.slots.every((s) => s.skillId !== null);
     setLevelUpState({
       isOpen: true,
-      newLevel: forLevel,
+      newLevel: firstLevel,
+      pendingLevels: restLevels,
       choices,
       requiresSlotReplacement: allSlotsFull,
       skipPlanetAnimation,
@@ -261,7 +266,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
 
   // Nivel 1: abre elección inicial en el segundo 1 (Carta 1 fija Campo Gravitacional)
   if (progression.pendingInitialPick) {
-    openLevelUpModal(1, true);
+    openLevelUpModal([1], true);
   }
 
   let loadedNyx: LoadedNyx | null = null;
@@ -908,10 +913,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         controller.restoreResources(pickupGains.hpGained, pickupGains.edenGained);
       }
       if (pickupGains.expGained > 0) {
-        const leveled = progression.addExp(pickupGains.expGained);
+        const gainedLevels = progression.addExp(pickupGains.expGained);
         runTracker.recordLevel(progression.level);
-        if (leveled) {
-          openLevelUpModal(progression.level);
+        if (gainedLevels.length > 0) {
+          openLevelUpModal(gainedLevels);
         }
       }
 

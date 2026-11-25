@@ -83,6 +83,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
   const [levelUpState, setLevelUpState] = useState<DomeLevelUpUiState>({
     isOpen: false,
     newLevel: 1,
+    pendingLevels: [],
     choices: null,
     requiresSlotReplacement: false,
     openId: 0,
@@ -138,9 +139,27 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
       if (!prog || !choices) return;
       const fullOption = choices.find((c) => c.id === option.id) ?? choices[0];
       prog.applyChoice(fullOption, replaceSlotIndex);
+
+      const [nextLevel, ...restLevels] = levelUpState.pendingLevels;
+      if (nextLevel !== undefined) {
+        const nextChoices = prog.generateLevelUpChoices(nextLevel);
+        const allSlotsFull = prog.slots.every((s) => s.skillId !== null);
+        setLevelUpState({
+          isOpen: true,
+          newLevel: nextLevel,
+          pendingLevels: restLevels,
+          choices: nextChoices,
+          requiresSlotReplacement: allSlotsFull,
+          skipPlanetAnimation: true,
+          openId: levelUpState.openId,
+        });
+        return;
+      }
+
       setLevelUpState({
         isOpen: false,
         newLevel: prog.level,
+        pendingLevels: [],
         choices: null,
         requiresSlotReplacement: false,
         openId: levelUpState.openId,
@@ -150,7 +169,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         canvas.requestPointerLock?.();
       }
     },
-    [levelUpState.choices, levelUpState.openId],
+    [levelUpState.choices, levelUpState.openId, levelUpState.pendingLevels],
   );
 
   const handlePlayAgain = useCallback(() => {
@@ -266,7 +285,6 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
       <DomeDarkMatterRings controllerRef={controllerRef} />
       <DomeHudSketch
         hud={hud}
-        onExit={onExit}
         hidePointerLockPrompt={levelUpState.isOpen || battleReport !== null || isPauseOpen || (training && debugPanelOpen)}
         audioRef={audioRef}
         alertsEnabled={!isPauseOpen && !levelUpState.isOpen && battleReport === null}
@@ -305,11 +323,19 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         />
       )}
       <DomeLevelUpSequence
-        key={`${levelUpState.newLevel}-${levelUpState.openId}`}
+        key={levelUpState.openId}
         isOpen={levelUpState.isOpen}
         newLevel={levelUpState.newLevel}
+        hasNextLevel={levelUpState.pendingLevels.length > 0}
         choices={levelUpState.choices}
-        equippedSlots={hud.slots.map((s) => ({ name: s.name, level: s.level }))}
+        equippedSlots={
+          progressionRef.current
+            ? progressionRef.current.slots.map((s) => ({
+                name: s.skillId ? ACTIVE_SKILLS_CATALOG[s.skillId].name : null,
+                level: s.level,
+              }))
+            : hud.slots.map((s) => ({ name: s.name, level: s.level }))
+        }
         requiresSlotReplacement={levelUpState.requiresSlotReplacement}
         skipPlanetAnimation={levelUpState.skipPlanetAnimation}
         audioRef={audioRef}

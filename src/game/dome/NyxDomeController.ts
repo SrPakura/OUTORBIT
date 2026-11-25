@@ -1402,9 +1402,12 @@ export class NyxDomeController {
 
     // Estrella del parry: detectar si la mira apunta sobre la estrella dorada
     // dentro de la banda válida [r + 2 .. r + 6] (4 m de margen tras el choque).
+    // Invariante estricto: si Nyx ya salió del rebote (`kick_recover`) sin
+    // haber lanzado el dash de parry, la ventana se cierra de inmediato.
     if (this.parryWindowActive && this.redirectTargetEnemy) {
       const targetDist = this.nyxRoot.position.distanceTo(this.redirectTargetEnemy.position);
-      if (!this.parryDashUsed && targetDist > this.redirectTargetEnemy.radius + 6.0) {
+      const bounceEnded = !this.parryDashUsed && this.mode !== 'kick_recover';
+      if (bounceEnded || (!this.parryDashUsed && targetDist > this.redirectTargetEnemy.radius + 6.0)) {
         this.parryWindowActive = false;
         this.redirectWindowTimer = 0;
         this.redirectTargetEnemy = null;

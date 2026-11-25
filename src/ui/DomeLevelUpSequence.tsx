@@ -42,6 +42,8 @@ const COL = {
 export interface DomeLevelUpSequenceProps {
   isOpen: boolean;
   newLevel: number;
+  /** true si hay más subidas de nivel en cola tras la actual (omite iris). */
+  hasNextLevel?: boolean;
   choices: LevelUpCardOption[] | null;
   equippedSlots: Array<{ name: string | null; level: number }>;
   requiresSlotReplacement: boolean;
@@ -588,6 +590,7 @@ function PlanetTransition({
 export default function DomeLevelUpSequence({
   isOpen,
   newLevel,
+  hasNextLevel = false,
   choices,
   equippedSlots,
   requiresSlotReplacement,
@@ -606,9 +609,29 @@ export default function DomeLevelUpSequence({
   const cardEls = useRef(new Map<string, HTMLDivElement>());
   const flyingRef = useRef<LevelUpCardOption | null>(null);
   const lockedRef = useRef(false);
+  const returningRef = useRef(false);
+  const timersRef = useRef<number[]>([]);
   const pendingRef = useRef<{ option: LevelUpCardOption; slotIndex?: 0 | 1 | 2 } | null>(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const hasNextLevelRef = useRef(hasNextLevel);
+  hasNextLevelRef.current = hasNextLevel;
+
+  const schedule = useCallback((fn: () => void, ms: number) => {
+    const id = window.setTimeout(() => {
+      timersRef.current = timersRef.current.filter((tId) => tId !== id);
+      fn();
+    }, ms);
+    timersRef.current.push(id);
+    return id;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      timersRef.current.forEach((id) => window.clearTimeout(id));
+      timersRef.current = [];
+    };
+  }, []);
 
   const audio = () => audioRef.current;
 
@@ -642,7 +665,7 @@ export default function DomeLevelUpSequence({
     });
     return () => timers.forEach((id) => window.clearTimeout(id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, choices]);
+  }, [phase, choices, newLevel]);
 
   // Cierre: iris de papel que colapsa en un punto que parpadea y se apaga
   const beginClosing = useCallback(
@@ -650,19 +673,19 @@ export default function DomeLevelUpSequence({
       pendingRef.current = { option, slotIndex };
       setPhase('closing');
       audio()?.playIrisWink();
-      window.setTimeout(() => {
+      schedule(() => {
         const pending = pendingRef.current;
         pendingRef.current = null;
         if (pending) onSelectRef.current(pending.option, pending.slotIndex);
       }, 1180);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [schedule],
   );
 
   const finish = useCallback(
     (option: LevelUpCardOption, slotIndex?: 0 | 1 | 2) => {
-      if (lockedRef.current) return;
+      if (lockedRef.current || returningRef.current) return;
       lockedRef.current = true;
       const el = cardEls.current.get(option.id);
       if (el) {
@@ -673,43 +696,56 @@ export default function DomeLevelUpSequence({
       flash();
       shake();
       audio()?.playCardStamp();
-      window.setTimeout(() => beginClosing(option, slotIndex), 520);
+      schedule(() => {
+        if (hasNextLevelRef.current) {
+          onSelectRef.current(option, slotIndex);
+        } else {
+          beginClosing(option, slotIndex);
+        }
+      }, 520);
     },
-    [beginClosing, flash, shake],
+    [beginClosing, flash, schedule, shake],
   );
 
   const closeReplace = useCallback(() => {
     const option = flyingRef.current;
-    if (!option) return;
+    if (!option || returningRef.current || lockedRef.current) return;
     const el = cardEls.current.get(option.id);
+    returningRef.current = true;
     flyingRef.current = null;
     setShowReplace(false);
-    if (!el) return;
+    if (!el) {
+      returningRef.current = false;
+      return;
+    }
     el.classList.remove('is-trembling');
     el.style.transition = 'transform 320ms cubic-bezier(.3, 1, .3, 1), box-shadow 320ms ease';
     el.style.transform = 'skewX(-5deg) scale(1)';
     el.style.boxShadow = `9px 9px 0 ${option.accentColor}`;
-    window.setTimeout(() => {
+    schedule(() => {
       el.classList.remove('is-flying');
       el.style.cssText = '';
       el.style.setProperty('--accent', option.accentColor);
       cardEls.current.forEach((sibling) => sibling.classList.remove('is-out'));
+      returningRef.current = false;
     }, 330);
-  }, []);
+  }, [schedule]);
 
   const flyToCenter = useCallback(
     (option: LevelUpCardOption) => {
       const el = cardEls.current.get(option.id);
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      el.style.left = `${rect.left}px`;
+      const unskewedWidth = el.offsetWidth || rect.width;
+      const left = rect.left + (rect.width - unskewedWidth) / 2;
+      el.style.left = `${left}px`;
       el.style.top = `${rect.top}px`;
-      el.style.width = `${rect.width}px`;
+      el.style.width = `${unskewedWidth}px`;
       el.classList.add('is-flying');
 
       const cx = window.innerWidth / 2 - (rect.left + rect.width / 2);
-      const cy = window.innerHeight * 0.4 - (rect.top + rect.height / 2);
-      const fly = `translate(${cx}px, ${cy}px) skewX(-5deg) scale(1.22)`;
+      const cy = window.innerHeight * 0.44 - (rect.top + rect.height / 2);
+      const fly = `translate(${cx}px, ${cy}px) skewX(-5deg) scale(1.1)`;
       el.style.setProperty('--fly-transform', fly);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -722,7 +758,7 @@ export default function DomeLevelUpSequence({
       });
       flyingRef.current = option;
       audio()?.playInkWipe();
-      window.setTimeout(() => {
+      schedule(() => {
         if (flyingRef.current !== option) return;
         el.classList.add('is-trembling');
         audio()?.playCardTremble();
@@ -730,12 +766,12 @@ export default function DomeLevelUpSequence({
         setShowReplace(true);
       }, 430);
     },
-    [shake],
+    [schedule, shake],
   );
 
   const pick = useCallback(
     (option: LevelUpCardOption) => {
-      if (lockedRef.current || flyingRef.current) return;
+      if (lockedRef.current || flyingRef.current || returningRef.current) return;
       if (requiresSlotReplacement && option.kind === 'active_new') {
         flyToCenter(option);
         return;
@@ -746,8 +782,8 @@ export default function DomeLevelUpSequence({
   );
 
   // Mando — cartas: D-Pad/stick izq-der mueve, Cruz (A) elige.
-  const [padCardIndex] = useGamepadListNav(choices?.length ?? 0, {
-    enabled: phase === 'cards' && !showReplace,
+  const [padCardIndex, setPadCardIndex] = useGamepadListNav(choices?.length ?? 0, {
+    enabled: isOpen && phase === 'cards' && !showReplace,
     columns: choices?.length ?? 1,
     onConfirm: (i) => {
       const option = choices?.[i];
@@ -756,14 +792,31 @@ export default function DomeLevelUpSequence({
   });
 
   // Mando — ranuras de reemplazo: Cruz (A) confirma, Círculo (B) vuelve.
-  const [padSlotIndex] = useGamepadListNav(equippedSlots.length, {
-    enabled: showReplace,
+  const [padSlotIndex, setPadSlotIndex] = useGamepadListNav(equippedSlots.length, {
+    enabled: isOpen && showReplace,
     columns: equippedSlots.length,
     onConfirm: (i) => {
       if (flyingRef.current) finish(flyingRef.current, i as 0 | 1 | 2);
     },
     onBack: closeReplace,
   });
+
+  // Al encadenar al siguiente nivel dentro de la misma secuencia, limpia refs y foco.
+  useEffect(() => {
+    lockedRef.current = false;
+    flyingRef.current = null;
+    returningRef.current = false;
+    setShowReplace(false);
+    setPadCardIndex(0);
+    setPadSlotIndex(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newLevel]);
+
+  // Al abrir el panel de reemplazo, el foco del mando empieza en la ranura 1.
+  useEffect(() => {
+    if (showReplace) setPadSlotIndex(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showReplace]);
 
   // Foco visual de las cartas: imperativo para no pisar las clases de
   // vuelo/sello que se gestionan con classList.
@@ -773,7 +826,7 @@ export default function DomeLevelUpSequence({
     cardEls.current.forEach((el, id) => {
       el.classList.toggle('is-pad-focus', id === focusedId);
     });
-  }, [phase, showReplace, choices, padCardIndex]);
+  }, [phase, showReplace, choices, padCardIndex, newLevel]);
 
   // Teclado: [1..N] elige carta · con carta en vuelo [1..3] elige ranura · ESC vuelve
   useEffect(() => {
@@ -810,7 +863,7 @@ export default function DomeLevelUpSequence({
       {phase === 'planet' && <PlanetTransition audioRef={audioRef} onDone={() => setPhase('cards')} />}
 
       {phase !== 'planet' && (
-        <div ref={sheetRef} className="lu-sheet is-in">
+        <div key={newLevel} ref={sheetRef} className="lu-sheet is-in">
           <div className="lu-speedlines" />
           <div className="lu-burst" />
 
@@ -826,45 +879,46 @@ export default function DomeLevelUpSequence({
             {choices.map((option, i) => {
               const isUpgrade = option.nextLevel > option.currentLevel;
               return (
-                <div
-                  key={option.id}
-                  ref={(el) => {
-                    if (el) cardEls.current.set(option.id, el);
-                    else cardEls.current.delete(option.id);
-                  }}
-                  className="lu-card"
-                  style={{ '--accent': option.accentColor } as CSSProperties}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => pick(option)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      pick(option);
-                    }
-                  }}
-                >
-                  <span className="lu-card__ghost">{pad2(i + 1)}</span>
-                  <span className="lu-card__rarity">{t(`levelUp.rarity.${option.rarity}`)}</span>
-                  <div className="lu-card__icon">
-                    <div className="ring" />
-                    <span className="hint">SVG</span>
+                <div key={option.id} className="lu-card-slot">
+                  <div
+                    ref={(el) => {
+                      if (el) cardEls.current.set(option.id, el);
+                      else cardEls.current.delete(option.id);
+                    }}
+                    className="lu-card"
+                    style={{ '--accent': option.accentColor } as CSSProperties}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => pick(option)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        pick(option);
+                      }
+                    }}
+                  >
+                    <span className="lu-card__ghost">{pad2(i + 1)}</span>
+                    <span className="lu-card__rarity">{t(`levelUp.rarity.${option.rarity}`)}</span>
+                    <div className="lu-card__icon">
+                      <div className="ring" />
+                      <span className="hint">SVG</span>
+                    </div>
+                    <p className="lu-card__name">{option.title}</p>
+                    <p className="lu-card__level">
+                      {t('levelUp.levelShort')} {option.currentLevel}{' '}
+                      <span className="arrow">→ {t('levelUp.levelShort')} {option.nextLevel}</span>
+                    </p>
+                    {option.edenCost != null && (
+                      <span className="lu-card__cost">
+                        {t('levelUp.edenCost', { n: option.edenCost })}
+                      </span>
+                    )}
+                    <p className="lu-card__desc">{option.description}</p>
+                    <span className="lu-card__key">[{i + 1}]</span>
+                    <div className="lu-shock" />
+                    <div className="lu-stamp">{t('levelUp.chosen')}</div>
+                    {isUpgrade && <span className="lu-card__upgrade">{t(`levelUp.kind.${option.kind}`)}</span>}
                   </div>
-                  <p className="lu-card__name">{option.title}</p>
-                  <p className="lu-card__level">
-                    {t('levelUp.levelShort')} {option.currentLevel}{' '}
-                    <span className="arrow">→ {t('levelUp.levelShort')} {option.nextLevel}</span>
-                  </p>
-                  {option.edenCost != null && (
-                    <span className="lu-card__cost">
-                      {t('levelUp.edenCost', { n: option.edenCost })}
-                    </span>
-                  )}
-                  <p className="lu-card__desc">{option.description}</p>
-                  <span className="lu-card__key">[{i + 1}]</span>
-                  <div className="lu-shock" />
-                  <div className="lu-stamp">{t('levelUp.chosen')}</div>
-                  {isUpgrade && <span className="lu-card__upgrade">{t(`levelUp.kind.${option.kind}`)}</span>}
                 </div>
               );
             })}
@@ -1050,9 +1104,23 @@ export default function DomeLevelUpSequence({
           gap: 4vw;
           padding-top: 16vh;
         }
-        .lu-card {
+        .lu-card-slot {
           position: relative;
           width: min(300px, 26vw);
+          opacity: 0;
+          animation: luCardSlam 520ms cubic-bezier(.16, 1.2, .3, 1) forwards;
+        }
+        .lu-card-slot:nth-child(1) { animation-delay: 480ms; }
+        .lu-card-slot:nth-child(2) { animation-delay: 610ms; }
+        .lu-card-slot:nth-child(3) { animation-delay: 740ms; }
+        @keyframes luCardSlam {
+          0%   { opacity: 0; transform: translateY(72vh) rotate(9deg) scale(0.9); }
+          62%  { opacity: 1; transform: translateY(-14px) rotate(0deg) scale(1.04); }
+          100% { opacity: 1; transform: translateY(0) rotate(0deg) scale(1); }
+        }
+        .lu-card {
+          position: relative;
+          width: 100%;
           background: #fbfbf8;
           border: 3px solid #0b0d12;
           box-shadow: 9px 9px 0 var(--accent, #0b0d12);
@@ -1060,17 +1128,7 @@ export default function DomeLevelUpSequence({
           cursor: pointer;
           transform: skewX(-5deg);
           transition: transform 150ms cubic-bezier(.2, .9, .3, 1), box-shadow 150ms ease, opacity 260ms ease, filter 260ms ease;
-          opacity: 0;
-          animation: luCardSlam 520ms cubic-bezier(.16, 1.2, .3, 1) forwards;
           color: #0b0d12;
-        }
-        .lu-card:nth-child(1) { animation-delay: 480ms; }
-        .lu-card:nth-child(2) { animation-delay: 610ms; }
-        .lu-card:nth-child(3) { animation-delay: 740ms; }
-        @keyframes luCardSlam {
-          0%   { opacity: 0; transform: skewX(-5deg) translateY(72vh) rotate(9deg) scale(0.9); }
-          62%  { opacity: 1; transform: skewX(-5deg) translateY(-14px) rotate(0deg) scale(1.04); }
-          100% { opacity: 1; transform: skewX(-5deg) translateY(0) rotate(0deg) scale(1); }
         }
         .lu-card:hover {
           transform: skewX(-5deg) translateY(-12px) scale(1.05);
@@ -1080,6 +1138,8 @@ export default function DomeLevelUpSequence({
         .lu-card.is-pad-focus {
           transform: skewX(-5deg) translateY(-12px) scale(1.05);
           box-shadow: 14px 14px 0 var(--accent, #0b0d12);
+          outline: 4px solid #22d3ee;
+          outline-offset: 4px;
           z-index: 2;
         }
         .lu-card:focus-visible { outline: 3px solid #22d3ee; outline-offset: 4px; }
@@ -1252,7 +1312,7 @@ export default function DomeLevelUpSequence({
 
         /* ---- vuelo al centro + temblor ---- */
         .lu-card.is-flying {
-          position: absolute;
+          position: fixed;
           margin: 0;
           z-index: 45;
           transition: transform 420ms cubic-bezier(.3, 1.1, .3, 1), box-shadow 420ms ease;
@@ -1276,12 +1336,12 @@ export default function DomeLevelUpSequence({
           flex-direction: column;
           align-items: center;
           justify-content: flex-end;
-          padding-bottom: 7vh;
+          padding-bottom: 5vh;
           background: rgba(11, 13, 18, 0.82);
         }
         .lu-replace__banner {
           position: absolute;
-          top: 12vh;
+          top: 5vh;
           left: 50%;
           transform: translateX(-50%) rotate(-2.5deg);
           background: #e11d48;
@@ -1322,6 +1382,8 @@ export default function DomeLevelUpSequence({
           transform: skewX(-5deg) translateY(-10px) scale(1.05);
           box-shadow: 11px 11px 0 #e11d48;
           border-color: #e11d48;
+          outline: 4px solid #22d3ee;
+          outline-offset: 4px;
         }
         .lu-slot__idx {
           position: absolute;
@@ -1349,7 +1411,7 @@ export default function DomeLevelUpSequence({
         }
         .lu-replace__esc {
           position: absolute;
-          top: calc(12vh + 90px);
+          top: calc(5vh + 74px);
           left: 50%;
           transform: translateX(-50%) rotate(-2.5deg);
           background: transparent;

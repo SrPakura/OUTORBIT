@@ -1947,14 +1947,20 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         !golemSpiral &&
         resolveSphereSlabCollision(activeSlabs, enemy.position, enemy.radius, _slabContact)
       ) {
-        enemy.position.addScaledVector(_slabContact.normal, _slabContact.depth);
-        const into = enemy.velocity.dot(_slabContact.normal);
-        if (into < 0) {
-          // Reflejo suave de la velocidad contra la normal del slab.
-          enemy.velocity.addScaledVector(
-            _slabContact.normal,
-            -into * (1 + SLAB_BOUNCE_RESTITUTION),
-          );
+        if (enemy.entity.archetype === 'ground_golem' && _slabContact.slab && onSlabSmash) {
+          // El Gólem Rompesuelos destroza el suelo al chocar en vez de
+          // teletransportarse por el empuje de su esfera de 3.2 m.
+          onSlabSmash(_slabContact.slab);
+        } else {
+          enemy.position.addScaledVector(_slabContact.normal, _slabContact.depth);
+          const into = enemy.velocity.dot(_slabContact.normal);
+          if (into < 0) {
+            // Reflejo suave de la velocidad contra la normal del slab.
+            enemy.velocity.addScaledVector(
+              _slabContact.normal,
+              -into * (1 + SLAB_BOUNCE_RESTITUTION),
+            );
+          }
         }
       }
 

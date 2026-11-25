@@ -7,7 +7,6 @@ import DomeYinYangHud from '@/ui/DomeYinYangHud';
 
 interface DomeHudSketchProps {
   hud: DomeHudState;
-  onExit: () => void;
   hidePointerLockPrompt?: boolean;
   /** Audio del bucle de juego: alimenta las alertas sonoras del HUD. */
   audioRef: { current: SynthAudio | null };
@@ -29,7 +28,6 @@ const CORNER_MASK = [
 
 function DomeHudSketchInner({
   hud,
-  onExit,
   hidePointerLockPrompt,
   audioRef,
   alertsEnabled,
@@ -478,21 +476,12 @@ function DomeHudSketchInner({
 
       {/* Aviso de mando conectado (Gamepad API) */}
       {hud.gamepadConnected && (
-        <div className="pointer-events-none absolute right-4 top-14 -skew-x-12 border border-cyan-300/50 bg-[#090314]/70 px-3 py-1">
+        <div className="pointer-events-none absolute right-4 top-4 -skew-x-12 border border-cyan-300/50 bg-[#090314]/70 px-3 py-1">
           <span className="block skew-x-12 text-[9px] font-bold tracking-[0.22em] text-cyan-200">
             {t('hud.gamepadConnected')}
           </span>
         </div>
       )}
-
-      {/* 10. Botón Menú */}
-      <button
-        type="button"
-        onClick={onExit}
-        className="pointer-events-auto absolute right-4 top-4 -skew-x-12 border border-white/40 bg-[#090314]/60 px-4 py-1.5 text-[10px] font-bold tracking-[0.28em] text-white/80 transition-colors hover:border-cyan-300 hover:text-cyan-200"
-      >
-        <span className="block skew-x-12">{t('hud.menuButton')}</span>
-      </button>
 
       <style>{`
         @keyframes domeHudPulse {

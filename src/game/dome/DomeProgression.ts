@@ -308,14 +308,15 @@ export class DomeProgressionManager {
   };
 
   /**
-   * Suma EXP (en "enemigos básicos": 1.0 = un enemigo). Devuelve `true` si
-   * subió al menos un nivel. Cada subida multiplica HP/Edén máximos por 1.05
-   * (curando/rellenando hasta el tope) y la curva pide `0.5 x nivel` enemigos.
+   * Suma EXP (en "enemigos básicos": 1.0 = un enemigo). Devuelve la lista de
+   * niveles alcanzados en orden (vacía si no subió). Cada subida multiplica
+   * HP/Edén máximos por 1.05 (curando/rellenando hasta el tope) y la curva pide
+   * `0.5 x nivel` enemigos.
    */
-  addExp(amount: number): boolean {
-    if (amount <= 0) return false;
+  addExp(amount: number): number[] {
+    if (amount <= 0) return [];
     this.exp += amount;
-    let leveledUp = false;
+    const gainedLevels: number[] = [];
     while (this.exp >= this.expToNext) {
       this.exp -= this.expToNext;
       this.level += 1;
@@ -324,10 +325,10 @@ export class DomeProgressionManager {
       this.hp = this.maxHp;
       this.eden = this.maxEden;
       this.expToNext = 0.5 * this.level;
-      leveledUp = true;
+      gainedLevels.push(this.level);
     }
-    if (leveledUp) this.modifiersDirty = true;
-    return leveledUp;
+    if (gainedLevels.length > 0) this.modifiersDirty = true;
+    return gainedLevels;
   }
 
   /** Avanza los cooldowns de los 3 huecos (llamar cada frame). */

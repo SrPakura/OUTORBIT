@@ -87,14 +87,14 @@ const GOLEM_CHARGE_SAFE_MARGIN = 2.5;
 export const GOLEM_COWARD_HP_RATIO = 0.35;
 /** HP de Nyx por debajo del cual apostar la vida sale a cuenta. */
 export const GOLEM_PLAYER_LOW_RATIO = 0.30;
-/** Amenaza: Nyx con un ataque EN CURSO hacia el gólem (cono medio). */
-const GOLEM_THREAT_ATTACK_DOT = 0.62;
+/** Amenaza: Nyx con un ataque EN CURSO hacia el gólem (cono ancho frontal). */
+const GOLEM_THREAT_ATTACK_DOT = 0.42;
 /** Amenaza relajada del herido: se cubre con un cono mucho más ancho. */
-const GOLEM_THREAT_WOUNDED_DOT = 0.35;
+const GOLEM_THREAT_WOUNDED_DOT = 0.25;
 /** Amenaza: distancia a la que un ataque de Nyx se toma en serio (m). */
-export const GOLEM_THREAT_RANGE = 20.0;
+export const GOLEM_THREAT_RANGE = 22.0;
 /** Trabajada la pared: tras bajarla, este tiempo SIN poder re-levantarla (s). */
-export const GOLEM_BLOCK_REACT_COOLDOWN = 1.8;
+export const GOLEM_BLOCK_REACT_COOLDOWN = 0.6;
 
 // --- Parry de la pared (ventana de remate en slow-mo) ---
 /**
@@ -1192,9 +1192,8 @@ function tryStartGolemBlock(
     return false;
   }
   if (!golemIsWounded(enemy)) {
-    // Pared que no puede honrar su PISO: con stamina justa bajaría a
-    // medias y vuelta a comerse el golpe — mejor no izarla en absoluto.
-    if (internal.golemStamina < GOLEM_BLOCK_FLOOR_SEC * GOLEM_STAMINA_DRAIN_BLOCK) {
+    // Requiere un mínimo de stamina para no bloquear completamente seco.
+    if (internal.golemStamina < 6.0) {
       return false;
     }
     // Si Nyx NO está atacando activamente, exigir margen de tiempo para no
