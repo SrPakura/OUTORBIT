@@ -210,7 +210,7 @@ export class MusicPlayer {
       // viene después (silencio aleatorio + siguiente).
       el.loop = false;
       el.preload = 'auto';
-      el.volume = 0;
+      el.volume = 0.01;
       el.addEventListener('ended', () => this.onTrackEnded(track));
       this.elements.set(track, el);
     }

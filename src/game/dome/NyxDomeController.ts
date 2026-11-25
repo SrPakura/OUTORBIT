@@ -197,7 +197,7 @@ const BULLET_TIME_DURATION = 1.6;
 const REDIRECT_TIME_SCALE = 0.25;
 // --- Parry del Gólem: slow-mo propio, un pelín más lento que el de
 // redirección — el remate necesita dash + apuntado + taladro completos.
-const PARRY_TIME_SCALE = 0.18;
+const PARRY_TIME_SCALE = 0.10;
 /**
  * Tope de SEGURIDAD (s REALES) del slow-mo del parry: la ventana la abre y la
  * cierra el MANAGER por DISTANCIA (α+6 → α+2, ver DomeWaveManager) y el game
@@ -681,18 +681,26 @@ export class NyxDomeController {
     this.parryWindowActive = true;
     this.parryDashUsed = false;
     this.parryStarPoint.copy(starPos);
-    // Ayuda al usuario: giro rápido de la mira/cámara hacia la estrella.
-    // En vuelo la cámara va pegada a la espalda: girar aimForward ES girar
-    // la cámara (el cuerpo se alinea elástico detrás, el latigazo visual).
-    if (this.mode !== 'grounded') {
-      this.tmpA.copy(starPos).sub(this.nyxRoot.position);
-      if (this.tmpA.lengthSq() > 1e-6) {
-        this.tmpA.normalize();
+    // Ayuda al usuario: giro automático de la mira/cámara hacia la estrella
+    // para que el jugador la vea al instante y le resulte natural darle.
+    this.tmpA.copy(starPos).sub(this.nyxRoot.position);
+    if (this.tmpA.lengthSq() > 1e-6) {
+      this.tmpA.normalize();
+      if (this.mode !== 'grounded') {
         this.aimForward.copy(this.tmpA);
         this.prevAimFwd.copy(this.aimForward);
         this.facing.copy(this.tmpA);
-        this.startCamTug();
+      } else {
+        // En suelo: alinea camYaw/camPitch locales respecto al plano `this.up`
+        const fDotU = THREE.MathUtils.clamp(this.tmpA.dot(this.up), -0.99, 0.99);
+        this.camPitch = Math.asin(fDotU);
+        const horiz = this.tmpB.copy(this.tmpA).addScaledVector(this.up, -fDotU);
+        if (horiz.lengthSq() > 1e-6) {
+          horiz.normalize();
+          this.camYaw = Math.atan2(horiz.x, -horiz.z);
+        }
       }
+      this.startCamTug();
     }
   }
 
@@ -1134,6 +1142,16 @@ export class NyxDomeController {
     // re-arma con un antirrebote para no re-abrirla en el mismo acercamiento.
     if (this.redirectWindowTimer > 0) {
       this.redirectWindowTimer = Math.max(0, this.redirectWindowTimer - rawDt);
+      // Mientras la ventana de parry está abierta y aún no se ha dasheado,
+      // guía suavemente la cámara hacia la estrella ("ey, mira esto").
+      if (this.parryWindowActive && !this.parryDashUsed && this.mode !== 'grounded') {
+        this.tmpA.copy(this.parryStarPoint).sub(this.nyxRoot.position);
+        if (this.tmpA.lengthSq() > 1e-6) {
+          this.tmpA.normalize();
+          this.rotateToward(this.aimForward, this.tmpA, 3.2 * rawDt);
+          this.rotateToward(this.facing, this.tmpA, 3.2 * rawDt);
+        }
+      }
       if (this.redirectWindowTimer === 0) {
         this.redirectReArm = REDIRECT_REARM_COOLDOWN;
         this.parryWindowActive = false;

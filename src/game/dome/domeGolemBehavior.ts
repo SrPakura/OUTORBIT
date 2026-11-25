@@ -134,7 +134,7 @@ export const GOLEM_PARRY_LOCKOUT_SEC = 5.0;
  * mientras el gólem bloquea con la guardia ya alzada. Es a la vez la
  * proximidad que sostiene la guardia (block_guard se rearma con Nyx dentro).
  */
-export const GOLEM_PARRY_OPEN_DIST = 6.0;
+export const GOLEM_PARRY_OPEN_DIST = 8.0;
 /** Banda del parry: la oportunidad TERMINA al llegar a d = α + CLOSE_DIST. */
 export const GOLEM_PARRY_CLOSE_DIST = 2.0;
 /** Eden necesario para la oportunidad: los 2 dashes del remate (ratio). */
