@@ -664,6 +664,12 @@ export interface EnemyInternal {
    * herido lo ignora).
    */
   golemBlockCooldown: number;
+  /**
+   * Gólem: carga de APUESTA (banda 20-30 m) — la espiral ignora el aborto
+   * anti-Barrera y el gólem puede inmolarse contra la esfera si hace falta
+   * para cruzar a Nyx. Se apaga al terminar/contactar.
+   */
+  golemGambling: boolean;
   /** Gólem: ángulo del brazo gigante (fallback procedural sin clips). */
   golemArmAngle: number;
   /** Gólem: torsión de spine/chest durante el telegraph (fallback). */
@@ -870,6 +876,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     vel: new THREE.Vector3(),
     aimForward: new THREE.Vector3(0, 0, 1),
     hpRatio: 1,
+    edenRatio: 1,
     attacking: false,
   };
 
@@ -1213,6 +1220,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       golemHitTimer: 0,
       golemRestartPending: false,
       golemBlockCooldown: 0,
+      golemGambling: false,
       golemArmAngle: 0,
       golemTwist: 0,
       golemImpact: new THREE.Vector3(),
@@ -1361,6 +1369,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal.golemDriftDir.set(0, 0, 1);
     internal.golemHitTimer = 0;
     internal.golemBlockCooldown = 0;
+    internal.golemGambling = false;
     if (internal.enemy.entity.archetype === 'crab_gunner') {
       resetCrabAttack(this, internal.enemy, internal);
       internal.crabPostKickGrace = 0;
@@ -1617,6 +1626,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
     onSlabSmash?: (slab: SlabCollider) => void,
     playerHpRatio = 1,
+    playerEdenRatio = 1,
   ): { didEnemyEvadeDash: boolean } {
     let didEnemyEvadeDash = false;
     this.waveTime += dt;
@@ -1624,6 +1634,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.golemInfo.vel.copy(playerVel);
     this.golemInfo.aimForward.copy(playerAimForward);
     this.golemInfo.hpRatio = THREE.MathUtils.clamp(playerHpRatio, 0, 1);
+    this.golemInfo.edenRatio = THREE.MathUtils.clamp(playerEdenRatio, 0, 1);
     this.golemInfo.attacking = playerAttackTime > 0.15 || playerKickAnim;
     this.updateDying(dt);
     const lockedId = lockedEnemy?.id ?? null;

@@ -826,6 +826,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         onGolemSmash,
         onSlabSmash,
         controller.getHp() / controller.getMaxHp(),
+        controller.getEden() / controller.getMaxEden(),
       );
       if (didEnemyEvadeDash) {
         controller.notifyEnemyEvaded();

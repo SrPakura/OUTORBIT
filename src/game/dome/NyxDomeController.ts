@@ -833,6 +833,11 @@ export class NyxDomeController {
     return this.eden;
   }
 
+  /** Tope de Eden de Nyx: la IA del Gólem lo usa para leer su ratio. */
+  getMaxEden(): number {
+    return this.maxEden;
+  }
+
   isPlayerGrounded(): boolean {
     return this.mode === 'grounded';
   }

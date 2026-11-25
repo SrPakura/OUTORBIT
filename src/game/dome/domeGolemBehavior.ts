@@ -51,8 +51,8 @@ export const GOLEM_TURN_RATE = 2.6;
 export const GOLEM_EXHAUSTED_TURN_RATE = 10.0 * (Math.PI / 180);
 
 // --- Lectura de Nyx (IA observadora de media distancia) ---
-/** Banda de compromiso: más allá de aquí SOLO acercarse (m). */
-export const GOLEM_ENGAGE_MAX_DIST = 20.0;
+/** Más allá de aquí SOLO acercarse con el rotor para entrar en banda (m). */
+export const GOLEM_ENGAGE_MAX_DIST = 30.0;
 /** Análisis/presión: micropausa de decisión dentro de la banda (s). */
 export const GOLEM_OBSERVE_SEC = 0.45;
 /** Presión: anillo de acoso mientras decide dentro de la banda (m). */
@@ -63,6 +63,14 @@ export const GOLEM_OBSERVE_ORBIT_SPEED = 6.0;
 export const GOLEM_LEAD_MAX_SEC = 0.75;
 /** Pasividad de Nyx: por debajo de esta velocidad NO le dispara a la posición actual. */
 export const GOLEM_PASSIVE_SPEED = 9.5;
+
+// --- Banda de apuesta (20-30 m): aquí SÍ puede inmolarse si hace falta ---
+/** Borde interior de la banda de apuesta (m). */
+export const GOLEM_GAMBLE_MIN_DIST = 20.0;
+/** Borde exterior de la banda de apuesta (m). */
+export const GOLEM_GAMBLE_MAX_DIST = 30.0;
+/** Eden de Nyx por debajo del cual afronta la inmolación como remate. */
+export const GOLEM_GAMBLE_EDEN_LOW = 0.35;
 
 // --- Corrección de rumbo en plena carga (auto-aim honesto de 300 kg) ---
 /** Thin (broca): giro máximo en vuelo (rad/s). */
@@ -232,8 +240,8 @@ export interface GolemBehaviorContext {
 /**
  * La foto de Nyx que el gólem LEE cada frame (información perfecta, uso
  * honesto): su velocidad (predicción/lead), su apunte (amenaza), si tiene
- * un ataque en curso y su nivel de vida (critero de tanque). El
- * `DomeWaveManager` la rellena una vez por frame.
+ * un ataque en curso y su nivel de vida/Eden (critero de tanque y de la
+ * banda de apuesta). El `DomeWaveManager` la rellena una vez por frame.
  */
 export interface GolemPlayerInfo {
   /** Velocidad actual de Nyx (m/s): lead de las cargas y pasividad. */
@@ -242,6 +250,8 @@ export interface GolemPlayerInfo {
   readonly aimForward: THREE.Vector3;
   /** Vida de Nyx 0..1. Bajo GOLEM_PLAYER_LOW_RATIO: se juega la vida. */
   hpRatio: number;
+  /** Eden de Nyx 0..1: con qué margen puede remontar (banda de apuesta). */
+  edenRatio: number;
   /** ¿Tiene Nyx un ataque en curso (ventana de speed_attack)? */
   attacking: boolean;
 }
@@ -573,7 +583,28 @@ export function updateGolemAttack(
         }
         return;
       }
-      // > 20 m: persigue al rotor a 15 m/s — nunca "se queda mirando".
+      if (dist <= GOLEM_GAMBLE_MAX_DIST) {
+        // Banda de APUESTA (20-30 m): alterna según cooldown, stamina, vida
+        // de ambos y Eden de Nyx. Si el intercambio sale a cuenta — gólem
+        // tocado y Nyx sin vida o sin Eden para remontar — tira la carga
+        // LARGA aunque la línea sea un suicidio: aquí SÍ puede inmolarse.
+        const allIn =
+          golemIsWounded(enemy) &&
+          (playerLow || info.edenRatio <= GOLEM_GAMBLE_EDEN_LOW);
+        if (
+          allIn &&
+          internal.golemStamina >= GOLEM_COST_THIN
+        ) {
+          internal.golemGambling = true;
+          startGolemChargeWindup(enemy, internal, playerPos, 'thin');
+          return;
+        }
+        // Cooldown/stamina no listos o apuesta mala: sigue acercándose
+        // (perseguirá sin parar hasta entrar en las bandas interiores).
+        enemy.attackTimer = GOLEM_DECISION_RETRY_SEC;
+        return;
+      }
+      // > 30 m: persigue al rotor a 15 m/s — nunca "se queda mirando".
       enemy.attackTimer = GOLEM_DECISION_RETRY_SEC;
       return;
     }
@@ -868,9 +899,16 @@ export function updateGolemAttack(
         }
       }
 
-      // Anti-suicidio honesto: la carga muere ANTES de tocar la Barrera.
-      const boundStop = DOME_PLAYER_BOUND_RADIUS - enemy.radius - GOLEM_BARRIER_STOP_MARGIN;
-      if (enemy.position.length() > boundStop || internal.golemTimer <= 0) {
+      // Anti-suicidio honesto: la carga muere ANTES de tocar la Barrera…
+      // salvo en la carga de APUESTA (banda 20-30 m): ahí el gólem decide
+      // con la vida de ambos y puede inmolarse contra la esfera si hace
+      // falta para cruzar a Nyx.
+      if (!internal.golemGambling) {
+        const boundStop = DOME_PLAYER_BOUND_RADIUS - enemy.radius - GOLEM_BARRIER_STOP_MARGIN;
+        if (enemy.position.length() > boundStop || internal.golemTimer <= 0) {
+          endGolemCharge(enemy, internal, ctx);
+        }
+      } else if (internal.golemTimer <= 0) {
         endGolemCharge(enemy, internal, ctx);
       }
       return;
@@ -1003,6 +1041,7 @@ function endGolemCharge(
   ctx: GolemBehaviorContext,
 ): void {
   internal.chargeTimer = 0;
+  internal.golemGambling = false;
   internal.golemState = 'charge_end';
   internal.golemTimer = GOLEM_CHARGE_END_SEC;
   enemy.attackTimer = 1.6 / ctx.speedMult;
