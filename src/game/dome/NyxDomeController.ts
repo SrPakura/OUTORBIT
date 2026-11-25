@@ -487,13 +487,13 @@ export class NyxDomeController {
   private waveNumber = 1;
   private waveLabel = 'BÁSICOS';
   private slotHudInfo: [
-    { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-    { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-    { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number; isActive?: boolean },
+    { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number; isActive?: boolean },
+    { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number; isActive?: boolean },
   ] = [
-    { skillId: null, name: null, level: 0 },
-    { skillId: null, name: null, level: 0 },
-    { skillId: null, name: null, level: 0 },
+    { skillId: null, name: null, level: 0, isActive: false },
+    { skillId: null, name: null, level: 0, isActive: false },
+    { skillId: null, name: null, level: 0, isActive: false },
   ];
   onSlotTriggered?: (slotIndex: 0 | 1 | 2) => void;
   onDomeBounceDamage?: (damage: number) => void;
@@ -1184,9 +1184,9 @@ export class NyxDomeController {
     waveNumber?: number;
     waveLabel?: string;
     slots: [
-      { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-      { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-      { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+      { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number; isActive?: boolean },
+      { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number; isActive?: boolean },
+      { skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number; isActive?: boolean },
     ];
   }): void {
     if (params.maxHp > this.maxHp) {

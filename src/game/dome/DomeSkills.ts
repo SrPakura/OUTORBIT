@@ -525,6 +525,26 @@ export class DomeSkillExecutor {
     return this.blackHoles.length > 0;
   }
 
+  /** True mientras la habilidad tiene efecto activo en la escena. */
+  isSkillActive(id: ActiveSkillId): boolean {
+    switch (id) {
+      case 'gravity_field':
+        return this.hasActiveGravityRocks();
+      case 'repulse_push':
+        return this.domes.length > 0;
+      case 'eden_absorb':
+        return this.halos.length > 0;
+      case 'attraction_well':
+        return this.wells.length > 0;
+      case 'bounce_horizon':
+        return this.waves.length > 0;
+      case 'black_hole':
+        return this.blackHoles.length > 0;
+      case 'implosion':
+        return this.implosions.length > 0;
+    }
+  }
+
   cancelGravityField(): void {
     const gf = this.gravityField;
     if (gf === null) return;

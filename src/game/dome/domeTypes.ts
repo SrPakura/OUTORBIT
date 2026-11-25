@@ -103,9 +103,9 @@ export interface DomeHudState {
   bulletTimeRemaining: number;
   activeSlot: 1 | 2 | 3;
   slots: [
-    { keyLabel: string; skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-    { keyLabel: string; skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
-    { keyLabel: string; skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
+    { keyLabel: string; skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number; isActive?: boolean },
+    { keyLabel: string; skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number; isActive?: boolean },
+    { keyLabel: string; skillId?: ActiveSkillId | null; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number; isActive?: boolean },
   ];
   domeBounceFlash: number;
   /**

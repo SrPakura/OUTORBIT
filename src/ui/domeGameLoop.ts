@@ -532,9 +532,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     waveNumber: undefined,
     waveLabel: undefined,
     slots: [
-      { skillId: null, name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
-      { skillId: null, name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
-      { skillId: null, name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0 },
+      { skillId: null, name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0, isActive: false },
+      { skillId: null, name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0, isActive: false },
+      { skillId: null, name: null, level: 0, cooldownRemaining: 0, maxCooldown: 0, isActive: false },
     ],
   };
 
@@ -1005,6 +1005,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         syncPayload.slots[i].level = slot.level;
         syncPayload.slots[i].cooldownRemaining = slot.cooldownRemaining;
         syncPayload.slots[i].maxCooldown = slot.maxCooldown;
+        syncPayload.slots[i].isActive = slot.skillId ? skillExecutor.isSkillActive(slot.skillId) : false;
       }
       controller.syncProgression(syncPayload);
 

@@ -36,24 +36,19 @@ function DomeSkillSlotsHudInner({ slots, activeSlot }: DomeSkillSlotsHudProps) {
         const onCooldown = equipped && cdRemaining > 0.05 && maxCd > 0;
         const progress = onCooldown ? Math.max(0, Math.min(1, 1 - cdRemaining / maxCd)) : 1;
         const dashOffset = RING_CIRCUMFERENCE * (1 - progress);
-        const isActive = activeSlot === slotNum;
-        const ringColor = isActive && equipped ? '#22D3EE' : '#E11D48';
-        const trackColor =
-          isActive && equipped ? 'rgba(34, 211, 238, 0.22)' : 'rgba(225, 29, 72, 0.16)';
+        const isActive = Boolean(slot.isActive && equipped);
+        const ringColor = isActive ? '#22D3EE' : '#E11D48';
+        const trackColor = isActive ? 'rgba(34, 211, 238, 0.2)' : 'rgba(225, 29, 72, 0.16)';
 
         return (
           <div
             key={slotNum}
-            className="relative flex items-center justify-center rounded-full transition-transform duration-150"
+            className="relative flex items-center justify-center rounded-full"
             style={{
               width: 'clamp(68px, 5.8vw, 88px)',
               height: 'clamp(68px, 5.8vw, 88px)',
               opacity: equipped ? 1 : 0.25,
-              transform: isActive && equipped ? 'scale(1.07)' : 'scale(1)',
-              boxShadow:
-                isActive && equipped
-                  ? '0 0 0 3px #22D3EE, 0 0 24px rgba(34, 211, 238, 0.9), 0 0 42px rgba(34, 211, 238, 0.45), 0 4px 12px rgba(0, 0, 0, 0.45)'
-                  : '0 4px 12px rgba(0, 0, 0, 0.4)',
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
             }}
           >
             <svg
