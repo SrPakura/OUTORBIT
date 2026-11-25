@@ -3015,6 +3015,30 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       // --- Cableado de los clips del GLB (crossfade FSM -> acción) ---
       const force = internal.golemRestartPending;
       internal.golemRestartPending = false;
+      const blockStart = internal.actions.get('golem_block_start');
+      const blockLoop = internal.actions.get('golem_block_loop');
+      const blockEnd = internal.actions.get('golem_block_end');
+
+      // Bloqueo reactivo en 3 clips (start 0.3 s one-shot -> loop ciclico ->
+      // end one-shot): la costura start.final == loop.f0 es exacta (0.0 deg).
+      if (
+        state !== 'block_guard' &&
+        blockEnd &&
+        (internal.currentClipAction === blockLoop ||
+          internal.currentClipAction === blockStart)
+      ) {
+        // La FSM acaba de bajar la pared: arranca la bajada (one-shot) y el
+        // clip del estado espera a que termine (ver guard de abajo).
+        this.crossfadeEnemyAction(internal, 'golem_block_end', 0.06);
+      }
+      if (
+        internal.currentClipAction === blockEnd &&
+        blockEnd.time < blockEnd.getClip().duration - 1 / 30
+      ) {
+        // La pared sigue bajando: no pises la salida con el clip del estado.
+        return;
+      }
+
       let clipName: string;
       let fadeSec = 0.12;
       if (state === 'parried') {
@@ -3037,8 +3061,25 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       ) {
         clipName = 'golem_brute_punch';
         fadeSec = force ? 0.08 : 0.12;
-      } else if (state === 'block_guard') {
-        clipName = 'golem_block_guard';
+      } else if (state === 'block_guard' && blockStart && blockLoop) {
+        // Pared REACTIVA: entrada -> subida one-shot; terminada la subida ->
+        // bucle ciclico mientras la FSM mantenga la guardia (0.78 s sin
+        // amenaza; rearmada mientras Nyx apunte/ataque).
+        if (internal.currentClipAction === blockStart) {
+          if (blockStart.time >= blockStart.getClip().duration - 1 / 30) {
+            // Subida completa: pasa al bucle de pared sostenida.
+            this.crossfadeEnemyAction(internal, 'golem_block_loop', 0.1);
+            return;
+          }
+          return; // Sigue subiendo la pared.
+        }
+        if (internal.currentClipAction !== blockLoop) {
+          // Entrada fresca a la guardia (desde helicóptero/windup/etc.):
+          // reset forzado de la subida (dos guardias seguidas no quedan
+          // clampadas a media subida).
+          this.crossfadeEnemyAction(internal, 'golem_block_start', 0.08, true);
+        }
+        return; // Ya en el bucle: la pared se sostiene sola.
       } else {
         clipName = 'golem_helicopter_loop';
         fadeSec = 0.3; // El rotor tarda en arrancar/pararse: fundido largo.
