@@ -46,21 +46,19 @@ import type { EnemyInternal, ManagedWaveEnemy } from './DomeWaveManager';
 // ============================================================================
 
 /** Giro del cuerpo en helicóptero hacia Nyx (slerp exponencial/s). */
-export const GOLEM_TURN_RATE = 2.2;
+export const GOLEM_TURN_RATE = 2.6;
 /** Giro honesto del gólem exhausto: 10°/s exactos (rad/s reales). */
 export const GOLEM_EXHAUSTED_TURN_RATE = 10.0 * (Math.PI / 180);
 
 // --- Lectura de Nyx (IA observadora de media distancia) ---
-/** Banda de compromiso: dentro de aquí LEE a Nyx antes de gastar un ataque. */
-export const GOLEM_ENGAGE_MAX_DIST = 26.0;
-/** Análisis en reposo antes de comprometer un windup (s). */
-export const GOLEM_OBSERVE_SEC = 0.9;
-/** Anillo de lectura (m del gólem a Nyx mientras analiza). */
-export const GOLEM_OBSERVE_RING = 17.0;
-/** Modo presión: con Nyx contra la esfera, contrae hasta rango de puñetazo. */
-export const GOLEM_PRESS_RING = 9.0;
-/** Cruceta lateral mientras analiza (m/s): nunca queda clavado esperando. */
-export const GOLEM_OBSERVE_ORBIT_SPEED = 4.5;
+/** Banda de compromiso: más allá de aquí SOLO acercarse (m). */
+export const GOLEM_ENGAGE_MAX_DIST = 20.0;
+/** Análisis/presión: micropausa de decisión dentro de la banda (s). */
+export const GOLEM_OBSERVE_SEC = 0.45;
+/** Presión: anillo de acoso mientras decide dentro de la banda (m). */
+const GOLEM_PRESS_RING = 7.0;
+/** Cruceta lateral mientras presiona (m/s): nunca clavado esperando. */
+export const GOLEM_OBSERVE_ORBIT_SPEED = 6.0;
 /** Lead honesto máximo de la predicción (s): apunta a donde Nyx VA a estar. */
 export const GOLEM_LEAD_MAX_SEC = 0.75;
 /** Pasividad de Nyx: por debajo de esta velocidad NO le dispara a la posición actual. */
@@ -68,9 +66,9 @@ export const GOLEM_PASSIVE_SPEED = 9.5;
 
 // --- Corrección de rumbo en plena carga (auto-aim honesto de 300 kg) ---
 /** Thin (broca): giro máximo en vuelo (rad/s). */
-export const GOLEM_THIN_TURN_IN_FLIGHT = 0.35;
+export const GOLEM_THIN_TURN_IN_FLIGHT = 0.45;
 /** Thick (ariete): gira la mitad — es un tren de mercancías (rad/s). */
-export const GOLEM_THICK_TURN_IN_FLIGHT = 0.18;
+export const GOLEM_THICK_TURN_IN_FLIGHT = 0.22;
 
 // --- Anti-suicidio: la carga solo arranca si la línea es segura ---
 /** Margen contra la Barrera Blanca para TODO el trayecto previsible (m). */
@@ -81,43 +79,47 @@ const GOLEM_CHARGE_SAFE_MARGIN = 2.5;
 export const GOLEM_COWARD_HP_RATIO = 0.35;
 /** HP de Nyx por debajo del cual apostar la vida sale a cuenta. */
 export const GOLEM_PLAYER_LOW_RATIO = 0.30;
-/** Amenaza: Nyx apuntando al gólem dentro de este cono (~21° de radio). */
-export const GOLEM_THREAT_AIM_DOT = 0.93;
-/** Amenaza: distancia a la que un apunte/ataque de Nyx se toma en serio (m). */
+/** Amenaza: Nyx con un ataque EN CURSO hacia el gólem (cono medio). */
+const GOLEM_THREAT_ATTACK_DOT = 0.62;
+/** Amenaza relajada del herido: se cubre con un cono mucho más ancho. */
+const GOLEM_THREAT_WOUNDED_DOT = 0.35;
+/** Amenaza: distancia a la que un ataque de Nyx se toma en serio (m). */
 export const GOLEM_THREAT_RANGE = 20.0;
+/** Trabajada la pared: tras bajarla, este tiempo SIN poder re-levantarla (s). */
+export const GOLEM_BLOCK_REACT_COOLDOWN = 1.8;
 
 // --- Descanso voluntario (stamina) ---
 /** Bajo esto, con Nyx pasiva, se retira a descansar en vez de pelear en seco. */
-export const GOLEM_REST_STAMINA = 30.0;
+export const GOLEM_REST_STAMINA = 25.0;
 /** Descanso completo: vuelve al ruedo con la energía a este nivel. */
 export const GOLEM_REST_TARGET_STAMINA = 62.0;
 export const GOLEM_REST_REGEN = 11.0;
 /** Distancia de seguridad que busca para descansar (m). */
-export const GOLEM_REST_DISTANCE = 28.0;
+export const GOLEM_REST_DISTANCE = 26.0;
 /** Retirada del descanso (m/s). */
-export const GOLEM_RETREAT_SPEED = 8.5;
+export const GOLEM_RETREAT_SPEED = 9.5;
 
 // --- Economía de energía/fatiga ---
 export const GOLEM_STAMINA_MAX = 100.0;
-/** Persecución en helicóptero: -4.5 stamina/s mientras presiona. */
-const GOLEM_STAMINA_DRAIN_HELI = 4.5;
-/** Análisis: el rotor mantiene el vuelo estacionario (-2 stamina/s). */
-const GOLEM_STAMINA_DRAIN_OBSERVE = 2.0;
+/** Persecución en helicóptero: -3.5 stamina/s mientras presiona. */
+const GOLEM_STAMINA_DRAIN_HELI = 3.5;
+/** Presión/lectura: el rotor mantiene el vuelo (-1.5 stamina/s). */
+const GOLEM_STAMINA_DRAIN_OBSERVE = 1.5;
 /** Bloqueo en guardia: -4 stamina/s. */
 const GOLEM_STAMINA_DRAIN_BLOCK = 4.0;
 /** Coste fijo de cada ataque (se cobra al arrancar el windup). */
-export const GOLEM_COST_THIN = 22.0;
-export const GOLEM_COST_THICK = 30.0;
-export const GOLEM_COST_PUNCH = 12.0;
+export const GOLEM_COST_THIN = 18.0;
+export const GOLEM_COST_THICK = 24.0;
+export const GOLEM_COST_PUNCH = 10.0;
 /** Ventana de castigo: duración del exhausto (recarga completa dentro). */
 export const GOLEM_EXHAUSTED_SEC = 5.0;
 /** Spec §7.4: exhausto avanza lento a 3 m/s. */
 export const GOLEM_EXHAUSTED_SPEED = 3.0;
 
 // --- Helicóptero (persecución con física pesada de 300 kg) ---
-export const GOLEM_HELI_SPEED = 12.5;
+export const GOLEM_HELI_SPEED = 15.0;
 /** Aceleración pesada (λ de acercamiento a la velocidad objetivo). */
-const GOLEM_HELI_ACCEL_LAMBDA = 1.8;
+const GOLEM_HELI_ACCEL_LAMBDA = 2.2;
 /** El rotor tarda en ganar altura: componente vertical al 75 %. */
 const GOLEM_HELI_VERTICAL_SCALE = 0.75;
 /** Contención anti-suicidio (mismo criterio que la flotación genérica). */
@@ -127,32 +129,34 @@ const GOLEM_KEEP_PULL = 9.0;
 const GOLEM_BARRIER_STOP_MARGIN = 2.5;
 
 // --- Puñetazo bruto ---
-export const GOLEM_PUNCH_TRIGGER_DISTANCE = 13.0;
-export const GOLEM_PUNCH_WINDUP_SEC = 1.1; // Windup torpe y exagerado.
+/** Banda del físico: dentro de 5 m el puñetazo es el castigo SIEMPRE. */
+export const GOLEM_PUNCH_TRIGGER_DISTANCE = 5.0;
+export const GOLEM_PUNCH_WINDUP_SEC = 0.95; // Windup torpe y exagerado.
 export const GOLEM_PUNCH_SWING_SEC = 0.2;
-export const GOLEM_PUNCH_RECOVER_SEC = 1.1; // Inercia posterior.
-export const GOLEM_PUNCH_REACH = 4.2;
-/** Hit justo: radio de impacto del puñetazo contra el cuerpo de Nyx (m). */
-export const GOLEM_PUNCH_HIT_RADIUS = 3.4;
+export const GOLEM_PUNCH_RECOVER_SEC = 1.0; // Inercia posterior.
+export const GOLEM_PUNCH_REACH = 4.6;
+/** Radio de impacto del puñetazo contra el cuerpo de Nyx (m). */
+export const GOLEM_PUNCH_HIT_RADIUS = 3.8;
 export const GOLEM_PUNCH_DAMAGE = 16;
 export const GOLEM_PUNCH_PUSH = 24.0;
-export const GOLEM_PUNCH_COOLDOWN = 3.0;
+export const GOLEM_PUNCH_COOLDOWN = 2.4;
 /** Todo slab con centro a <8 m del punto de impacto se destroza. */
 export const GOLEM_SLAB_BREAK_RADIUS = 8.0;
 /** El latigazo arrastra el cuerpo hacia el punto de impacto (m/s). */
 const GOLEM_PUNCH_LUNGE_SPEED = 4.0;
 
 // --- Cargas en espiral (dirección sellada, trayectoria recta honesta) ---
-export const GOLEM_CHARGE_MIN_DIST = 13.0;
-export const GOLEM_CHARGE_MAX_DIST = 55.0;
-/** Thin: broca rápida (26×mult m/s); thick ~30 % más lenta. */
-export const GOLEM_THIN_SPEED = 26.0;
-export const GOLEM_THICK_SPEED = 18.2;
+/** Banda de la carga: de <5 m (puñetazo) hasta 20 m (más allá: acercarse). */
+export const GOLEM_CHARGE_MIN_DIST = 4.5;
+export const GOLEM_CHARGE_MAX_DIST = 20.0;
+/** Thin: broca rápida (28×mult m/s); thick ~30 % más lenta. */
+export const GOLEM_THIN_SPEED = 28.0;
+export const GOLEM_THICK_SPEED = 20.0;
 export const GOLEM_THIN_WINDUP_SEC = 0.45;
 export const GOLEM_THICK_WINDUP_SEC = 0.6;
 /** Rastreo honesto durante el windup (rad/s); al terminar, dir. sellada. */
-export const GOLEM_THIN_AIM_TURN_RATE = 1.8;
-export const GOLEM_THICK_AIM_TURN_RATE = 0.7;
+export const GOLEM_THIN_AIM_TURN_RATE = 2.2;
+export const GOLEM_THICK_AIM_TURN_RATE = 0.9;
 /** Techo de duración de cada carga (s). */
 export const GOLEM_THIN_MAX_SEC = 2.2;
 export const GOLEM_THICK_MAX_SEC = 2.6;
@@ -161,7 +165,7 @@ export const GOLEM_THIN_PUSH = 20.0;
 export const GOLEM_THICK_DAMAGE = 18;
 export const GOLEM_THICK_PUSH = 26.0;
 /** Contacto del cuerpo en carga contra Nyx (padding sobre el radius). */
-const GOLEM_CHARGE_CONTACT_PADDING = 1.1;
+const GOLEM_CHARGE_CONTACT_PADDING = 1.5;
 /** Ariete: radio de "roce" extra que rompe slabs mientras ara. */
 const GOLEM_THICK_GRAZE_RADIUS = 2.6;
 /** Frenado de la inercia tras terminar la carga. */
@@ -194,7 +198,7 @@ export const GOLEM_PARRY_MAX_Y_HIT_DIR = -0.45;
 export const GOLEM_HIT_CLIP_SEC = 0.3;
 
 /** Cooldown de decisión en helicóptero cuando Nyx está fuera de alcance. */
-const GOLEM_DECISION_RETRY_SEC = 0.5;
+const GOLEM_DECISION_RETRY_SEC = 0.35;
 
 /**
  * Máquina de estados del Gólem Rompesuelos. `parried` se inyecta desde el
@@ -279,16 +283,20 @@ function turnTowardsHonest(
 }
 
 /**
- * ¿Es Nyx una amenaza REAL para este gólem? Información perfecta: dentro de
- * rango serio, un ataque en curso apuntándole (cono laxo, está en plena
- * acceleración) o un apunte fino a bocajarro (cono estricto). Con esto el
- * gólem decide cubrirse ANTES de comerse el golpe, no después.
+ * ¿Es Nyx una amenaza REAL para este gólem? SOLO cuenta un ataque EN CURSO
+ * apuntándole: la mirada YA NO BLOQUEA — antes levantaba la pared por un
+ * apunte fino aunque Nyx no estuviera haciendo nada ("bloquea si lo miro",
+ * incluso lejos). Herido, el cono se relaja: el que va perdiendo se cubre
+ * antes.
  */
 function isThreatToGolem(
   enemy: ManagedWaveEnemy,
   playerPos: THREE.Vector3,
   info: GolemPlayerInfo,
 ): boolean {
+  if (!info.attacking) {
+    return false;
+  }
   const dist = enemy.position.distanceTo(playerPos);
   if (dist > GOLEM_THREAT_RANGE) {
     return false;
@@ -298,13 +306,8 @@ function isThreatToGolem(
     return true;
   }
   _aimDir.normalize();
-  const aimDot = info.aimForward.dot(_aimDir);
-  // Ataque en curso hacia él (viene lanzada): cono laxo a rango completo.
-  if (info.attacking && aimDot > 0.6) {
-    return true;
-  }
-  // Apunte fino a bocajarro: cono estricto.
-  return aimDot > GOLEM_THREAT_AIM_DOT && dist < 14.0;
+  const cone = golemIsWounded(enemy) ? GOLEM_THREAT_WOUNDED_DOT : GOLEM_THREAT_ATTACK_DOT;
+  return info.aimForward.dot(_aimDir) > cone;
 }
 
 /** ¿Va tan bajo el gólem que un intercambio le sale caro? */
@@ -405,7 +408,7 @@ export function updateGolemEnemy(
       }
       const dist = _toPlayer.length();
       _toPlayer.normalize();
-      const ring = internal.golemPress ? GOLEM_PRESS_RING : GOLEM_OBSERVE_RING;
+      const ring = GOLEM_PRESS_RING;
       // Radial: acércate si estás fuera del anillo, repliega si te metes.
       const radial = THREE.MathUtils.clamp(
         (dist - ring) * 0.55,
@@ -524,6 +527,9 @@ export function updateGolemAttack(
   onSlabSmash?: (slab: SlabCollider) => void,
 ): void {
   const playerLow = info.hpRatio <= GOLEM_PLAYER_LOW_RATIO;
+  if (internal.golemBlockCooldown > 0) {
+    internal.golemBlockCooldown = Math.max(0, internal.golemBlockCooldown - dt);
+  }
   switch (internal.golemState) {
     // ------------------------------------------------------------------
     case 'helicopter': {
@@ -533,23 +539,41 @@ export function updateGolemAttack(
         startGolemExhausted(enemy, internal, playerPos);
         return;
       }
+      // Amenaza REAL (ataque en curso hacia él): pared ANTES de comérselo.
+      if (isThreatToGolem(enemy, playerPos, info) && tryStartGolemBlock(enemy, internal)) {
+        return;
+      }
       if (enemy.attackTimer > 0) {
         return;
       }
       const dist = enemy.position.distanceTo(playerPos);
       if (dist < GOLEM_PUNCH_TRIGGER_DISTANCE) {
+        // < 5 m: castigo físico SIEMPRE, sin esperar a nadie.
         startGolemPunch(enemy, internal);
         return;
       }
-      if (dist <= GOLEM_ENGAGE_MAX_DIST) {
-        // Banda de compromiso: no dispara nada desde aquí — se planta a
-        // media distancia y LEE a Nyx (amenaza, pasividad, posición contra
-        // la esfera) antes de gastar un solo windup. Tanque, no suicida.
-        internal.golemState = 'observe';
-        internal.golemTimer = GOLEM_OBSERVE_SEC;
+      if (dist <= GOLEM_CHARGE_MAX_DIST) {
+        // Banda de la carga (5-20 m): dispara YA si la línea es segura.
+        if (
+          golemChargeIsSafe(
+            enemy,
+            playerPos,
+            info,
+            internal.golemChargeKind === 'thin',
+            ctx.speedMult,
+          )
+        ) {
+          startGolemChargeWindup(enemy, internal, playerPos, internal.golemChargeKind);
+          internal.golemChargeKind = internal.golemChargeKind === 'thin' ? 'thick' : 'thin';
+        } else {
+          // Línea no segura (esfera cerca): PRESIÓN — acosa por dentro
+          // mientras reevalúa; a <5 m el puñetazo solo.
+          internal.golemState = 'observe';
+          internal.golemTimer = GOLEM_OBSERVE_SEC;
+        }
         return;
       }
-      // Lejos: sigue acercándose con el rotor (la calma también amenaza).
+      // > 20 m: persigue al rotor a 15 m/s — nunca "se queda mirando".
       enemy.attackTimer = GOLEM_DECISION_RETRY_SEC;
       return;
     }
@@ -565,65 +589,41 @@ export function updateGolemAttack(
       const dist = enemy.position.distanceTo(playerPos);
       // Nyx se planta encima: castigo físico inmediato (abusa del cuerpo).
       if (dist < GOLEM_PUNCH_TRIGGER_DISTANCE) {
-        internal.golemPress = false;
         startGolemPunch(enemy, internal);
         return;
       }
-      const threat = isThreatToGolem(enemy, playerPos, info);
-      // Reacción defensiva: me ataca (venga entero) o voy herido -> la pared
-      // sale ANTES de comerse el golpe, no después.
-      if (threat && !playerLow && (info.attacking || golemIsWounded(enemy))) {
-        internal.golemPress = false;
-        startGolemBlock(enemy, internal);
+      // Me está atacando apuntándome: pared si puede (cooldown mediante).
+      if (isThreatToGolem(enemy, playerPos, info) && tryStartGolemBlock(enemy, internal)) {
         return;
       }
       if (internal.golemTimer > 0) {
         return;
       }
-      // --- Decisión con lo leído (0.9 s de análisis) ---
+      // --- Reevaluación corta (0.45 s): sin vacilar en la cara ---
       const passivePlayer = info.vel.length() < GOLEM_PASSIVE_SPEED && !info.attacking;
       if (internal.golemStamina < GOLEM_REST_STAMINA && passivePlayer) {
         // Energía justa y Nyx sin intención: retirada a descansar.
-        internal.golemPress = false;
         internal.golemState = 'retreat';
         return;
       }
-      const distRange =
-        dist <= GOLEM_CHARGE_MAX_DIST && dist >= GOLEM_CHARGE_MIN_DIST;
-      const chargeSafe = golemChargeIsSafe(
-        enemy,
-        playerPos,
-        info,
-        internal.golemChargeKind === 'thin',
-        ctx.speedMult,
-      );
-      if (distRange && chargeSafe) {
-        // Ruta inteligente: solo tira la espiral si TODO el trayecto
-        // previsible le deja vivo.
-        internal.golemPress = false;
-        startGolemChargeWindup(enemy, internal, playerPos, internal.golemChargeKind);
-        internal.golemChargeKind = internal.golemChargeKind === 'thin' ? 'thick' : 'thin';
-        return;
+      if (dist <= GOLEM_CHARGE_MAX_DIST) {
+        if (
+          golemChargeIsSafe(
+            enemy,
+            playerPos,
+            info,
+            internal.golemChargeKind === 'thin',
+            ctx.speedMult,
+          )
+        ) {
+          startGolemChargeWindup(enemy, internal, playerPos, internal.golemChargeKind);
+          internal.golemChargeKind = internal.golemChargeKind === 'thin' ? 'thick' : 'thin';
+          return;
+        }
       }
-      if (playerLow && golemIsWounded(enemy) && dist < GOLEM_ENGAGE_MAX_DIST) {
-        // Ambos contra las cuerdas y la línea no es segura: se juega la vida
-        // igualmente, pero con la cabeza — contracción y castigo físico.
-        internal.golemPress = true; // Contracción: llega al cuerpo y golpea.
-        internal.golemState = 'helicopter';
-        enemy.attackTimer = 0.35;
-        return;
-      }
-      if (!chargeSafe && dist < GOLEM_ENGAGE_MAX_DIST) {
-        // Nyx junto a la esfera: la espiral se come la pared. Modo PRESIÓN —
-        // contrae el anillo hasta el puñetazo, siempre cubriéndose la salida.
-        internal.golemPress = true;
-        internal.golemState = 'helicopter';
-        enemy.attackTimer = GOLEM_DECISION_RETRY_SEC;
-        return;
-      }
-      // Nada claro: sigue leyendo (nunca congelado: sigue orbitando).
-      enemy.attackTimer = GOLEM_DECISION_RETRY_SEC;
-      internal.golemState = 'helicopter';
+      // La esfera sigue cerrando la línea: sigue acosando por dentro hasta
+      // <5 m — el puñetazo saldrá solo en cuanto pise esa banda.
+      internal.golemTimer = GOLEM_OBSERVE_SEC;
       return;
     }
 
@@ -642,19 +642,18 @@ export function updateGolemAttack(
       }
       const threat = isThreatToGolem(enemy, playerPos, info);
       const rested = internal.golemStamina >= GOLEM_REST_TARGET_STAMINA;
-      if (rested || (threat && !info.attacking)) {
+      if (rested) {
         internal.golemState = 'helicopter';
         enemy.attackTimer = 0.35;
         return;
       }
-      if (info.attacking && dist < GOLEM_THREAT_RANGE) {
-        // Corta el descanso con la pared o con el cuerpo, según su vida.
-        if (golemIsWounded(enemy) && !playerLow) {
-          startGolemBlock(enemy, internal);
-        } else {
-          internal.golemState = 'helicopter';
-          enemy.attackTimer = 0;
+      if (threat) {
+        // Nyx le corta el descanso atacándolo: pared (si puede) o al ruedo YA.
+        if (tryStartGolemBlock(enemy, internal)) {
+          return;
         }
+        internal.golemState = 'helicopter';
+        enemy.attackTimer = 0;
       }
       return;
     }
@@ -880,8 +879,14 @@ export function updateGolemAttack(
     case 'charge_end': {
       internal.golemTimer -= dt;
       if (internal.golemTimer <= 0) {
-        // Tras la inercia levanta la pared maciza (transición defensiva).
-        startGolemBlock(enemy, internal);
+        // Tras la inercia: la pared SOLO si Nyx es amenaza real (antes la
+        // alzaba SIEMPRE y se leía como "bloquea después de un ataque").
+        if (isThreatToGolem(enemy, playerPos, info)) {
+          tryStartGolemBlock(enemy, internal);
+        } else {
+          settleGolem(enemy, internal, playerPos);
+          enemy.attackTimer = Math.max(enemy.attackTimer, 0.4);
+        }
       }
       return;
     }
@@ -896,14 +901,16 @@ export function updateGolemAttack(
         startGolemPunch(enemy, internal);
         return;
       }
-      // Pared REACTIVA: mientras Nyx siga siendo una amenaza (apunte/ataque
-      // en serio) el timer SE REARMA — no se agota la animación y deja de
-      // cubrir para comerse el golpe de gratis. Sin amenaza, cuenta atrás
-      // corta y vuelve al ruedo. El tope absoluto lo marca la stamina.
+      // Pared REACTIVA: mientras Nyx siga siendo amenaza (ataque en curso
+      // hacia él) el timer SE REARMA. Sin amenaza, cuenta atrás corta y
+      // vuelve al ruedo. El tope absoluto lo marca la stamina.
       if (isThreatToGolem(enemy, playerPos, info)) {
         internal.golemTimer = Math.max(internal.golemTimer, GOLEM_BLOCK_HOLD_SEC);
       }
       if (internal.golemTimer <= 0 || internal.golemStamina <= 0) {
+        // Pared trabajada: tras bajarla, un rato SIN poder izarla otra vez
+        // (ventana de castigo honesta; el herido la ignora).
+        internal.golemBlockCooldown = GOLEM_BLOCK_REACT_COOLDOWN;
         settleGolem(enemy, internal, playerPos);
       }
       return;
@@ -965,7 +972,6 @@ function settleGolem(
 
 /** Arranca el Puñetazo Bruto (windup torpe; dirección sellada al final). */
 function startGolemPunch(enemy: ManagedWaveEnemy, internal: EnemyInternal): void {
-  internal.golemPress = false;
   internal.golemStamina -= GOLEM_COST_PUNCH;
   internal.golemState = 'punch_windup';
   internal.golemTimer = GOLEM_PUNCH_WINDUP_SEC;
@@ -983,7 +989,6 @@ function startGolemChargeWindup(
   playerPos: THREE.Vector3,
   kind: 'thin' | 'thick',
 ): void {
-  internal.golemPress = false;
   internal.golemStamina -= kind === 'thin' ? GOLEM_COST_THIN : GOLEM_COST_THICK;
   internal.golemState = kind === 'thin' ? 'thin_windup' : 'thick_windup';
   internal.golemTimer = kind === 'thin' ? GOLEM_THIN_WINDUP_SEC : GOLEM_THICK_WINDUP_SEC;
@@ -1006,8 +1011,21 @@ function endGolemCharge(
 /** Levanta la pared maciza (bloqueo frontal con el brazo gigante). REACTIVA:
  * se mantiene rearmada mientras Nyx amenace (ver FSM) y baja sola ~0.8 s
  * después de que la amenaza desaparezca. */
+/**
+ * Pared reactiva CON COOLDOWN: tras bajar la guardia el gólem tarda
+ * GOLEM_BLOCK_REACT_COOLDOWN en poder izarla otra vez (se puede castigar la
+ * pared bajada). El herido ignora el cooldown: sin vida, cubrirse es lo
+ * único que le queda. Devuelve false si NO la levantó.
+ */
+function tryStartGolemBlock(enemy: ManagedWaveEnemy, internal: EnemyInternal): boolean {
+  if (internal.golemBlockCooldown > 0 && !golemIsWounded(enemy)) {
+    return false;
+  }
+  startGolemBlock(enemy, internal);
+  return true;
+}
+
 function startGolemBlock(enemy: ManagedWaveEnemy, internal: EnemyInternal): void {
-  internal.golemPress = false;
   internal.golemState = 'block_guard';
   internal.golemTimer = GOLEM_BLOCK_RELAX_SEC;
   // Reinicio del clip de guardia: la pared sube SIEMPRE (no se reusa pose).
@@ -1025,7 +1043,6 @@ function startGolemExhausted(
   internal.golemState = 'exhausted';
   internal.golemTimer = GOLEM_EXHAUSTED_SEC;
   internal.chargeTimer = 0;
-  internal.golemPress = false;
   // Dirección de deriva FIJA al entrar; el giro lento no puede corregirla.
   internal.golemDriftDir.subVectors(playerPos, enemy.position);
   if (internal.golemDriftDir.lengthSq() < 1e-4) {
@@ -1059,7 +1076,6 @@ export function parryGolemHead(
   }
   internal.golemState = 'parried';
   internal.golemTimer = GOLEM_PARRIED_SEC;
-  internal.golemPress = false;
   internal.chargeTimer = 0;
   enemy.entity.vulnerableTimer = Math.max(
     enemy.entity.vulnerableTimer ?? 0,

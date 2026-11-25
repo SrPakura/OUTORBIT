@@ -659,11 +659,11 @@ export interface EnemyInternal {
   /** Gólem: forzar el reinicio del clip one-shot actual al crossfadear. */
   golemRestartPending: boolean;
   /**
-   * Gólem: modo PRESIÓN — con Nyx junto a la esfera (o ambos a la que salga)
-   * la espiral no es segura, así que contrae el anillo de lectura hasta el
-   * rango del puñetazo y castiga con el cuerpo.
+   * Gólem: cooldown de la pared reactiva — tras bajar la guardia, este
+   * tiempo (s) sin poder izarla otra vez (ventana de castigo honesta; el
+   * herido lo ignora).
    */
-  golemPress: boolean;
+  golemBlockCooldown: number;
   /** Gólem: ángulo del brazo gigante (fallback procedural sin clips). */
   golemArmAngle: number;
   /** Gólem: torsión de spine/chest durante el telegraph (fallback). */
@@ -1212,7 +1212,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       golemDriftDir: new THREE.Vector3(0, 0, 1),
       golemHitTimer: 0,
       golemRestartPending: false,
-      golemPress: false,
+      golemBlockCooldown: 0,
       golemArmAngle: 0,
       golemTwist: 0,
       golemImpact: new THREE.Vector3(),
@@ -1360,7 +1360,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal.golemChargeKind = 'thin';
     internal.golemDriftDir.set(0, 0, 1);
     internal.golemHitTimer = 0;
-    internal.golemPress = false;
+    internal.golemBlockCooldown = 0;
     if (internal.enemy.entity.archetype === 'crab_gunner') {
       resetCrabAttack(this, internal.enemy, internal);
       internal.crabPostKickGrace = 0;
