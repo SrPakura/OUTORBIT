@@ -186,7 +186,6 @@ function buildInkSplash(seed: number): InkSplashShape {
 }
 
 const INK_SPLASH_FILL = 'rgba(4, 2, 8, 0.97)';
-const INK_SPLASH_RIM = 'rgba(135, 14, 48, 0.42)';
 
 const CORNER_MASK = [
   'radial-gradient(circle at 0% 0%, black 0%, transparent 44%)',
@@ -363,31 +362,41 @@ function DomeHudSketchInner({
             opacity: Math.min(1, hud.inkOverlayIntensity ?? 0),
           }}
         >
-          {inkSplash.blobs.map((d, i) => (
-            <path
-              key={`blob-${i}`}
-              d={d}
-              fill={INK_SPLASH_FILL}
-              fillRule="evenodd"
-              stroke={INK_SPLASH_RIM}
-              strokeWidth={2}
-              strokeLinejoin="round"
-            />
-          ))}
-          {inkSplash.drips.map((d, i) => (
-            <path key={`drip-${i}`} d={d} fill={INK_SPLASH_FILL} />
-          ))}
-          {inkSplash.drops.map((drop, i) => (
-            <ellipse
-              key={`drop-${i}`}
-              cx={drop.x}
-              cy={drop.y}
-              rx={drop.rx}
-              ry={drop.ry}
-              transform={`rotate(${drop.rot.toFixed(1)} ${drop.x.toFixed(1)} ${drop.y.toFixed(1)})`}
-              fill={INK_SPLASH_FILL}
-            />
-          ))}
+          <defs>
+            <filter id="domeInkUnifiedRim" x="-5%" y="-5%" width="110%" height="110%">
+              <feMorphology in="SourceAlpha" operator="dilate" radius="2.2" result="dilated" />
+              <feFlood floodColor="rgba(165, 18, 56, 0.72)" result="rimColor" />
+              <feComposite in="rimColor" in2="dilated" operator="in" result="rim" />
+              <feMerge>
+                <feMergeNode in="rim" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+          <g filter="url(#domeInkUnifiedRim)">
+            {inkSplash.blobs.map((d, i) => (
+              <path
+                key={`blob-${i}`}
+                d={d}
+                fill={INK_SPLASH_FILL}
+                fillRule="evenodd"
+              />
+            ))}
+            {inkSplash.drips.map((d, i) => (
+              <path key={`drip-${i}`} d={d} fill={INK_SPLASH_FILL} />
+            ))}
+            {inkSplash.drops.map((drop, i) => (
+              <ellipse
+                key={`drop-${i}`}
+                cx={drop.x}
+                cy={drop.y}
+                rx={drop.rx}
+                ry={drop.ry}
+                transform={`rotate(${drop.rot.toFixed(1)} ${drop.x.toFixed(1)} ${drop.y.toFixed(1)})`}
+                fill={INK_SPLASH_FILL}
+              />
+            ))}
+          </g>
         </svg>
       )}
 
