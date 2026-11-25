@@ -50,6 +50,13 @@ export interface SkillTriggerContext {
   slabs: SlabCollider[];
   onDamageEnemy: DamageEnemyFn;
   onHealPlayer: (hp: number, eden: number) => void;
+  /**
+   * Bolas de Doble Filo: captura las bolas de tinta ácida del Pulpo Espiral
+   * (base o de las 15 de la Bola Gigante) dentro de `radius` de `center` —
+   * el Campo Gravitacional las coge EN VEZ de rocas. Devuelve sus mallas
+   * (ya fuera del pool de proyectiles enemigo, visibles en escena).
+   */
+  captureEnemyProjectiles?: (center: THREE.Vector3, radius: number) => THREE.Mesh[];
 }
 
 export interface SkillTriggerResult {
@@ -77,6 +84,19 @@ const DEBRIS_ABSORB_RADIUS = 9;
 const DEBRIS_ABSORB_DISTANCE = 0.7;
 /** Fricción del vuelo a la deriva de los escombros (1/s). */
 const DEBRIS_DRIFT_DAMPING = 0.8;
+/**
+ * Bolas de Doble Filo: radio de captura de las bolas de tinta del Pulpo
+ * Espiral alrededor de Nyx al activar el Campo Gravitacional (m).
+ */
+const INK_BALL_CAPTURE_RADIUS = 9;
+/**
+ * Daño efectivo de una bola capturada: x3 una roca pequeña al impactar.
+ * El pipeline de skills convierte el daño en fuerza cinética
+ * (impactSpeed = max(12, damage*0.4)): una roca pequeña (15) fuerza 12
+ * (10.8 HP reales), la bola capturada (90) fuerza 36 = 32.4 HP = x3 exacto.
+ */
+const CAPTURED_INK_BALL_DAMAGE = 90;
+const CAPTURED_INK_BALL_HIT_RADIUS = 0.85;
 
 // --- Scratch a nivel de módulo: sin allocations por frame ---
 const _v1 = new THREE.Vector3();
@@ -131,6 +151,12 @@ interface OrbitFragment {
   dist: number;
   height: number;
   spinAxis: THREE.Vector3;
+  /**
+   * Bola de tinta ácida capturada del Pulpo Espiral: al dispararla NO tiene
+   * full auto-aim (sale en la dirección de apuntado de Nyx, homing nulo) e
+   * inflige x3 el daño de una roca pequeña.
+   */
+  capturedInkBall?: boolean;
 }
 
 interface GravityFieldState {
@@ -167,6 +193,8 @@ interface ProjectileState {
   hitIds: Set<string>;
   pierce: boolean;
   orientToVelocity: boolean;
+  /** Bola de tinta ácida capturada del pulpo: al morir se devuelve al pool. */
+  capturedInkBall: boolean;
 }
 
 interface ExpandingWave {
@@ -289,6 +317,12 @@ export class DomeSkillExecutor {
   private gravityField: GravityFieldState | null = null;
   /** Escombros de suelos rotos esperando a ser agarrados por el campo. */
   private readonly looseDebris: LooseDebris[] = [];
+  /**
+   * Devuelve al pool del DomeWaveManager una bola de tinta ácida capturada
+   * que ya no es nuestra (impactada, expirada, campo cancelado o dispose):
+   * el game loop lo conecta con `waveMgr.recycleInkBallMesh(mesh)`.
+   */
+  onCapturedInkBallFreed?: (mesh: THREE.Mesh) => void;
 
   // --- Geometrías compartidas ---
   private readonly fragGeometry = new THREE.DodecahedronGeometry(0.34, 0);
@@ -309,6 +343,13 @@ export class DomeSkillExecutor {
     metalness: 0.12,
     flatShading: true,
   });
+  /**
+   * Bolas de tinta ácida capturadas (Bolas de Doble Filo): al ser capturadas
+   * por el Campo Gravitacional cambian su shader rojo ácido por esta nebulosa
+   * cósmica similar a la de Nyx (mismo abismo #090314 y nebulosas cian/violeta,
+   * con estrellas titilantes en espacio de pantalla).
+   */
+  private readonly capturedInkBallMaterial: THREE.ShaderMaterial;
   private readonly waveMaterial = new THREE.MeshBasicMaterial({
     color: 0x7ae8dc,
     transparent: true,
@@ -375,6 +416,80 @@ export class DomeSkillExecutor {
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+    this.capturedInkBallMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uDeepColor: { value: new THREE.Color(0x090314) },
+        uNebulaA: { value: new THREE.Color(0x7e22ce) },
+        uNebulaB: { value: new THREE.Color(0x06b6d4) },
+        uRimColor: { value: new THREE.Color(0xf8fafc) },
+        uTime: { value: 0 },
+      },
+      transparent: true,
+      depthWrite: true,
+      vertexShader: /* glsl */ `
+        varying vec3 vNormalW;
+        varying vec3 vViewDir;
+        void main() {
+          vec4 worldPos = modelMatrix * vec4( position, 1.0 );
+          vNormalW = normalize( mat3( modelMatrix ) * normal );
+          vViewDir = normalize( cameraPosition - worldPos.xyz );
+          gl_Position = projectionMatrix * viewMatrix * worldPos;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uDeepColor;
+        uniform vec3 uNebulaA;
+        uniform vec3 uNebulaB;
+        uniform vec3 uRimColor;
+        uniform float uTime;
+        varying vec3 vNormalW;
+        varying vec3 vViewDir;
+        float hash21( vec2 p ) {
+          p = fract( p * vec2( 234.34, 435.345 ) );
+          p += dot( p, p + 34.23 );
+          return fract( p.x * p.y );
+        }
+        float noise2( vec2 p ) {
+          vec2 i = floor( p );
+          vec2 f = fract( p );
+          f = f * f * ( 3.0 - 2.0 * f );
+          return mix(
+            mix( hash21( i ), hash21( i + vec2( 1.0, 0.0 ) ), f.x ),
+            mix( hash21( i + vec2( 0.0, 1.0 ) ), hash21( i + vec2( 1.0, 1.0 ) ), f.x ),
+            f.y
+          );
+        }
+        float fbm( vec2 p ) {
+          float v = 0.0; float a = 0.5;
+          mat2 m = mat2( 0.8, 0.6, -0.6, 0.8 );
+          for ( int i = 0; i < 4; i++ ) { v += a * noise2( p ); p = m * p * 2.02; a *= 0.5; }
+          return v;
+        }
+        void main() {
+          vec2 uv = gl_FragCoord.xy * 0.02;
+          vec2 drift = vec2( uTime * 0.05, -uTime * 0.03 );
+          float n = fbm( uv + drift );
+          vec3 col = uDeepColor;
+          col = mix( col, uNebulaA * 0.85, smoothstep( 0.42, 0.85, n ) );
+          col = mix( col, uNebulaB * 0.9, smoothstep( 0.55, 0.95, fbm( uv * 1.7 - drift ) ) );
+          // Estrellas titilantes de la nebulosa.
+          vec2 gv = fract( uv * 9.0 ) - 0.5;
+          vec2 id = floor( uv * 9.0 );
+          float h = hash21( id );
+          float star = 0.0;
+          if ( h > 0.72 ) {
+            float d = length( gv );
+            float tw = 0.6 + 0.4 * sin( uTime * 3.0 + h * 40.0 );
+            star = smoothstep( 0.12, 0.0, d ) * tw;
+          }
+          col += vec3( 1.0 ) * star * 1.4;
+          // Borde rim brillante tipo nebulosa de Nyx.
+          float fresnel = pow( 1.0 - max( dot( normalize( vNormalW ), normalize( vViewDir ) ), 0.0 ), 2.0 );
+          col += uRimColor * smoothstep( 0.25, 0.9, fresnel ) * 0.85;
+          gl_FragColor = vec4( col, 0.96 );
+        }
+      `,
+    });
   }
 
   // ------------------------------------------------------------------
@@ -415,6 +530,9 @@ export class DomeSkillExecutor {
     this.gravityField = null;
     for (const fragment of gf.fragments) {
       this.scene.remove(fragment.mesh);
+      if (fragment.capturedInkBall) {
+        this.onCapturedInkBallFreed?.(fragment.mesh);
+      }
     }
   }
 
@@ -431,10 +549,13 @@ export class DomeSkillExecutor {
       this.gravityField = null;
     }
 
+    // Bola de tinta capturada: SIN full auto-aim — sale en la dirección de
+    // apuntado de Nyx (homing nulo), aunque haya enemigo lockeado en la mira.
+    const directAim = fragment.capturedInkBall === true;
     const aimPoint =
-      target !== null
-        ? target.position
-        : _v1.copy(playerPos).addScaledVector(forwardDir, 45);
+      directAim || target === null
+        ? _v1.copy(playerPos).addScaledVector(forwardDir, 45)
+        : target.position;
     _v2.subVectors(aimPoint, fragment.mesh.position);
     if (_v2.lengthSq() < 1e-6) _v2.copy(forwardDir);
     _v2.normalize();
@@ -447,11 +568,12 @@ export class DomeSkillExecutor {
       remainingLife: 3.2,
       damage: fragment.damage,
       hitRadius: fragment.hitRadius,
-      homingTarget: target,
-      homingStrength: target !== null ? 10.5 : 0,
+      homingTarget: directAim ? null : target,
+      homingStrength: directAim ? 0 : target !== null ? 10.5 : 0,
       hitIds: new Set<string>(),
       pierce: false,
       orientToVelocity: false,
+      capturedInkBall: fragment.capturedInkBall === true,
     });
     return true;
   }
@@ -464,6 +586,12 @@ export class DomeSkillExecutor {
    *
    * Los escombros sueltos cercanos (suelos rotos por el Gólem) se convierten
    * en las primeras rocas del campo; el resto se genera nuevo.
+   *
+   * Bolas de Doble Filo: si hay bolas de tinta ácida del Pulpo Espiral (base
+   * o de las 15 de la Bola Gigante) dentro del radio de captura, se cogen
+   * EN VEZ de rocas — cambian su shader rojo por la nebulosa cósmica de Nyx,
+   * cuentan como proyectiles pequeños (x3 de daño de una roca pequeña al
+   * dispararlas, sin full auto-aim) y llenan los primeros slots del plan.
    */
   private triggerGravityField(level: number, ctx: SkillTriggerContext): SkillTriggerResult {
     if (this.gravityField !== null) {
@@ -500,9 +628,28 @@ export class DomeSkillExecutor {
     // Capa 1 del trío de área: anillo en el suelo bajo el ancla del campo.
     this.spawnAreaGroundRing(anchor, 4 + level, 0.6, ctx.slabs);
 
+    // Bolas de tinta ácida del pulpo dentro del radio de captura: EN VEZ de
+    // coger rocas (cada bola ocupa un slot del plan; el resto con escombros
+    // y rocas nuevas).
+    const capturedBalls = ctx.captureEnemyProjectiles?.(ctx.playerPos, INK_BALL_CAPTURE_RADIUS) ?? [];
+    const cappedBalls = capturedBalls.slice(0, plan.length);
+    for (let i = 0; i < cappedBalls.length; i++) {
+      const ballMesh = cappedBalls[i];
+      ballMesh.material = this.capturedInkBallMaterial;
+      const fragment = this.makeOrbitFragment(ballMesh, 'small', {
+        damage: CAPTURED_INK_BALL_DAMAGE,
+        hitRadius: CAPTURED_INK_BALL_HIT_RADIUS,
+      }, i, plan.length);
+      fragment.capturedInkBall = true;
+      this.gravityField.fragments.push(fragment);
+    }
+
     // Escombros agarrables: los más cercanos a Nyx se convierten en rocas
     // orbitantes antes de generar rocas nuevas.
-    while (this.gravityField.fragments.length < plan.length && this.looseDebris.length > 0) {
+    while (
+      this.gravityField.fragments.length < plan.length &&
+      this.looseDebris.length > 0
+    ) {
       let nearestIdx = 0;
       let nearestDist = Infinity;
       for (let i = 0; i < this.looseDebris.length; i++) {
@@ -792,6 +939,7 @@ export class DomeSkillExecutor {
         hitIds: new Set<string>(),
         pierce: true,
         orientToVelocity: true,
+        capturedInkBall: false,
       });
     }
     return { triggered: true, animOverride: 'air_dash' };
@@ -850,6 +998,9 @@ export class DomeSkillExecutor {
     playerPos?: THREE.Vector3,
     forwardDir?: THREE.Vector3,
   ): void {
+    // Reloj de la nebulosa cósmica de las bolas capturadas (en órbita y en vuelo,
+    // mientras la Mesh viva en escena).
+    this.capturedInkBallMaterial.uniforms.uTime.value += dt;
     this.updateGravityField(dt, playerPos, forwardDir);
     this.updateLooseDebris(dt);
     this.updateProjectiles(dt, enemies, onDamageEnemy);
@@ -927,6 +1078,9 @@ export class DomeSkillExecutor {
       if (killed || p.remainingLife <= 0) {
         this.scene.remove(p.mesh);
         if (p.material !== null) p.material.dispose();
+        if (p.capturedInkBall) {
+          this.onCapturedInkBallFreed?.(p.mesh);
+        }
         this.projectiles.splice(i, 1);
       }
     }
@@ -1330,7 +1484,12 @@ export class DomeSkillExecutor {
 
   dispose(): void {
     if (this.gravityField !== null) {
-      for (const fragment of this.gravityField.fragments) this.scene.remove(fragment.mesh);
+      for (const fragment of this.gravityField.fragments) {
+        this.scene.remove(fragment.mesh);
+        if (fragment.capturedInkBall) {
+          this.onCapturedInkBallFreed?.(fragment.mesh);
+        }
+      }
       this.gravityField = null;
     }
     for (const debris of this.looseDebris) this.scene.remove(debris.mesh);
@@ -1338,6 +1497,9 @@ export class DomeSkillExecutor {
     for (const p of this.projectiles) {
       this.scene.remove(p.mesh);
       if (p.material !== null) p.material.dispose();
+      if (p.capturedInkBall) {
+        this.onCapturedInkBallFreed?.(p.mesh);
+      }
     }
     this.projectiles.length = 0;
     for (const wave of this.waves) {
@@ -1376,6 +1538,7 @@ export class DomeSkillExecutor {
     this.domeGeometry.dispose();
     this.groundRingGeometry.dispose();
     this.rockMaterial.dispose();
+    this.capturedInkBallMaterial.dispose();
     this.waveMaterial.dispose();
     this.sliceMaterial.dispose();
     this.coreMaterial.dispose();

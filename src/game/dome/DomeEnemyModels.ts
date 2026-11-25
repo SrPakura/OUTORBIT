@@ -344,7 +344,7 @@ const gltfLoader = new GLTFLoader();
  * bumpar esta constante la URL cambia y todo el mundo descarga el asset nuevo
  * a la primera. Bump obligatorio en cada re-export de cualquier .glb.
  */
-const GLB_CACHE_VERSION = 3;
+const GLB_CACHE_VERSION = 4;
 
 function loadEnemyModel(archetype: EnemyArchetype): Promise<void> {
   if (modelCache.has(archetype)) {
@@ -618,7 +618,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       // congelan en su último frame hasta que el comportamiento los
       // reinicie con reset(). Las espirales y la guardia del gólem son
       // bucles sostenidos ("Bucle + Pose" de enemigos_base.md §7.4).
-      if (/loop|idle|float|duplicate|spiral|guard/.test(clip.name)) {
+      if (/loop|idle|float|observe|ready|duplicate|spiral|guard/.test(clip.name)) {
         action.setLoop(THREE.LoopRepeat, Infinity);
       } else {
         action.setLoop(THREE.LoopOnce, 1);
@@ -631,6 +631,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       actions.get('cell_idle_float') ??
       actions.get('crab_idle_breathe') ??
       actions.get('golem_helicopter_loop') ??
+      actions.get('octopus_idle_observe') ??
       actions.values().next().value ??
       null;
     if (idle) {

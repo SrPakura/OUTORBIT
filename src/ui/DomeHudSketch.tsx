@@ -19,6 +19,84 @@ const RETICLE_SIZE = RETICLE_SIZE_PX; // 120px en pantalla para enmarcar sin tap
 const HALFTONE_MASK =
   'radial-gradient(circle at 50% 50%, transparent 48%, rgba(0,0,0,0.45) 72%, black 96%)';
 
+// ---------------------------------------------------------------------------
+// Mancha de Tinta Ácida del Pulpo Espiral (rediseño): salpicadura orgánica
+// PROCEDURAL — blobs irregulares con gotas y chorretes, nunca un círculo ni
+// un overlay plano. Se genera UNA vez con un LCG determinista (misma
+// salpicadura en cada partida, sin hidratación que bail entre renders).
+// ---------------------------------------------------------------------------
+
+function makeInkRng(seed: number): () => number {
+  let s = (seed * 2654435761 + 1013904223) >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 429497296;
+  };
+}
+
+/** Blob irregular con curvas suaves (9-12 anclas, radio desigual, achatado). */
+function inkBlobPath(cx: number, cy: number, baseR: number, rng: () => number): string {
+  const anchors = 9 + Math.floor(rng() * 4);
+  const pts: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < anchors; i++) {
+    const a = (i / anchors) * Math.PI * 2;
+    const r = baseR * (0.45 + rng() * 0.9);
+    pts.push({
+      x: cx + Math.cos(a) * r,
+      y: cy + Math.sin(a) * r * (0.75 + rng() * 0.5),
+    });
+  }
+  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)} `;
+  for (let i = 0; i < anchors; i++) {
+    const p = pts[i];
+    const n = pts[(i + 1) % anchors];
+    const mx = (p.x + n.x) / 2;
+    const my = (p.y + n.y) / 2;
+    d += `Q ${p.x.toFixed(1)} ${p.y.toFixed(1)} ${mx.toFixed(1)} ${my.toFixed(1)} `;
+  }
+  return `${d}Z`;
+}
+
+/** Chorrete: goteo estrecho que cae bajo una mancha. */
+function inkDripPath(x: number, y: number, len: number, w: number): string {
+  return `M ${x} ${y} C ${x - w} ${y + len * 0.4}, ${x - w * 0.6} ${y + len * 0.75}, ${x} ${y + len} C ${x + w * 0.6} ${y + len * 0.75}, ${x + w} ${y + len * 0.4}, ${x} ${y} Z`;
+}
+
+interface InkSplashShape {
+  blobs: string[];
+  drops: Array<{ x: number; y: number; r: number }>;
+  drips: string[];
+}
+
+/** Salpicadura completa sobre el lienzo virtual 1600x900 del visor. */
+function buildInkSplash(): InkSplashShape {
+  const rng = makeInkRng(69147);
+  const W = 1600;
+  const H = 900;
+  const blobs = [
+    inkBlobPath(W * 0.28, H * 0.3, 360, rng),
+    inkBlobPath(W * 0.68, H * 0.62, 330, rng),
+    inkBlobPath(W * 0.47, H * 0.46, 250, rng),
+  ];
+  const drops: InkSplashShape['drops'] = [];
+  for (let i = 0; i < 16; i++) {
+    drops.push({
+      x: rng() * W,
+      y: rng() * H,
+      r: 5 + rng() * 34,
+    });
+  }
+  const drips = [
+    inkDripPath(W * 0.24, H * 0.34, 150, 13),
+    inkDripPath(W * 0.55, H * 0.52, 210, 10),
+    inkDripPath(W * 0.72, H * 0.66, 120, 8),
+  ];
+  return { blobs, drops, drips };
+}
+
+const INK_SPLASH = buildInkSplash();
+const INK_SPLASH_FILL = 'rgba(8, 3, 16, 0.95)';
+
 const CORNER_MASK = [
   'radial-gradient(circle at 0% 0%, black 0%, transparent 44%)',
   'radial-gradient(circle at 100% 0%, black 0%, transparent 44%)',
@@ -169,16 +247,36 @@ function DomeHudSketchInner({
         />
       )}
 
-      {/* 2b. Mancha de tinta del Pulpo Espiral */}
-      {(hud.inkOverlayIntensity ?? 0) > 0.01 && (
-        <div
-          className="pointer-events-none absolute inset-0"
+      {/* 2b. Mancha de Tinta Ácida del Pulpo Espiral: salpicadura orgánica
+          procedural (blobs irregulares + gotas + chorretes). La opacidad la
+          fija el combate: bola base 55% durante 3 s, contra-parry 65%. */}
+      {(hud.inkOverlayIntensity ?? 0) > 0.005 && (
+        <svg
+          className="pointer-events-none absolute inset-0 h-full w-full"
+          viewBox="0 0 1600 900"
+          preserveAspectRatio="xMidYMid slice"
           style={{
-            opacity: Math.min(0.92, hud.inkOverlayIntensity ?? 0),
-            background:
-              'radial-gradient(circle at 22% 30%, rgba(10,4,22,0.94) 0%, transparent 42%), radial-gradient(circle at 76% 65%, rgba(10,4,22,0.92) 0%, transparent 46%), radial-gradient(circle at 50% 50%, rgba(15,6,30,0.45) 0%, rgba(6,2,14,0.88) 95%)',
+            opacity: Math.min(1, hud.inkOverlayIntensity ?? 0),
+            animation: 'domeHudInkCrawl 2.6s ease-in-out infinite',
           }}
-        />
+        >
+          {INK_SPLASH.blobs.map((d, i) => (
+            <path key={`blob-${i}`} d={d} fill={INK_SPLASH_FILL} />
+          ))}
+          {INK_SPLASH.drips.map((d, i) => (
+            <path key={`drip-${i}`} d={d} fill={INK_SPLASH_FILL} />
+          ))}
+          {INK_SPLASH.drops.map((drop, i) => (
+            <ellipse
+              key={`drop-${i}`}
+              cx={drop.x}
+              cy={drop.y}
+              rx={drop.r}
+              ry={drop.r * (0.8 + 0.4 * ((i % 3) / 2))}
+              fill={INK_SPLASH_FILL}
+            />
+          ))}
+        </svg>
       )}
 
       {/* 3. Viñeta abisal de Caída al Vacío */}
@@ -495,6 +593,10 @@ function DomeHudSketchInner({
         @keyframes domeHudCritical {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.45; }
+        }
+        @keyframes domeHudInkCrawl {
+          0%, 100% { transform: scale(1) translateY(0); }
+          50% { transform: scale(1.025) translateY(6px); }
         }
       `}</style>
     </div>

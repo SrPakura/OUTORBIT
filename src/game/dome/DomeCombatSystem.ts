@@ -80,7 +80,11 @@ export interface NyxStatusEffects {
   staggerTimer: number;
   /** Segundos restantes de ceguera por tinta del Pulpo Espiral (0 = limpia). */
   inkBlindTimer: number;
-  /** Acumulador fraccionario del drenaje de HP por tinta (3 HP/s). */
+  /** Duración TOTAL de la mancha activa (s): regula el fundido inicial/final. */
+  inkStainDuration: number;
+  /** Opacidad de la mancha activa (0.55 bola base, 0.65 contra-parry a bocajarro). */
+  inkStainOpacity: number;
+  /** Acumulador fraccionario del drenaje de HP por tinta (4 HP/s). */
   inkTickAccum: number;
 }
 
@@ -109,11 +113,23 @@ const HITSTOP_KILL = 0.12;
 const NYX_BARRIER_DAMAGE = 10;
 const NYX_BARRIER_INVULN_SEC = 0.8;
 const NYX_BARRIER_STAGGER_SEC = 0.5;
-/** Tinta del Pulpo Espiral: 5 s de pantalla manchada, 12 HP en 4 s (3 HP/s). */
-const INK_BLIND_DURATION = 5.0;
-const INK_DAMAGE_TOTAL = 12;
-const INK_DAMAGE_DURATION = 4.0;
-const INK_DAMAGE_PER_SEC = INK_DAMAGE_TOTAL / INK_DAMAGE_DURATION;
+/**
+ * Tinta Ácida del Pulpo Espiral (rediseño): la mancha ya NO es un bucle fijo
+ * — cada impacte fija su duración y opacidad. Bola base: 3.0 s al 55 %;
+ * contra-parry a bocajarro: 5–10 s aleatorios al 65 %. El DoT drena 4 HP/s
+ * durante TODA la duración de la mancha sin cortar el movimiento de Nyx.
+ */
+export const INK_DOT_PER_SEC = 4.0;
+/** Mancha de impacto de las bolas de tinta (base y de la Bola Gigante). */
+export const INK_STAIN_SEC = 3.0;
+export const INK_STAIN_OPACITY = 0.55;
+/** Mancha del contra-parry a bocajarro (opacidad y duración aleatoria). */
+export const INK_COUNTER_OPACITY = 0.65;
+export const INK_COUNTER_MIN_SEC = 5.0;
+export const INK_COUNTER_MAX_SEC = 10.0;
+/** Fundidos de la mancha (s): arranque instantáneo, cola corta al expirar. */
+const INK_FADE_IN_SEC = 0.12;
+const INK_FADE_OUT_SEC = 0.45;
 /**
  * Daño que recibe Nyx al golpear cuerpo a cuerpo al Prisma Necroz con los
  * pinchos sacados (además de la repulsión del `thorns_repel`).
@@ -138,8 +154,10 @@ export interface EnemyArchetypeStats {
 export const DOME_ENEMY_ARCHETYPES: Record<EnemyArchetype, EnemyArchetypeStats> = {
   // Célula Abisal: poca carne, estrella bien visible, revienta con poca velocidad.
   abyssal_cell: { maxHp: 40, radius: 1.6, fleshThickness: 15, expValue: 1.0, isElite: false, isBoss: false, weakPoints: 1, evasive: false },
-  // Pulpo Espiral: estrella profunda, dashes en espiral, ataque de tinta.
-  spiral_octopus: { maxHp: 70, radius: 2.2, fleshThickness: 55, expValue: 1.5, isElite: false, isBoss: false, weakPoints: 1, evasive: true },
+  // Pulpo Espiral (rediseño): hostigador táctico de media distancia. Toda su
+  // evasión y el Contra-Parry los gobierna su propio ciclo de 5.0 s en
+  // DomeWaveManager — el dash evasivo genérico de 3 s NO aplica.
+  spiral_octopus: { maxHp: 70, radius: 2.2, fleshThickness: 55, expValue: 1.5, isElite: false, isBoss: false, weakPoints: 1, evasive: false },
   // Cangrejo Artillero: torreta pegada a suelos, dispara esferas oscuras.
   crab_gunner: { maxHp: 60, radius: 1.8, fleshThickness: 35, expValue: 1.25, isElite: false, isBoss: false, weakPoints: 1, evasive: false },
   // Gólem Rompesuelos: mucha carne/blindaje, manotazo que aturde.
@@ -212,6 +230,8 @@ export class DomeCombatSystem {
       invulnTimer: 0,
       staggerTimer: 0,
       inkBlindTimer: 0,
+      inkStainDuration: INK_STAIN_SEC,
+      inkStainOpacity: 0,
       inkTickAccum: 0,
     };
   }
@@ -233,6 +253,8 @@ export class DomeCombatSystem {
     this.nyxStatus.invulnTimer = 0;
     this.nyxStatus.staggerTimer = 0;
     this.nyxStatus.inkBlindTimer = 0;
+    this.nyxStatus.inkStainDuration = INK_STAIN_SEC;
+    this.nyxStatus.inkStainOpacity = 0;
     this.nyxStatus.inkTickAccum = 0;
   }
 
@@ -375,39 +397,47 @@ export class DomeCombatSystem {
   }
 
   /**
-   * Chorro de tinta del Pulpo Espiral: 5 s de pantalla manchada y 12 HP
-   * drenados a lo largo de los primeros 4 s (3 HP/s). El drenaje real ocurre
-   * en `updatePlayerStatus`; aquí devuelve el total que quedará pendiente.
+   * Tinta Ácida del Pulpo Espiral: mancha la pantalla con opacidad y duración
+   * dadas (3.0 s/55 % bola base; 5-10 s/65 % contra-parry) y drena 4 HP/s
+   * durante toda la mancha. El drenaje real ocurre en `updatePlayerStatus`;
+   * aquí devuelve el total que quedará pendiente.
    */
-  applyOctopusInkAttack(): number {
+  applyOctopusInkAttack(durationSec: number, opacity: number): number {
     if (this.isNyxDown) {
       return 0;
     }
-    this.nyxStatus.inkBlindTimer = INK_BLIND_DURATION;
+    this.nyxStatus.inkBlindTimer = durationSec;
+    this.nyxStatus.inkStainDuration = durationSec;
+    this.nyxStatus.inkStainOpacity = opacity;
     this.nyxStatus.inkTickAccum = 0;
-    return INK_DAMAGE_TOTAL;
+    return Math.round(INK_DOT_PER_SEC * durationSec);
   }
 
   /**
    * Update por frame de las alteraciones de Nyx. Devuelve el daño de tinta
-   * aplicado este frame, la intensidad del manchado de pantalla (0..1) y si
-   * sigue aturdida (stagger).
+   * aplicado este frame, la intensidad del manchado de pantalla (opacidad de
+   * la mancha con fundidos de entrada/salida, 0..1) y si sigue aturdida.
    */
   updatePlayerStatus(dt: number): { inkDamageThisFrame: number; inkIntensity: number; isStaggered: boolean } {
     const status = this.nyxStatus;
     let inkDamageThisFrame = 0;
+    let inkIntensity = 0;
 
     if (status.inkBlindTimer > 0) {
-      const blindElapsed = INK_BLIND_DURATION - status.inkBlindTimer;
-      if (blindElapsed < INK_DAMAGE_DURATION) {
-        status.inkTickAccum += dt * INK_DAMAGE_PER_SEC;
-        const wholeHp = Math.floor(status.inkTickAccum);
-        if (wholeHp > 0) {
-          status.inkTickAccum -= wholeHp;
-          inkDamageThisFrame = wholeHp;
-          this.nyxHp = Math.max(0, this.nyxHp - wholeHp);
-        }
+      // DoT Ácido: drena 4 HP/s durante TODA la duración de la mancha.
+      status.inkTickAccum += dt * INK_DOT_PER_SEC;
+      const wholeHp = Math.floor(status.inkTickAccum);
+      if (wholeHp > 0) {
+        status.inkTickAccum -= wholeHp;
+        inkDamageThisFrame = wholeHp;
+        this.nyxHp = Math.max(0, this.nyxHp - wholeHp);
       }
+      // Mancha: opacidad plena durante la duración, arranque instantáneo y
+      // fundido corto en los últimos 0.45 s antes de limpiarse.
+      const elapsedSec = status.inkStainDuration - status.inkBlindTimer;
+      const fadeIn = Math.min(1, elapsedSec / INK_FADE_IN_SEC);
+      const fadeOut = Math.min(1, status.inkBlindTimer / INK_FADE_OUT_SEC);
+      inkIntensity = status.inkStainOpacity * fadeIn * fadeOut;
       status.inkBlindTimer = Math.max(0, status.inkBlindTimer - dt);
     } else {
       status.inkTickAccum = 0;
@@ -418,7 +448,7 @@ export class DomeCombatSystem {
 
     return {
       inkDamageThisFrame,
-      inkIntensity: Math.min(1, status.inkBlindTimer / INK_BLIND_DURATION),
+      inkIntensity,
       isStaggered: status.staggerTimer > 0,
     };
   }

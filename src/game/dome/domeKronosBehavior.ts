@@ -177,7 +177,7 @@ export interface KronosBehaviorContext {
   fireProjectile(
     enemy: ManagedWaveEnemy,
     playerPos: THREE.Vector3,
-    kind: 'dark' | 'ink',
+    kind: 'dark' | 'ink_ball' | 'ink_giant',
     damage: number,
     speed: number,
     spreadRad?: number,

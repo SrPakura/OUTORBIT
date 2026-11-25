@@ -432,7 +432,7 @@ export interface CrabBehaviorContext {
   fireProjectile(
     enemy: ManagedWaveEnemy,
     playerPos: THREE.Vector3,
-    kind: 'dark' | 'ink' | 'laser',
+    kind: 'dark' | 'ink_ball' | 'ink_giant' | 'laser',
     damage: number,
     speed: number,
     spreadRad?: number,

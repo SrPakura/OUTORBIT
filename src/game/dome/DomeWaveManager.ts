@@ -10,6 +10,11 @@ import { resolveSphereSlabCollision, raycastSlabs, type SlabContact } from './Do
 import {
   createDomeEnemyEntity,
   DOME_ENEMY_ARCHETYPES,
+  INK_COUNTER_MAX_SEC,
+  INK_COUNTER_MIN_SEC,
+  INK_COUNTER_OPACITY,
+  INK_STAIN_OPACITY,
+  INK_STAIN_SEC,
   type DomeEnemyEntity,
   type EnemyArchetype,
 } from './DomeCombatSystem';
@@ -178,7 +183,6 @@ const HIT_FLASH_EMISSIVE = 0.85;
 
 /** Arquetipos con dash evasivo al ser lockeados/atacados. */
 const EVASIVE_ARCHETYPES: ReadonlySet<EnemyArchetype> = new Set([
-  'spiral_octopus',
   'lightning_butterfly',
   'giant_sparrow',
   'prisma_necroz',
@@ -229,14 +233,54 @@ const PRISMA_NECROZ_TURN_RATE = 2.6;
 const CHARGE_CONTACT_PADDING = 1.9;
 
 // Proyectiles oscuros lentos (pool fijo, sin allocations por frame).
-const PROJECTILE_POOL_SIZE = 32;
+// 96 entradas: la Bola Gigante del pulpo dispersa 15 bolas ¡en 5 tandas
+// sucesivas! — con varios pulpos vivos el pool de 32 se saturaba y las
+// tandas 4-5 se quedaban sin bolas.
+const PROJECTILE_POOL_SIZE = 96;
 const PROJECTILE_LIFE_SEC = 9.0;
 const PROJECTILE_PLAYER_RADIUS = 1.6;
 const PROJECTILE_BOUND_RADIUS = 88.0;
 
 // Embestidas (ave legendaria): carga directa contra Nyx.
 
-// --- Pulpo Espiral: orientación procedural + tentáculos sin clips ---
+// --- Pulpo Espiral (rediseño): hostigador táctico de media distancia ---
+// Ciclo propio de 5.0 s: entre dashes deriva lento encarando a Nyx, y en el
+// último segundo entra en estado LISTO PARA CONTRA-PARRY (alerta). Fuera de
+// esa ventana no puede esquivar NI contra-parry.
+const OCTOPUS_DASH_COOLDOWN_SEC = 5.0; // Duración del ciclo completo.
+const OCTOPUS_DASH_ALERT_SEC = 1.0; // Ventana de alerta/contra-parry.
+const OCTOPUS_DASH_SPEED = 30.0; // m/s del impulso del dash.
+const OCTOPUS_DASH_TIME = 0.55; // s de impulso (luego frena suave).
+const OCTOPUS_DRIFT_DAMPING = 0.55; // Fricción de la deriva entre dashes.
+const OCTOPUS_DASH_DAMPING = 1.1; // Freno suave del impulso del dash.
+const OCTOPUS_KEEP_RADIUS = 80.0; // Contención dura (evita la Barrera Blanca).
+const OCTOPUS_KEEP_PULL = 26.0; // Empuje de contención (m/s²).
+const OCTOPUS_MIN_NYX_DIST = 2.0; // Banda mínima: nunca pegado a Nyx.
+const OCTOPUS_MIN_NYX_PUSH = 9.0; // Repulsión suave bajo la banda mínima.
+const OCTOPUS_PREF_MIN_DIST = 9.0; // Preferencia: los dashes no acaban encima de Nyx.
+const OCTOPUS_MIN_Y = 2.0; // Altura mínima de la banda libre.
+const OCTOPUS_MAX_Y = 42.0; // Altura máxima de la banda libre.
+// Ataque 1 — Bolas Rojas de Tinta Ácida (0.333/s = 1 cada 3.0 s).
+const OCTOPUS_SHOOT_INTERVAL = 3.0; // s entre bolas base.
+const OCTOPUS_BALL_INIT_SPEED = 30.0; // m/s iniciales hacia Nyx.
+const OCTOPUS_BALL_DECEL = 1.0; // m/s² de deceleración constante.
+const OCTOPUS_BALL_DAMAGE = 8; // HP de daño directo al impacto.
+const OCTOPUS_SHOOT_CLIP_SEC = 0.5; // Duración estimada de octopus_shoot_ball.
+// Ataque 2 — Bola Gigante de Dispersión (cada 20.0 s).
+const OCTOPUS_GIANT_CHARGE_SEC = 20.0; // Barra interna de energía.
+const OCTOPUS_GIANT_WINDUP_SEC = 0.8; // octopus_giant_charge antes de lanzarla.
+const OCTOPUS_GIANT_SCALE = 2.6; // Tamaño visual de la Bola Gigante.
+const OCTOPUS_GIANT_DETONATE_DIST = 12.0; // Detona a ≤ 12 m de Nyx.
+const OCTOPUS_GIANT_EXPLODE_COLOR = 0xff2a3a;
+const OCTOPUS_SPLIT_TOTAL = 15; // 15 bolas = 5 ráfagas de 3.
+const OCTOPUS_SPLIT_BURST = 3; // Bolas por ráfaga.
+const OCTOPUS_SPLIT_GAP = 0.16; // s entre ráfagas sucesivas.
+const OCTOPUS_SPLIT_SPREAD = 0.12; // rad de abanico dentro de cada ráfaga.
+const OCTOPUS_SPLIT_AUTOAIM = 0.35; // Corrección angular leve (rad/s) hacia Nyx.
+// Contra-Parry (patada a bocajarro en ventana de alerta).
+const OCTOPUS_COUNTER_CLIP_SEC = 0.8; // Duración de octopus_counter_parry.
+// Clips one-shot del pulpo (estimados hasta medir el GLB final).
+const OCTOPUS_HIT_CLIP_SEC = 0.45;
 const OCTOPUS_TURN_RATE = 3.2; // Velocidad de giro hacia Nyx (slerp/seg).
 const OCTOPUS_SPIRAL_TILT = 0.38; // Inclinación máx. de la espiral al desplazarse.
 const OCTOPUS_SPIRAL_SPEED = 2.6; // Velocidad del balanceo en espiral.
@@ -783,6 +827,23 @@ export interface EnemyInternal {
   currentClipAction: THREE.AnimationAction | null;
   /** Célula: segundos restantes del flinch de cell_hit sobre la IA. */
   cellHitTimer: number;
+  // --- Pulpo Espiral (rediseño) ---
+  /** Cuenta atrás del ciclo de dash de 5.0 s (≤1 s = alerta/contra-parry). */
+  octopusDashTimer: number;
+  /** Segundos restantes del impulso del dash en curso. */
+  octopusDashActive: number;
+  /** Barra interna de energía de la Bola Gigante (0..20 s). */
+  octopusGiantCharge: number;
+  /** Windup de octopus_giant_charge pendiente del lanzamiento. */
+  octopusGiantWindup: number;
+  /** Segundos restantes del one-shot octopus_shoot_ball. */
+  octopusShootTimer: number;
+  /** Segundos restantes del flinch octopus_hit. */
+  octopusHitTimer: number;
+  /** Segundos restantes del contra-parry octopus_counter_parry. */
+  octopusCounterTimer: number;
+  /** Forzar el reinicio del clip one-shot actual (re-disparo directo). */
+  octopusForceRestart: boolean;
 }
 
 /**
@@ -835,10 +896,31 @@ function findBodyMaterial(root: THREE.Object3D): THREE.ShaderMaterial | null {
 interface WaveProjectile {
   mesh: THREE.Mesh;
   active: boolean;
-  kind: 'dark' | 'ink' | 'laser';
+  kind: 'dark' | 'ink_ball' | 'ink_giant' | 'laser';
   damage: number;
   velocity: THREE.Vector3;
   life: number;
+  /** Tinta ácida del pulpo: deceleración constante (m/s²; 0 en el resto). */
+  decel: number;
+  /** Auto-aim leve hacia Nyx (rad/s; solo las 15 de la Bola Gigante). */
+  autoAimRate: number;
+  /**
+   * Capturada por el Campo Gravitacional: la malla pasó a orbitar a Nyx como
+   * proyectil pequeño — ya NO pertenece al pool (se salta en los deactivates
+   * globales para no robarla de la órbita).
+   */
+  captured: boolean;
+}
+
+/**
+ * Tanda pendiente de la Bola Gigante: al detonar encola las 15 bolas y las
+ * suelta en 5 ráfagas sucesivas de 3 desde el punto de la explosión.
+ */
+interface OctopusSplitBurst {
+  active: boolean;
+  shotsLeft: number;
+  timer: number;
+  origin: THREE.Vector3;
 }
 
 /**
@@ -879,6 +961,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private readonly projectileGeometry = new THREE.SphereGeometry(0.55, 12, 10);
   private readonly darkProjectileMaterial: THREE.ShaderMaterial;
   private readonly inkProjectileMaterial: THREE.ShaderMaterial;
+  /**
+   * Tandas de dispersión de las Bolas Gigantes del pulpo (hasta 3 bolas
+   * gigantes reventando a la vez — suficientes para cualquier oleada).
+   */
+  private readonly octopusSplits: OctopusSplitBurst[] = [];
   readonly kronosRings: KronosRing[] = [];
   private readonly kronosRingGeometry = new THREE.TorusGeometry(1, 0.07, 8, 48);
   private readonly kronosRingMaterial: THREE.ShaderMaterial;
@@ -999,10 +1086,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       rimStrength: 0.9,
       emissiveBoost: 0.35,
     });
-    this.inkProjectileMaterial = createComicCelMaterial(0x0a0a12, {
-      rimColor: 0x4a2a6a,
-      rimStrength: 0.8,
-      emissiveBoost: 0.2,
+    // Bolas Rojas de Tinta Ácida (rediseño del pulpo): esfera roja ácida y
+    // energética — nada de la esfera morada/oscura vieja.
+    this.inkProjectileMaterial = createComicCelMaterial(0xff1626, {
+      rimColor: 0xff9a7a,
+      rimStrength: 1.15,
+      emissiveBoost: 1.45,
     });
     // Ráfaga de corta distancia del cangrejo: perla roja muy brillante.
     this.laserProjectileMaterial = createComicCelMaterial(0xff2233, {
@@ -1030,6 +1119,19 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         damage: 0,
         velocity: new THREE.Vector3(),
         life: 0,
+        decel: 0,
+        autoAimRate: 0,
+        captured: false,
+      });
+    }
+
+    // Tandas de dispersión del pulpo: 3 slots de explosiones en curso.
+    for (let i = 0; i < 3; i++) {
+      this.octopusSplits.push({
+        active: false,
+        shotsLeft: 0,
+        timer: 0,
+        origin: new THREE.Vector3(),
       });
     }
 
@@ -1402,6 +1504,19 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       actions: glbVisual ? glbVisual.actions : null,
       currentClipAction: null,
       cellHitTimer: 0,
+      // Pulpo Espiral: ciclo de dash desincronizado (2.5–5 s) para que varios
+      // pulpos de una oleada no entren en alerta a la vez.
+      octopusDashTimer:
+        archetype === 'spiral_octopus'
+          ? (OCTOPUS_DASH_COOLDOWN_SEC * 0.5 + rng() * OCTOPUS_DASH_COOLDOWN_SEC * 0.5)
+          : 0,
+      octopusDashActive: 0,
+      octopusGiantCharge: 0,
+      octopusGiantWindup: 0,
+      octopusShootTimer: 0,
+      octopusHitTimer: 0,
+      octopusCounterTimer: 0,
+      octopusForceRestart: false,
     });
   }
 
@@ -1530,6 +1645,20 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       internal.cellLungeLeft = 0;
     }
     internal.cellHitTimer = 0;
+    // Pulpo Espiral (rediseño): ciclos de dash y ofensiva a valores de reposo
+    // — al reactivar la IA nunca arranca en ventana de contra-parry.
+    if (internal.enemy.entity.archetype === 'spiral_octopus') {
+      internal.octopusDashTimer = Math.max(
+        internal.octopusDashTimer,
+        OCTOPUS_DASH_ALERT_SEC + 0.5,
+      );
+      internal.octopusDashActive = 0;
+      internal.octopusGiantWindup = 0;
+      internal.octopusShootTimer = 0;
+      internal.octopusHitTimer = 0;
+      internal.octopusCounterTimer = 0;
+      internal.octopusForceRestart = false;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1586,6 +1715,17 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     if (internal.enemy.entity.archetype === 'crab_gunner' && internal.enemy.entity.alive) {
       internal.crabPostKickGrace = 0.75;
       internal.crabHitTimer = CRAB_HIT_CLIP_SEC;
+    }
+    // Pulpo Espiral (rediseño): golpe conectado FUERA de la ventana de
+    // alerta (los primeros 4.0 s del ciclo) — sin esquive ni contra-parry,
+    // recibe el impacto completo y reproduce octopus_hit.
+    if (internal.enemy.entity.archetype === 'spiral_octopus' && internal.enemy.entity.alive) {
+      internal.octopusHitTimer = this.octopusClipSec(
+      internal,
+      'octopus_hit',
+      OCTOPUS_HIT_CLIP_SEC,
+    );
+      internal.octopusForceRestart = true;
     }
     // Célula Abisal: flinch de cell_hit (la FSM ya corta la duplicación por
     // el pico de hitFlash).
@@ -1816,7 +1956,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     playerGroundedSlab: SlabCollider | null,
     activeSlabs: SlabCollider[] | undefined,
     onPlayerHit: (damage: number) => void,
-    onOctopusInk: () => void,
+    onOctopusInk: (durationSec: number, opacity: number) => void,
     onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
     onSlabSmash?: (slab: SlabCollider) => void,
     playerHpRatio = 1,
@@ -2007,6 +2147,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           playerPos,
           this.enemiesPassive,
         );
+      } else if (enemy.entity.archetype === 'spiral_octopus') {
+        // Pulpo Espiral (rediseño): movimiento libre por toda la cúpula con
+        // su PROPIO ciclo de dash de 5.0 s — sin homePos estático, sin dash
+        // evasivo genérico. La contención dura vive a 80 m.
+        this.updateOctopusEnemy(enemy, internal, dt, playerPos);
       } else {
         this.applyFloatMovement(enemy, internal, dt, elapsed);
       }
@@ -2125,6 +2270,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
 
     this.updateProjectiles(dt, playerPos, onPlayerHit, onOctopusInk);
+    this.updateOctopusSplitBursts(dt, playerPos);
     updateKronosRings(this, dt, playerPos, onGolemSmash);
     updateKronosPortals(this.kronosPortals, dt, elapsed);
 
@@ -2201,7 +2347,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     playerGroundedSlab: SlabCollider | null,
     activeSlabs: SlabCollider[] | undefined,
     onPlayerHit: (damage: number) => void,
-    onOctopusInk: () => void,
+    onOctopusInk: (durationSec: number, opacity: number) => void,
     onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
     onSlabSmash?: (slab: SlabCollider) => void,
   ): void {
@@ -2275,6 +2421,13 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       return;
     }
 
+    // Pulpo Espiral (rediseño): hostigador táctico — bolas rojas de tinta
+    // ácida cada 3.0 s (0.333/s) y Bola Gigante de Dispersión cada 20.0 s.
+    if (archetype === 'spiral_octopus') {
+      this.updateOctopusOffense(enemy, internal, dt, playerPos);
+      return;
+    }
+
     // Contacto de embestida en curso: daño a Nyx y fin de la carga.
     if (internal.chargeTimer > 0) {
       const dist = enemy.position.distanceTo(playerPos);
@@ -2295,23 +2448,6 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     const mult = this.speedMult;
 
     switch (archetype) {
-      case 'spiral_octopus': {
-        // Chorro de tinta desde el frente del manto: mancha la pantalla de Nyx.
-        _muzzleDir.subVectors(playerPos, enemy.position);
-        if (_muzzleDir.lengthSq() < 1e-4) {
-          _muzzleDir.set(0, 0, 1);
-        } else {
-          _muzzleDir.normalize();
-        }
-        _muzzlePos
-          .copy(enemy.position)
-          .addScaledVector(_muzzleDir, enemy.radius * OCTOPUS_INK_FORWARD)
-          .addScaledVector(_up, enemy.radius * OCTOPUS_INK_UP);
-        this.fireProjectile(enemy, playerPos, 'ink', 0, 8 * mult, 0, _muzzlePos);
-        enemy.attackTimer = 4.5 / mult;
-        break;
-      }
-
       case 'giant_sparrow':
         // Élite: alterna embestida aérea (picado) y ráfaga de 3 esferas oscuras
         // por la boca (que abre durante el telegraph + disparo).
@@ -2410,10 +2546,387 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     );
   }
 
+
   // -------------------------------------------------------------------------
-  // Cangrejo Artillero: contexto de combate del rediseño (§7.1)
-  // Pool de hilos/haces láser, aros de peligro, fuego amigo, detonación
-  // kamikaze y cableado FSM -> clips GLB (crossfades al estilo de la célula).
+  // Pulpo Espiral (rediseño): ciclo de 5.0 s, bolas de tinta ácida,
+  // Bola Gigante de Dispersión y Contra-Parry.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Movimiento libre del pulpo (banda 2–80 m por toda la zona segura):
+   * ciclos de dash de 5.0 s con deriva de fricción suave entre impulsos,
+   * observando y encarando a Nyx (la orientación la fija updateOctopusPose).
+   * SIN homePos estático y SIN dash evasivo genérico: el último segundo del
+   * ciclo (dashTimer <= 1.0 s) es la ventana de alerta del Contra-Parry.
+   */
+  private updateOctopusEnemy(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    playerPos: THREE.Vector3,
+  ): void {
+    // Modo Entrenamiento (saco de boxeo): sin ciclo de dash, solo fricción.
+    if (this.enemiesPassive) {
+      enemy.velocity.multiplyScalar(Math.exp(-3.5 * dt));
+      enemy.position.addScaledVector(enemy.velocity, dt);
+      return;
+    }
+
+    internal.octopusDashTimer -= dt;
+    if (internal.octopusDashTimer <= 0 && internal.octopusDashActive <= 0) {
+      this.startOctopusDash(enemy, internal, playerPos);
+    }
+
+    // Fricción: freno suave tras el impulso del dash, deriva lenta el resto
+    // del ciclo (el octópodo planea observando a Nyx).
+    enemy.velocity.multiplyScalar(
+      Math.exp(-(internal.octopusDashActive > 0 ? OCTOPUS_DASH_DAMPING : OCTOPUS_DRIFT_DAMPING) * dt),
+    );
+    internal.octopusDashActive = Math.max(0, internal.octopusDashActive - dt);
+    enemy.position.addScaledVector(enemy.velocity, dt);
+
+    // Contención dura a 80 m: jamás toca la Barrera Blanca.
+    _flat.set(enemy.position.x, 0, enemy.position.z);
+    const flatDist = _flat.length();
+    const keepRadius = OCTOPUS_KEEP_RADIUS - enemy.radius;
+    if (flatDist > keepRadius) {
+      _flat.divideScalar(flatDist);
+      enemy.position.x = _flat.x * keepRadius;
+      enemy.position.z = _flat.z * keepRadius;
+      const into = enemy.velocity.dot(_flat);
+      if (into > 0) {
+        enemy.velocity.addScaledVector(_flat, -into);
+      }
+    }
+    // Banda vertical libre.
+    if (enemy.position.y < OCTOPUS_MIN_Y) {
+      enemy.position.y = OCTOPUS_MIN_Y;
+      enemy.velocity.y = Math.max(0, enemy.velocity.y);
+    } else if (enemy.position.y > OCTOPUS_MAX_Y) {
+      enemy.position.y = OCTOPUS_MAX_Y;
+      enemy.velocity.y = Math.min(0, enemy.velocity.y);
+    }
+
+    // Banda mínima respecto a Nyx: repulsión suave para no acabar pegado.
+    _toEnemy.subVectors(enemy.position, playerPos);
+    const nyxDist = _toEnemy.length();
+    if (nyxDist > 1e-4 && nyxDist < enemy.radius + OCTOPUS_MIN_NYX_DIST) {
+      _toEnemy.divideScalar(nyxDist);
+      enemy.velocity.addScaledVector(_toEnemy, OCTOPUS_MIN_NYX_PUSH * dt);
+    }
+  }
+
+  /**
+   * Impulso del dash del ciclo (cada 5.0 s): un nuevo vector libre de la
+   * cúpula de alta velocidad, sincronizado con el one-shot
+   * `octopus_dash_propel`, que frena suavemente. Resetea el ciclo completo
+   * (dashTimer = 5.0 s).
+   */
+  private startOctopusDash(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    playerPos: THREE.Vector3,
+  ): void {
+    const ang = internal.rng() * Math.PI * 2;
+    _spiralDir
+      .set(Math.cos(ang), (internal.rng() - 0.5) * 0.9, Math.sin(ang))
+      .normalize();
+    // Nyx demasiado cerca: mezcla el vector libre con la huida (banda de
+    // media distancia — el hostigador nunca acaba encima del objetivo).
+    const nyxDist = enemy.position.distanceTo(playerPos);
+    if (nyxDist < OCTOPUS_PREF_MIN_DIST) {
+      _aimDir.subVectors(enemy.position, playerPos);
+      if (_aimDir.lengthSq() > 1e-4) {
+        _aimDir.normalize();
+        _spiralDir.lerp(_aimDir, 0.55).normalize();
+      }
+    }
+    // Cerca del borde de contención: gira el vector hacia dentro (80 m).
+    _flat.set(enemy.position.x, 0, enemy.position.z);
+    if (_flat.length() > OCTOPUS_KEEP_RADIUS * 0.66) {
+      _aimDir.copy(_flat).negate().normalize();
+      _spiralDir.lerp(_aimDir, 0.5).normalize();
+    }
+    enemy.velocity.copy(_spiralDir).multiplyScalar(OCTOPUS_DASH_SPEED);
+    internal.octopusDashActive = OCTOPUS_DASH_TIME;
+    internal.octopusDashTimer = OCTOPUS_DASH_COOLDOWN_SEC;
+    internal.octopusForceRestart = true;
+  }
+
+  /**
+   * Ofensiva del Pulpo Espiral:
+   * - Ataque 1 — Bola Roja de Tinta Ácida: 1 cada 3.0 s (0.333/s) con física
+   *   30 m/s + decel constante -1 m/s², sincronizada con octopus_shoot_ball.
+   * - Ataque 2 — Bola Gigante de Dispersión: barra interna de energía que se
+   *   llena cada 20.0 s; al completarse reproduce octopus_giant_charge y
+   *   lanza una Bola Gigante Roja (detona a ≤ 12 m de Nyx).
+   */
+  private updateOctopusOffense(
+    enemy: ManagedWaveEnemy,
+    internal: EnemyInternal,
+    dt: number,
+    playerPos: THREE.Vector3,
+  ): void {
+    // Barra de energía de la Bola Gigante (cada 20.0 s).
+    internal.octopusGiantCharge += dt;
+    if (internal.octopusGiantCharge >= OCTOPUS_GIANT_CHARGE_SEC && internal.octopusGiantWindup <= 0) {
+      internal.octopusGiantCharge = 0;
+      internal.octopusGiantWindup = this.octopusClipSec(
+        internal,
+        'octopus_giant_charge',
+        OCTOPUS_GIANT_WINDUP_SEC,
+      );
+      internal.octopusForceRestart = true;
+    }
+    if (internal.octopusGiantWindup > 0) {
+      internal.octopusGiantWindup -= dt;
+      if (internal.octopusGiantWindup <= 0) {
+        // Lanzamiento de la Bola Gigante Roja desde el frente del manto.
+        _muzzleDir.subVectors(playerPos, enemy.position);
+        if (_muzzleDir.lengthSq() < 1e-4) {
+          _muzzleDir.set(0, 0, 1);
+        } else {
+          _muzzleDir.normalize();
+        }
+        _muzzlePos
+          .copy(enemy.position)
+          .addScaledVector(_muzzleDir, enemy.radius * OCTOPUS_INK_FORWARD)
+          .addScaledVector(_up, enemy.radius * OCTOPUS_INK_UP);
+        this.fireOctopusBall(_muzzlePos, _muzzleDir, 0, 0, true);
+      }
+      return; // En windup no hay bolas base (el clip de carga gobierna el manto).
+    }
+
+    if (enemy.attackTimer > 0) {
+      return;
+    }
+
+    // Bola base desde el frente del manto, hacia Nyx.
+    _muzzleDir.subVectors(playerPos, enemy.position);
+    if (_muzzleDir.lengthSq() < 1e-4) {
+      _muzzleDir.set(0, 0, 1);
+    } else {
+      _muzzleDir.normalize();
+    }
+    _muzzlePos
+      .copy(enemy.position)
+      .addScaledVector(_muzzleDir, enemy.radius * OCTOPUS_INK_FORWARD)
+      .addScaledVector(_up, enemy.radius * OCTOPUS_INK_UP);
+    this.fireOctopusBall(_muzzlePos, _muzzleDir, OCTOPUS_BALL_DAMAGE * this.speedMult, 0, false);
+    internal.octopusShootTimer = this.octopusClipSec(
+      internal,
+      'octopus_shoot_ball',
+      OCTOPUS_SHOOT_CLIP_SEC,
+    );
+    internal.octopusForceRestart = true;
+    enemy.attackTimer = OCTOPUS_SHOOT_INTERVAL / this.speedMult;
+  }
+
+  /**
+   * Bola de tinta ácida del pool (shader rojo ácido/energético): física
+   * 30 m/s con deceleración constante de -1 m/s² y auto-aim leve opcional
+   * (solo las 15 de la dispersión de la Bola Gigante). Capturable por el
+   * Campo Gravitacional de Nyx.
+   */
+  private fireOctopusBall(
+    origin: THREE.Vector3,
+    dir: THREE.Vector3,
+    damage: number,
+    autoAimRate: number,
+    giant: boolean,
+  ): void {
+    const projectile = this.projectiles.find((p) => !p.active && !p.captured);
+    if (!projectile) {
+      return;
+    }
+    _shotDir.copy(dir).normalize();
+    projectile.active = true;
+    projectile.kind = giant ? 'ink_giant' : 'ink_ball';
+    projectile.damage = damage;
+    projectile.decel = OCTOPUS_BALL_DECEL;
+    projectile.autoAimRate = autoAimRate;
+    projectile.captured = false;
+    projectile.life = PROJECTILE_LIFE_SEC;
+    projectile.velocity.copy(_shotDir).multiplyScalar(OCTOPUS_BALL_INIT_SPEED);
+    projectile.mesh.material = this.inkProjectileMaterial;
+    projectile.mesh.scale.setScalar(giant ? OCTOPUS_GIANT_SCALE : 1);
+    projectile.mesh.position.copy(origin).addScaledVector(_shotDir, giant ? 2.4 : 1.2);
+    projectile.mesh.visible = true;
+  }
+
+  /**
+   * Detonación de la Bola Gigante: encola las 15 bolas rojas que se abren
+   * brevemente en abanico y se lanzan hacia Nyx en 5 ráfagas sucesivas de 3.
+   */
+  private enqueueOctopusSplit(origin: THREE.Vector3): void {
+    for (const burst of this.octopusSplits) {
+      if (burst.active) {
+        continue;
+      }
+      burst.active = true;
+      burst.shotsLeft = OCTOPUS_SPLIT_TOTAL;
+      burst.timer = 0; // Primera ráfaga inmediata.
+      burst.origin.copy(origin);
+      return;
+    }
+    // Sin slot libre (3ª explosión simultánea): las 15 en un único abanico.
+    _shotDir.set(0, 0, 1);
+    for (let i = 0; i < OCTOPUS_SPLIT_TOTAL; i++) {
+      _perp.crossVectors(_shotDir, _up).normalize();
+      _aimDir.copy(_shotDir).addScaledVector(_perp, (i - 7) * 0.055).normalize();
+      this.fireOctopusBall(origin, _aimDir, OCTOPUS_BALL_DAMAGE * this.speedMult, OCTOPUS_SPLIT_AUTOAIM, false);
+    }
+  }
+
+  /** Ráfagas sucesivas de 3 en 3 de la Bola Gigante detonada. */
+  private updateOctopusSplitBursts(dt: number, playerPos: THREE.Vector3): void {
+    for (const burst of this.octopusSplits) {
+      if (!burst.active) {
+        continue;
+      }
+      burst.timer -= dt;
+      if (burst.timer > 0) {
+        continue;
+      }
+      _shotDir.subVectors(playerPos, burst.origin);
+      if (_shotDir.lengthSq() < 1e-4) {
+        _shotDir.set(0, 0, 1);
+      } else {
+        _shotDir.normalize();
+      }
+      _perp.crossVectors(_shotDir, _up);
+      if (_perp.lengthSq() < 1e-4) {
+        _perp.set(1, 0, 0);
+      } else {
+        _perp.normalize();
+      }
+      for (let i = 0; i < OCTOPUS_SPLIT_BURST; i++) {
+        const offset = (i - (OCTOPUS_SPLIT_BURST - 1) / 2) * OCTOPUS_SPLIT_SPREAD;
+        _aimDir.copy(_shotDir).addScaledVector(_perp, offset).normalize();
+        this.fireOctopusBall(
+          burst.origin,
+          _aimDir,
+          OCTOPUS_BALL_DAMAGE * this.speedMult,
+          OCTOPUS_SPLIT_AUTOAIM,
+          false,
+        );
+      }
+      burst.shotsLeft -= OCTOPUS_SPLIT_BURST;
+      if (burst.shotsLeft <= 0) {
+        burst.active = false;
+      } else {
+        burst.timer = OCTOPUS_SPLIT_GAP;
+      }
+    }
+  }
+
+  /**
+   * Bolas de Doble Filo (Campo Gravitacional): captura todas las bolas de
+   * tinta ácida (base o de las 15 de la Bola Gigante) dentro de `radius` de
+   * `center` EN VEZ de coger rocas. Salen del pool (quedan visibles en
+   * escena) y pasan a orbitar a Nyx como proyectiles pequeños.
+   */
+  captureInkBallsInRadius(center: THREE.Vector3, radius: number): THREE.Mesh[] {
+    const captured: THREE.Mesh[] = [];
+    for (const projectile of this.projectiles) {
+      if (!projectile.active || projectile.captured || projectile.kind !== 'ink_ball') {
+        continue;
+      }
+      if (projectile.mesh.position.distanceTo(center) > radius) {
+        continue;
+      }
+      projectile.active = false;
+      projectile.captured = true;
+      projectile.life = 0;
+      projectile.decel = 0;
+      projectile.autoAimRate = 0;
+      captured.push(projectile.mesh);
+    }
+    return captured;
+  }
+
+  /**
+   * Devuelve al pool una bola de tinta capturada que DomeSkills ya gastó
+   * (impactada, expirada o campo cancelado): la entrada vuelve a estar
+   * disponible para el siguiente disparo del pulpo sin fugas de capacidad.
+   */
+  recycleInkBallMesh(mesh: THREE.Mesh): void {
+    for (const projectile of this.projectiles) {
+      if (projectile.mesh !== mesh) {
+        continue;
+      }
+      projectile.captured = false;
+      this.deactivateProjectile(projectile);
+      return;
+    }
+  }
+
+  /**
+   * Duración REAL del clip del GLB del pulpo (para cerrar los one-shots
+   * exactamente al acabar). Si el clip aún no existe (export pendiente de
+   * Blender), cae al estimado `fallback` — la FSM nunca se rompe.
+   */
+  private octopusClipSec(internal: EnemyInternal, clip: string, fallback: number): number {
+    const action = internal.actions?.get(clip);
+    return action ? Math.max(1 / 30, action.getClip().duration) : fallback;
+  }
+
+  /**
+   * Contra-Parry del pulpo (ventana de alerta, dashTimer <= 1.0 s): anula el
+   * impacto (0 daño y 0 knockback), se gira al instante para mirar a Nyx a
+   * la cara y ejecuta su dash de escape (resetea el ciclo a 5.0 s). La tinta
+   * a bocajarro (65 %, 5–10 s aleatorios) la aplica el game loop con la
+   * duración devuelta; devuelve 0 si NO puede contra-parry (fuera de la
+   * ventana: los primeros 4.0 s del ciclo son la ventana vulnerable real).
+   */
+  tryOctopusCounterParry(enemy: TestEnemySphere): number {
+    const internal = this.internals.get(enemy.id);
+    if (
+      !internal ||
+      internal.enemy.entity.archetype !== 'spiral_octopus' ||
+      !internal.enemy.entity.alive ||
+      this.enemiesPassive ||
+      internal.octopusDashTimer > OCTOPUS_DASH_ALERT_SEC
+    ) {
+      return 0;
+    }
+    // Giro instantáneo: mira a Nyx a la cara en este mismo frame.
+    _lookDir.subVectors(this.playerPosCache, internal.enemy.position);
+    if (_lookDir.lengthSq() < 1e-6) {
+      _lookDir.set(0, 0, 1);
+    } else {
+      _lookDir.normalize();
+    }
+    lookAtQuat(_lookDir, _up, _targetQuat);
+    internal.enemy.mesh.quaternion.copy(_targetQuat);
+    // Clip del contra-parry + dash de escape con el ciclo reiniciado.
+    internal.octopusCounterTimer = this.octopusClipSec(
+      internal,
+      'octopus_counter_parry',
+      OCTOPUS_COUNTER_CLIP_SEC,
+    );
+    internal.octopusForceRestart = true;
+    _aimDir.subVectors(internal.enemy.position, this.playerPosCache);
+    if (_aimDir.lengthSq() < 1e-4) {
+      _aimDir.set(0, 0, 1);
+    } else {
+      _aimDir.normalize();
+      _aimDir.y += 0.22;
+      _aimDir.normalize();
+    }
+    internal.enemy.velocity.copy(_aimDir).multiplyScalar(OCTOPUS_DASH_SPEED);
+    internal.octopusDashActive = OCTOPUS_DASH_TIME;
+    internal.octopusDashTimer = OCTOPUS_DASH_COOLDOWN_SEC;
+    internal.enemy.hitFlash = Math.max(internal.enemy.hitFlash, 0.35);
+    internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
+    return (
+      INK_COUNTER_MIN_SEC + internal.rng() * (INK_COUNTER_MAX_SEC - INK_COUNTER_MIN_SEC)
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Cangrejo Artillero: rediseño §7.1 — pool de láseres, aros de peligro y
+  // fuego amigo + cableado FSM -> clips GLB (crossfades al estilo de la célula).
   // -------------------------------------------------------------------------
 
   /** Entrada libre del pool (o la propia del dueño) para un haz/aro. */
@@ -2804,14 +3317,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   fireProjectile(
     enemy: ManagedWaveEnemy,
     playerPos: THREE.Vector3,
-    kind: 'dark' | 'ink' | 'laser',
+    kind: 'dark' | 'ink_ball' | 'ink_giant' | 'laser',
     damage: number,
     speed: number,
     spreadRad = 0,
     origin?: THREE.Vector3,
     dirOverride?: THREE.Vector3,
   ): void {
-    const projectile = this.projectiles.find((p) => !p.active);
+    const projectile = this.projectiles.find((p) => !p.active && !p.captured);
     if (!projectile) {
       return;
     }
@@ -2840,9 +3353,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     projectile.kind = kind;
     projectile.damage = damage;
     projectile.life = PROJECTILE_LIFE_SEC;
+    projectile.decel = 0;
+    projectile.autoAimRate = 0;
+    projectile.captured = false;
     projectile.velocity.copy(_shotDir).multiplyScalar(speed);
     projectile.mesh.material =
-      kind === 'ink'
+      kind === 'ink_ball' || kind === 'ink_giant'
         ? this.inkProjectileMaterial
         : kind === 'laser'
           ? this.laserProjectileMaterial
@@ -2860,14 +3376,55 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     dt: number,
     playerPos: THREE.Vector3,
     onPlayerHit: (damage: number) => void,
-    onOctopusInk: () => void,
+    onOctopusInk: (durationSec: number, opacity: number) => void,
   ): void {
     for (const projectile of this.projectiles) {
       if (!projectile.active) {
         continue;
       }
       projectile.life -= dt;
+
+      // Tinta ácida del pulpo: velocidad con deceleración constante de
+      // -1.0 m/s² (speed = max(0, 30 - 1.0 * t)) y auto-aim leve (solo las
+      // 15 de la dispersión de la Bola Gigante).
+      if (projectile.decel > 0) {
+        const speed = projectile.velocity.length();
+        if (speed > 1e-4) {
+          const newSpeed = Math.max(0, speed - projectile.decel * dt);
+          if (projectile.autoAimRate > 0) {
+            _aimDir.subVectors(playerPos, projectile.mesh.position);
+            if (_aimDir.lengthSq() > 1e-4) {
+              _aimDir.normalize();
+              _shotDir.copy(projectile.velocity).multiplyScalar(1 / speed);
+              const angle = _shotDir.angleTo(_aimDir);
+              if (angle > 1e-4) {
+                _shotDir.lerp(_aimDir, Math.min(1, (projectile.autoAimRate * dt) / angle)).normalize();
+              }
+              projectile.velocity.copy(_shotDir).multiplyScalar(newSpeed);
+            }
+          } else {
+            projectile.velocity.multiplyScalar(newSpeed / speed);
+          }
+        }
+      }
+
       projectile.mesh.position.addScaledVector(projectile.velocity, dt);
+
+      // Bola Gigante: detonación por proximidad al entrar a ≤ 12.0 m de la
+      // hitbox de Nyx — se divide en 15 bolas (5 ráfagas sucesivas de 3).
+      if (projectile.kind === 'ink_giant') {
+        const distNyx = projectile.mesh.position.distanceTo(playerPos);
+        if (distNyx <= OCTOPUS_GIANT_DETONATE_DIST + PROJECTILE_PLAYER_RADIUS) {
+          this.onEnemyExplode?.(
+            projectile.mesh.position.clone(),
+            OCTOPUS_GIANT_DETONATE_DIST,
+            OCTOPUS_GIANT_EXPLODE_COLOR,
+          );
+          this.enqueueOctopusSplit(projectile.mesh.position);
+          this.deactivateProjectile(projectile);
+          continue;
+        }
+      }
 
       const hitPlayer =
         projectile.mesh.position.distanceTo(playerPos) <
@@ -2875,8 +3432,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       const outOfBounds = projectile.mesh.position.length() > PROJECTILE_BOUND_RADIUS;
 
       if (hitPlayer) {
-        if (projectile.kind === 'ink') {
-          onOctopusInk();
+        if (projectile.kind === 'ink_ball' || projectile.kind === 'ink_giant') {
+          // Bola de tinta ácida: daño directo (8 HP) + mancha negra en el HUD
+          // (55 % de opacidad durante 3.0 s) con DoT ácido de 4 HP/s.
+          onPlayerHit(projectile.damage);
+          onOctopusInk(INK_STAIN_SEC, INK_STAIN_OPACITY);
         } else {
           onPlayerHit(projectile.damage);
         }
@@ -2891,11 +3451,24 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     projectile.active = false;
     projectile.mesh.visible = false;
     projectile.life = 0;
+    projectile.decel = 0;
+    projectile.autoAimRate = 0;
   }
 
   private deactivateAllProjectiles(): void {
     for (const projectile of this.projectiles) {
+      // Las bolas capturadas por el Campo Gravitacional ya no son del pool:
+      // orbitan a Nyx como proyectiles pequeños (DomeSkills las libera).
+      if (projectile.captured) {
+        continue;
+      }
       this.deactivateProjectile(projectile);
+    }
+    // Tandas de dispersión pendientes: sin bolas de origen, no hay ráfagas.
+    for (const burst of this.octopusSplits) {
+      burst.active = false;
+      burst.shotsLeft = 0;
+      burst.timer = 0;
     }
   }
 
@@ -3051,7 +3624,16 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     internal.currentClipAction = next;
   }
 
-  /** Pulpo: orientación suave hacia Nyx con balanceo en espiral y tentáculos ondeando. */
+  /**
+   * Pulpo Espiral (rediseño): orientación hacia Nyx con balanceo en espiral,
+   * brillo de advertencia del star_core en la ventana de alerta y el
+   * cableado de los 7 clips del GLB con crossfade de 0.12 s:
+   *   octopus_idle_observe (bucle), octopus_pre_dash_ready (bucle, alerta),
+   *   octopus_dash_propel, octopus_shoot_ball, octopus_giant_charge,
+   *   octopus_counter_parry y octopus_hit (one-shots).
+   * Sin clips en el GLB (export pendiente), cae al fallback seguro
+   * procedural de tentáculos — la FSM no se rompe.
+   */
   private updateOctopusPose(
     enemy: ManagedWaveEnemy,
     internal: EnemyInternal,
@@ -3059,6 +3641,30 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     elapsed: number,
     playerPos: THREE.Vector3,
   ): void {
+    // Relojes de los one-shots del pulpo (flinch, contra-parry, disparo).
+    internal.octopusHitTimer = Math.max(0, internal.octopusHitTimer - dt);
+    internal.octopusCounterTimer = Math.max(0, internal.octopusCounterTimer - dt);
+    internal.octopusShootTimer = Math.max(0, internal.octopusShootTimer - dt);
+
+    // Ventana de alerta (último segundo del ciclo): Listo para Contra-Parry.
+    const alert =
+      !this.enemiesPassive && internal.octopusDashTimer <= OCTOPUS_DASH_ALERT_SEC;
+
+    // star_core: brillo de advertencia creciente durante la alerta.
+    for (const material of internal.starMaterials) {
+      if (alert) {
+        material.uniforms.uColor.value.setHex(0xff2214);
+        material.uniforms.uRimColor.value.setHex(0xff5533);
+        material.uniforms.uEmissiveBoost.value =
+          0.9 + Math.abs(Math.sin(elapsed * (14 + 26 * (1 - internal.octopusDashTimer)))) * 1.6;
+      } else {
+        material.uniforms.uColor.value.setHex(STAR_CORE_COLOR);
+        material.uniforms.uRimColor.value.setHex(STAR_CORE_RIM);
+        material.uniforms.uEmissiveBoost.value = STAR_CORE_EMISSIVE;
+      }
+    }
+
+    // Encara a Nyx (cámara lenta de giro) + espiral del cuerpo.
     _lookDir.subVectors(playerPos, enemy.position);
     if (_lookDir.lengthSq() < 1e-6) {
       _lookDir.set(0, 0, 1);
@@ -3066,23 +3672,50 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       _lookDir.normalize();
     }
     lookAtQuat(_lookDir, _up, _targetQuat);
-    // Espiral: rodillo alrededor del eje de avance mientras se desplaza.
     _rollQuat.setFromAxisAngle(
       _lookDir,
       Math.sin(elapsed * OCTOPUS_SPIRAL_SPEED + enemy.phase) * OCTOPUS_SPIRAL_TILT,
     );
     _targetQuat.premultiply(_rollQuat);
-    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-OCTOPUS_TURN_RATE * dt));
+    const turnRate = internal.octopusCounterTimer > 0 ? 40.0 : OCTOPUS_TURN_RATE;
+    enemy.mesh.quaternion.slerp(_targetQuat, 1 - Math.exp(-turnRate * dt));
 
-    // Oscilación procedural de los tentáculos sobre su pose de reposo.
-    for (let i = 0; i < internal.tentacles.length; i++) {
-      const tentacle = internal.tentacles[i];
-      _legWaveQuat.setFromAxisAngle(
-        _legWaveAxis,
-        Math.sin(elapsed * TENTACLE_WAVE_SPEED + enemy.phase + i) * tentacle.amplitude,
-      );
-      tentacle.bone.quaternion.copy(tentacle.rest).multiply(_legWaveQuat);
+    if (!internal.actions || internal.actions.size === 0) {
+      // Fallback seguro sin clips (GLB aún sin exportar): oscilación
+      // procedural de los tentáculos sobre su pose de reposo.
+      for (let i = 0; i < internal.tentacles.length; i++) {
+        const tentacle = internal.tentacles[i];
+        _legWaveQuat.setFromAxisAngle(
+          _legWaveAxis,
+          Math.sin(elapsed * TENTACLE_WAVE_SPEED + enemy.phase + i) * tentacle.amplitude,
+        );
+        tentacle.bone.quaternion.copy(tentacle.rest).multiply(_legWaveQuat);
+      }
+      return;
     }
+
+    // --- Cableado FSM -> clips GLB (crossfade de 0.12 s) ---
+    // Prioridad: flinch > contra-parry > carga gigante > disparo > dash >
+    // alerta pre-dash > reposo observando.
+    let clipName: string;
+    if (internal.octopusHitTimer > 0) {
+      clipName = 'octopus_hit';
+    } else if (internal.octopusCounterTimer > 0) {
+      clipName = 'octopus_counter_parry';
+    } else if (internal.octopusGiantWindup > 0) {
+      clipName = 'octopus_giant_charge';
+    } else if (internal.octopusShootTimer > 0) {
+      clipName = 'octopus_shoot_ball';
+    } else if (internal.octopusDashActive > 0) {
+      clipName = 'octopus_dash_propel';
+    } else if (alert) {
+      clipName = 'octopus_pre_dash_ready';
+    } else {
+      clipName = 'octopus_idle_observe';
+    }
+    const force = internal.octopusForceRestart;
+    internal.octopusForceRestart = false;
+    this.crossfadeEnemyAction(internal, clipName, 0.12, force);
   }
 
   /** Compone una rotación euleriana sobre la pose de reposo de un hueso. */

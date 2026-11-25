@@ -424,6 +424,20 @@ export class NyxDomeController {
    */
   private guardBouncedThisHit = false;
   /**
+   * Contra-Parry del Pulpo Espiral: el pulpo anuló ESTE impacto (ventana de
+   * alerta de su ciclo de 5.0 s) — la patada NO se corta ni rebota; Nyx
+   * sigue su trayectoria hacia delante pasando de largo. Lo activa
+   * octopusCounterParry() desde el game loop dentro del hit callback.
+   */
+  private counterParriedThisHit = false;
+  /**
+   * Enemigo que contra-parryó el golpe en curso: sus impactos se ignoran unos
+   * instantes para que Nyx atraviese su hitbox sin re-impactarlo en el frame
+   * siguiente (sigue en mode speed_attack, sin lock).
+   */
+  private counterParryIgnoreId: string | null = null;
+  private counterParryIgnoreTimer = 0;
+  /**
    * Suelo de velocidad de salida aplicado SOLO al próximo lanzamiento del
    * rebote cinético (0 = sin suelo; lo activa bounceOffGolemGuard).
    */
@@ -1145,6 +1159,17 @@ export class NyxDomeController {
     this.playOneShot(anim);
   }
 
+  /**
+   * Contra-Parry del Pulpo Espiral (ventana de alerta del ciclo de 5.0 s):
+   * el pulpo anuló el impacto de la patada — Nyx NO se corta ni rebota,
+   * sigue su trayectoria frontal pasando de largo (sin kick_flip, sin
+   * rebote, sin hit-stop: el octópodo ya escapa con su propio dash y la
+   * tinta a bocajarro la aplica el game loop).
+   */
+  octopusCounterParry(): void {
+    this.counterParriedThisHit = true;
+  }
+
   syncProgression(params: {
     level: number;
     exp: number;
@@ -1320,6 +1345,12 @@ export class NyxDomeController {
 
     // --- Decaimientos
     if (this.bounceCooldown > 0) this.bounceCooldown -= sdt;
+    if (this.counterParryIgnoreTimer > 0) {
+      this.counterParryIgnoreTimer -= sdt;
+      if (this.counterParryIgnoreTimer <= 0) {
+        this.counterParryIgnoreId = null;
+      }
+    }
     if (this.domeBounceFlash > 0) {
       this.domeBounceFlash = Math.max(0, this.domeBounceFlash - sdt * 2.2);
     }
@@ -1446,6 +1477,8 @@ export class NyxDomeController {
           }
         } else {
           for (const enemy of enemies) {
+            // Contra-parryado hace un instante: su hitbox se atraviesa limpia.
+            if (enemy.id === this.counterParryIgnoreId) continue;
             if (this.nyxRoot.position.distanceTo(enemy.position) <= PLAYER_RADIUS + enemy.radius + 0.45) {
               this.lockedEnemy = enemy;
               this.impactEnemy(onHitEnemy);
@@ -2365,8 +2398,24 @@ export class NyxDomeController {
     const impactSpeed = this.velocity.length();
     const kineticMult = Math.max(0.6, Math.pow(impactSpeed / 14, 1.35));
     this.guardBouncedThisHit = false;
+    this.counterParriedThisHit = false;
     onHitEnemy?.(enemy, this.tmpE.copy(this.facing), isDrill, impactSpeed);
     this.vfx.spawnBurst(enemy.position, this.facing, 0xffc24d, 30);
+    // Contra-Parry del Pulpo Espiral: la patada pasa de largo — la trayectoria
+    // de Nyx NO se corta ni rebota (sin flip, sin hit-stop, sin rebote). El
+    // pulpo ya se gira, escupe y escapa con su dash; aqui solo se libera el
+    // lock y se ignora su hitbox unos instantes para atravesarla limpio.
+    if (this.counterParriedThisHit) {
+      this.counterParryIgnoreId = enemy.id;
+      this.counterParryIgnoreTimer = 0.5;
+      this.lockedEnemy = null;
+      this.redirectTargetEnemy = null;
+      this.redirectWindowTimer = 0;
+      this.vfx.spawnImpactRing(enemy.position, this.facing);
+      if (isDrill) this.audio?.playSpinKick();
+      else this.audio?.playMelee();
+      return;
+    }
     this.shake = Math.max(this.shake, 0.34 * kineticMult);
     // Hit-Stop + FOV Punch + flash de impacto: el taladro pega más fuerte.
     this.hitStopTimer = Math.max(
@@ -2644,6 +2693,8 @@ export class NyxDomeController {
       // enemigo en pleno ataque, el impacto/bloqueo se resuelve al instante
       // en el primer contacto (nunca empujar al enemigo por la arena).
       for (const enemy of enemies) {
+        // Contra-parryado hace un instante: su hitbox se atraviesa limpia.
+        if (enemy.id === this.counterParryIgnoreId) continue;
         const dist = this.nyxRoot.position.distanceTo(enemy.position);
         if (dist <= PLAYER_RADIUS + enemy.radius + 0.45) {
           this.lockedEnemy = enemy;

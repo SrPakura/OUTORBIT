@@ -107,7 +107,11 @@ export interface DomeHudState {
     { keyLabel: string; name: string | null; level: number; cooldownRemaining?: number; maxCooldown?: number },
   ];
   domeBounceFlash: number;
-  /** Intensidad de mancha de tinta del Pulpo Espiral (0..1) */
+  /**
+   * Intensidad de mancha de Tinta Ácida del Pulpo Espiral (0..1): opacidad de
+   * la salpicadura procedural (0.55 bola base / 0.65 contra-parry) ya con
+   * fundidos de entrada/salida aplicados por el combate.
+   */
   inkOverlayIntensity?: number;
   /** Oleada actual (1..) y tipo ('BÁSICOS' | 'MINIBOSS' | 'BOSS') */
   waveNumber?: number;

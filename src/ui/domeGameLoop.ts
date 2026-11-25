@@ -28,7 +28,7 @@ import {
 } from '@/game/dome/DomeProgression';
 import { DomePickupManager } from '@/game/dome/DomePickups';
 import { DomeSkillExecutor, type SkillTargetEnemy } from '@/game/dome/DomeSkills';
-import { DomeCombatSystem, THORNS_DAMAGE_TO_NYX, type EnemyArchetype } from '@/game/dome/DomeCombatSystem';
+import { DomeCombatSystem, INK_COUNTER_OPACITY, THORNS_DAMAGE_TO_NYX, type EnemyArchetype } from '@/game/dome/DomeCombatSystem';
 import { DomeRunTracker } from '@/game/dome/DomeRunStats';
 import { DOME_PLAYER_BOUND_RADIUS, type DomeHudState, type SlabCollider, type TestEnemySphere } from '@/game/dome/domeTypes';
 import type { GameSettings } from '@/game/settings';
@@ -149,6 +149,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   // el manager ya usa FLOAT_MAX_SPEED = 28 m/s como valor por defecto.)
   const pickups = new DomePickupManager(scene);
   const skillExecutor = new DomeSkillExecutor(scene);
+  // Bolas de tinta capturadas gastadas (impacto/expiración/cancelación):
+  // vuelven al pool de proyectiles del waveMgr (sin fugas de capacidad).
+  skillExecutor.onCapturedInkBallFreed = (mesh) => waveMgr.recycleInkBallMesh(mesh);
   const progression = new DomeProgressionManager();
   progressionRef.current = progression;
   const combat = new DomeCombatSystem(progression.maxHp);
@@ -423,7 +426,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
 
   // --- Callbacks estables del waveMgr: cero closures nuevas por frame ---
   const onWavePlayerHit = (dmg: number) => applyDamageToNyx(dmg);
-  const onOctopusInk = () => combat.applyOctopusInkAttack();
+  // Tinta Ácida del Pulpo Espiral: mancha en pantalla con opacidad/duración
+  // dadas (bola base 3 s/55 %, contra-parry a bocajarro 5-10 s/65 %) y DoT.
+  const onOctopusInk = (durationSec: number, opacity: number) =>
+    combat.applyOctopusInkAttack(durationSec, opacity);
   // Manotazo brutal del Gólem: daño + empuje con hit_stagger.
   // (Los Anillos de Contención de KRONOS lo reutilizan con daño 0 y
   // un empuje radial más fuerte hacia la Barrera Blanca.)
@@ -447,6 +453,19 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     isDrill: boolean,
     impactSpeed?: number,
   ) => {
+    // Contra-Parry del Pulpo Espiral (ventana de alerta, dashTimer <= 1.0 s):
+    // el pulpo ANULA el impacto (0 daño, 0 knockback), escupe un chorro de
+    // tinta ácida a bocajarro (65 % de opacidad, 5-10 s aleatorios) y escapa
+    // con su dash reiniciando el ciclo. La patada de Nyx NO se corta ni
+    // rebota: sigue su trayectoria pasando de largo (octopusCounterParry).
+    const counterInkSec = waveMgr.tryOctopusCounterParry(enemy);
+    if (counterInkSec > 0) {
+      controller?.octopusCounterParry();
+      onOctopusInk(counterInkSec, INK_COUNTER_OPACITY);
+      comicVfx.spawnComicHit(enemy.position, hitDir, 1.1, enemy.radius);
+      controller?.punchCamera(0.55);
+      return;
+    }
     waveMgr.onHitEnemy(enemy, hitDir, isDrill, impactSpeed);
     // VFX cómic del impacto cinético: la intensidad escala con la velocidad
     // real del golpe (el taladro pega más fuerte) y los picos salen sesgados
@@ -595,6 +614,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           slabs: activeSlabs,
           onDamageEnemy: handleSkillDamageEnemy,
           onHealPlayer: (hp, eden) => controller?.restoreResources(hp, eden),
+          // Bolas de Doble Filo: el Campo Gravitacional captura las bolas de
+          // tinta ácida del pulpo dentro de su radio EN VEZ de coger rocas.
+          captureEnemyProjectiles: (center, radius) =>
+            waveMgr.captureInkBallsInRadius(center, radius),
         });
         if (res.triggered) {
           controller.spendEden(def.edenCost);
