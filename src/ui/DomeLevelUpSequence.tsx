@@ -1185,8 +1185,6 @@ export default function DomeLevelUpSequence({
           width: 108px;
           height: 108px;
           margin: 10px auto 16px;
-          border: 2px dashed #2a2f3d;
-          background: rgba(255, 255, 255, 0.5);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -1194,7 +1192,7 @@ export default function DomeLevelUpSequence({
         .lu-card__icon::before, .lu-card__icon::after {
           content: "";
           position: absolute;
-          background: rgba(11, 13, 18, 0.06);
+          background: rgba(11, 13, 18, 0.05);
         }
         .lu-card__icon::before { left: 50%; top: 0; bottom: 0; width: 1px; }
         .lu-card__icon::after  { top: 50%; left: 0; right: 0; height: 1px; }
