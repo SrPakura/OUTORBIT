@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { createMenuFluidDivider } from '@/game/render/menuShaders';
 import { NyxAnimator } from '@/game/render/nyxAnimator';
 
 // ============================================================================
@@ -24,7 +25,7 @@ const inpTag = document.getElementById('inp-tag') as HTMLInputElement;
 const inpSub = document.getElementById('inp-sub') as HTMLInputElement;
 const inpVer = document.getElementById('inp-ver') as HTMLInputElement;
 const inpTextAngle = document.getElementById('inp-text-angle') as HTMLInputElement;
-const inpLeftW = document.getElementById('inp-left-w') as HTMLInputElement;
+const inpTextScale = document.getElementById('inp-text-scale') as HTMLInputElement;
 const inpRot = document.getElementById('inp-rot') as HTMLInputElement;
 const inpTilt = document.getElementById('inp-tilt') as HTMLInputElement;
 const inpZoom = document.getElementById('inp-zoom') as HTMLInputElement;
@@ -256,9 +257,13 @@ renderer.setClearColor(0x0a0e25, 1);
 renderer.autoClear = false;
 
 const scene = new THREE.Scene();
+const dividerScene = new THREE.Scene();
+const divider = createMenuFluidDivider();
+dividerScene.add(divider.mesh);
+
 const camera = new THREE.PerspectiveCamera(30, W / H, 0.1, 100);
 // Desplaza el encuadre para centrar a Nyx dentro de la ventana espacial a la derecha
-camera.setViewOffset(W, H, -W * 0.11, 0, W, H);
+camera.setViewOffset(W, H, -W * 0.14, 0, W, H);
 
 const backdropMat = new THREE.ShaderMaterial({
   vertexShader: backdropVert,
@@ -366,33 +371,29 @@ function drawGameLogo(
 function drawOverlay(): void {
   uiCtx.clearRect(0, 0, W, H);
 
-  const leftPct = parseFloat(inpLeftW.value) / 100;
-  const topSplitX = W * (leftPct + 0.08);
-  const botSplitX = W * (leftPct - 0.07);
-  const padTop = 38;
-  const padRight = 40;
-  const padBot = 38;
+  const pad = 34;
+  const r = 36; // Esquinas redondeadas del marco blanco
 
   // ------------------------------------------------------------------------
-  // 1. Marco blanco de papel cómic (exacto al boceto: bordes limpios + corte diagonal)
+  // 1. Marco blanco de papel (#f1f1ed, idéntico al shader del menú) con esquinas redondeadas
+  //    (solo arriba, derecha y abajo; el borde izquierdo especial lo dibuja MenuFluidDivider)
   // ------------------------------------------------------------------------
   uiCtx.save();
   uiCtx.beginPath();
   uiCtx.rect(0, 0, W, H);
-  // Ventana interior con curva orgánica cómic en el corte izquierdo (even-odd)
-  const ctrlX = (topSplitX + botSplitX) * 0.5 - 26;
-  const ctrlY = H * 0.52;
-  uiCtx.moveTo(topSplitX, padTop);
-  uiCtx.lineTo(W - padRight, padTop);
-  uiCtx.lineTo(W - padRight, H - padBot);
-  uiCtx.lineTo(botSplitX, H - padBot);
-  uiCtx.quadraticCurveTo(ctrlX, ctrlY, topSplitX, padTop);
+  // Agujero interior con esquinas redondeadas (even-odd) desde x=0 para no tapar el corte fluido izquierdo
+  uiCtx.moveTo(-20, pad);
+  uiCtx.lineTo(W - pad - r, pad);
+  uiCtx.quadraticCurveTo(W - pad, pad, W - pad, pad + r);
+  uiCtx.lineTo(W - pad, H - pad - r);
+  uiCtx.quadraticCurveTo(W - pad, H - pad, W - pad - r, H - pad);
+  uiCtx.lineTo(-20, H - pad);
   uiCtx.closePath();
 
-  uiCtx.fillStyle = '#f6f7f9';
+  uiCtx.fillStyle = '#f1f1ed';
   uiCtx.fill('evenodd');
 
-  // Cuadrícula de papel sutil solo sobre el marco blanco
+  // Rejilla sutil sobre el marco blanco exterior
   uiCtx.save();
   uiCtx.clip('evenodd');
   uiCtx.strokeStyle = 'rgba(11, 13, 18, 0.04)';
@@ -411,106 +412,100 @@ function drawOverlay(): void {
   }
   uiCtx.restore();
 
-  // Trama halftone + resplandor carmesí sutil pegado al borde diagonal interior (como el shader del menú)
-  uiCtx.save();
-  const grad = uiCtx.createLinearGradient(topSplitX - 10, 0, topSplitX + 95, 0);
-  grad.addColorStop(0, 'rgba(225, 29, 72, 0.28)');
-  grad.addColorStop(1, 'rgba(225, 29, 72, 0)');
-  uiCtx.strokeStyle = grad;
-  uiCtx.lineWidth = 70;
+  // Trazo de tinta fino alrededor de las esquinas redondeadas interiores
+  uiCtx.strokeStyle = 'rgba(11, 13, 18, 0.85)';
+  uiCtx.lineWidth = 4;
   uiCtx.beginPath();
-  uiCtx.moveTo(topSplitX + 18, padTop);
-  uiCtx.quadraticCurveTo(ctrlX + 18, ctrlY, botSplitX + 18, H - padBot);
+  uiCtx.moveTo(W * 0.39, pad);
+  uiCtx.lineTo(W - pad - r, pad);
+  uiCtx.quadraticCurveTo(W - pad, pad, W - pad, pad + r);
+  uiCtx.lineTo(W - pad, H - pad - r);
+  uiCtx.quadraticCurveTo(W - pad, H - pad, W - pad - r, H - pad);
+  uiCtx.lineTo(W * 0.23, H - pad);
   uiCtx.stroke();
-
-  // Borde de tinta negro nítido siguiendo solo el corte izquierdo
-  uiCtx.strokeStyle = '#0b0d12';
-  uiCtx.lineWidth = 5;
-  uiCtx.beginPath();
-  uiCtx.moveTo(topSplitX, padTop);
-  uiCtx.quadraticCurveTo(ctrlX, ctrlY, botSplitX, H - padBot);
-  uiCtx.stroke();
-  uiCtx.restore();
   uiCtx.restore();
 
   // ------------------------------------------------------------------------
-  // 2. Bloque de textos sobre la franja blanca izquierda (100% configurable)
+  // 2. Bloque de textos grande sobre la franja blanca izquierda (100% configurable)
   // ------------------------------------------------------------------------
   const logoText = inpLogo.value;
   const tagText = inpTag.value;
   const subText = inpSub.value;
   const verText = inpVer.value;
   const angleRad = (parseFloat(inpTextAngle.value) * Math.PI) / 180;
-
-  const stripCenterX = (topSplitX + botSplitX) * 0.5 * 0.48;
-  const stripCenterY = H * 0.51;
+  const scale = parseFloat(inpTextScale.value);
 
   uiCtx.save();
-  uiCtx.translate(stripCenterX, stripCenterY);
+  uiCtx.translate(W * 0.165, H * 0.51);
   uiCtx.rotate(angleRad);
+  uiCtx.scale(scale, scale);
 
-  const logoSize = 158;
-  const blockW = 720;
+  const logoSize = 205;
+  const hasTag = tagText.trim().length > 0;
+  const hasLogo = logoText.trim().length > 0;
+  const hasSub = subText.trim().length > 0;
+  const hasVer = verText.trim().length > 0;
+
   const blockH =
-    (tagText.trim() ? 48 : 0) +
-    (logoText.trim() ? logoSize * 0.94 : 0) +
-    (subText.trim() ? 66 : 0) +
-    (verText.trim() ? 52 : 0);
+    (hasTag ? 54 : 0) +
+    (hasLogo ? logoSize * 0.90 : 0) +
+    (hasSub ? 78 : 0) +
+    (hasVer ? 50 : 0);
   let cursorY = -blockH * 0.5;
-  const startX = -blockW * 0.5;
+  const startX = -420;
 
   // Tag superior estilo .title-tag + línea carmesí (solo si tiene texto)
-  if (tagText.trim().length > 0) {
+  if (hasTag) {
     uiCtx.save();
     uiCtx.translate(startX, cursorY);
-    uiCtx.font = '800 22px ui-monospace, "SF Mono", Menlo, monospace';
-    const tw = uiCtx.measureText(tagText.toUpperCase()).width + 28;
+    uiCtx.font = '800 24px ui-monospace, "SF Mono", Menlo, monospace';
+    const tw = uiCtx.measureText(tagText.toUpperCase()).width + 30;
     uiCtx.save();
     uiCtx.transform(1, 0, -0.14, 1, 0, 0);
     uiCtx.fillStyle = '#0b0d12';
-    uiCtx.fillRect(5, 5, tw, 36);
+    uiCtx.fillRect(5, 5, tw, 38);
     uiCtx.fillStyle = '#ffffff';
-    uiCtx.fillRect(0, 0, tw, 36);
+    uiCtx.fillRect(0, 0, tw, 38);
     uiCtx.strokeStyle = '#0b0d12';
     uiCtx.lineWidth = 2.5;
-    uiCtx.strokeRect(0, 0, tw, 36);
+    uiCtx.strokeRect(0, 0, tw, 38);
     uiCtx.fillStyle = '#0b0d12';
     uiCtx.textBaseline = 'middle';
-    uiCtx.fillText(tagText.toUpperCase(), 14, 19);
+    uiCtx.fillText(tagText.toUpperCase(), 15, 20);
     uiCtx.restore();
 
     uiCtx.fillStyle = '#e11d48';
-    uiCtx.fillRect(tw + 18, 16, Math.max(120, 620 - tw), 5);
+    uiCtx.fillRect(tw + 18, 17, Math.max(160, 820 - tw), 6);
     uiCtx.restore();
-    cursorY += 48;
+    cursorY += 54;
   }
 
   // Logo idéntico al del juego (solo si tiene texto)
-  if (logoText.trim().length > 0) {
+  if (hasLogo) {
     uiCtx.save();
     uiCtx.translate(startX, cursorY);
-    drawGameLogo(uiCtx, logoText, logoSize, 9);
+    drawGameLogo(uiCtx, logoText, logoSize, 10);
     uiCtx.restore();
-    cursorY += logoSize * 0.94;
+    cursorY += logoSize * 0.90;
   }
 
-  // Subtítulo libre (solo si tiene texto)
-  if (subText.trim().length > 0) {
+  // Subtítulo libre grande y legible (solo si tiene texto)
+  if (hasSub) {
     uiCtx.save();
-    uiCtx.translate(startX + 18, cursorY + 12);
-    uiCtx.font = 'italic 800 50px "Barlow Condensed", sans-serif';
+    uiCtx.translate(startX + 12, cursorY + 12);
+    uiCtx.font = 'italic 800 66px "Barlow Condensed", sans-serif';
     uiCtx.textBaseline = 'top';
     uiCtx.fillStyle = '#0b0d12';
     uiCtx.fillText(subText, 0, 0);
     uiCtx.restore();
-    cursorY += 66;
+    cursorY += 78;
   }
 
   // Texto extra libre (solo si el usuario escribe algo)
-  if (verText.trim().length > 0) {
+  if (hasVer) {
     uiCtx.save();
-    uiCtx.translate(startX + 20, cursorY + 14);
-    uiCtx.font = '800 34px "Barlow Condensed", sans-serif';
+    uiCtx.translate(startX + 14, cursorY + 14);
+    uiCtx.font = '800 40px "Barlow Condensed", sans-serif';
     uiCtx.textBaseline = 'top';
     uiCtx.fillStyle = '#e11d48';
     uiCtx.fillText(verText, 0, 0);
@@ -550,8 +545,11 @@ function tick(): void {
     pivot.rotation.set(0.0, autoRotY, parseFloat(inpTilt.value));
   }
 
+  divider.update(elapsed, W / H);
   renderer.clear();
   renderer.render(scene, camera);
+  renderer.clearDepth();
+  renderer.render(dividerScene, divider.camera);
 }
 
 btnPause.addEventListener('click', () => {
@@ -559,7 +557,7 @@ btnPause.addEventListener('click', () => {
   btnPause.textContent = autoSpin ? 'Pausar giro' : 'Reanudar giro';
 });
 
-for (const el of [inpLogo, inpTag, inpSub, inpVer, inpTextAngle, inpLeftW]) {
+for (const el of [inpLogo, inpTag, inpSub, inpVer, inpTextAngle, inpTextScale]) {
   el.addEventListener('input', drawOverlay);
 }
 
