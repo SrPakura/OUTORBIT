@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { createMenuFluidDivider } from '@/game/render/menuShaders';
 import { NyxAnimator } from '@/game/render/nyxAnimator';
 
 // ============================================================================
@@ -256,10 +255,146 @@ renderer.setPixelRatio(1);
 renderer.setClearColor(0x0a0e25, 1);
 renderer.autoClear = false;
 
+const frameDividerVert = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const frameDividerFrag = /* glsl */ `
+  uniform float uTime;
+  uniform float uAspect;
+  varying vec2 vUv;
+
+  float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+  }
+
+  float valueNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+      mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x),
+      f.y
+    );
+  }
+
+  float fbm(vec2 p) {
+    float sum = 0.0;
+    float amp = 0.5;
+    for (int i = 0; i < 4; i++) {
+      sum += amp * valueNoise(p);
+      p = p * 2.03 + vec2(1.7, 9.2);
+      amp *= 0.5;
+    }
+    return sum;
+  }
+
+  float halftoneDots(vec2 fragCoord, float scale) {
+    float angle = 0.523599;
+    mat2 rot = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+    vec2 uv = (rot * fragCoord) / scale;
+    vec2 grid = fract(uv) - 0.5;
+    return length(grid);
+  }
+
+  void main() {
+    vec2 uv = vUv;
+    vec2 q = vec2(uv.x * uAspect, uv.y);
+
+    // Ventana espacial con los 4 bordes y esquinas redondeadas + corte diagonal izquierdo
+    float padY = 0.032;
+    float padX = 0.018;
+    float r = 0.036;
+
+    vec2 pBot = vec2(0.24 * uAspect, 0.0);
+    vec2 pTop = vec2(0.40 * uAspect, 1.0);
+    vec2 edgeDir = normalize(pTop - pBot);
+    vec2 nL = vec2(edgeDir.y, -edgeDir.x); // Normal interior hacia la derecha
+
+    float sLeft = dot(q - pBot, nL);
+    float sRight = (1.0 - padX) * uAspect - q.x;
+    float sTop = (1.0 - padY) - q.y;
+    float sBot = q.y - padY;
+
+    float dBox = min(min(sLeft, sRight), min(sTop, sBot));
+    float oX = max(max(r - sLeft, r - sRight), 0.0);
+    float oY = max(max(r - sTop, r - sBot), 0.0);
+    float dWindow = (oX > 0.0 && oY > 0.0) ? (r - length(vec2(oX, oY))) : dBox;
+
+    // Onda líquida orgánica idéntica a MenuFluidDivider aplicada a los 4 bordes
+    float t = uTime;
+    float n1 = fbm(vec2(q.y * 3.0 + t * 0.22, q.x * 2.2 - t * 0.12));
+    float n2 = fbm(vec2(q.y * 6.2 - t * 0.28, q.x * 3.6 + t * 0.16));
+    float wave = sin((q.y + q.x) * 8.0 + t * 1.2) * 0.35
+               + (n1 - 0.5) * 1.25
+               + (n2 - 0.5) * 0.55;
+    float d = dWindow - (wave / 1.5) * 0.014;
+
+    vec3 col;
+    float alpha;
+
+    if (d < 0.0) {
+      // Marco/panel blanco #f1f1ed con rejilla sutil
+      vec3 paper = vec3(0.945, 0.945, 0.929);
+      vec2 gp = gl_FragCoord.xy / 96.0;
+      vec2 gf = abs(fract(gp) - 0.5);
+      float lineMask = smoothstep(0.485, 0.5, max(gf.x, gf.y));
+      col = mix(paper, paper * 0.93, lineMask * 0.55);
+      alpha = 1.0;
+    } else if (d < 0.004) {
+      // Filo de tinta oscura en todo el perímetro redondeado
+      col = vec3(0.043, 0.051, 0.071);
+      alpha = 0.92;
+    } else if (d < 0.060) {
+      // Estela líquida + puntos halftone en los 4 bordes
+      float f = (d - 0.004) / 0.056;
+      float swirl = fbm(vec2((q.y + q.x) * 4.5 + t * 0.3, f * 3.5 - t * 0.45));
+      vec3 ink = vec3(0.043, 0.051, 0.071);
+      vec3 crimson = vec3(0.88, 0.11, 0.28);
+      vec3 plum = vec3(0.42, 0.19, 0.90);
+      vec3 cian = vec3(0.13, 0.83, 0.93);
+      vec3 liquid = mix(crimson, plum, smoothstep(0.2, 0.85, swirl));
+      liquid = mix(liquid, cian, smoothstep(0.55, 1.0, swirl) * 0.45);
+      col = mix(ink, liquid, smoothstep(0.0, 0.4, f));
+      float dots = halftoneDots(gl_FragCoord.xy, 6.5);
+      float dotMask = smoothstep(0.7, 0.1, f) * 0.45;
+      alpha = (dots < dotMask ? 0.42 : 0.20) * (1.0 - smoothstep(0.0, 1.0, f));
+    } else {
+      col = vec3(0.0);
+      alpha = 0.0;
+    }
+
+    gl_FragColor = vec4(col, alpha);
+  }
+`;
+
 const scene = new THREE.Scene();
 const dividerScene = new THREE.Scene();
-const divider = createMenuFluidDivider();
-dividerScene.add(divider.mesh);
+const dividerMat = new THREE.ShaderMaterial({
+  vertexShader: frameDividerVert,
+  fragmentShader: frameDividerFrag,
+  uniforms: {
+    uTime: { value: 0 },
+    uAspect: { value: W / H },
+  },
+  transparent: true,
+  depthTest: false,
+  depthWrite: false,
+  fog: false,
+});
+const dividerMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), dividerMat);
+dividerMesh.frustumCulled = false;
+dividerMesh.renderOrder = 10;
+dividerScene.add(dividerMesh);
+const dividerCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+dividerCamera.position.z = 1;
 
 const camera = new THREE.PerspectiveCamera(30, W / H, 0.1, 100);
 // Desplaza el encuadre para centrar a Nyx dentro de la ventana espacial a la derecha
@@ -371,62 +506,10 @@ function drawGameLogo(
 function drawOverlay(): void {
   uiCtx.clearRect(0, 0, W, H);
 
-  const pad = 34;
-  const r = 36; // Esquinas redondeadas del marco blanco
-
   // ------------------------------------------------------------------------
-  // 1. Marco blanco de papel (#f1f1ed, idéntico al shader del menú) con esquinas redondeadas
-  //    (solo arriba, derecha y abajo; el borde izquierdo especial lo dibuja MenuFluidDivider)
-  // ------------------------------------------------------------------------
-  uiCtx.save();
-  uiCtx.beginPath();
-  uiCtx.rect(0, 0, W, H);
-  // Agujero interior con esquinas redondeadas (even-odd) desde x=0 para no tapar el corte fluido izquierdo
-  uiCtx.moveTo(-20, pad);
-  uiCtx.lineTo(W - pad - r, pad);
-  uiCtx.quadraticCurveTo(W - pad, pad, W - pad, pad + r);
-  uiCtx.lineTo(W - pad, H - pad - r);
-  uiCtx.quadraticCurveTo(W - pad, H - pad, W - pad - r, H - pad);
-  uiCtx.lineTo(-20, H - pad);
-  uiCtx.closePath();
-
-  uiCtx.fillStyle = '#f1f1ed';
-  uiCtx.fill('evenodd');
-
-  // Rejilla sutil sobre el marco blanco exterior
-  uiCtx.save();
-  uiCtx.clip('evenodd');
-  uiCtx.strokeStyle = 'rgba(11, 13, 18, 0.04)';
-  uiCtx.lineWidth = 1.5;
-  for (let x = 0; x < W; x += 54) {
-    uiCtx.beginPath();
-    uiCtx.moveTo(x, 0);
-    uiCtx.lineTo(x, H);
-    uiCtx.stroke();
-  }
-  for (let y = 0; y < H; y += 54) {
-    uiCtx.beginPath();
-    uiCtx.moveTo(0, y);
-    uiCtx.lineTo(W, y);
-    uiCtx.stroke();
-  }
-  uiCtx.restore();
-
-  // Trazo de tinta fino alrededor de las esquinas redondeadas interiores
-  uiCtx.strokeStyle = 'rgba(11, 13, 18, 0.85)';
-  uiCtx.lineWidth = 4;
-  uiCtx.beginPath();
-  uiCtx.moveTo(W * 0.39, pad);
-  uiCtx.lineTo(W - pad - r, pad);
-  uiCtx.quadraticCurveTo(W - pad, pad, W - pad, pad + r);
-  uiCtx.lineTo(W - pad, H - pad - r);
-  uiCtx.quadraticCurveTo(W - pad, H - pad, W - pad - r, H - pad);
-  uiCtx.lineTo(W * 0.23, H - pad);
-  uiCtx.stroke();
-  uiCtx.restore();
-
-  // ------------------------------------------------------------------------
-  // 2. Bloque de textos grande sobre la franja blanca izquierda (100% configurable)
+  // Bloque de textos grande sobre la franja blanca izquierda (100% configurable)
+  // El marco blanco redondeado + efecto líquido halftone de los 4 lados lo
+  // dibuja frameDividerFrag en WebGL justo debajo.
   // ------------------------------------------------------------------------
   const logoText = inpLogo.value;
   const tagText = inpTag.value;
@@ -545,11 +628,12 @@ function tick(): void {
     pivot.rotation.set(0.0, autoRotY, parseFloat(inpTilt.value));
   }
 
-  divider.update(elapsed, W / H);
+  dividerMat.uniforms.uTime.value = elapsed;
+  dividerMat.uniforms.uAspect.value = W / H;
   renderer.clear();
   renderer.render(scene, camera);
   renderer.clearDepth();
-  renderer.render(dividerScene, divider.camera);
+  renderer.render(dividerScene, dividerCamera);
 }
 
 btnPause.addEventListener('click', () => {
