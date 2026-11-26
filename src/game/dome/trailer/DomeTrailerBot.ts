@@ -84,8 +84,6 @@ export class DomeTrailerBot {
   private dashPulseCooldown = 0;
   private jumpPulseCooldown = 0;
   private slalomPhase = 0;
-  private flowSlabCursor = 0;
-  private flowWaypointTimer = 0;
   private readonly omniCooldowns: Record<ActiveSkillId, number> = {
     gravity_field: 0,
     repulse_push: 0,
@@ -288,15 +286,14 @@ export class DomeTrailerBot {
       }
     }
 
-    // Iniciar aproximación a suelo flotante para Rebote Cinético
-    const bounceTriggerChance =
-      (this.config.style === 'flow' ? 0.11 : 0.05) * this.config.trickshotRate;
+    // Iniciar aproximación a suelo flotante para Rebote Cinético (desactivado en 'flow' para no frenar)
     if (
-      (this.state === 'combat_drill' || this.state === 'flow_slalom') &&
+      this.config.style !== 'flow' &&
+      this.state === 'combat_drill' &&
       this.bounceCooldown <= 0 &&
       ctx.slabs.length > 0 &&
       target &&
-      Math.random() < bounceTriggerChance
+      Math.random() < 0.05 * this.config.trickshotRate
     ) {
       const slab = this.pickBounceSlab(ctx.slabs, ctx.playerPos, target.position);
       if (slab) {
@@ -312,7 +309,7 @@ export class DomeTrailerBot {
       if (this.stateTimer > 2.4 || distSlab > 65) {
         this.state = 'combat_drill';
         this.stateTimer = 0;
-        this.bounceCooldown = this.config.style === 'flow' ? 1.5 : 2.0;
+        this.bounceCooldown = 2.0;
       } else {
         this.steerCameraToward(ctx, this.targetSlabCenter, 14, inp);
         inp.moveY = -1;
@@ -326,54 +323,51 @@ export class DomeTrailerBot {
     }
 
     // ------------------------------------------------------------------
-    // 7. MODO 'flow': Exhibición de movimiento a máxima velocidad + fly-bys
+    // 7. MODO 'flow': Vuelo libre continuo a máxima velocidad + esquive de suelos + skills a distancia
     // ------------------------------------------------------------------
     if (this.config.style === 'flow') {
-      this.flowWaypointTimer -= dt;
-      if (ctx.slabs.length > 0) {
-        if (this.flowWaypointTimer <= 0) {
-          this.flowSlabCursor = (this.flowSlabCursor + 1) % ctx.slabs.length;
-          this.flowWaypointTimer = 1.6;
+      // Trayectoria orbital amplia y fluida por el espacio abierto de la cúpula
+      const orbitAngle = this.slalomPhase * 0.55;
+      const orbitR = 38 + Math.sin(this.slalomPhase * 0.28) * 14;
+      this.tmpDesired.set(
+        Math.cos(orbitAngle) * orbitR,
+        Math.sin(this.slalomPhase * 0.42) * 18,
+        Math.sin(orbitAngle) * orbitR,
+      );
+
+      // Esquivar activamente cualquier suelo flotante en la ruta (margen amplio, cero frenadas)
+      for (const slab of ctx.slabs) {
+        this.tmpEnemyOffset.subVectors(ctx.playerPos, slab.center);
+        const clearR = Math.max(slab.halfExtents.x, slab.halfExtents.z) + 8.5;
+        const distSq = this.tmpEnemyOffset.lengthSq();
+        if (distSq < clearR * clearR && distSq > 1e-4) {
+          const dist = Math.sqrt(distSq);
+          const pushWeight = (clearR - dist) / clearR;
+          this.tmpDesired.addScaledVector(this.tmpEnemyOffset.divideScalar(dist), 28 * pushWeight);
         }
-        const slab = ctx.slabs[this.flowSlabCursor % ctx.slabs.length];
-        // Rodea por detrás/lateral del suelo flotante a toda velocidad
-        const sideSign = this.flowSlabCursor % 2 === 0 ? 1 : -1;
-        this.tmpRight.crossVectors(ctx.aimForward, ctx.aimUp).normalize();
-        this.tmpDesired
-          .copy(slab.center)
-          .addScaledVector(this.tmpRight, sideSign * (slab.halfExtents.x + 5.5));
-        this.tmpDesired.y += Math.sin(this.slalomPhase * 0.9) * 5.0;
-        if (ctx.playerPos.distanceTo(this.tmpDesired) < 8) {
-          this.flowWaypointTimer = 0;
-        }
-      } else {
-        this.tmpDesired.set(
-          Math.cos(this.slalomPhase * 0.7) * 44,
-          Math.sin(this.slalomPhase * 0.45) * 16,
-          Math.sin(this.slalomPhase * 0.7) * 44,
-        );
       }
 
       if (ctx.playerPos.length() > DOME_SOFT_BOUND) {
-        this.tmpDesired.lerp(this.tmpCross.set(0, 0, 0), 0.65);
+        this.tmpDesired.lerp(this.tmpCross.set(0, 0, 0), 0.7);
       }
 
-      // Si hay un enemigo justo en la trayectoria (fly-by), lo atraviesa de pasada
-      const distToEnemy = target ? ctx.playerPos.distanceTo(target.position) : Infinity;
-      if (target && distToEnemy < 16) {
-        this.steerCameraToward(ctx, target.position, 13, inp);
-        inp.wantAttack = true;
-        inp.attackHeld = true;
-      } else {
-        this.steerCameraToward(ctx, this.tmpDesired, 7.2, inp);
-        inp.attackHeld = ctx.playerSpeed > 18;
+      // Disparar habilidades a distancia en pleno vuelo (sin frenar con patadas cuerpo a cuerpo)
+      if (target && ctx.playerPos.distanceTo(target.position) < 52) {
+        const rangedSkill = this.pickReadyOmniSkill(RANGED_TRICKSHOT_SKILLS);
+        if (rangedSkill !== null && Math.random() < 0.06 * this.config.trickshotRate) {
+          this.steerCameraToward(ctx, target.position, 14, inp);
+          this.fireOmniSkill(rangedSkill, 4.0, inp);
+        }
       }
 
+      this.steerCameraToward(ctx, this.tmpDesired, 6.5, inp);
       inp.moveY = -1;
       inp.dashHeld = true;
-      if (ctx.playerSpeed < 23.5 && this.dashPulseCooldown <= 0) {
+      inp.attackHeld = false;
+      inp.wantAttack = false;
+      if (ctx.playerSpeed < 25 && this.dashPulseCooldown <= 0) {
         inp.wantDash = true;
-        this.dashPulseCooldown = 0.25;
+        this.dashPulseCooldown = 0.22;
       }
       return inp;
     }
