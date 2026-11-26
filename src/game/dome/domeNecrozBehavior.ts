@@ -213,8 +213,8 @@ export function createNecrozBossState(
   // Se añade como hijo de mesh para rotar solidariamente a 25°/s.
   mesh.add(shieldMesh);
 
-  // Tinta exterior limpia SOLO en los 3 bordes de cada triángulo (6 vértices/tri).
-  const edgeBuf = new Float32Array(triCount * 6 * 3);
+  // Tinta exterior limpia en los 3 bordes base + 3 aristas hacia la punta (12 vértices/tri).
+  const edgeBuf = new Float32Array(triCount * 12 * 3);
   const edgeGeo = new THREE.BufferGeometry();
   const shieldEdgePosAttr = new THREE.BufferAttribute(edgeBuf, 3);
   shieldEdgePosAttr.setUsage(THREE.DynamicDrawUsage);
@@ -354,11 +354,11 @@ function syncShieldGeometry(n: NecrozBossState, dt: number): void {
   for (let i = 0; i < n.shieldTriangles.length; i++) {
     const tri = n.shieldTriangles[i];
     const base = i * 27;
-    const eBase = i * 18;
+    const eBase = i * 36;
     if (!tri.intact) {
       tri.spikeH = 0;
       arr.fill(0, base, base + 27);
-      edgeArr.fill(0, eBase, eBase + 18);
+      edgeArr.fill(0, eBase, eBase + 36);
       continue;
     }
     tri.spikeH += (targetH - tri.spikeH) * Math.min(1, dt * NECROZ_DEF_SPIKE_GROW_RATE);
@@ -367,7 +367,7 @@ function syncShieldGeometry(n: NecrozBossState, dt: number): void {
     writeTri(arr, base + 9, tri.v1, tri.v2, _v1);
     writeTri(arr, base + 18, tri.v2, tri.v0, _v1);
 
-    // Tinta exterior del triángulo (v0->v1, v1->v2, v2->v0) ligeramente por fuera
+    // Tinta exterior: 3 bordes base + 3 aristas hacia la punta (apex)
     const s = 1.005;
     edgeArr[eBase + 0] = tri.v0.x * s; edgeArr[eBase + 1] = tri.v0.y * s; edgeArr[eBase + 2] = tri.v0.z * s;
     edgeArr[eBase + 3] = tri.v1.x * s; edgeArr[eBase + 4] = tri.v1.y * s; edgeArr[eBase + 5] = tri.v1.z * s;
@@ -375,6 +375,18 @@ function syncShieldGeometry(n: NecrozBossState, dt: number): void {
     edgeArr[eBase + 9] = tri.v2.x * s; edgeArr[eBase + 10] = tri.v2.y * s; edgeArr[eBase + 11] = tri.v2.z * s;
     edgeArr[eBase + 12] = tri.v2.x * s; edgeArr[eBase + 13] = tri.v2.y * s; edgeArr[eBase + 14] = tri.v2.z * s;
     edgeArr[eBase + 15] = tri.v0.x * s; edgeArr[eBase + 16] = tri.v0.y * s; edgeArr[eBase + 17] = tri.v0.z * s;
+
+    if (tri.spikeH > 0.05) {
+      const ax = _v1.x * s, ay = _v1.y * s, az = _v1.z * s;
+      edgeArr[eBase + 18] = tri.v0.x * s; edgeArr[eBase + 19] = tri.v0.y * s; edgeArr[eBase + 20] = tri.v0.z * s;
+      edgeArr[eBase + 21] = ax; edgeArr[eBase + 22] = ay; edgeArr[eBase + 23] = az;
+      edgeArr[eBase + 24] = tri.v1.x * s; edgeArr[eBase + 25] = tri.v1.y * s; edgeArr[eBase + 26] = tri.v1.z * s;
+      edgeArr[eBase + 27] = ax; edgeArr[eBase + 28] = ay; edgeArr[eBase + 29] = az;
+      edgeArr[eBase + 30] = tri.v2.x * s; edgeArr[eBase + 31] = tri.v2.y * s; edgeArr[eBase + 32] = tri.v2.z * s;
+      edgeArr[eBase + 33] = ax; edgeArr[eBase + 34] = ay; edgeArr[eBase + 35] = az;
+    } else {
+      edgeArr.fill(0, eBase + 18, eBase + 36);
+    }
   }
   n.shieldPosAttr.needsUpdate = true;
   n.shieldEdgePosAttr.needsUpdate = true;
