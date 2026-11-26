@@ -181,7 +181,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   // detonación kamikaze): suelta la EXP restante (25 % en la autoinmolación)
   // y contabiliza la kill igual que una patada de Nyx.
   waveMgr.onInternalKill = (enemy) => {
-    pickups.spawnFromEnemy(enemy.position, enemy.entity.expValue, 6);
+    pickups.spawnFromEnemy(enemy.position, enemy.entity.expValue, 9);
     runTracker.recordKill({
       isElite: enemy.entity.isElite,
       isBoss: enemy.entity.isBoss,
@@ -387,7 +387,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     // antes de llegar aquí: la idempotencia la marca killEnemy (true sólo la
     // primera vez), no el flag de vida.
     if (!waveMgr.killEnemy(enemy)) return;
-    pickups.spawnFromEnemy(enemy.position, enemy.entity.expValue, 6);
+    pickups.spawnFromEnemy(enemy.position, enemy.entity.expValue, 9);
     runTracker.recordKill({
       isElite: enemy.entity.isElite,
       isBoss: enemy.entity.isBoss,
