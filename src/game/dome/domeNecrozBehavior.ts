@@ -23,13 +23,13 @@ const NECROZ_DEF_SPIKE_PUSH = 24;
 // Esfera Blanca exterior (80–88.6 m): pirámides de 75 m de altura.
 const DOME_SPIKE_BASE_RADIUS = DOME_PLAYER_BOUND_RADIUS - 3.6; // ~85 m
 const DOME_SPIKE_HEIGHT = 75.0;
-const DOME_SPIKE_GROW_SEC = 1.5;
+const DOME_SPIKE_GROW_SEC = 2.3;
 const DOME_SPIKE_HOLD_SEC = 2.0;
 const DOME_SPIKE_RETRACT_SEC = 0.5;
 const DOME_SPIKE_POOL_SIZE = 32;
 const DOME_SPIKE_BASE_HALF = 5.4;
-const DOME_SPIKE_PAIR_DELAY_SEC = 0.5;
-const DOME_SPIKE_WAVE_INTERVAL_SEC = 2.0;
+const DOME_SPIKE_PAIR_DELAY_SEC = 0.9;
+const DOME_SPIKE_WAVE_INTERVAL_SEC = 2.8;
 const DOME_SPIKE_DAMAGE = 10;
 const DOME_SPIKE_PUSH = 22;
 
@@ -98,6 +98,7 @@ export interface NecrozBossState {
   shieldRadius: number;
   shieldMesh: THREE.Mesh;
   shieldPosAttr: THREE.BufferAttribute;
+  shieldEdgePosAttr: THREE.BufferAttribute;
   shieldTriangles: ShieldTriangle[];
   building: boolean;
   buildProgress: number;
@@ -115,6 +116,8 @@ export interface NecrozBossState {
   homingTimer: number;
   lastHomingBase: THREE.Vector3;
   hasLastHoming: boolean;
+  lastAttackWasHoming: boolean;
+  aiPauseTimer: number;
 
   // Clips / feedback
   hitTimer: number;
@@ -169,37 +172,58 @@ export function createNecrozBossState(
     triangles[orderIndices[rank]].buildOrder = rank / Math.max(1, orderIndices.length - 1);
   }
 
-  // Cada triángulo del escudo = 3 sub-triángulos (9 vértices) para extrusión 4.º vértice.
+  // Cada triángulo del escudo = 3 sub-triángulos (9 vértices) para extrusión 4.º vértice,
+  // con colores por cara (tonos variados de cristal) para distinguir cada triángulo.
   const buf = new Float32Array(triCount * 9 * 3);
+  const colBuf = new Float32Array(triCount * 9 * 3);
+  const PALETTE = [
+    new THREE.Color(0x6d28d9), // violeta profundo
+    new THREE.Color(0x9333ea), // púrpura vivo
+    new THREE.Color(0xc026d3), // fucsia cristalino
+    new THREE.Color(0x4338ca), // índigo oscuro
+    new THREE.Color(0xa855f7), // amatista brillante
+  ];
+  for (let i = 0; i < triCount; i++) {
+    const c = PALETTE[i % PALETTE.length];
+    for (let v = 0; v < 9; v++) {
+      const o = (i * 9 + v) * 3;
+      colBuf[o + 0] = c.r;
+      colBuf[o + 1] = c.g;
+      colBuf[o + 2] = c.b;
+    }
+  }
   const shieldGeo = new THREE.BufferGeometry();
   const shieldPosAttr = new THREE.BufferAttribute(buf, 3);
   shieldPosAttr.setUsage(THREE.DynamicDrawUsage);
   shieldGeo.setAttribute('position', shieldPosAttr);
+  shieldGeo.setAttribute('color', new THREE.BufferAttribute(colBuf, 3));
   shieldGeo.computeVertexNormals();
 
   const shieldMat = new THREE.MeshBasicMaterial({
-    color: 0xa855f7,
+    vertexColors: true,
     transparent: true,
-    opacity: 0.48,
+    opacity: 0.72,
     side: THREE.FrontSide,
     depthWrite: false,
-    wireframe: false,
   });
   const shieldMesh = new THREE.Mesh(shieldGeo, shieldMat);
   shieldMesh.name = 'necroz_crystal_shield';
   // Se añade como hijo de mesh para rotar solidariamente a 25°/s.
   mesh.add(shieldMesh);
 
-  // Wireframe sutil encima para resaltar la triangulación cristalina.
-  const wireMat = new THREE.MeshBasicMaterial({
-    color: 0xe9d5ff,
+  // Tinta exterior limpia SOLO en los 3 bordes de cada triángulo (6 vértices/tri).
+  const edgeBuf = new Float32Array(triCount * 6 * 3);
+  const edgeGeo = new THREE.BufferGeometry();
+  const shieldEdgePosAttr = new THREE.BufferAttribute(edgeBuf, 3);
+  shieldEdgePosAttr.setUsage(THREE.DynamicDrawUsage);
+  edgeGeo.setAttribute('position', shieldEdgePosAttr);
+  const edgeMat = new THREE.LineBasicMaterial({
+    color: 0xf5d0fe,
     transparent: true,
-    opacity: 0.55,
-    wireframe: true,
-    depthWrite: false,
+    opacity: 0.92,
   });
-  const wireMesh = new THREE.Mesh(shieldGeo, wireMat);
-  shieldMesh.add(wireMesh);
+  const edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
+  shieldMesh.add(edgeLines);
 
   void scene;
 
@@ -210,6 +234,7 @@ export function createNecrozBossState(
     shieldRadius,
     shieldMesh,
     shieldPosAttr,
+    shieldEdgePosAttr,
     shieldTriangles: triangles,
     building: true,
     buildProgress: 0,
@@ -225,6 +250,8 @@ export function createNecrozBossState(
     homingTimer: 0,
     lastHomingBase: new THREE.Vector3(),
     hasLastHoming: false,
+    lastAttackWasHoming: false,
+    aiPauseTimer: 0,
     hitTimer: 0,
     defClipTimer: 0,
     currentClip: null,
@@ -292,7 +319,9 @@ export function disposeNecrozState(n: NecrozBossState): void {
   n.shieldMesh.geometry.dispose();
   (n.shieldMesh.material as THREE.Material).dispose();
   for (const child of n.shieldMesh.children) {
-    const m = (child as THREE.Mesh).material;
+    const obj = child as THREE.Mesh | THREE.LineSegments;
+    obj.geometry?.dispose();
+    const m = obj.material;
     if (m && !Array.isArray(m)) m.dispose();
   }
   n.shieldMesh.removeFromParent();
@@ -317,14 +346,17 @@ function writeTri(arr: Float32Array, offset: number, a: THREE.Vector3, b: THREE.
 
 function syncShieldGeometry(n: NecrozBossState, dt: number): void {
   const arr = n.shieldPosAttr.array as Float32Array;
+  const edgeArr = n.shieldEdgePosAttr.array as Float32Array;
   const targetH = n.defensiveSpikesOut ? NECROZ_DEF_SPIKE_HEIGHT : 0;
 
   for (let i = 0; i < n.shieldTriangles.length; i++) {
     const tri = n.shieldTriangles[i];
     const base = i * 27;
+    const eBase = i * 18;
     if (!tri.intact) {
       tri.spikeH = 0;
       arr.fill(0, base, base + 27);
+      edgeArr.fill(0, eBase, eBase + 18);
       continue;
     }
     tri.spikeH += (targetH - tri.spikeH) * Math.min(1, dt * NECROZ_DEF_SPIKE_GROW_RATE);
@@ -332,8 +364,18 @@ function syncShieldGeometry(n: NecrozBossState, dt: number): void {
     writeTri(arr, base + 0, tri.v0, tri.v1, _v1);
     writeTri(arr, base + 9, tri.v1, tri.v2, _v1);
     writeTri(arr, base + 18, tri.v2, tri.v0, _v1);
+
+    // Tinta exterior del triángulo (v0->v1, v1->v2, v2->v0) ligeramente por fuera
+    const s = 1.005;
+    edgeArr[eBase + 0] = tri.v0.x * s; edgeArr[eBase + 1] = tri.v0.y * s; edgeArr[eBase + 2] = tri.v0.z * s;
+    edgeArr[eBase + 3] = tri.v1.x * s; edgeArr[eBase + 4] = tri.v1.y * s; edgeArr[eBase + 5] = tri.v1.z * s;
+    edgeArr[eBase + 6] = tri.v1.x * s; edgeArr[eBase + 7] = tri.v1.y * s; edgeArr[eBase + 8] = tri.v1.z * s;
+    edgeArr[eBase + 9] = tri.v2.x * s; edgeArr[eBase + 10] = tri.v2.y * s; edgeArr[eBase + 11] = tri.v2.z * s;
+    edgeArr[eBase + 12] = tri.v2.x * s; edgeArr[eBase + 13] = tri.v2.y * s; edgeArr[eBase + 14] = tri.v2.z * s;
+    edgeArr[eBase + 15] = tri.v0.x * s; edgeArr[eBase + 16] = tri.v0.y * s; edgeArr[eBase + 17] = tri.v0.z * s;
   }
   n.shieldPosAttr.needsUpdate = true;
+  n.shieldEdgePosAttr.needsUpdate = true;
   n.shieldMesh.geometry.computeVertexNormals();
 }
 
@@ -724,7 +766,7 @@ export function updateNecrozEnemy(
     }
   }
 
-  // --- Toma de decisiones IA Perfecta (0 s cooldowns, gobernada por Pereza) ---
+  // --- Toma de decisiones IA Perfecta (gobernada por Pereza, sin spam) ---
   const busy =
     n.building ||
     n.defensiveSpikesOut ||
@@ -735,24 +777,33 @@ export function updateNecrozEnemy(
     // Drena pereza pasivamente (-8/s) solo cuando no ejecuta acciones.
     n.laziness = Math.max(0, n.laziness - LAZINESS_DRAIN_PER_SEC * dt);
 
-    const brokenFrac = getBrokenFraction(n);
-    if (brokenFrac >= NECROZ_REBUILD_MIN_BROKEN_FRAC && n.laziness <= 55) {
-      // Reconstruir escudo (4.0 s, +45 Pereza) solo si faltan >= 45% triángulos.
-      n.building = true;
-      n.buildProgress = 0;
-      n.buildDuration = NECROZ_REBUILD_SEC;
-      addLaziness(n, ctx, LAZINESS_REBUILD_COST);
-    } else if (n.laziness < 75) {
-      if (nyxSpeed < 10.0) {
-        // Castigo barato a la quietud/lentitud: Púas Teledirigidas (5 m/s)
-        n.homingLeft = 4;
-        n.homingTimer = 0;
-        n.hasLastHoming = false;
-      } else {
-        // Nyx rápida por la cúpula: 10–15 oleadas de Púas Ofensivas (75 m)
-        n.offensiveWavesLeft = 10 + Math.floor(Math.random() * 6);
-        n.offensivePairStep = 0;
-        n.offensiveTimer = 0;
+    if (n.aiPauseTimer > 0) {
+      n.aiPauseTimer = Math.max(0, n.aiPauseTimer - dt);
+    } else {
+      const brokenFrac = getBrokenFraction(n);
+      if (brokenFrac >= NECROZ_REBUILD_MIN_BROKEN_FRAC && n.laziness <= 55) {
+        // Reconstruir escudo (4.0 s, +45 Pereza) solo si faltan >= 45% triángulos.
+        n.building = true;
+        n.buildProgress = 0;
+        n.buildDuration = NECROZ_REBUILD_SEC;
+        addLaziness(n, ctx, LAZINESS_REBUILD_COST);
+        n.aiPauseTimer = 1.6;
+      } else if (n.laziness < 75) {
+        if (nyxSpeed < 14.0 || !n.lastAttackWasHoming) {
+          // Púas Teledirigidas (5 m/s detrás de Nyx): alterna con ofensivas o castiga lentitud.
+          n.homingLeft = 4 + Math.floor(Math.random() * 3);
+          n.homingTimer = 0;
+          n.hasLastHoming = false;
+          n.lastAttackWasHoming = true;
+          n.aiPauseTimer = 2.4;
+        } else {
+          // Nyx rápida por la cúpula: ráfaga legible de Púas Ofensivas (6–10 oleadas de 2 en 2)
+          n.offensiveWavesLeft = 6 + Math.floor(Math.random() * 5);
+          n.offensivePairStep = 0;
+          n.offensiveTimer = 0;
+          n.lastAttackWasHoming = false;
+          n.aiPauseTimer = 2.8;
+        }
       }
     }
   }
