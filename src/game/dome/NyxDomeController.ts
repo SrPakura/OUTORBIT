@@ -434,6 +434,7 @@ export class NyxDomeController {
    * arco acrobático — el modo ya es `kinetic_bounce`.
    */
   private guardBouncedThisHit = false;
+  private smashKnockbackedThisHit = false;
   /**
    * Contra-Parry del Pulpo Espiral: el pulpo anuló ESTE impacto (ventana de
    * alerta de su ciclo de 5.0 s) — la patada NO se corta ni rebota; Nyx
@@ -1170,11 +1171,15 @@ export class NyxDomeController {
    * Rompesuelos): suma impulso a la velocidad de Nyx y reproduce `hit_stagger`.
    */
   applySmashKnockback(pushDir: THREE.Vector3, speed: number): void {
-    if (this.mode === 'speed_attack' || this.mode === 'dashing') {
+    this.smashKnockbackedThisHit = true;
+    this.animLock = null;
+    if (this.mode === 'speed_attack' || this.mode === 'dashing' || this.mode === 'kick_recover') {
       this.mode = 'floating';
       this.speedAttackKind = null;
       this.lockedEnemy = null;
       this.reticleLockState = 'none';
+      this.bulletTimeTimer = 0;
+      this.redirectWindowTimer = 0;
       this.velocity.copy(pushDir).multiplyScalar(speed);
     } else {
       this.velocity.addScaledVector(pushDir, speed);
@@ -2596,6 +2601,7 @@ export class NyxDomeController {
     const impactSpeed = this.velocity.length();
     const kineticMult = Math.max(0.6, Math.pow(impactSpeed / 14, 1.35));
     this.guardBouncedThisHit = false;
+    this.smashKnockbackedThisHit = false;
     this.counterParriedThisHit = false;
     onHitEnemy?.(enemy, this.tmpE.copy(this.facing), isDrill, impactSpeed);
     this.vfx.spawnBurst(enemy.position, this.facing, 0xffc24d, 30);
@@ -2633,7 +2639,7 @@ export class NyxDomeController {
     this.impactWobbleImpulse = Math.max(this.impactWobbleImpulse, Math.min(1.3, kineticMult));
     this.lockedEnemy = null;
     this.speedAttackKind = null;
-    if (!this.guardBouncedThisHit) {
+    if (!this.guardBouncedThisHit && !this.smashKnockbackedThisHit) {
       // Cualquier golpe conectado no bloqueado apaga el slow-mo de bullet-time
       // para que nunca quede cámara lenta colgando tras impactar sin matar.
       this.bulletTimeTimer = 0;
