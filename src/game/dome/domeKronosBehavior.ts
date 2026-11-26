@@ -42,7 +42,7 @@ export const KRONOS_STAR_SEGMENTS = [3, 6, 9, 12];
 /** Radios de impacto directo por estrella (star_core_1..4 según tamaño real del GLB). */
 export const KRONOS_STAR_HIT_RADII = [1.15, 1.0, 0.85, 0.75] as const;
 /** Vida por fase (Fases 1–3) si los impactos no aciertan directamente en una Estrella Dorsal. */
-export const KRONOS_PHASE_MAX_HP = 350;
+export const KRONOS_PHASE_MAX_HP = 500;
 /** Blindaje inicial por fase (se reinicia al pasar de fase). */
 export const KRONOS_PHASE_FLESH = 90;
 
@@ -104,8 +104,8 @@ const KRONOS_BITE_FLIGHT_SEC = 0.8;
 const KRONOS_PORTAL_LIFE_SEC = 3.2;
 const KRONOS_PORTAL_COOLDOWN = 8.0;
 
-// --- Fase 4: Destrucción (supervivencia de 45 s) ---
-const KRONOS_PHASE4_TOTAL_SEC = 45.0;
+// --- Fase 4: Destrucción (supervivencia de 60 s) ---
+const KRONOS_PHASE4_TOTAL_SEC = 60.0;
 const KRONOS_COSMOS_DAMAGE = 16; // cosmos_fusion: impacto automático directo.
 const KRONOS_COSMOS_WINDUP_SEC = 0.3;
 const KRONOS_SUPERNOVA_SEC = 1.2; // Convulsión segmento a segmento final.
@@ -1652,33 +1652,30 @@ export function enterKronosPhase4(
   if (physics) {
     internal.material = physics;
   }
-  // Agenda de efectos sobre Nyx repartida por los 45 s:
-  //  - Temblor de cámara: 4 ráfagas que suman 15 s.
-  //  - Deformación: 2 ráfagas que suman 11.25 s (5.25 + 6).
-  //  - Ejes invertidos: 5 activaciones de 3.75 s (18.75 s).
+  // Agenda de efectos sobre Nyx repartida por los 60 s:
   k.agenda = [
-    { at: 2.25, on: true, kind: 1 },
-    { at: 6.0, on: false, kind: 1 },
-    { at: 7.5, on: true, kind: 2 },
-    { at: 9.75, on: true, kind: 0 },
-    { at: 11.25, on: false, kind: 2 },
-    { at: 14.25, on: true, kind: 1 },
-    { at: 15.0, on: false, kind: 0 },
-    { at: 18.0, on: false, kind: 1 },
-    { at: 19.5, on: true, kind: 2 },
-    { at: 22.5, on: true, kind: 0 },
-    { at: 23.25, on: false, kind: 2 },
-    { at: 26.25, on: true, kind: 1 },
-    { at: 28.5, on: false, kind: 0 },
-    { at: 30.0, on: false, kind: 1 },
-    { at: 30.75, on: true, kind: 2 },
-    { at: 34.5, on: false, kind: 2 },
-    { at: 35.625, on: true, kind: 2 },
-    { at: 37.5, on: true, kind: 1 },
-    { at: 39.375, on: false, kind: 2 },
-    { at: 41.25, on: false, kind: 1 },
-    { at: 41.625, on: true, kind: 2 },
-    { at: 45.0, on: false, kind: 2 },
+    { at: 3.0, on: true, kind: 1 },
+    { at: 8.0, on: false, kind: 1 },
+    { at: 10.0, on: true, kind: 2 },
+    { at: 13.0, on: true, kind: 0 },
+    { at: 15.0, on: false, kind: 2 },
+    { at: 19.0, on: true, kind: 1 },
+    { at: 20.0, on: false, kind: 0 },
+    { at: 24.0, on: false, kind: 1 },
+    { at: 26.0, on: true, kind: 2 },
+    { at: 30.0, on: true, kind: 0 },
+    { at: 31.0, on: false, kind: 2 },
+    { at: 35.0, on: true, kind: 1 },
+    { at: 38.0, on: false, kind: 0 },
+    { at: 40.0, on: false, kind: 1 },
+    { at: 41.0, on: true, kind: 2 },
+    { at: 46.0, on: false, kind: 2 },
+    { at: 47.5, on: true, kind: 2 },
+    { at: 50.0, on: true, kind: 1 },
+    { at: 52.5, on: false, kind: 2 },
+    { at: 55.0, on: false, kind: 1 },
+    { at: 55.5, on: true, kind: 2 },
+    { at: 60.0, on: false, kind: 2 },
   ];
   k.agendaIdx = 0;
 }
