@@ -1002,6 +1002,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private incomingSkillProjectiles: readonly IncomingSkillProjectile[] = [];
   private sparrowShriekPulse = false;
   private sparrowCameraShake = 0;
+  private sparrowSlowMoScale = 1;
   /**
    * Efectos de cosmos_fusion sobre Nyx (Fase 4): el game loop los empuja al
    * controller cada frame y consume los pulsos one-shot.
@@ -1825,6 +1826,10 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     return this.sparrowCameraShake;
   }
 
+  getSparrowSlowMoScale(): number {
+    return this.sparrowSlowMoScale;
+  }
+
   notifySparrowSkillHit(enemy: TestEnemySphere): void {
     const internal = this.internals.get(enemy.id);
     if (internal?.sparrow && internal.enemy.entity.alive) {
@@ -2173,6 +2178,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   } {
     let didEnemyEvadeDash = false;
     this.sparrowCameraShake = 0;
+    this.sparrowSlowMoScale = 1;
     this.waveTime += dt;
     this.playerPosCache.copy(playerPos);
     // Ventana del parry: si el gólem propietario murió por otra vía
@@ -2407,6 +2413,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           const fade = Math.min(1, internal.sparrow.shriekShakeTimer / 1.2);
           this.sparrowCameraShake = Math.max(this.sparrowCameraShake, 0.56 * fade);
         }
+        this.sparrowSlowMoScale = Math.min(this.sparrowSlowMoScale, internal.sparrow.slowMoScale);
         if (sparrowRes.crashDamage > 0) {
           enemy.hitFlash = Math.max(enemy.hitFlash, sparrowRes.hitFlash);
           enemy.entity.hitFlash = enemy.hitFlash;
@@ -4625,6 +4632,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.resetKronosNyxEffects();
     this.sparrowCameraShake = 0;
     this.sparrowShriekPulse = false;
+    this.sparrowSlowMoScale = 1;
   }
 
   /**

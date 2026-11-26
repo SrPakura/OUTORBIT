@@ -77,6 +77,8 @@ export interface SparrowBossState {
   hitTimer: number;
   bankRad: number;
   weavePhase: number;
+  /** Escala de tiempo táctica suave (0.75x en escenas clave, 1.0 en reposo). */
+  slowMoScale: number;
   activeClip: string | null;
 }
 
@@ -216,6 +218,7 @@ export function createSparrowState(seedPhase: number): SparrowBossState {
     hitTimer: 0,
     bankRad: 0,
     weavePhase: seedPhase,
+    slowMoScale: 1,
     activeClip: null,
   };
 }
@@ -240,6 +243,7 @@ export function resetSparrowState(state: SparrowBossState): void {
   state.drillHitPlayer = false;
   state.hitTimer = 0;
   state.bankRad = 0;
+  state.slowMoScale = 1;
   state.activeClip = null;
   hideMirageClone(state);
 }
@@ -537,6 +541,7 @@ export function updateSparrowEnemy(
 
   if (passive) {
     hideMirageClone(state);
+    state.slowMoScale = 1;
     velocity.multiplyScalar(Math.exp(-4.0 * dt));
     _toPlayer.subVectors(playerPos, pos);
     if (_toPlayer.lengthSq() > 1e-4) {
@@ -967,6 +972,19 @@ export function updateSparrowEnemy(
   }
 
   state.bankRad += (targetBank - state.bankRad) * Math.min(1, dt * 8);
+
+  // Cámara lenta táctica leve (0.75x) en las escenas clave de lectura/reflejo:
+  // Dispersión, Frenado Rompesuelos, Aleteo Salvaje, Taladro cercano e impacto.
+  const postDist = pos.distanceTo(playerPos);
+  const slowMoScene =
+    state.state === 'clone_split' ||
+    state.state === 'hard_brake' ||
+    state.state === 'wild_flap' ||
+    state.state === 'drill_windup' ||
+    (state.state === 'drill_dive' && postDist <= 30.0) ||
+    (state.state === 'crash_stun' && state.stateTimer >= SPARROW_CRASH_STUN_SEC - 0.75);
+  const targetSlowMo = slowMoScene ? 0.75 : 1.0;
+  state.slowMoScale += (targetSlowMo - state.slowMoScale) * Math.min(1, dt * 16);
 
   // Brillo del `star_core_mouth`: arde al abrir el pico (Garrido / Taladro / Crash Stun).
   if (rig?.mouthStarMaterial) {

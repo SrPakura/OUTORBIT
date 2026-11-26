@@ -1203,7 +1203,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         audio.playSparrowShriek();
       }
       controller.setKronosControlsInverted(kronosFx.controlsInverted);
-      controller.setKronosSlowMoScale(kronosFx.phase4 ? 0.75 : 1);
+      controller.setKronosSlowMoScale(
+        Math.min(kronosFx.phase4 ? 0.75 : 1, waveMgr.getSparrowSlowMoScale()),
+      );
       if (kronosFx.shakePulse > 0) {
         // Rugido/apertura de portal de KRONOS: sacudida puntual + señal sonora.
         controller.punchCamera(Math.min(1.3, kronosFx.shakePulse));
