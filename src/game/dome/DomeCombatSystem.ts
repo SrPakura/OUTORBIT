@@ -221,7 +221,7 @@ export class DomeCombatSystem {
   /** Estado de alteraciones de Nyx (leerlo para el HUD/VFX, no mutarlo a mano). */
   readonly nyxStatus: NyxStatusEffects;
   private nyxHp: number;
-  private readonly nyxMaxHp: number;
+  private nyxMaxHp: number;
 
   constructor(nyxMaxHp = 100) {
     this.nyxMaxHp = nyxMaxHp;
@@ -246,6 +246,18 @@ export class DomeCombatSystem {
 
   get isNyxDown(): boolean {
     return this.nyxHp <= 0;
+  }
+
+  /**
+   * Sincroniza la vida real de Nyx desde el controlador para que `isNyxDown` no
+   * quede atascado en `true` tras curaciones (p. ej. Absorción de Edén) y bloquee
+   * alteraciones como la mancha de tinta ácida.
+   */
+  syncNyxHp(hp: number, maxHp?: number): void {
+    if (maxHp !== undefined && maxHp > 0) {
+      this.nyxMaxHp = maxHp;
+    }
+    this.nyxHp = Math.max(0, hp);
   }
 
   reset(nyxMaxHp = this.nyxMaxHp): void {

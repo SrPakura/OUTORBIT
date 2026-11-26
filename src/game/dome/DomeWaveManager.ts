@@ -2396,7 +2396,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     playerKickAnim: boolean,
     playerGroundedSlab: SlabCollider | null,
     activeSlabs: SlabCollider[] | undefined,
-    onPlayerHit: (damage: number) => void,
+    onPlayerHit: (damage: number, options?: { hurtSlash?: boolean }) => void,
     onOctopusInk: (durationSec: number, opacity: number) => void,
     onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
     onSlabSmash?: (slab: SlabCollider) => void,
@@ -2952,7 +2952,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     playerKickAnim: boolean,
     playerGroundedSlab: SlabCollider | null,
     activeSlabs: SlabCollider[] | undefined,
-    onPlayerHit: (damage: number) => void,
+    onPlayerHit: (damage: number, options?: { hurtSlash?: boolean }) => void,
     onOctopusInk: (durationSec: number, opacity: number) => void,
     onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
     onSlabSmash?: (slab: SlabCollider) => void,
@@ -3962,7 +3962,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     dt: number,
     playerPos: THREE.Vector3,
     activeSlabs: SlabCollider[],
-    onPlayerHit: (damage: number) => void,
+    onPlayerHit: (damage: number, options?: { hurtSlash?: boolean }) => void,
     onOctopusInk: (durationSec: number, opacity: number) => void,
     onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
   ): void {
@@ -4122,7 +4122,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         } else if (projectile.kind === 'ink_ball' || projectile.kind === 'ink_giant') {
           // Bola de tinta ácida: daño directo (8 HP) + mancha negra en el HUD
           // (55 % de opacidad durante 3.0 s) con DoT ácido de 4 HP/s.
-          onPlayerHit(projectile.damage);
+          // Sin raja roja: la mancha de tinta es el feedback propio del pulpo.
+          onPlayerHit(projectile.damage, { hurtSlash: false });
           onOctopusInk(INK_STAIN_SEC, INK_STAIN_OPACITY);
         } else {
           onPlayerHit(projectile.damage);

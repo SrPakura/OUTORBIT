@@ -1175,17 +1175,26 @@ export class NyxDomeController {
     }
   }
 
-  applyDamage(amount: number): void {
+  applyDamage(
+    amount: number,
+    options?: { hurtSlash?: boolean; shake?: boolean; sound?: boolean },
+  ): void {
     if (amount <= 0) return;
     this.hp = Math.max(0, this.hp - amount);
-    this.impactFlash = Math.max(this.impactFlash, 0.85);
-    this.hurtFlash = 1.0;
-    if (this.hurtSfxCooldown <= 0) {
-      this.hurtSlashSeed += 1;
-      this.hurtSfxCooldown = 0.22;
-      this.audio?.playHurt();
+    if (options?.hurtSlash !== false) {
+      this.impactFlash = Math.max(this.impactFlash, 0.85);
+      this.hurtFlash = 1.0;
+      if (this.hurtSfxCooldown <= 0) {
+        this.hurtSlashSeed += 1;
+        this.hurtSfxCooldown = 0.22;
+        if (options?.sound !== false) {
+          this.audio?.playHurt();
+        }
+      }
     }
-    this.shake = Math.max(this.shake, 0.25);
+    if (options?.shake !== false) {
+      this.shake = Math.max(this.shake, 0.25);
+    }
   }
 
   /**

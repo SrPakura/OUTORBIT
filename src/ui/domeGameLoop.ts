@@ -323,9 +323,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   // Daño a Nyx con la regla de inmortalidad del entrenamiento: si un golpe
   // la deja por debajo de 1 HP, se regenera al instante para poder seguir
   // probando golpes enemigos y trampas sin morir.
-  const applyDamageToNyx = (amount: number) => {
+  const applyDamageToNyx = (
+    amount: number,
+    options?: { hurtSlash?: boolean; shake?: boolean; sound?: boolean },
+  ) => {
     if (!controller || amount <= 0) return;
-    controller.applyDamage(amount);
+    controller.applyDamage(amount, options);
     if (training && controller.getHp() < 1) {
       controller.restoreResources(progression.maxHp, 0);
     }
@@ -466,7 +469,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   };
 
   // --- Callbacks estables del waveMgr: cero closures nuevas por frame ---
-  const onWavePlayerHit = (dmg: number) => applyDamageToNyx(dmg);
+  const onWavePlayerHit = (dmg: number, options?: { hurtSlash?: boolean }) =>
+    applyDamageToNyx(dmg, options);
   // Tinta Ácida del Pulpo Espiral: mancha en pantalla con opacidad/duración
   // dadas (bola base 3 s/55 %, contra-parry a bocajarro 5-10 s/65 %) y DoT.
   const onOctopusInk = (durationSec: number, opacity: number) =>
@@ -1049,13 +1053,15 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         controller.restoreResources(0, 25 * effRawDt);
       }
       const mods = progression.getModifiers();
+      combat.syncNyxHp(controller.getHp(), controller.getMaxHp());
       const playerStatus = combat.updatePlayerStatus(effRawDt);
-      if (playerStatus.inkDamageThisFrame > 0 && controller) {
-        // DoT ácido silencioso: drena HP sin sacudir la cámara cada 0.25 s.
-        controller.restoreResources(-playerStatus.inkDamageThisFrame, 0);
-        if (training && controller.getHp() < 1) {
-          controller.restoreResources(progression.maxHp, 0);
-        }
+      if (playerStatus.inkDamageThisFrame > 0) {
+        // DoT ácido silencioso: drena HP sin raja ni sacudir cámara cada 0.25 s.
+        applyDamageToNyx(playerStatus.inkDamageThisFrame, {
+          hurtSlash: false,
+          shake: false,
+          sound: false,
+        });
       }
 
       // Suelos activos según oleada (flotantes arrancados en básicas / triángulos de esfera en Miniboss y Boss).
