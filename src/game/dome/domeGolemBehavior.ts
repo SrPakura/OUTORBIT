@@ -140,9 +140,9 @@ export const GOLEM_PARRY_EDEN_RATIO = 0.06;
 /** Daño del remate en la ventana: fracción de la vida TOTAL del gólem. */
 export const GOLEM_PARRY_CRIT_RATIO = 0.35;
 /** Estrella del parry: cuánto sobresale del cuerpo el punto de dash (m). */
-export const GOLEM_PARRY_STAR_OUT = 4.4;
+export const GOLEM_PARRY_STAR_OUT = 2.8;
 /** Estrella del parry: altura sobre el hombro del brazo gigante (m). */
-export const GOLEM_PARRY_STAR_UP = 2.2;
+export const GOLEM_PARRY_STAR_UP = 4.0;
 // --- Descanso voluntario (stamina) ---
 /** Bajo esto, con Nyx pasiva, se retira a descansar en vez de pelear en seco. */
 export const GOLEM_REST_STAMINA = 25.0;
@@ -265,6 +265,8 @@ export const GOLEM_PARRIED_SEC = 1.6;
 export const GOLEM_PARRY_VULN_SEC = 1.8;
 /** Taladro descendente que remata: componente vertical máxima de hitDir. */
 export const GOLEM_PARRY_MAX_Y_HIT_DIR = -0.45;
+/** Umbral vertical más permisivo cuando el remate ya viene del dash de Fase 2. */
+export const GOLEM_PARRY_STRIKE_MAX_Y_HIT_DIR = -0.22;
 export const GOLEM_HIT_CLIP_SEC = 0.3;
 
 /**

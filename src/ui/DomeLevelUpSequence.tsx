@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import * as THREE from 'three';
-import { useI18n } from '@/i18n';
+import { useI18n, SKILL_I18N_KEYS } from '@/i18n';
 import type { LevelUpCardOption } from '@/game/dome/DomeProgression';
 import type { SynthAudio } from '@/game/audio/SynthAudio';
 import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
@@ -46,7 +46,7 @@ export interface DomeLevelUpSequenceProps {
   /** true si hay más subidas de nivel en cola tras la actual (omite iris). */
   hasNextLevel?: boolean;
   choices: LevelUpCardOption[] | null;
-  equippedSlots: Array<{ name: string | null; level: number }>;
+  equippedSlots: Array<{ skillId?: string | null; name: string | null; level: number }>;
   requiresSlotReplacement: boolean;
   /** Selección inicial de la partida: salta la animación del planeta y
    *  muestra el papel y las cartas desde el primer frame. */
@@ -878,6 +878,19 @@ export default function DomeLevelUpSequence({
 
           <main className="lu-stage">
             {choices.map((option, i) => {
+              const skillKey = option.skillId
+                ? SKILL_I18N_KEYS[option.skillId]
+                : option.passiveId
+                  ? SKILL_I18N_KEYS[option.passiveId]
+                  : null;
+              const cardTitle = skillKey ? t(`skills.${skillKey}`) : option.title;
+              const cardDesc =
+                option.skillId && skillKey
+                  ? t(`skillDescriptions.${skillKey}`)
+                  : option.passiveId && skillKey
+                    ? t(`skillDescriptions.${skillKey}${option.nextLevel}`)
+                    : option.description;
+
               return (
                 <div key={option.id} className="lu-card-slot">
                   <div
@@ -907,7 +920,7 @@ export default function DomeLevelUpSequence({
                         className="lu-card__svg"
                       />
                     </div>
-                    <p className="lu-card__name">{option.title}</p>
+                    <p className="lu-card__name">{cardTitle}</p>
                     <p className="lu-card__level">
                       {t('levelUp.levelShort')} {option.currentLevel}{' '}
                       <span className="arrow">→ {t('levelUp.levelShort')} {option.nextLevel}</span>
@@ -917,7 +930,7 @@ export default function DomeLevelUpSequence({
                         {t('levelUp.edenCost', { n: option.edenCost })}
                       </span>
                     )}
-                    <p className="lu-card__desc">{option.description}</p>
+                    <p className="lu-card__desc">{cardDesc}</p>
                     <span className="lu-card__key">[{i + 1}]</span>
                     <div className="lu-shock" />
                     <div className="lu-stamp">{t('levelUp.chosen')}</div>
@@ -936,20 +949,25 @@ export default function DomeLevelUpSequence({
             {t('levelUp.escBack')}
           </button>
           <div className="lu-replace__slots">
-            {equippedSlots.map((slot, i) => (
-              <button
-                key={i}
-                type="button"
-                className={`lu-slot${padSlotIndex === i ? ' is-pad-focus' : ''}`}
-                onClick={() => flyingRef.current && finish(flyingRef.current, i as 0 | 1 | 2)}
-              >
-                <span className="lu-slot__idx">R{i + 1}</span>
-                <p className="lu-slot__name">{slot.name ?? t('levelUp.emptySlot')}</p>
-                <p className="lu-slot__lv">
-                  {t('levelUp.levelShort')} {slot.level}
-                </p>
-              </button>
-            ))}
+            {equippedSlots.map((slot, i) => {
+              const slotSkillKey = slot.skillId ? SKILL_I18N_KEYS[slot.skillId] : null;
+              const slotDisplayName = slotSkillKey ? t(`skills.${slotSkillKey}`) : (slot.name ?? t('levelUp.emptySlot'));
+
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  className={`lu-slot${padSlotIndex === i ? ' is-pad-focus' : ''}`}
+                  onClick={() => flyingRef.current && finish(flyingRef.current, i as 0 | 1 | 2)}
+                >
+                  <span className="lu-slot__idx">R{i + 1}</span>
+                  <p className="lu-slot__name">{slotDisplayName}</p>
+                  <p className="lu-slot__lv">
+                    {t('levelUp.levelShort')} {slot.level}
+                  </p>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -972,7 +990,7 @@ export default function DomeLevelUpSequence({
           /* Transparente: durante el planeta se ve la partida detrás y el
              papel lo aporta .lu-sheet. */
           background: transparent;
-          font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+          font-family: "Helvetica Neue", Helvetica, Arial, "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
           -webkit-font-smoothing: antialiased;
         }
         .lu-planet { position: absolute; inset: 0; width: 100%; height: 100%; }

@@ -27,7 +27,7 @@ const R_OUTER = 76.5;
 const R_INNER = 65.5;
 const TICK_COUNT = 96;
 
-const HUD_FONT = "'Barlow Condensed', 'Arial Narrow', 'Helvetica Neue', sans-serif";
+const HUD_FONT = "'Barlow Condensed', 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', 'Meiryo', 'Arial Narrow', 'Helvetica Neue', sans-serif";
 /** Azul del borde exterior: sustituye a todos los rojos del diseño original. */
 const ACCENT = '#3be8ff';
 

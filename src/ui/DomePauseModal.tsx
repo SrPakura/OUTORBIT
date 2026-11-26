@@ -143,7 +143,7 @@ export function DomePauseModal({
             linear-gradient(90deg, rgba(11,13,18,0.06) 1px, transparent 1px);
           background-size: 96px 96px;
           color: #0b0d12;
-          font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+          font-family: "Helvetica Neue", Helvetica, Arial, "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
           -webkit-font-smoothing: antialiased;
           animation: pauseIn 260ms ease-out;
         }

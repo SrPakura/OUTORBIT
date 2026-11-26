@@ -39,7 +39,7 @@ export default function TitleScreen({
   const sandboxRef = useRef<TitleDioramaSandbox | null>(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  const { language, toggleLanguage, t } = useI18n();
+  const { language, setLanguage, toggleLanguage, t } = useI18n();
 
   const [modal, setModal] = useState<MenuModal>(null);
 
@@ -142,30 +142,44 @@ export default function TitleScreen({
 
       {/* --- Selector de idioma abajo a la izquierda --- */}
       <div className="absolute bottom-4 left-4 z-10 flex flex-col items-start gap-1.5">
-        <button
-          type="button"
-          onClick={toggleLanguage}
-          aria-label="Toggle language / Cambiar idioma"
-          className={`-skew-x-12 cursor-pointer border-2 border-[#0b0d12] bg-white/70 px-1 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-[#0b0d12] shadow-[4px_4px_0_#0b0d12] transition-all hover:-translate-y-0.5 hover:border-[#e11d48] active:translate-y-0 ${
-            padIndex === actions.length - 1 ? '-translate-y-0.5 shadow-[4px_4px_0_#e11d48]' : ''
+        <div
+          className={`-skew-x-12 flex items-center border-2 border-[#0b0d12] bg-white/70 px-1 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-[#0b0d12] shadow-[4px_4px_0_#0b0d12] transition-all ${
+            padIndex === actions.length - 1 ? '-translate-y-0.5 shadow-[4px_4px_0_#e11d48] border-[#e11d48]' : ''
           }`}
         >
-          <span
-            className={`skew-x-12 px-2 py-0.5 transition-colors ${
+          <button
+            type="button"
+            onClick={() => setLanguage('es')}
+            aria-label="Español"
+            className={`skew-x-12 cursor-pointer px-2 py-0.5 transition-colors ${
               language === 'es' ? 'text-[#0e7490]' : 'text-[#0b0d12]/40 hover:text-[#0b0d12]/70'
             }`}
           >
             {t('menu.languageEs')}
-          </span>
+          </button>
           <span className="skew-x-12 text-[#0b0d12]/30">/</span>
-          <span
-            className={`skew-x-12 px-2 py-0.5 transition-colors ${
+          <button
+            type="button"
+            onClick={() => setLanguage('en')}
+            aria-label="English"
+            className={`skew-x-12 cursor-pointer px-2 py-0.5 transition-colors ${
               language === 'en' ? 'text-[#0e7490]' : 'text-[#0b0d12]/40 hover:text-[#0b0d12]/70'
             }`}
           >
             {t('menu.languageEn')}
-          </span>
-        </button>
+          </button>
+          <span className="skew-x-12 text-[#0b0d12]/30">/</span>
+          <button
+            type="button"
+            onClick={() => setLanguage('ja')}
+            aria-label="日本語"
+            className={`skew-x-12 cursor-pointer px-2 py-0.5 transition-colors ${
+              language === 'ja' ? 'text-[#0e7490]' : 'text-[#0b0d12]/40 hover:text-[#0b0d12]/70'
+            }`}
+          >
+            {t('menu.languageJa')}
+          </button>
+        </div>
       </div>
 
       {modal === 'settings' && (

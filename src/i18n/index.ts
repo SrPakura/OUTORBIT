@@ -11,6 +11,7 @@ import { loadGameSettings, saveGameSettings, type Language } from '@/game/settin
 import { loadStoredLanguage, saveStoredLanguage } from '@/game/localStorageState';
 import es from './es.json';
 import en from './en.json';
+import ja from './ja.json';
 
 // ============================================================================
 // Infraestructura multi-idioma de OUTORBIT: español como idioma base e inglés
@@ -25,7 +26,7 @@ export type { Language };
 /** Parámetros de interpolación: `t('hud.wave', { n: 3 })` -> "OLEADA 3". */
 export type TranslationParams = Record<string, string | number>;
 
-const DICTIONARIES: Record<Language, unknown> = { es, en };
+const DICTIONARIES: Record<Language, unknown> = { es, en, ja };
 
 /** Resuelve una ruta de puntos ("a.b.c") dentro de un diccionario JSON. */
 function resolvePath(dictionary: unknown, key: string): unknown {
@@ -50,7 +51,7 @@ export interface I18nContextValue {
   language: Language;
   /** Cambia el idioma y lo persiste en localStorage al instante. */
   setLanguage: (language: Language) => void;
-  /** Alterna entre 'es' y 'en'. */
+  /** Alterna cíclicamente entre 'es', 'en' y 'ja'. */
   toggleLanguage: () => void;
   /** Traduce una clave con fallback seguro a es.json y luego a la clave. */
   t: (key: string, params?: TranslationParams) => string;
@@ -88,7 +89,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
   const toggleLanguage = useCallback(() => {
     setLanguageState((prev) => {
-      const next: Language = prev === 'es' ? 'en' : 'es';
+      const next: Language = prev === 'es' ? 'en' : prev === 'en' ? 'ja' : 'es';
       try {
         saveStoredLanguage(next);
         saveGameSettings({ ...loadGameSettings(), language: next });
@@ -106,7 +107,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       toggleLanguage,
       t: (key, params) => {
         const raw = resolvePath(DICTIONARIES[language], key);
-        const fallback = resolvePath(es, key);
+        const fallback = resolvePath(en, key) ?? resolvePath(es, key);
         const template = typeof raw === 'string' ? raw : fallback;
         return interpolate(typeof template === 'string' ? template : key, params);
       },
@@ -139,5 +140,31 @@ export function waveLabelKey(label: string): string | null {
       return null;
   }
 }
+
+/** Mapa de id de habilidad activa/pasiva a la clave en skills / skillDescriptions */
+export const SKILL_I18N_KEYS: Record<string, string> = {
+  gravity_field: 'gravityField',
+  repulse_push: 'push',
+  eden_absorb: 'edenAbsorption',
+  attraction_well: 'attractionWell',
+  bounce_horizon: 'bounceHorizon',
+  black_hole: 'blackHole',
+  implosion: 'implosion',
+  speed_force: 'speed',
+  eden_regen: 'edenRegen',
+  hp_regen: 'hpRegen',
+};
+
+/** Mapa de arquetipo de enemigo a clave de traducción en enemies.* */
+export const ENEMY_I18N_KEYS: Record<string, string> = {
+  abyssal_cell: 'enemies.abyssalCell',
+  spiral_octopus: 'enemies.spiralOctopus',
+  crab_gunner: 'enemies.crabGunner',
+  ground_golem: 'enemies.groundGolem',
+  lightning_butterfly: 'enemies.lightningButterfly',
+  giant_sparrow: 'enemies.giantSparrow',
+  prisma_necroz: 'enemies.prismaNecroz',
+  kronos_leviathan: 'enemies.kronosLeviathan',
+};
 
 export default LanguageProvider;

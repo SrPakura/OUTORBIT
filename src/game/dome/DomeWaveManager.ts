@@ -54,6 +54,7 @@ import {
   GOLEM_PARRY_STAR_OUT,
   GOLEM_PARRY_STAR_UP,
   GOLEM_PARRY_MAX_Y_HIT_DIR,
+  GOLEM_PARRY_STRIKE_MAX_Y_HIT_DIR,
   GOLEM_PARRY_WINDOW_SEC,
   GOLEM_PUNCH_WINDUP_SEC,
   GOLEM_STAMINA_MAX,
@@ -337,6 +338,7 @@ const _guardDir = new THREE.Vector3();
 const _modelUp = new THREE.Vector3(0, 1, 0);
 const _starWorld = new THREE.Vector3();
 const _starSide = new THREE.Vector3();
+const _headWorld = new THREE.Vector3();
 
 /**
  * Estrella del parry del Gólem: 4 puntas doradas que caben en la mira del
@@ -1021,12 +1023,16 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
    *    taladro descendente. El golpe conectado cierra TODO al instante.
    */
   private golemParryPhase: 'parry_decide' | 'parry_strike' | null = null;
+  /** True mientras Nyx está en pleno vuelo rápido (1.0x) hacia la estrella del hombro. */
+  private golemParryDashInFlight = false;
   /** Cierre de ventana pendiente de consumir por domeGameLoop (closeParryWindow). */
   private golemParryClosedFlag = false;
   /** Posición de Nyx del frame actual (cara real para isGolemGuardBlocking). */
   private readonly playerPosCache = new THREE.Vector3();
   /** Punto de la estrella en mundo (junto al brazo malo), refrescado por frame. */
   private readonly golemParryStarPos = new THREE.Vector3();
+  /** Punto de impacto de la cabeza del gólem en mundo, refrescado por frame. */
+  private readonly golemParryHeadPos = new THREE.Vector3();
   /** Gólem cuya ventana abrir; consumido por el game loop en el mismo frame. */
   private pendingParryEnemy: ManagedWaveEnemy | null = null;
   /** Proyectil láser de la ráfaga corta: perla roja brillante parryable. */
@@ -1765,11 +1771,17 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
    * con la entidad de combate. Acepta cualquier `TestEnemySphere` (el
    * controller no necesita conocer `ManagedWaveEnemy`).
    */
-  onHitEnemy(enemy: TestEnemySphere, hitDir: THREE.Vector3, isDrill: boolean, impactSpeed?: number): void {
+  onHitEnemy(
+    enemy: TestEnemySphere,
+    hitDir: THREE.Vector3,
+    isDrill: boolean,
+    impactSpeed?: number,
+  ): { parryCritDamage: number } {
     const internal = this.internals.get(enemy.id);
     if (!internal) {
-      return;
+      return { parryCritDamage: 0 };
     }
+    let parryCritDamage = 0;
     const kineticMult = Math.max(0.6, Math.pow((impactSpeed ?? 16) / 14, 1.35));
     const baseKnockback = isDrill ? HIT_KNOCKBACK_DRILL : HIT_KNOCKBACK;
     // Velocidad ANTES del knockback: si la pared del gólem absorbe el golpe,
@@ -1809,14 +1821,17 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       const parryWindowOpenForThis = this.golemParryTargetId === enemy.id;
       const strikePhase = parryWindowOpenForThis && this.golemParryPhase === 'parry_strike';
       const descending = hitDir.y <= GOLEM_PARRY_MAX_Y_HIT_DIR;
-      if (isDrill && strikePhase && descending) {
+      const descendingStrike = hitDir.y <= GOLEM_PARRY_STRIKE_MAX_Y_HIT_DIR;
+      if (isDrill && strikePhase && descendingStrike) {
         // FASE 2 — REMATE CONECTADO (dash al star point + taladro
-        // descendente): arranca el 35% de la vida TOTAL (aditivo al daño
-        // cinético; el kill lo decide el game loop). La ventana se cierra AQUÍ,
-        // EN ESTE MISMO FRAME: golemParryClosedFlag llega a domeGameLoop, que
-        // llama a controller.closeParryWindow() en el mismo bucle — el
-        // slow-mo NUNCA sobrevive al golpe de remate.
-        internal.enemy.entity.hp -= internal.enemy.entity.maxHp * GOLEM_PARRY_CRIT_RATIO;
+        // descendente): arranca exactamente el 35% de la vida TOTAL (el game
+        // loop omite computeKineticImpact en este impacto para no sumar daño
+        // extra). La ventana se cierra AQUÍ, EN ESTE MISMO FRAME.
+        parryCritDamage = internal.enemy.entity.maxHp * GOLEM_PARRY_CRIT_RATIO;
+        internal.enemy.entity.hp = Math.max(0, internal.enemy.entity.hp - parryCritDamage);
+        if (internal.enemy.entity.hp <= 0) {
+          internal.enemy.entity.alive = false;
+        }
         internal.enemy.entity.hitFlash = 1.8;
         internal.golemParryCd = GOLEM_PARRY_COOLDOWN_SEC;
         this.closeGolemParryWindow(0);
@@ -1847,15 +1862,21 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
       } else {
         // Sacudida seca de impacto (golem_hit pisa la FSM mientras dura).
-        if (strikePhase) {
-          // FASE 2: cualquier golpe conectado cierra la ventana YA — el
-          // slow-mo nunca sigue tras haber golpeado el remate.
+        // Cualquier golpe no bloqueado sobre el gólem (tanto en Fase 1 como
+        // en Fase 2) cierra la ventana YA para que el slow-mo nunca se quede
+        // colgado tras impactar al enemigo sin matarlo.
+        if (parryWindowOpenForThis) {
           this.closeGolemParryWindow(0);
         }
         internal.golemHitTimer = GOLEM_HIT_CLIP_SEC;
         internal.golemRestartPending = true;
       }
+    } else if (this.golemParryTargetId !== null && this.golemParryTargetId !== enemy.id) {
+      // Si Nyx golpea a otro enemigo mientras la ventana estaba abierta sobre
+      // el gólem, cerramos la ventana para no dejar slow-mo colgando tras golpear.
+      this.closeGolemParryWindow(0);
     }
+    return { parryCritDamage };
   }
 
   /**
@@ -2035,10 +2056,13 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     playerEdenRatio = 1,
     /** ¿Usó Nyx el dash del remate dentro de la ventana de parry abierta? */
     playerParryDashUsed = false,
+    /** ¿Sigue Nyx en pleno vuelo del dash hacia la estrella (1.0x antes de llegar)? */
+    playerParryDashInFlight = false,
   ): {
     didEnemyEvadeDash: boolean;
     golemParryTarget: TestEnemySphere | null;
     golemParryStarPos: THREE.Vector3 | null;
+    golemParryHeadPos: THREE.Vector3 | null;
   } {
     let didEnemyEvadeDash = false;
     this.waveTime += dt;
@@ -2057,6 +2081,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     let golemParryTarget: TestEnemySphere | null = null;
     let golemParryStarPos: THREE.Vector3 | null = null;
+    let golemParryHeadPos: THREE.Vector3 | null = null;
     // Foto de Nyx para la IA observadora del Gólem (una por frame).
     this.golemInfo.vel.copy(playerVel);
     // Foto de Nyx para KRONOS: velocidad (predicción honesta de trayectoria,
@@ -2299,6 +2324,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           playerPos,
           playerVel,
           playerParryDashUsed,
+          playerParryDashInFlight,
           dt,
         );
       }
@@ -2363,10 +2389,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     if (this.pendingParryEnemy) {
       golemParryTarget = this.pendingParryEnemy;
       golemParryStarPos = this.golemParryStarPos.clone();
+      golemParryHeadPos = this.golemParryHeadPos.clone();
       this.pendingParryEnemy = null;
     }
 
-    return { didEnemyEvadeDash, golemParryTarget, golemParryStarPos };
+    return { didEnemyEvadeDash, golemParryTarget, golemParryStarPos, golemParryHeadPos };
   }
 
   dispose(): void {
@@ -4045,6 +4072,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     playerPos: THREE.Vector3,
     playerVel: THREE.Vector3,
     playerParryDashUsed: boolean,
+    playerParryDashInFlight: boolean,
     dt: number,
   ): void {
     const dist = enemy.position.distanceTo(playerPos);
@@ -4060,10 +4088,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       if (this.golemParryPhase === 'parry_decide') {
         if (playerParryDashUsed) {
           // FASE 2 — Remate: arranca al EJECUTAR el dash al star point
-          // (AQUÍ, y solo aquí, arranca el cooldown largo de 18 s) y vive el
-          // margen corto GOLEM_PARRY_EXECUTE_SEC de mundo para que el
-          // taladro descendente conecte aunque Nyx ya esté a < α+2.
+          // (AQUÍ, y solo aquí, arranca el cooldown largo de 18 s). Mientras
+          // Nyx vuela a 1.0x hacia la estrella (`playerParryDashInFlight`), el
+          // reloj de remate se mantiene entero hasta que llegue arriba.
           this.golemParryPhase = 'parry_strike';
+          this.golemParryDashInFlight = playerParryDashInFlight;
           this.golemParryTimer = GOLEM_PARRY_EXECUTE_SEC;
           internal.golemParryCd = GOLEM_PARRY_COOLDOWN_SEC;
         } else if (dist <= closeBand) {
@@ -4083,11 +4112,13 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           this.closeGolemParryWindow(GOLEM_PARRY_LOCKOUT_SEC);
         }
       } else {
-        // FASE 2 (`parry_strike`): solo el remate conectado (onHitEnemy,
-        // que cierra y apaga el slow-mo EN ESE FRAME) o el fin del margen
-        // corto pueden cerrar la ventana — la distancia ya no manda (el
-        // dash lleva a Nyx por dentro de α+2 para golpear).
-        if (this.golemParryTimer <= 0) {
+        // FASE 2 (`parry_strike`): mientras Nyx vuela a 1.0x hacia la estrella
+        // pausamos el desgaste de `golemParryTimer`; al llegar arriba corre el
+        // margen corto GOLEM_PARRY_EXECUTE_SEC hasta conectar o expirar.
+        this.golemParryDashInFlight = playerParryDashInFlight;
+        if (playerParryDashInFlight) {
+          this.golemParryTimer = GOLEM_PARRY_EXECUTE_SEC;
+        } else if (this.golemParryTimer <= 0) {
           this.closeGolemParryWindow(0);
         }
       }
@@ -4134,10 +4165,25 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.golemParryEnemy = enemy;
     this.golemParryTimer = GOLEM_PARRY_WINDOW_SEC; // tope de seguridad de mundo
     this.golemParryPhase = 'parry_decide'; // FASE 1: decisión/lectura
+    this.golemParryDashInFlight = false;
     this.pendingParryEnemy = enemy;
     // La estrella YA existe en el frame de apertura (el harvest del update
     // clona la foto de este mismo frame, no una posición stale o a cero).
     this.updateGolemParryStar(enemy, internal);
+    this.updateGolemParryHead(enemy, internal);
+  }
+
+  /**
+   * Sincroniza sin allocations los puntos actuales de estrella (hombro) y
+   * cabeza del gólem mientras hay ventana de parry abierta.
+   */
+  getGolemParryTargets(starOut: THREE.Vector3, headOut: THREE.Vector3): boolean {
+    if (this.golemParryTargetId === null) {
+      return false;
+    }
+    starOut.copy(this.golemParryStarPos);
+    headOut.copy(this.golemParryHeadPos);
+    return true;
   }
 
   /**
@@ -4158,7 +4204,10 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.golemParryEnemy = null;
     this.golemParryTimer = 0;
     this.golemParryPhase = null;
+    this.golemParryDashInFlight = false;
     this.golemParryHalo.visible = false;
+    this.golemParryHaloMaterial.depthTest = true;
+    this.golemParryHalo.renderOrder = 0;
     this.golemParryClosedFlag = true;
   }
 
@@ -4198,6 +4247,21 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.golemParryStarPos.y = _starWorld.y + GOLEM_PARRY_STAR_UP;
   }
 
+  /**
+   * Punto de remate en Fase 2: la cabeza del gólem (`head` o respaldo
+   * superior), donde se mueve la estrella dorada al llegar del dash.
+   */
+  private updateGolemParryHead(enemy: ManagedWaveEnemy, internal: EnemyInternal): void {
+    if (internal.golemRig && internal.golemRig.head) {
+      internal.golemRig.head.bone.getWorldPosition(_headWorld);
+      this.golemParryHeadPos.copy(_headWorld);
+      this.golemParryHeadPos.y += 0.65;
+    } else {
+      this.golemParryHeadPos.copy(enemy.position);
+      this.golemParryHeadPos.y += enemy.radius * 0.65;
+    }
+  }
+
   private updateGolemPose(
     enemy: ManagedWaveEnemy,
     internal: EnemyInternal,
@@ -4210,24 +4274,33 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     const state = internal.golemState;
 
-    // Estrella dorada: solo brilla en el gólem con la ventana de parry
-    // abierta, flotando JUNTO AL BRAZO MALO (el gigante) a un lado y a la
-    // altura de su hombro: el punto de dash del remate. Nunca sobre la
-    // cabeza ni pegada al cuerpo — tiene que quedar hueco para que Nyx
-    // llegue, mire y taladre en diagonal descendente hacia el centro.
+    // Estrella dorada:
+    //  - Fase 1 (`parry_decide`) o en vuelo hacia ella: junto al hombro izquierdo.
+    //  - Fase 2 (`parry_strike` tras llegar): desaparece del hombro y marca la
+    //    cabeza del gólem (el punto exacto del remate).
     const isParryTarget = this.golemParryTargetId === enemy.id;
     if (isParryTarget) {
       this.updateGolemParryStar(enemy, internal);
+      this.updateGolemParryHead(enemy, internal);
+      const showHeadTarget =
+        this.golemParryPhase === 'parry_strike' && !this.golemParryDashInFlight;
       this.golemParryHalo.visible = true;
-      this.golemParryHalo.position.copy(this.golemParryStarPos);
+      this.golemParryHalo.position.copy(
+        showHeadTarget ? this.golemParryHeadPos : this.golemParryStarPos,
+      );
+      this.golemParryHaloMaterial.depthTest = !showHeadTarget;
+      this.golemParryHalo.renderOrder = showHeadTarget ? 10 : 0;
       // Billboard hacia Nyx + giro lento de la estrella + pulso.
       this.golemParryHalo.lookAt(playerPos);
-      this.golemParryHalo.rotateZ(elapsed * 1.5);
-      this.golemParryHalo.scale.setScalar(1.6 * (1 + 0.14 * Math.sin(elapsed * 9)));
-      this.golemParryHaloMaterial.opacity = 0.6 + 0.3 * Math.sin(elapsed * 9);
+      this.golemParryHalo.rotateZ(elapsed * (showHeadTarget ? 2.4 : 1.5));
+      const baseScale = showHeadTarget ? 1.35 : 1.6;
+      this.golemParryHalo.scale.setScalar(baseScale * (1 + 0.14 * Math.sin(elapsed * 9)));
+      this.golemParryHaloMaterial.opacity = 0.65 + 0.3 * Math.sin(elapsed * 9);
     } else if (this.golemParryTargetId === null) {
       // Ventana cerrada: ningún gólem debe llevar la estrella.
       this.golemParryHalo.visible = false;
+      this.golemParryHaloMaterial.depthTest = true;
+      this.golemParryHalo.renderOrder = 0;
     }
 
     // --- Orientación honesta del grupo raíz (los clips NUNCA la tocan) ---

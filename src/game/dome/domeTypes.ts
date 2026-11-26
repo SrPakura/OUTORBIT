@@ -96,6 +96,8 @@ export interface DomeHudState {
   reticleLockState: ReticleLockState;
   /** True cuando la mira apunta sobre la estrella dorada del parry del Gólem. */
   parryStarHovered?: boolean;
+  /** Fase activa del parry del Gólem para prompts e indicadores del HUD. */
+  parryStage?: 'none' | 'decide' | 'dash' | 'strike';
   /** Sentadilla Cinética: disponible (azul clarito) o adjudicada (azul brillante). */
   kineticBounceState: KineticBounceUiState;
   lockedEnemyScreenPos: { x: number; y: number } | null;

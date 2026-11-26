@@ -7,6 +7,7 @@ import {
   type PassiveId,
 } from '@/game/dome/DomeProgression';
 import type { EnemyArchetype } from '@/game/dome/DomeCombatSystem';
+import { useI18n, ENEMY_I18N_KEYS, SKILL_I18N_KEYS } from '@/i18n';
 
 // ============================================================================
 // DomeTrainingPanel — Panel Debug flotante del Modo Entrenamiento.
@@ -125,6 +126,8 @@ export default function DomeTrainingPanel({
   onSetPassiveLevel,
   onRefill,
 }: DomeTrainingPanelProps) {
+  const { t } = useI18n();
+
   return (
     <aside
       className="pointer-events-auto absolute right-3 top-3 z-[60] max-h-[94vh] w-[320px] overflow-y-auto rounded-md border border-cyan-300/40 bg-[#090314]/85 p-3 font-mono text-white shadow-[0_0_28px_rgba(34,211,238,0.18)] backdrop-blur-md select-none"
@@ -132,22 +135,22 @@ export default function DomeTrainingPanel({
     >
       <header className="mb-2 flex items-center justify-between gap-2 border-b border-white/15 pb-2">
         <span className="text-xs font-black uppercase tracking-[0.18em] text-cyan-300">
-          Entrenamiento{' '}
-          <span className="text-amber-300/90">[Debug]</span>
+          {t('trainingPanel.title')}{' '}
+          <span className="text-amber-300/90">{t('trainingPanel.debug')}</span>
         </span>
         <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-white/45">
-          F2 / Tab: ocultar
+          {t('trainingPanel.hideHint')}
         </span>
       </header>
 
       {/* --- Enemigo: selector 8/8 + reinicio + pasivo/ataca --- */}
       <section className="mb-3">
-        <SectionTitle>Enemigo (8/8)</SectionTitle>
+        <SectionTitle>{t('trainingPanel.enemySection')}</SectionTitle>
         <div className="grid grid-cols-2 gap-1">
           {TRAINING_ENEMY_ORDER.map((id) => (
             <PanelButton
               key={id}
-              label={ENEMY_LABELS[id]}
+              label={t(ENEMY_I18N_KEYS[id])}
               active={archetype === id}
               onClick={() => onSetArchetype(id)}
               className="truncate"
@@ -155,10 +158,10 @@ export default function DomeTrainingPanel({
           ))}
         </div>
         <div className="mt-1.5 flex gap-1">
-          <PanelButton label="Reiniciar enemigo" accent="amber" onClick={onRespawn} className="flex-1" />
+          <PanelButton label={t('trainingPanel.restartEnemy')} accent="amber" onClick={onRespawn} className="flex-1" />
           <PanelButton
-            label={passive ? 'Quieto (pasivo)' : 'IA activa'}
-            title="Alterna entre saco de boxeo (sin ataques) y comportamiento ofensivo real"
+            label={passive ? t('trainingPanel.dummyPassive') : t('trainingPanel.dummyActive')}
+            title={t('trainingPanel.dummyTitle')}
             accent={passive ? 'violet' : 'rose'}
             active
             onClick={() => onSetPassive(!passive)}
@@ -169,29 +172,30 @@ export default function DomeTrainingPanel({
 
       {/* --- Ranuras 1/2/3: habilidad equipada, nivel y vaciado --- */}
       <section className="mb-3">
-        <SectionTitle>Ranuras 1 / 2 / 3</SectionTitle>
+        <SectionTitle>{t('trainingPanel.slotsSection')}</SectionTitle>
         <div className="flex flex-col gap-1">
           {slots.map((slot, index) => {
             const slotIdx = index as 0 | 1 | 2;
             const def = slot.skillId ? ACTIVE_SKILLS_CATALOG[slot.skillId] : null;
             const maxed = def !== null && slot.level >= slot.maxLevel;
+            const skillName = slot.skillId ? t(`skills.${SKILL_I18N_KEYS[slot.skillId]}`) : '';
             return (
               <div key={slot.keyLabel} className="flex items-center gap-1">
                 <span className="w-4 shrink-0 text-[10px] font-black text-cyan-300">
                   {slot.keyLabel}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[10px] font-bold text-white/85">
-                  {def ? `${def.name} · Nv ${slot.level}/${slot.maxLevel}` : '— vacía —'}
+                  {def ? `${skillName} · ${t('levelUp.levelShort')} ${slot.level}/${slot.maxLevel}` : t('trainingPanel.emptySlot')}
                 </span>
                 <PanelButton
-                  label="+Nv"
-                  title={maxed ? 'Nivel máximo' : 'Sube un nivel esta habilidad'}
+                  label={t('trainingPanel.upgradeLevel')}
+                  title={maxed ? t('trainingPanel.maxLevelTitle') : t('trainingPanel.upgradeLevelTitle')}
                   active={def !== null && !maxed}
                   accent="cyan"
                   onClick={() => onUpgradeSlot(slotIdx)}
                 />
                 <PanelButton
-                  label="Vaciar"
+                  label={t('trainingPanel.clearSlot')}
                   onClick={() => onClearSlot(slotIdx)}
                 />
               </div>
@@ -202,18 +206,21 @@ export default function DomeTrainingPanel({
 
       {/* --- Habilidades Activas: equipar en la ranura 1, 2 o 3 --- */}
       <section className="mb-3">
-        <SectionTitle>Habilidades activas (7)</SectionTitle>
+        <SectionTitle>{t('trainingPanel.activeSkillsSection')}</SectionTitle>
         <div className="flex flex-col gap-1">
           {ACTIVE_SKILL_IDS.map((skillId) => {
             const def = ACTIVE_SKILLS_CATALOG[skillId];
+            const skillKey = SKILL_I18N_KEYS[skillId];
+            const skillName = t(`skills.${skillKey}`);
+            const skillDesc = t(`skillDescriptions.${skillKey}`);
             return (
               <div key={skillId} className="flex items-center gap-1">
                 <span
                   className="min-w-0 flex-1 truncate text-[10px] font-bold"
                   style={{ color: def.accentColor }}
-                  title={def.description}
+                  title={skillDesc}
                 >
-                  {def.name}
+                  {skillName}
                 </span>
                 {([0, 1, 2] as const).map((slotIdx) => {
                   const equippedHere = slots[slotIdx]?.skillId === skillId;
@@ -221,7 +228,7 @@ export default function DomeTrainingPanel({
                     <PanelButton
                       key={slotIdx}
                       label={`→${slotIdx + 1}`}
-                      title={`Equipar en la ranura ${slotIdx + 1}`}
+                      title={t('trainingPanel.equipToSlotTitle', { n: slotIdx + 1 })}
                       active={equippedHere}
                       onClick={() => onEquipSkill(slotIdx, skillId)}
                     />
@@ -235,25 +242,28 @@ export default function DomeTrainingPanel({
 
       {/* --- Pasivas: nivel directo 0..3 sin farmear EXP --- */}
       <section className="mb-3">
-        <SectionTitle>Pasivas (3)</SectionTitle>
+        <SectionTitle>{t('trainingPanel.passivesSection')}</SectionTitle>
         <div className="flex flex-col gap-1">
           {PASSIVE_IDS.map((passiveId) => {
             const def = PASSIVES_CATALOG[passiveId];
             const level = passiveLevels[passiveId];
+            const passiveKey = SKILL_I18N_KEYS[passiveId];
+            const passiveName = t(`skills.${passiveKey}`);
+            const passiveDesc = level > 0 ? t(`skillDescriptions.${passiveKey}${level}`) : t('trainingPanel.noLevel');
             return (
               <div key={passiveId} className="flex items-center gap-1">
                 <span
                   className="min-w-0 flex-1 truncate text-[10px] font-bold"
                   style={{ color: def.accentColor }}
-                  title={def.levels[Math.max(0, level - 1)]?.description ?? 'Sin nivel'}
+                  title={passiveDesc}
                 >
-                  {def.name}
+                  {passiveName}
                 </span>
                 {Array.from({ length: def.maxLevel + 1 }, (_, lv) => (
                   <PanelButton
                     key={lv}
                     label={String(lv)}
-                    title={lv === 0 ? 'Desactivada' : def.levels[lv - 1].label}
+                    title={lv === 0 ? t('trainingPanel.disabled') : def.levels[lv - 1].label}
                     active={level === lv}
                     accent="violet"
                     onClick={() => onSetPassiveLevel(passiveId, lv)}
@@ -267,16 +277,16 @@ export default function DomeTrainingPanel({
 
       {/* --- Extras de entrenamiento --- */}
       <section>
-        <SectionTitle>Extras</SectionTitle>
+        <SectionTitle>{t('trainingPanel.extrasSection')}</SectionTitle>
         <PanelButton
-          label="Recargar Vida + Edén (T)"
+          label={t('trainingPanel.refillButton')}
           accent="amber"
           active
           onClick={onRefill}
           className="w-full"
         />
         <p className="mt-1.5 text-[9px] leading-relaxed font-semibold tracking-[0.04em] text-white/45">
-          Nyx inmortal · Edén +25/s · sin oleadas automáticas
+          {t('trainingPanel.footerNote')}
         </p>
       </section>
     </aside>

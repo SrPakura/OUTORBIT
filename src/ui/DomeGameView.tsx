@@ -455,10 +455,11 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         equippedSlots={
           progressionRef.current
             ? progressionRef.current.slots.map((s) => ({
+                skillId: s.skillId,
                 name: s.skillId ? ACTIVE_SKILLS_CATALOG[s.skillId].name : null,
                 level: s.level,
               }))
-            : hud.slots.map((s) => ({ name: s.name, level: s.level }))
+            : hud.slots.map((s) => ({ skillId: s.skillId, name: s.name, level: s.level }))
         }
         requiresSlotReplacement={levelUpState.requiresSlotReplacement}
         skipPlanetAnimation={levelUpState.skipPlanetAnimation}

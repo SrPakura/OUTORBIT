@@ -264,7 +264,7 @@ Antes era un único `proceduralModels.ts` de 4.778 líneas; ahora cada familia t
 
 | Carpeta | Qué hace |
 |---------|----------|
-| `src/i18n/` | `index.ts` (hook `useI18n`) + `es.json` y `en.json` con **paridad exacta de claves** (170). Si tocas UI con traducciones, mantén la paridad. |
+| `src/i18n/` | `index.ts` (hook `useI18n`) + `es.json`, `en.json` y `ja.json` con **paridad exacta de claves** (248). Si tocas UI con traducciones, mantén la paridad. |
 | `src/api/` | `base44Client.js` (cliente Base44) y `leaderboard.ts` (API del leaderboard). |
 | `src/components/` + `src/pages/` + `src/lib/` | Boilerplate de auth de Base44: login, registro, MFA, OAuth, rutas protegidas. |
 

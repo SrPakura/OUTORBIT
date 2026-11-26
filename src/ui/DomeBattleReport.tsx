@@ -14,7 +14,7 @@ import {
   savePilotNickname,
 } from '@/game/localStorageState';
 import type { LeaderboardEntryRecord } from '@/game/types';
-import { useI18n } from '@/i18n';
+import { useI18n, SKILL_I18N_KEYS } from '@/i18n';
 
 // ============================================================================
 // Game Over / Battle Report de la Cúpula — mismo ADN visual que la subida de
@@ -38,7 +38,7 @@ export interface DomeBattleReportData {
   maxSpeed: number;
   survivalTimeSec: number;
   perfectRedirections: number;
-  equippedSkills: Array<{ name: string; level: number }>;
+  equippedSkills: Array<{ id?: string; name: string; level: number }>;
 }
 
 export interface DomeBattleReportProps {
@@ -133,7 +133,7 @@ export function DomeBattleReport({
   const autoSubmittedRef = useRef(false);
   const { t, language } = useI18n();
 
-  const locale = language === 'es' ? 'es-ES' : 'en-US';
+  const locale = language === 'ja' ? 'ja-JP' : language === 'es' ? 'es-ES' : 'en-US';
   const formatScore = (value: number): string => Math.round(value).toLocaleString(locale);
   const roundedRunScore = Math.round(data.score);
 
@@ -292,15 +292,19 @@ export function DomeBattleReport({
                 <p className="brep-empty">{t('battleReport.noSkills')}</p>
               ) : (
                 <div className="brep-loadout">
-                  {data.equippedSkills.map((skill, index) => (
-                    <div key={`${skill.name}-${index}`} className="brep-slot">
-                      <span className="brep-slot__idx">R{index + 1}</span>
-                      <span className="brep-slot__name">{skill.name}</span>
-                      <span className="brep-slot__lv">
-                        {t('battleReport.levelShort')} {skill.level}
-                      </span>
-                    </div>
-                  ))}
+                  {data.equippedSkills.map((skill, index) => {
+                    const skillKey = skill.id ? SKILL_I18N_KEYS[skill.id] : null;
+                    const displayName = skillKey ? t(`skills.${skillKey}`) : skill.name;
+                    return (
+                      <div key={`${skill.name}-${index}`} className="brep-slot">
+                        <span className="brep-slot__idx">R{index + 1}</span>
+                        <span className="brep-slot__name">{displayName}</span>
+                        <span className="brep-slot__lv">
+                          {t('battleReport.levelShort')} {skill.level}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </Panel>
@@ -486,7 +490,7 @@ export function DomeBattleReport({
             linear-gradient(90deg, rgba(11,13,18,0.06) 1px, transparent 1px);
           background-size: 96px 96px;
           color: #0b0d12;
-          font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+          font-family: "Helvetica Neue", Helvetica, Arial, "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
           -webkit-font-smoothing: antialiased;
           animation: brepIn 260ms ease-out;
         }

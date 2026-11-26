@@ -211,7 +211,11 @@ const PARRY_TIME_SCALE = 0.10;
  * loop llama a closeParryWindow() — este tope solo recorta ventanas que, por
  * cualquier bug, no llegaran a cerrarse (10 s > 1.5 s de mundo / 0.18 ≈ 8.3 s).
  */
-const PARRY_WINDOW_SAFETY_REAL_SEC = 10.0;
+const PARRY_WINDOW_SAFETY_REAL_SEC = 16.0;
+/** Distancia al aro dorado a la que Nyx completa el dash y entra en Fase 2. */
+const PARRY_STAR_ARRIVE_DIST = 1.85;
+/** Tope de seguridad (s reales) del vuelo 1.0x del dash hacia la estrella. */
+const PARRY_DASH_MAX_REAL_SEC = 0.42;
 /**
  * Rebote contra el brazo del Gólem en bloqueo: suelo de la velocidad de
  * SALIDA (m/s) — aunque el golpe llegara lento, 300 kg de brazo macizo
@@ -419,7 +423,9 @@ export class NyxDomeController {
    *  - null: ventana cerrada (la cierra SOLO el manager, vía
    *    domeGameLoop.closeParryWindow).
    */
-  private parryPhase: 'parry_decide' | 'parry_strike' | null = null;
+  private parryPhase: 'parry_decide' | 'parry_dash' | 'parry_strike' | null = null;
+  private parryDashElapsed = 0;
+  private wantParryStrike = false;
   private parryStarHovered = false;
   private kickRecoverFromAttack = false;
   /**
@@ -449,6 +455,8 @@ export class NyxDomeController {
   private kineticExitFloor = 0;
   /** Punto de la estrella dorada (junto al brazo fino): destino del dash. */
   private readonly parryStarPoint = new THREE.Vector3();
+  /** Punto de impacto en la cabeza del Gólem (Fase 2): destino del remate. */
+  private readonly parryHeadPoint = new THREE.Vector3();
   private reticleLockState: ReticleLockState = 'none';
   // Enemigo lockeado proyectado a <= RETICLE_LOCK_RADIUS_PX del centro del
   // visor este frame (se recalcula en updateReticle, antes de la física).
@@ -748,8 +756,11 @@ export class NyxDomeController {
     this.kronosControlsInverted = active;
   }
 
-  /** Escala de tiempo del mundo: 0.20 en redirección, 0.22 en cámara lenta. */
+  /** Escala de tiempo del mundo: 0.20 en redirección, 0.10 en parry (1.0 en el dash de entrada). */
   getTimeScale(): number {
+    if (this.parryWindowActive && this.parryPhase === 'parry_dash') {
+      return 1.0 * this.kronosSlowMo;
+    }
     let scale = 1.0;
     if (this.redirectWindowTimer > 0) {
       scale = this.parryWindowActive ? PARRY_TIME_SCALE : REDIRECT_TIME_SCALE;
@@ -805,12 +816,24 @@ export class NyxDomeController {
    * vía domeGameLoop → closeParryWindow(); este timer es solo un tope de
    * seguridad alto.
    */
-  openParryWindow(target: TestEnemySphere, starPos: THREE.Vector3): void {
+  openParryWindow(
+    target: TestEnemySphere,
+    starPos: THREE.Vector3,
+    headPos?: THREE.Vector3,
+  ): void {
     this.redirectTargetEnemy = target;
     this.redirectWindowTimer = PARRY_WINDOW_SAFETY_REAL_SEC;
     this.parryWindowActive = true;
     this.parryPhase = 'parry_decide';
+    this.parryDashElapsed = 0;
+    this.wantParryStrike = false;
     this.parryStarPoint.copy(starPos);
+    if (headPos) {
+      this.parryHeadPoint.copy(headPos);
+    } else {
+      this.parryHeadPoint.copy(target.position);
+      this.parryHeadPoint.y += target.radius * 0.55;
+    }
     // Ayuda al usuario: giro automático de la mira/cámara hacia la estrella
     // para que el jugador la vea al instante y le resulte natural darle.
     this.tmpA.copy(starPos).sub(this.nyxRoot.position);
@@ -835,6 +858,16 @@ export class NyxDomeController {
   }
 
   /**
+   * Actualiza en vivo los puntos de la estrella (hombro) y la cabeza del
+   * Gólem mientras la ventana de parry esté abierta.
+   */
+  syncParryTargets(starPos: THREE.Vector3, headPos: THREE.Vector3): void {
+    if (!this.parryWindowActive) return;
+    this.parryStarPoint.copy(starPos);
+    this.parryHeadPoint.copy(headPos);
+  }
+
+  /**
    * El MANAGER cerró la ventana del parry (en la fase que sea: Nyx llegó a
    * α+2 sin ejecutar, se alejó de α+9, el gólem bajó la guardia, el margen
    * del remate caducó o EL REMATE CONECTÓ): apaga el slow-mo YA, EN ESTE
@@ -849,16 +882,24 @@ export class NyxDomeController {
     this.redirectWindowTimer = 0;
     this.parryWindowActive = false;
     this.parryPhase = null;
+    this.parryDashElapsed = 0;
+    this.wantParryStrike = false;
   }
 
   /**
-   * ¿Está el parry en FASE 2 (dash al star point ya EJECUTADO dentro de la
-   * ventana abierta)? El MANAGER lo encuesta (via domeGameLoop) para dos
-   * cosas: marcar la transición parry_decide → parry_strike (aquí arranca el
-   * cooldown largo de 18 s) y arrancar el margen corto del remate.
+   * ¿Ejecutó Nyx el dash de parry (en vuelo hacia la estrella o ya en Fase 2)?
+   * El MANAGER lo encuesta para transicionar sin castigar con el lockout de α+2.
    */
   isParryDashUsed(): boolean {
-    return this.parryWindowActive && this.parryPhase === 'parry_strike';
+    return (
+      this.parryWindowActive &&
+      (this.parryPhase === 'parry_dash' || this.parryPhase === 'parry_strike')
+    );
+  }
+
+  /** ¿Está Nyx en el vuelo rápido (1.0x) del dash hacia la estrella del hombro? */
+  isParryDashInFlight(): boolean {
+    return this.parryWindowActive && this.parryPhase === 'parry_dash';
   }
 
   onMouseMove(dx: number, dy: number): void {
@@ -1242,6 +1283,13 @@ export class NyxDomeController {
       gamepadConnected: this.isGamepadConnected(),
       reticleLockState: this.reticleLockState,
       parryStarHovered: this.parryStarHovered,
+      parryStage: !this.parryWindowActive
+        ? 'none'
+        : this.parryPhase === 'parry_dash'
+          ? 'dash'
+          : this.parryPhase === 'parry_strike'
+            ? 'strike'
+            : 'decide',
       kineticBounceState:
         this.kinetic.phase === 'committed' || this.mode === 'kinetic_bounce'
           ? 'committed'
@@ -1249,8 +1297,13 @@ export class NyxDomeController {
             ? 'available'
             : 'none',
       lockedEnemyScreenPos: this.lockedEnemyScreenPos,
-      bulletTimeActive: this.bulletTimeTimer > 0 || this.redirectWindowTimer > 0,
-      bulletTimeRemaining: Math.max(this.bulletTimeTimer, this.redirectWindowTimer),
+      bulletTimeActive:
+        this.bulletTimeTimer > 0 ||
+        (this.redirectWindowTimer > 0 && this.parryPhase !== 'parry_dash'),
+      bulletTimeRemaining:
+        this.parryPhase === 'parry_dash'
+          ? 0
+          : Math.max(this.bulletTimeTimer, this.redirectWindowTimer),
       activeSlot: this.activeSlot,
       slots: [
         { keyLabel: formatKeyCode(this.settings.bindings.slot1), ...this.slotHudInfo[0] },
@@ -1288,24 +1341,36 @@ export class NyxDomeController {
     if (this.bulletTimeTimer > 0) {
       this.bulletTimeTimer = Math.max(0, this.bulletTimeTimer - rawDt);
     }
-    // Ventana de redirección: también descuenta TIEMPO REAL. Al cerrarse,
-    // re-arma con un antirrebote para no re-abrirla en el mismo acercamiento.
+    // Ventana de redirección: también descuenta TIEMPO REAL (pausado durante
+    // el vuelo rápido `parry_dash` a 1.0x para que no coma tiempo de Fase 2).
     if (this.redirectWindowTimer > 0) {
-      this.redirectWindowTimer = Math.max(0, this.redirectWindowTimer - rawDt);
-      // FASE 1 (parry_decide): guía suavemente la cámara hacia la estrella
-      // ("ey, mira esto") mientras el dash del remate siga pendiente.
-      if (this.parryPhase === 'parry_decide' && this.mode !== 'grounded') {
-        this.tmpA.copy(this.parryStarPoint).sub(this.nyxRoot.position);
+      if (this.parryPhase !== 'parry_dash') {
+        this.redirectWindowTimer = Math.max(0, this.redirectWindowTimer - rawDt);
+      }
+      // Guía de cámara del parry:
+      //  - Fase 1 (`parry_decide`): guía hacia la estrella del hombro.
+      //  - Fase 2 (`parry_strike`): mantiene centrada la cabeza del Gólem.
+      if (
+        this.parryWindowActive &&
+        (this.parryPhase === 'parry_decide' || this.parryPhase === 'parry_strike') &&
+        this.mode !== 'grounded'
+      ) {
+        const focusPoint =
+          this.parryPhase === 'parry_strike' ? this.parryHeadPoint : this.parryStarPoint;
+        const steerRate = this.parryPhase === 'parry_strike' ? 5.0 : 3.2;
+        this.tmpA.copy(focusPoint).sub(this.nyxRoot.position);
         if (this.tmpA.lengthSq() > 1e-6) {
           this.tmpA.normalize();
-          this.rotateToward(this.aimForward, this.tmpA, 3.2 * rawDt);
-          this.rotateToward(this.facing, this.tmpA, 3.2 * rawDt);
+          this.rotateToward(this.aimForward, this.tmpA, steerRate * rawDt);
+          this.rotateToward(this.facing, this.tmpA, steerRate * rawDt);
         }
       }
       if (this.redirectWindowTimer === 0) {
         this.redirectReArm = REDIRECT_REARM_COOLDOWN;
         this.parryWindowActive = false;
         this.parryPhase = null;
+        this.parryDashElapsed = 0;
+        this.wantParryStrike = false;
         if (!this.lockedEnemy) this.redirectTargetEnemy = null;
       }
     } else if (this.redirectReArm > 0) {
@@ -1501,13 +1566,35 @@ export class NyxDomeController {
           }
         }
       }
+      // --- Llegada a la estrella en `parry_dash`: al alcanzar la estrella
+      // dorada (1.0x), corta el dash, gira la cámara a la cabeza y reactiva
+      // el slow-mo de Fase 2 (`parry_strike`).
+      if (this.parryWindowActive && this.parryPhase === 'parry_dash') {
+        this.parryDashElapsed += rawDt;
+        const toStar = this.tmpA.copy(this.parryStarPoint).sub(this.nyxRoot.position);
+        const distToStar = toStar.length();
+        const passedStar = toStar.dot(this.dashDir) <= 0.35;
+        if (
+          distToStar <= PARRY_STAR_ARRIVE_DIST ||
+          (this.parryDashElapsed >= 0.05 && passedStar) ||
+          this.mode !== 'dashing' ||
+          this.parryDashElapsed >= PARRY_DASH_MAX_REAL_SEC
+        ) {
+          this.enterParryStrikePhase();
+        }
+      }
       // --- Cúpula: una sola comprobación por frame (no depende del avance)
       this.resolveDomeBound();
       // --- Separación física contra enemigos fuera de speed_attack: evita
       // empujar o arrastrar enemigos por la arena (ej. contra el brazo en
-      // bloqueo o al rozarlos en dash/flotación). En FASE 2 (parry_strike)
-      // Nyx vuela hacia el cuerpo para taladrar: sin separación.
-      if (enemies && this.mode !== 'speed_attack' && this.parryPhase !== 'parry_strike') {
+      // bloqueo o al rozarlos en dash/flotación). En dash/remate del parry
+      // Nyx vuela hacia la estrella/cabeza sin chocar contra la esfera exterior.
+      if (
+        enemies &&
+        this.mode !== 'speed_attack' &&
+        this.parryPhase !== 'parry_dash' &&
+        this.parryPhase !== 'parry_strike'
+      ) {
         for (const enemy of enemies) {
           this.tmpA.subVectors(this.nyxRoot.position, enemy.position);
           const d = this.tmpA.length();
@@ -1668,13 +1755,21 @@ export class NyxDomeController {
     const cx = width * 0.5;
     const cy = height * 0.5;
 
-    // Estrella del parry: hover del visor SOLO mientras la ventana del
-    // manager esté ABIERTA (quién abre/cierra es decisión exclusiva del
-    // manager vía domeGameLoop; aquí solo se marca el punto del dash).
-    if (this.parryWindowActive && this.projectToScreen(this.parryStarPoint, camera, width, height)) {
-      const starDistPx = Math.hypot(this.screenPos.x - cx, this.screenPos.y - cy);
-      if (starDistPx <= RETICLE_LOCK_RADIUS_PX * 1.25) {
-        this.parryStarHovered = true;
+    // Estrella del parry:
+    //  - Fase 1 (`parry_decide`): hover sobre la estrella del hombro.
+    //  - Fase 2 (`parry_strike`): hover sobre la marca en la cabeza del Gólem.
+    if (this.parryWindowActive && this.parryPhase !== 'parry_dash') {
+      const targetPt =
+        this.parryPhase === 'parry_strike' ? this.parryHeadPoint : this.parryStarPoint;
+      if (this.projectToScreen(targetPt, camera, width, height)) {
+        const starDistPx = Math.hypot(this.screenPos.x - cx, this.screenPos.y - cy);
+        const radiusPx =
+          this.parryPhase === 'parry_strike'
+            ? RETICLE_LOCK_RADIUS_PX * 1.5
+            : RETICLE_LOCK_RADIUS_PX * 1.25;
+        if (starDistPx <= radiusPx) {
+          this.parryStarHovered = true;
+        }
       }
     }
 
@@ -2168,15 +2263,25 @@ export class NyxDomeController {
    * 'parry_strike' (remate pendiente) y el manager arranca aquí su margen
    * corto — la ventana SOLO la cierran el golpe conectado o ese margen.
    */
+  /**
+   * FASE 1 → Vuelo del dash hacia la estrella del hombro (`parry_dash`):
+   * corta el slow-mo a 1.0x durante el desplazamiento rápido hasta llegar a
+   * la estrella; al llegar (`enterParryStrikePhase`), desaparece la estrella
+   * del hombro, la cámara gira a la cabeza y vuelve el slow-mo (0.10x).
+   */
   private parryDashUp(target: TestEnemySphere): void {
     this.eden -= EDEN_DASH_COST;
-    this.parryPhase = 'parry_strike';
-    // Objetivo: la estrella junto al brazo malo (guardada al abrir la
-    // ventana). Sin ella (imposible salvo bug), la cabeza como respaldo.
+    this.parryPhase = 'parry_dash';
+    this.parryDashElapsed = 0;
+    this.wantParryStrike = false;
+    this.bulletTimeTimer = 0;
+    this.lockedEnemy = null;
+    this.reticleLockState = 'none';
+    // Objetivo: la estrella junto al brazo malo. Sin ella, respaldo arriba.
     this.tmpA.copy(this.parryStarPoint);
     if (this.tmpA.distanceToSquared(this.nyxRoot.position) < 1e-4) {
       this.tmpA.copy(target.position);
-      this.tmpA.y += target.radius + 2.0;
+      this.tmpA.y += target.radius + 3.0;
     }
     this.tmpA.sub(this.nyxRoot.position);
     if (this.tmpA.lengthSq() < 1e-6) {
@@ -2196,19 +2301,78 @@ export class NyxDomeController {
     this.dashSideRoll = 0;
     this.dashWobbleImpulse = 1.2;
     this.mode = 'dashing';
-    this.dashTimer = DASH_DURATION;
+    this.dashTimer = PARRY_DASH_MAX_REAL_SEC;
     this.animator.setState('air_dash');
     this.startCamTug();
     this.shake = Math.max(this.shake, 0.2);
     this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
     this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
     this.audio?.playGravityShift();
-    // NO se fuerza el lock: si se fijara aquí, el LMB del remate saldría
-    // como Caída al Vacío (el flujo de can_lock es quien convierte el ataque
-    // en TALADRO). Nyx mira a la cabeza mientras sube y el ataque entra por
-    // el lock normal, con la velocidad del dash (31 m/s >= umbral de taladro).
-    // La cámara lenta NO se corta: tras ejecutar el dash, la ventana del
-    // manager sobrevive un margen corto para que el remate conecte.
+  }
+
+  /**
+   * Llegada a la estrella dorada → FASE 2 (`parry_strike`):
+   *  - Reactiva el slow-mo (0.10x) con un nuevo pulso de cámara.
+   *  - Gira cámara y cuerpo directamente hacia la cabeza del Gólem.
+   *  - Frena el exceso de impulso para suspender a Nyx lista para taladrar.
+   */
+  private enterParryStrikePhase(): void {
+    const target = this.redirectTargetEnemy;
+    this.parryPhase = 'parry_strike';
+    this.parryDashElapsed = 0;
+    this.redirectWindowTimer = PARRY_WINDOW_SAFETY_REAL_SEC;
+    this.mode = 'floating';
+    this.dashTimer = 0;
+    this.airDriftTimer = 0;
+    this.dashSideRoll = 0;
+    this.animLock = null;
+    this.animator.setState('zero_g_float');
+
+    if (target) {
+      const toHead = this.tmpA.copy(this.parryHeadPoint).sub(this.nyxRoot.position);
+      if (toHead.lengthSq() < 1e-4) {
+        toHead
+          .copy(target.position)
+          .addScaledVector(this.up, target.radius * 0.55)
+          .sub(this.nyxRoot.position);
+      }
+      if (toHead.lengthSq() > 1e-6) {
+        toHead.normalize();
+        this.aimForward.copy(toHead);
+        this.prevAimFwd.copy(toHead);
+        this.facing.copy(toHead);
+        // Nivela el horizonte contra +Y del mundo para que el giro hacia la
+        // cabeza quede recto y el jugador lea de inmediato dónde rematar.
+        this.tmpB.set(0, 1, 0);
+        this.tmpB.addScaledVector(toHead, -this.tmpB.dot(toHead));
+        if (this.tmpB.lengthSq() > 1e-4) {
+          this.aimUp.copy(this.tmpB).normalize();
+          this.up.copy(this.aimUp);
+        }
+        const right = this.tmpC.crossVectors(this.up, this.facing);
+        if (right.lengthSq() > 1e-6) {
+          right.normalize();
+          this.mat.makeBasis(right, this.up, this.facing);
+          this.nyxRoot.quaternion.setFromRotationMatrix(this.mat);
+        }
+        // Suspensión controlada mirando hacia la cabeza (sin pasarse de largo).
+        this.velocity.copy(toHead).multiplyScalar(5.5);
+      } else {
+        this.velocity.multiplyScalar(0.2);
+      }
+    } else {
+      this.velocity.multiplyScalar(0.2);
+    }
+
+    this.startCamTug();
+    this.fovPunch = Math.min(this.fovPunch, -5);
+    this.shake = Math.max(this.shake, 0.18);
+    this.audio?.playAnchor();
+
+    if (this.wantParryStrike) {
+      this.wantParryStrike = false;
+      this.handleAttack();
+    }
   }
 
   private isRedirectDashDir(f: number, r: number, target: TestEnemySphere): boolean {
@@ -2272,6 +2436,12 @@ export class NyxDomeController {
     // cosmos_fusion: la deformación de KRONOS bloquea patadas y caídas/picados.
     if (this.kronosDeformed) return;
     if (this.onLeftClickAttackOverride?.()) return;
+    // Si está volando hacia la estrella del hombro (`parry_dash`), encola el
+    // remate para lanzarlo en cuanto llegue arriba y gire hacia la cabeza.
+    if (this.parryWindowActive && this.parryPhase === 'parry_dash') {
+      this.wantParryStrike = true;
+      return;
+    }
     if (this.mode === 'speed_attack') {
       // Si estaba atacando sin lock (p.ej. tras perderlo en cámara lenta) y mete
       // al enemigo dentro de la mira, permite re-lockear con Clic Izquierdo.
@@ -2319,21 +2489,27 @@ export class NyxDomeController {
     if (
       this.parryWindowActive &&
       this.redirectTargetEnemy &&
-      (this.parryStarHovered || this.parryPhase === 'parry_strike')
+      (this.parryPhase === 'parry_strike' ||
+        (this.parryPhase === 'parry_decide' && this.parryStarHovered))
     ) {
-      // Remate directo sobre la estrella / cabeza del Gólem en ventana de parry:
-      // siempre sale como taladro descendente hacia el objetivo sin resbalar.
+      // Remate directo sobre la cabeza del Gólem en Fase 2 (o estrella en
+      // Fase 1): siempre sale como taladro descendente hacia el objetivo.
       this.lockedEnemy = this.redirectTargetEnemy;
       this.reticleLockState = 'locked';
       this.speedAttackKind = 'spiral_drill_kick';
       this.animator.setState('spiral_drill_kick');
-      this.tmpA
-        .copy(this.redirectTargetEnemy.position)
-        .addScaledVector(this.up, this.redirectTargetEnemy.radius * 0.45)
-        .sub(this.nyxRoot.position);
+      if (this.parryPhase === 'parry_strike') {
+        this.tmpA.copy(this.parryHeadPoint).sub(this.nyxRoot.position);
+      } else {
+        this.tmpA
+          .copy(this.redirectTargetEnemy.position)
+          .addScaledVector(this.up, this.redirectTargetEnemy.radius * 0.45)
+          .sub(this.nyxRoot.position);
+      }
       if (this.tmpA.lengthSq() > 1e-4) {
         this.facing.copy(this.tmpA.normalize());
         this.aimForward.copy(this.facing);
+        this.prevAimFwd.copy(this.facing);
       }
       const parrySpeed = Math.max(speed, (DRILL_SPEED_THRESHOLD + 6.0) * this.speedMultiplier);
       this.velocity.copy(this.facing).multiplyScalar(parrySpeed);
@@ -2450,6 +2626,9 @@ export class NyxDomeController {
     this.lockedEnemy = null;
     this.speedAttackKind = null;
     if (!this.guardBouncedThisHit) {
+      // Cualquier golpe conectado no bloqueado apaga el slow-mo de bullet-time
+      // para que nunca quede cámara lenta colgando tras impactar sin matar.
+      this.bulletTimeTimer = 0;
       // Rebote NORMAL contra carne: voltereta de frenado + arco acrobático.
       // El rebote contra el BRAZO del Gólem en bloqueo NO llega aquí: salió
       // como Sentadilla Cinética (mode = kinetic_bounce) y esa patada no
@@ -2628,16 +2807,27 @@ export class NyxDomeController {
 
   private updateDashing(dt: number): void {
     this.dashTimer -= dt;
-    // Solo el dash frontal sigue a la cámara en vivo; los laterales/esquivas
-    // conservan su vector lateral para poder esquivar golpes limpiamente.
-    if (this.dashIsForward) {
+    if (this.parryWindowActive && this.parryPhase === 'parry_dash') {
+      // Durante el vuelo 1.0x hacia la estrella dorada, corrige rumbo hacia
+      // su posición viva por si el Gólem deriva levemente.
+      const toStar = this.tmpA.copy(this.parryStarPoint).sub(this.nyxRoot.position);
+      if (toStar.lengthSq() > 1e-4) {
+        this.dashDir.copy(toStar.normalize());
+        this.facing.copy(this.dashDir);
+        this.aimForward.copy(this.dashDir);
+      }
+    } else if (this.dashIsForward) {
+      // Solo el dash frontal sigue a la cámara en vivo; los laterales/esquivas
+      // conservan su vector lateral para poder esquivar golpes limpiamente.
       this.rotateToward(this.dashDir, this.aimForward, DASH_TURN_RATE * dt);
     }
     this.velocity.copy(this.dashDir).multiplyScalar(this.dashSpeed);
     if (this.dashTimer <= 0) {
       this.mode = 'floating';
       // Al salir del dash a alta velocidad, derrape aéreo de absorción.
-      this.startAirDrift();
+      if (!(this.parryWindowActive && this.parryPhase === 'parry_dash')) {
+        this.startAirDrift();
+      }
     }
   }
 
@@ -2661,10 +2851,18 @@ export class NyxDomeController {
     // una tasa proporcional a la velocidad (sigue al enemigo en el centro de
     // la mira/estrella sin tirones imposibles).
     if (this.lockedEnemy) {
-      const toEnemy = this.tmpA.copy(this.lockedEnemy.position).sub(this.nyxRoot.position);
-      const dist = toEnemy.length();
-      if (dist > 1e-4) {
-        toEnemy.multiplyScalar(1 / dist);
+      const toCenter = this.tmpB.copy(this.lockedEnemy.position).sub(this.nyxRoot.position);
+      const dist = toCenter.length();
+      const targetPt =
+        this.parryWindowActive &&
+        this.parryPhase === 'parry_strike' &&
+        this.lockedEnemy === this.redirectTargetEnemy
+          ? this.parryHeadPoint
+          : this.lockedEnemy.position;
+      const toEnemy = this.tmpA.copy(targetPt).sub(this.nyxRoot.position);
+      const aimDist = toEnemy.length();
+      if (aimDist > 1e-4) {
+        toEnemy.multiplyScalar(1 / aimDist);
         const trackRate = THREE.MathUtils.clamp(1.8 + speed * 0.14, 2.2, 5.5);
         this.rotateToward(this.aimForward, toEnemy, trackRate * dt);
         this.rotateToward(this.facing, toEnemy, trackRate * dt);

@@ -24,6 +24,8 @@ interface PickupItem {
   kind: DomePickupKind;
   active: boolean;
   value: number;
+  /** True si su EXP ya se contabilizó por adelantado para encadenar nivel (el orbe sigue volando hasta Nyx). */
+  counted: boolean;
   velocity: THREE.Vector3;
   phase: number;
   life: number;
@@ -104,6 +106,7 @@ export class DomePickupManager {
         kind: 'exp',
         active: false,
         value: 0,
+        counted: false,
         velocity: new THREE.Vector3(),
         phase: 0,
         life: 0,
@@ -191,8 +194,9 @@ export class DomePickupManager {
       // frame es mayor que el radio de recogida.
       _toPlayer.subVectors(playerPos, item.mesh.position);
       if (_toPlayer.lengthSq() <= COLLECT_DISTANCE * COLLECT_DISTANCE) {
-        if (item.kind === 'exp') gains.expGained += item.value;
-        else if (item.kind === 'eden') gains.edenGained += item.value;
+        if (item.kind === 'exp') {
+          if (!item.counted) gains.expGained += item.value;
+        } else if (item.kind === 'eden') gains.edenGained += item.value;
         else gains.hpGained += item.value;
         this.onCollect?.(item.kind, item.mesh.position);
         this.deactivate(item);
@@ -200,6 +204,40 @@ export class DomePickupManager {
     }
 
     return gains;
+  }
+
+  /**
+   * Suma la EXP de los orbes activos sin contabilizar dentro de `radius` m
+   * alrededor de `playerPos` (no consume ni oculta los orbes).
+   */
+  peekExpInRadius(playerPos: THREE.Vector3, radius: number): number {
+    const rSq = radius * radius;
+    let total = 0;
+    for (const item of this.pool) {
+      if (!item.active || item.kind !== 'exp' || item.counted) continue;
+      if (item.mesh.position.distanceToSquared(playerPos) <= rSq) {
+        total += item.value;
+      }
+    }
+    return total;
+  }
+
+  /**
+   * Contabiliza por adelantado la EXP de los orbes dentro de `radius` m y los
+   * marca como `counted` para que sigan volando hacia Nyx y disparen su VFX
+   * al llegar sin sumar EXP por duplicado.
+   */
+  markExpCountedInRadius(playerPos: THREE.Vector3, radius: number): number {
+    const rSq = radius * radius;
+    let total = 0;
+    for (const item of this.pool) {
+      if (!item.active || item.kind !== 'exp' || item.counted) continue;
+      if (item.mesh.position.distanceToSquared(playerPos) <= rSq) {
+        item.counted = true;
+        total += item.value;
+      }
+    }
+    return total;
   }
 
   /** Desactiva todos los orbes activos (p. ej. al reiniciar la oleada). */
@@ -228,6 +266,7 @@ export class DomePickupManager {
     if (item === null) return;
     item.kind = kind;
     item.value = value;
+    item.counted = false;
     item.active = true;
     item.life = BASE_LIFETIME;
     item.age = 0;
@@ -262,6 +301,7 @@ export class DomePickupManager {
 
   private deactivate(item: PickupItem): void {
     item.active = false;
+    item.counted = false;
     item.mesh.visible = false;
   }
 

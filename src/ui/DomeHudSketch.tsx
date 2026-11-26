@@ -267,7 +267,12 @@ function DomeHudSketchInner({
   const pressureOpacity = Math.min(0.72, 0.24 + halftoneOpacity * 0.55);
 
   const isVoidFall = hud.mode === 'speed_attack' && hud.speedAttackKind === 'void_fall';
-  const bulletRingRatio = Math.max(0, Math.min(1, hud.bulletTimeRemaining / 2.2));
+  const parryStage = hud.parryStage ?? 'none';
+  const isParrySlowMo = parryStage === 'decide' || parryStage === 'strike';
+  const bulletRingRatio = Math.max(
+    0,
+    Math.min(1, hud.bulletTimeRemaining / (isParrySlowMo ? 16.0 : 2.2)),
+  );
 
   // --- Alerta crítica de Edén (< 20%): borde del visor en cian/violeta.
   const edenPct = hud.maxEden > 0 ? hud.eden / hud.maxEden : 1;
@@ -526,13 +531,17 @@ function DomeHudSketchInner({
                 cy="256"
                 r="150"
                 fill="none"
-                stroke="#22d3ee"
+                stroke={isParrySlowMo ? '#ffd54f' : '#22d3ee'}
                 strokeWidth="2"
                 strokeLinecap="round"
                 strokeOpacity="0.85"
                 strokeDasharray={`${2 * Math.PI * 150 * bulletRingRatio} ${2 * Math.PI * 150}`}
                 transform="rotate(-90 256 256)"
-                style={{ filter: 'drop-shadow(0 0 6px #22d3ee)' }}
+                style={{
+                  filter: isParrySlowMo
+                    ? 'drop-shadow(0 0 6px #ffd54f)'
+                    : 'drop-shadow(0 0 6px #22d3ee)',
+                }}
               />
             )}
 
@@ -552,14 +561,24 @@ function DomeHudSketchInner({
           </g>
         </svg>
 
-        {/* Etiqueta compacta de cámara lenta, bajo el visor */}
+        {/* Etiqueta compacta de cámara lenta / prompt de parry, bajo el visor */}
         {hud.bulletTimeActive && (
           <div
             className="absolute left-1/2 top-full mt-4 -translate-x-1/2"
             style={{ animation: 'domeHudBulletPulse 0.9s ease-in-out infinite' }}
           >
-            <span className="whitespace-nowrap text-[10px] font-bold tracking-[0.32em] text-cyan-200/90 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]">
-              {t('hud.bulletTimeHint')}
+            <span
+              className={
+                isParrySlowMo
+                  ? 'whitespace-nowrap text-[11px] font-bold tracking-[0.28em] text-amber-200 drop-shadow-[0_0_10px_rgba(255,213,79,0.9)]'
+                  : 'whitespace-nowrap text-[10px] font-bold tracking-[0.32em] text-cyan-200/90 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]'
+              }
+            >
+              {parryStage === 'strike'
+                ? t('hud.parryStrikeHint')
+                : parryStage === 'decide'
+                  ? t('hud.parryDashHint')
+                  : t('hud.bulletTimeHint')}
             </span>
           </div>
         )}

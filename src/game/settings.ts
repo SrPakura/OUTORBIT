@@ -88,8 +88,8 @@ export const GAMEPAD_ACTIONS: GamepadAction[] = [
  */
 export type GamepadButtonIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17;
 
-/** Idioma de la interfaz ('en' por defecto, 'es' como alternativa). */
-export type Language = 'es' | 'en';
+/** Idioma de la interfaz ('en' por defecto, 'es' y 'ja' como alternativas). */
+export type Language = 'es' | 'en' | 'ja';
 
 export interface GameSettings {
   /** Idioma de la UI ('en' por defecto, persistido en localStorage). */
@@ -278,7 +278,8 @@ function sanitizeSettings(raw: unknown): GameSettings {
       : DEFAULT_GAMEPAD_BINDINGS[action];
   }
   return {
-    language: source.language === 'es' ? 'es' : 'en',
+    language:
+      source.language === 'es' || source.language === 'ja' ? source.language : 'en',
     mouseSensitivity: clampNumber(
       source.mouseSensitivity,
       SETTINGS_LIMITS.mouseSensitivity.min,

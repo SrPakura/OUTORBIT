@@ -139,7 +139,7 @@ function ToggleRow({
 }
 
 export default function SettingsScreen({ settings, onClose, onUpdateSettings }: SettingsScreenProps) {
-  const { t, language, toggleLanguage } = useI18n();
+  const { t, language, setLanguage } = useI18n();
   const [tab, setTab] = useState<SettingsTab>('general');
   const [skipTutorials, setSkipTutorials] = useState<boolean>(() => areAllTutorialsCompleted());
   const [capturing, setCapturing] = useState<ControlAction | null>(null);
@@ -384,7 +384,7 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                   <button
                     type="button"
                     onClick={() => {
-                      if (language !== 'es') toggleLanguage();
+                      if (language !== 'es') setLanguage('es');
                     }}
                     className="set-chip set-chip--btn"
                     style={
@@ -398,7 +398,7 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                   <button
                     type="button"
                     onClick={() => {
-                      if (language !== 'en') toggleLanguage();
+                      if (language !== 'en') setLanguage('en');
                     }}
                     className="set-chip set-chip--btn"
                     style={
@@ -408,6 +408,20 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                     }
                   >
                     EN
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (language !== 'ja') setLanguage('ja');
+                    }}
+                    className="set-chip set-chip--btn"
+                    style={
+                      language === 'ja'
+                        ? { background: '#0b0d12', color: '#22d3ee', borderColor: '#0b0d12' }
+                        : undefined
+                    }
+                  >
+                    JA
                   </button>
                 </span>
               </div>
@@ -536,7 +550,7 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
             linear-gradient(90deg, rgba(11,13,18,0.06) 1px, transparent 1px);
           background-size: 96px 96px;
           color: #0b0d12;
-          font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+          font-family: "Helvetica Neue", Helvetica, Arial, "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
           -webkit-font-smoothing: antialiased;
         }
         .set-speedlines {

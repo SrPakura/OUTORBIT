@@ -7,7 +7,8 @@
     "controls": "Ajustes",
     "leaderboard": "Leaderboard",
     "languageEs": "ESPAÑOL",
-    "languageEn": "ENGLISH"
+    "languageEn": "ENGLISH",
+    "languageJa": "JAPONÉS"
   },
   "controls": {
     "keyboardHint": "La sensibilidad y el eje Y afectan a la cámara de la partida; el FOV y la trama halftone se ven al instante en el diorama y en el juego.",
@@ -58,6 +59,8 @@
     "emptySlot": "VACÍO",
     "levelShort": "Nv.",
     "bulletTimeHint": "⚡ DASH [CLIC DER] PARA REDIRIGIR PATADA",
+    "parryDashHint": "⚡ DASH [CLIC DER] A LA ESTRELLA",
+    "parryStrikeHint": "⚡ [CLIC IZQ] ¡REMATA EN LA CABEZA!",
     "clickToCapture": "HAZ CLIC EN LA ARENA PARA CAPTURAR EL RATÓN · ESC PARA SOLTAR",
     "groundControls": "EN SUELO: WASD ANDAR · RATÓN CÁMARA LIBRE · ESPACIO ENTRAR A FLOTACIÓN 0G",
     "floatControls": "EN FLOTACIÓN 0G: RATÓN GIRAR CUERPO · WASD PROPULSIÓN (1 EDÉN/S, INERCIA 0G) · CLIC DER + WASD DASH (3 EDÉN)",
@@ -142,7 +145,10 @@
     "groundGolem": "Gólem Rompesuelos",
     "giantSparrow": "Gorrión Gigante",
     "prismaNecroz": "Prisma Necroz",
-    "kronosLeviathan": "Leviatán KRONOS"
+    "kronosLeviathan": "Leviatán KRONOS",
+    "crabGunner": "Cangrejo Artillero",
+    "abyssalCell": "Célula Abisal",
+    "lightningButterfly": "Mariposa Relámpago"
   },
   "battleReport": {
     "subtitle": "CÚPULA PERDIDA · INFORME DE COMBATE",
@@ -244,5 +250,47 @@
     "title": "SOLO PARA PC",
     "body": "OUTORBIT es una experiencia de gravedad esférica pensada exclusivamente para Teclado + Ratón (Pointer Lock, WASD, Gravity Shift con clic derecho).",
     "footer": "Abre el juego desde un ordenador de escritorio para pilotar al escuadrón."
+  },
+  "skillDescriptions": {
+    "gravityField": "Agarra hasta 2 escombros con estasis y los orbita frente a Nyx; vuelve a pulsar para lanzarlos contra un enemigo. Cada nivel agarra más objetos, más grandes y los lanza con mucha más fuerza.",
+    "push": "Onda antigravitatoria con ambas palmas que empuja lejos a los enemigos del radio (y al suelo flotante si no estás apoyada). Un enemigo empujado contra la Barrera Blanca muere al instante. Cada nivel añade más radio y más fuerza.",
+    "edenAbsorption": "Canaliza quedándote completamente quieta con los brazos en alto para recuperar Vida y Edén al instante con un halo ascendente. Cada nivel aumenta la cantidad recuperada.",
+    "attractionWell": "Enlaza dos enemigos cercanos (o dos suelos con un enemigo en medio) con atracción gravitatoria intensa durante 1.8 s; al chocar reciben daño por impacto y quedan aturdidos. Cada nivel amplía el rango y el daño de aplastamiento.",
+    "bounceHorizon": "Lanza ondas cortantes que parten el espacio y atraviesan a los enemigos que tocan. Cada nivel lanza más ondas y, desde Nv 2, adquieren auto-aim hacia el enemigo bloqueado.",
+    "blackHole": "Lanza una mini-singularidad con disco de acreción que avanza lenta por la cúpula durante 4.5 s, succionando y dañando todo lo que entra en su horizonte de sucesos. Cada nivel amplía el radio de succión y el daño.",
+    "implosion": "Comprime la gravedad interna de un enemigo hasta que se colapsa sobre sí mismo y desaparece al instante (a jefes les revienta un cristal/segmento). Habilidad legendaria sin niveles de mejora.",
+    "speed1": "Vuelo un 20% más rápido respecto a la base y, por física, las patadas golpean con más fuerza y penetran más profundo.",
+    "speed2": "Vuelo un 50% más rápido: las patadas golpean con mucha más fuerza y es más fácil entrar en Patada Taladro Espiral.",
+    "speed3": "Vuelo un 75% más rápido: fuerza y penetración máximas en cada impacto gravitatorio.",
+    "edenRegen1": "Regenera un 2% de tu barra de Edén por segundo, solo cuando estás quieta.",
+    "edenRegen2": "Regenera un 3% de Edén por segundo mientras flotes inmóvil o estés parada.",
+    "edenRegen3": "Regenera un 5% de Edén por segundo en cuanto te detienes.",
+    "hpRegen1": "Regenera de forma pasiva y constante un 1% de Vida por segundo, incluso moviéndote o peleando.",
+    "hpRegen2": "Regenera un 1.5% de Vida por segundo en todo momento.",
+    "hpRegen3": "Regenera un 2% de Vida por segundo en todo momento. Gran margen de error en combate."
+  },
+  "trainingPanel": {
+    "title": "Entrenamiento",
+    "debug": "[Debug]",
+    "hideHint": "F2 / Tab: ocultar",
+    "enemySection": "Enemigo (8/8)",
+    "restartEnemy": "Reiniciar enemigo",
+    "dummyPassive": "Quieto (pasivo)",
+    "dummyActive": "IA activa",
+    "dummyTitle": "Alterna entre saco de boxeo (sin ataques) y comportamiento ofensivo real",
+    "slotsSection": "Ranuras 1 / 2 / 3",
+    "emptySlot": "— vacía —",
+    "upgradeLevel": "+Nv",
+    "maxLevelTitle": "Nivel máximo",
+    "upgradeLevelTitle": "Sube un nivel esta habilidad",
+    "clearSlot": "Vaciar",
+    "activeSkillsSection": "Habilidades activas (7)",
+    "equipToSlotTitle": "Equipar en la ranura {{n}}",
+    "passivesSection": "Pasivas (3)",
+    "disabled": "Desactivada",
+    "noLevel": "Sin nivel",
+    "extrasSection": "Extras",
+    "refillButton": "Recargar Vida + Edén (T)",
+    "footerNote": "Nyx inmortal · Edén +25/s · sin oleadas automáticas"
   }
 }

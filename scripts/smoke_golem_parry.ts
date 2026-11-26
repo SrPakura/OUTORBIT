@@ -72,7 +72,10 @@ const prevPos = new THREE.Vector3();
 let elapsed = 0;
 
 /** Corre un frame del manager con la foto actual de Nyx. */
-function frameUpdate(parryDashUsed = false): { opened: boolean; closedEvent: boolean } {
+function frameUpdate(
+  parryDashUsed = false,
+  parryDashInFlight = false,
+): { opened: boolean; closedEvent: boolean } {
   const res = mgr.update(
     DT,
     elapsed,
@@ -92,6 +95,7 @@ function frameUpdate(parryDashUsed = false): { opened: boolean; closedEvent: boo
     1, // playerHpRatio
     1, // playerEdenRatio (con Eden: el parry no es un bluff)
     parryDashUsed,
+    parryDashInFlight,
   );
   elapsed += DT;
   return {
@@ -383,6 +387,73 @@ function conclusiveApproach(maxAttempts: number): {
     '6b. El rebote frontal NO consume la ventana de parry',
     wasOpen ? mgr.isGolemParryWindowOpen() === true : true,
     wasOpen ? 'ventana sigue abierta' : 'sin ventana previa (skip)',
+  );
+  mgr.consumeGolemParryClose();
+}
+
+// --------------------------------------------------------------------------
+// 7) Golpe NO bloqueado en parry_decide (por la espalda/costado) cierra la
+//    ventana al instante (sin slow-mo colgado).
+// --------------------------------------------------------------------------
+{
+  if (!mgr.isGolemParryWindowOpen()) {
+    holdAt(GOLEM_PARRY_COOLDOWN_SEC + 1.0, 26);
+    conclusiveApproach(4);
+  }
+  const gBack = new THREE.Vector3(0, 0, -1).applyQuaternion(golem.mesh.quaternion);
+  pos.copy(golem.position).addScaledVector(gBack, ALPHA + 3.2);
+  prevPos.copy(pos);
+  vel.set(0, 0, 0);
+  aim.copy(gBack).negate();
+  frameUpdate();
+  const isBlocked = mgr.isGolemGuardBlocking(golem);
+  const hitDir = golem.position.clone().sub(pos).normalize();
+  const hitRes = mgr.onHitEnemy(golem, hitDir, false, 20);
+  check(
+    '7. Golpe no bloqueado en parry_decide cierra ventana (sin slow-mo colgado)',
+    !isBlocked && hitRes.parryCritDamage === 0 && !mgr.isGolemParryWindowOpen(),
+    `blocked=${isBlocked}, open=${mgr.isGolemParryWindowOpen()}`,
+  );
+  mgr.consumeGolemParryClose();
+}
+
+// --------------------------------------------------------------------------
+// 8) Vuelo de dash (parryDashInFlight) pausa el reloj de remate y al llegar
+//    permite conectar el remate con daño exacto del 35% + vulnerableTimer.
+// --------------------------------------------------------------------------
+{
+  holdAt(GOLEM_PARRY_COOLDOWN_SEC + 1.0, 26);
+  const r = conclusiveApproach(4);
+  check('8. Preparación: ventana abierta para test de vuelo 1.0x', r.opened);
+  // 0.35 s en vuelo rápido hacia la estrella (dentro de α+2 inclusive): no caduca
+  for (let i = 0; i < 21; i++) {
+    prevPos.copy(pos);
+    pos.copy(golem.position).add(new THREE.Vector3(0, ALPHA + 1.2, 0));
+    vel.set(0, 0, 0);
+    frameUpdate(true, true);
+  }
+  check(
+    '8b. Durante parryDashInFlight la ventana sigue abierta',
+    mgr.isGolemParryWindowOpen() === true,
+  );
+  // Llega a la estrella (`parryDashInFlight = false`) y espera 0.2 s: sigue abierta
+  for (let i = 0; i < 12; i++) {
+    frameUpdate(true, false);
+  }
+  check(
+    '8c. Tras llegar arriba sigue vivo el margen de remate',
+    mgr.isGolemParryWindowOpen() === true,
+  );
+  const hpBefore = golem.entity.hp;
+  const strikeDir = new THREE.Vector3(1, -0.5, 0).normalize();
+  const res = mgr.onHitEnemy(golem, strikeDir, true, 28);
+  check(
+    '8d. Remate devuelve parryCritDamage=35% maxHp y abre vulnerableTimer',
+    Math.abs(res.parryCritDamage - golem.entity.maxHp * GOLEM_PARRY_CRIT_RATIO) < 0.01 &&
+      Math.abs(hpBefore - golem.entity.hp - res.parryCritDamage) < 0.01 &&
+      (golem.entity.vulnerableTimer ?? 0) > 0 &&
+      !mgr.isGolemParryWindowOpen(),
+    `crit=${res.parryCritDamage.toFixed(1)}, vuln=${(golem.entity.vulnerableTimer ?? 0).toFixed(2)}`,
   );
   mgr.consumeGolemParryClose();
 }

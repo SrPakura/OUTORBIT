@@ -7,7 +7,8 @@
     "controls": "Settings",
     "leaderboard": "Leaderboard",
     "languageEs": "ESPAÑOL",
-    "languageEn": "ENGLISH"
+    "languageEn": "ENGLISH",
+    "languageJa": "JAPANESE"
   },
   "controls": {
     "keyboardHint": "Sensitivity and the Y axis affect the in-game camera; FOV and the halftone pattern are visible instantly in the diorama and in the game.",
@@ -58,6 +59,8 @@
     "emptySlot": "EMPTY",
     "levelShort": "Lv.",
     "bulletTimeHint": "⚡ DASH [RIGHT CLICK] TO REDIRECT KICK",
+    "parryDashHint": "⚡ DASH [RIGHT CLICK] TO THE STAR",
+    "parryStrikeHint": "⚡ [LEFT CLICK] STRIKE THE HEAD!",
     "clickToCapture": "CLICK THE ARENA TO CAPTURE THE MOUSE · ESC TO RELEASE",
     "groundControls": "ON GROUND: WASD WALK · MOUSE FREE CAMERA · SPACE ENTER 0G FLOAT",
     "floatControls": "IN 0G FLOAT: MOUSE ROTATE BODY · WASD THRUST (1 EDEN/S, 0G INERTIA) · RIGHT CLICK + WASD DASH (3 EDEN)",
@@ -142,7 +145,10 @@
     "groundGolem": "Groundbreaker Golem",
     "giantSparrow": "Giant Sparrow",
     "prismaNecroz": "Prisma Necroz",
-    "kronosLeviathan": "KRONOS Leviathan"
+    "kronosLeviathan": "KRONOS Leviathan",
+    "crabGunner": "Crab Gunner",
+    "abyssalCell": "Abyssal Cell",
+    "lightningButterfly": "Lightning Butterfly"
   },
   "battleReport": {
     "subtitle": "DOME LOST · COMBAT REPORT",
@@ -244,5 +250,47 @@
     "title": "PC ONLY",
     "body": "OUTORBIT is a spherical gravity experience designed exclusively for Keyboard + Mouse (Pointer Lock, WASD, Gravity Shift with right click).",
     "footer": "Open the game from a desktop computer to pilot the squad."
+  },
+  "skillDescriptions": {
+    "gravityField": "Traps up to 2 pieces of debris in stasis and orbits them in front of Nyx; press again to fling them at an enemy. Each level catches more and larger objects and launches them with far greater force.",
+    "push": "Antigravitational wave from both palms that blasts enemies within range away (and pushes floating slabs if not grounded). An enemy knocked into the White Barrier is eliminated instantly. Each level expands radius and knockback.",
+    "edenAbsorption": "Channel by standing completely still with arms raised to instantly recover Health and Eden with an ascending halo. Each level increases the recovery amount.",
+    "attractionWell": "Tethers two nearby enemies (or two slabs with an enemy caught between) with intense gravitational pull for 1.8 s; upon collision they suffer impact damage and are stunned. Each level increases range and crush damage.",
+    "bounceHorizon": "Unleashes slashing waves that cleave space and pierce enemies in their path. Each level unleashes more waves, gaining auto-aim toward locked targets from Lv 2 onward.",
+    "blackHole": "Fires a miniature accretion-disk singularity that drifts slowly through the dome for 4.5 s, pulling in and tearing apart everything caught in its event horizon. Each level expands suction radius and damage.",
+    "implosion": "Compresses the internal gravity of a target enemy until it collapses in on itself and vanishes instantly (shatters a crystal/segment on bosses). Legendary skill with no upgrade levels.",
+    "speed1": "Fly 20% faster than base; physics dictates that kicks hit harder and penetrate deeper.",
+    "speed2": "Fly 50% faster: kicks strike with immense force and entering Spiral Drill Kick becomes effortless.",
+    "speed3": "Fly 75% faster: maximum force and penetration on every gravitational impact.",
+    "edenRegen1": "Regenerates 2% of your Eden bar per second, only while standing completely still.",
+    "edenRegen2": "Regenerates 3% of Eden per second while floating motionless or standing still.",
+    "edenRegen3": "Regenerates 5% of Eden per second as soon as you come to a stop.",
+    "hpRegen1": "Passively and steadily regenerates 1% of max Health per second, even while moving or fighting.",
+    "hpRegen2": "Regenerates 1.5% of max Health per second continuously at all times.",
+    "hpRegen3": "Regenerates 2% of max Health per second continuously. Vastly improves combat survival."
+  },
+  "trainingPanel": {
+    "title": "Training",
+    "debug": "[Debug]",
+    "hideHint": "F2 / Tab: hide",
+    "enemySection": "Enemy (8/8)",
+    "restartEnemy": "Reset enemy",
+    "dummyPassive": "Still (passive)",
+    "dummyActive": "Active AI",
+    "dummyTitle": "Toggle between punching bag (no attacks) and real offensive behavior",
+    "slotsSection": "Slots 1 / 2 / 3",
+    "emptySlot": "— empty —",
+    "upgradeLevel": "+Lv",
+    "maxLevelTitle": "Max level",
+    "upgradeLevelTitle": "Upgrade this skill by one level",
+    "clearSlot": "Clear",
+    "activeSkillsSection": "Active skills (7)",
+    "equipToSlotTitle": "Equip to slot {{n}}",
+    "passivesSection": "Passives (3)",
+    "disabled": "Disabled",
+    "noLevel": "No level",
+    "extrasSection": "Extras",
+    "refillButton": "Refill Health + Eden (T)",
+    "footerNote": "Immortal Nyx · Eden +25/s · no automatic waves"
   }
 }

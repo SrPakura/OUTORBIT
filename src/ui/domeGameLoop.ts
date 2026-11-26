@@ -472,7 +472,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       controller?.punchCamera(0.55);
       return;
     }
-    waveMgr.onHitEnemy(enemy, hitDir, isDrill, impactSpeed);
+    const hitRes = waveMgr.onHitEnemy(enemy, hitDir, isDrill, impactSpeed);
     // VFX cómic del impacto cinético: la intensidad escala con la velocidad
     // real del golpe (el taladro pega más fuerte) y los picos salen sesgados
     // hacia la dirección del hit.
@@ -483,7 +483,18 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       enemy.radius,
     );
     const managed = waveMgr.getActiveEnemies().find((e) => e.id === enemy.id);
-    if (managed && managed.entity.alive) {
+    if (managed) {
+      // Remate de parry del Gólem (Fase 2): hace exactamente el 35% de la
+      // vida máxima sin sumar computeKineticImpact en este mismo impacto
+      // (`vulnerableTimer` queda abierto solo para los golpes posteriores).
+      if (hitRes.parryCritDamage > 0) {
+        runTracker.recordDamage(hitRes.parryCritDamage);
+        if (managed.entity.hp <= 0 || !managed.entity.alive) {
+          killWaveEnemy(managed, false);
+        }
+        return;
+      }
+      if (!managed.entity.alive) return;
       // Leviatán KRONOS: su vida son 4 Estrellas Dorsales, no HP genérico.
       // Un impacto de alta velocidad (Patada Taladro o velocidad > umbral
       // cinético) rompe UNA estrella con las puertas anti-skip del manager
@@ -876,6 +887,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   let hudTimer = 0;
   let raf = 0;
   let gameOverTriggered = false;
+  const parryStarScratch = new THREE.Vector3();
+  const parryHeadScratch = new THREE.Vector3();
 
   const tick = () => {
     raf = requestAnimationFrame(tick);
@@ -961,7 +974,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       sphereTiles.update(worldDt, elapsed);
       refillActiveSlabs();
 
-      const { didEnemyEvadeDash, golemParryTarget, golemParryStarPos } = waveMgr.update(
+      const {
+        didEnemyEvadeDash,
+        golemParryTarget,
+        golemParryStarPos,
+        golemParryHeadPos,
+      } = waveMgr.update(
         worldDt,
         elapsed,
         controller.getPosition(),
@@ -980,6 +998,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         controller.getHp() / controller.getMaxHp(),
         controller.getEden() / controller.getMaxEden(),
         controller.isParryDashUsed(),
+        controller.isParryDashInFlight(),
       );
       if (didEnemyEvadeDash) {
         controller.notifyEnemyEvaded();
@@ -997,7 +1016,17 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         // Parry del Gólem (FASE 1 — apertura por DISTANCIA: Nyx cruzó α+9
         // con la guardia alzada): slow-mo propio con latigazo de cámara
         // hacia la estrella y ventaja de dash directo al punto del remate.
-        controller.openParryWindow(golemParryTarget, golemParryStarPos);
+        controller.openParryWindow(
+          golemParryTarget,
+          golemParryStarPos,
+          golemParryHeadPos ?? undefined,
+        );
+      }
+      if (
+        controller.isParryWindowActive() &&
+        waveMgr.getGolemParryTargets(parryStarScratch, parryHeadScratch)
+      ) {
+        controller.syncParryTargets(parryStarScratch, parryHeadScratch);
       }
 
       waveMgr.fillActiveEnemies(activeEnemies);
@@ -1066,9 +1095,22 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       }
       if (pickupGains.expGained > 0) {
         const gainedLevels = progression.addExp(pickupGains.expGained);
-        runTracker.recordLevel(progression.level);
         if (gainedLevels.length > 0) {
+          // Si al subir de nivel ya hay suficiente EXP en un radio de 30 m
+          // para encadenar otra subida, se contabiliza por adelantado para
+          // abrir 1 -> 2 -> 2 -> 3. Los orbes siguen vivos y vuelan hasta Nyx
+          // igual que los de Edén/Vida, marcados como `counted` para no sumar
+          // su EXP por duplicado al tocarla.
+          const nearbyExp = pickups.peekExpInRadius(controller.getPosition(), 30);
+          if (nearbyExp > 0 && progression.exp + nearbyExp >= progression.expToNext) {
+            const countedExp = pickups.markExpCountedInRadius(controller.getPosition(), 30);
+            const extraLevels = progression.addExp(countedExp);
+            gainedLevels.push(...extraLevels);
+          }
+          runTracker.recordLevel(progression.level);
           openLevelUpModal(gainedLevels);
+        } else {
+          runTracker.recordLevel(progression.level);
         }
       }
 
@@ -1170,6 +1212,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           equippedSkills: progression.slots
             .filter((s) => s.skillId !== null)
             .map((s) => ({
+              id: s.skillId!,
               name: ACTIVE_SKILLS_CATALOG[s.skillId!].name,
               level: s.level,
             })),

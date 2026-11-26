@@ -81,7 +81,7 @@ function safeSetItem(key: string, value: string): void {
 // ---------------------------------------------------------------------------
 export function loadStoredLanguage(): Language | null {
   const raw = safeGetItem(STORAGE_KEYS.language);
-  if (raw === 'es' || raw === 'en') return raw;
+  if (raw === 'es' || raw === 'en' || raw === 'ja') return raw;
   return null;
 }
 
