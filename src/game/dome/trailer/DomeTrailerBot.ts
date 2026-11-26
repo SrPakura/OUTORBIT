@@ -166,7 +166,69 @@ export class DomeTrailerBot {
     }
 
     // ------------------------------------------------------------------
-    // 2. PRIORIDAD ALTA: Esquive al último segundo (CPA)
+    // 2. ESTILO 'dodge': Staredown épico desde lejos + esquives al último segundo
+    // ------------------------------------------------------------------
+    if (this.config.style === 'dodge') {
+      const target = this.pickBestEnemy(ctx.enemies, ctx.playerPos, ctx.aimForward);
+      if (target) {
+        this.steerCameraToward(ctx, target.position, 9.0, inp);
+        const dist = ctx.playerPos.distanceTo(target.position);
+        // Mantener distancia épica (24–36 m) mirando fijamente al enemigo
+        if (dist > 36) inp.moveY = -0.55;
+        else if (dist < 22) inp.moveY = 0.55;
+        else inp.moveY = 0;
+      } else {
+        inp.moveY = 0;
+      }
+      if (this.dodgeCooldown <= 0 && ctx.threats.length > 0) {
+        const dodgeVec = this.evaluateLastSecondDodge(ctx, 0.25, 2.1);
+        if (dodgeVec) {
+          this.tmpRight.crossVectors(ctx.aimForward, ctx.aimUp).normalize();
+          const side = dodgeVec.dot(this.tmpRight);
+          inp.moveX = side >= 0 ? 1 : -1;
+          inp.moveY = 0;
+          inp.wantDash = true;
+          inp.dashHeld = true;
+          this.dodgeCooldown = 0.48;
+        }
+      }
+      return inp;
+    }
+
+    // ------------------------------------------------------------------
+    // 2b. ESTILO 'parry': Solo Parrys perfectos (provoca y espera al Gólem)
+    // ------------------------------------------------------------------
+    if (this.config.style === 'parry') {
+      const golem =
+        ctx.enemies.find((e) => e.entity.hp > 0 && e.entity.archetype === 'ground_golem') ??
+        this.pickBestEnemy(ctx.enemies, ctx.playerPos, ctx.aimForward);
+      if (golem) {
+        this.steerCameraToward(ctx, golem.position, 11.0, inp);
+        const dist = ctx.playerPos.distanceTo(golem.position);
+        // Banda óptima para provocar la guardia y esperar la estrella dorada (8–13 m)
+        if (dist > 13.5) inp.moveY = -0.65;
+        else if (dist < 7.5) inp.moveY = 0.65;
+        else inp.moveY = 0;
+        inp.moveX = Math.sin(this.slalomPhase * 0.5) * 0.35;
+      } else {
+        inp.moveY = 0;
+      }
+      // Esquiva proyectiles si viene otro enemigo en la oleada, sin atacar ni hacer trickshots
+      if (this.dodgeCooldown <= 0 && ctx.threats.length > 0) {
+        const dodgeVec = this.evaluateLastSecondDodge(ctx, 0.24, 1.85);
+        if (dodgeVec) {
+          this.tmpRight.crossVectors(ctx.aimForward, ctx.aimUp).normalize();
+          inp.moveX = dodgeVec.dot(this.tmpRight) >= 0 ? 1 : -1;
+          inp.wantDash = true;
+          inp.dashHeld = true;
+          this.dodgeCooldown = 0.7;
+        }
+      }
+      return inp;
+    }
+
+    // ------------------------------------------------------------------
+    // 2c. PRIORIDAD ALTA: Esquive al último segundo (CPA)
     // ------------------------------------------------------------------
     if (this.dodgeCooldown <= 0 && ctx.threats.length > 0) {
       const dodgeVec = this.evaluateLastSecondDodge(ctx);
@@ -497,7 +559,11 @@ export class DomeTrailerBot {
     out.lookDy = THREE.MathUtils.clamp(-pitchErr, -maxStep, maxStep);
   }
 
-  private evaluateLastSecondDodge(ctx: BotWorldContext): THREE.Vector3 | null {
+  private evaluateLastSecondDodge(
+    ctx: BotWorldContext,
+    maxCpaSec = 0.30,
+    extraMargin = 1.85,
+  ): THREE.Vector3 | null {
     let bestThreat: TrailerThreatInfo | null = null;
     let earliestCpa = Infinity;
 
@@ -508,11 +574,11 @@ export class DomeTrailerBot {
       if (speedSq < 1e-4) continue;
 
       const tCpa = -relPos.dot(relVel) / speedSq;
-      if (tCpa < 0.04 || tCpa > 0.30) continue;
+      if (tCpa < 0.03 || tCpa > maxCpaSec) continue;
 
       const cpaDistSq =
         relPos.lengthSq() + 2 * relPos.dot(relVel) * tCpa + speedSq * tCpa * tCpa;
-      const dangerRadius = threat.radius + 1.85;
+      const dangerRadius = threat.radius + extraMargin;
       if (cpaDistSq <= dangerRadius * dangerRadius && tCpa < earliestCpa) {
         earliestCpa = tCpa;
         bestThreat = threat;

@@ -20,6 +20,7 @@ import type {
 
 export interface TrailerStartOptions {
   wave?: number;
+  oleada?: number;
   seed?: number;
   loadout?: [ActiveSkillId, ActiveSkillId, ActiveSkillId];
   infiniteEden?: boolean;
@@ -66,8 +67,9 @@ export function setLastRecordedReplay(replay: ReplayFileV1 | null): void {
 }
 
 function normalizeStartConfig(opts: TrailerStartOptions = {}): TrailerBotConfig {
+  const waveRaw = opts.oleada ?? opts.wave ?? 1;
   return {
-    wave: Math.max(1, Math.floor(opts.wave ?? 1)),
+    wave: Math.max(1, Math.floor(waveRaw)),
     seed: typeof opts.seed === 'number' ? opts.seed >>> 0 : generateRandomSeed(),
     loadout: opts.loadout ?? ['gravity_field', 'bounce_horizon', 'black_hole'],
     infiniteEden: opts.infiniteEden ?? true,
@@ -84,7 +86,8 @@ export const outorbitTrailerApi = {
     console.info(
       `%c[OUTORBIT Trailer & Replay Theater]
 %cComandos disponibles (window.outorbitTrailer / window.trailer):
-  trailer.start({ wave: 1, hud: false, style: 'hyper'|'cinematic'|'flow', loadout: ['gravity_field','bounce_horizon','black_hole'] })
+  trailer.start({ oleada: 1, hud: false, style: 'hyper'|'cinematic'|'flow'|'dodge'|'parry' })
+  trailer.oleada(4, { style: 'parry' }) -> atajo directo de oleada (4=Gólem, 5=Gorrión, 10=Prisma, 15=KRONOS)
   trailer.stop()                         -> detiene el bot y guarda la toma en memoria
   trailer.download('toma.json')          -> descarga el .outorbit-replay.json
   trailer.playLast({ camera: 'free' })   -> reproduce la última toma en Modo Teatro
@@ -104,6 +107,14 @@ Atajos en Modo Teatro (Replay):
       'color:#22d3ee;font-weight:bold;font-size:13px',
       'color:#e2e8f0;font-size:12px',
     );
+  },
+
+  oleada(n: number, opts: Omit<TrailerStartOptions, 'wave' | 'oleada'> = {}): void {
+    outorbitTrailerApi.start({ ...opts, oleada: n });
+  },
+
+  wave(n: number, opts: Omit<TrailerStartOptions, 'wave' | 'oleada'> = {}): void {
+    outorbitTrailerApi.start({ ...opts, wave: n });
   },
 
   start(opts: TrailerStartOptions = {}): void {

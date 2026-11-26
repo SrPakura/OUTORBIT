@@ -10,7 +10,7 @@ import type { ActiveSkillId } from '@/game/dome/DomeProgression';
 export const TRAILER_FIXED_DT = 1 / 60;
 
 export type ReplayCameraMode = 'bot' | 'free' | 'orbit' | 'director';
-export type TrailerBotStyle = 'hyper' | 'cinematic' | 'flow';
+export type TrailerBotStyle = 'hyper' | 'cinematic' | 'flow' | 'dodge' | 'parry';
 
 /**
  * Entrada sintética por tick compartida entre el Bot (grabación) y el
