@@ -189,11 +189,11 @@ function DomeSkillSlotsHudInner({ slots }: DomeSkillSlotsHudProps) {
               />
             )}
 
-            {/* Etiqueta de tecla biselada a 45° (estilo barra OLEADA) */}
+            {/* Etiqueta de tecla/botón de mando biselada a 45° (estilo barra OLEADA) */}
             <svg
               viewBox="0 0 22 22"
               className="absolute -bottom-0.5 -right-0.5 z-20"
-              style={{ width: '20px', height: '20px' }}
+              style={{ width: '23px', height: '23px' }}
               aria-hidden="true"
             >
               <polygon
@@ -202,17 +202,54 @@ function DomeSkillSlotsHudInner({ slots }: DomeSkillSlotsHudProps) {
                 stroke={isActive ? '#00e5ff' : equipped ? 'rgba(228, 228, 236, 0.65)' : 'rgba(228, 228, 236, 0.35)'}
                 strokeWidth="1.4"
               />
-              <text
-                x="11"
-                y="14.5"
-                textAnchor="middle"
-                fill={isActive ? '#00e5ff' : '#ffffff'}
-                fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                fontWeight="900"
-                fontSize="11"
-              >
-                {slot.keyLabel}
-              </text>
+              {slot.gamepadButton === 2 ? (
+                <rect
+                  x="6.6"
+                  y="6.6"
+                  width="8.8"
+                  height="8.8"
+                  fill="none"
+                  stroke={isActive ? '#00e5ff' : '#f472b6'}
+                  strokeWidth="1.9"
+                />
+              ) : slot.gamepadButton === 3 ? (
+                <polygon
+                  points="11,6.1 15.9,15.1 6.1,15.1"
+                  fill="none"
+                  stroke={isActive ? '#00e5ff' : '#4ade80'}
+                  strokeWidth="1.85"
+                  strokeLinejoin="round"
+                />
+              ) : slot.gamepadButton === 1 ? (
+                <circle
+                  cx="11"
+                  cy="11"
+                  r="4.6"
+                  fill="none"
+                  stroke={isActive ? '#00e5ff' : '#fb7185'}
+                  strokeWidth="1.9"
+                />
+              ) : slot.gamepadButton === 0 ? (
+                <path
+                  d="M7.2 7.2 L14.8 14.8 M14.8 7.2 L7.2 14.8"
+                  fill="none"
+                  stroke={isActive ? '#00e5ff' : '#60a5fa'}
+                  strokeWidth="2.1"
+                  strokeLinecap="round"
+                />
+              ) : (
+                <text
+                  x="11"
+                  y="14.5"
+                  textAnchor="middle"
+                  fill={isActive ? '#00e5ff' : '#ffffff'}
+                  fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                  fontWeight="900"
+                  fontSize={slot.keyLabel.length > 1 ? '8.5' : '11'}
+                >
+                  {slot.keyLabel}
+                </text>
+              )}
             </svg>
 
             {/* Pips de nivel de habilidad (centrados bajo el círculo) */}

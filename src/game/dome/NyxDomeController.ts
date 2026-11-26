@@ -29,6 +29,7 @@ import type { NyxWalkPlayer } from '@/game/render/nyxWalkPlayer';
 import type { NyxClips } from '@/game/render/nyxModelLoader';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
 import {
+  formatGamepadButtonShort,
   formatKeyCode,
   resolveActionCodes,
   type ControlAction,
@@ -1355,11 +1356,29 @@ export class NyxDomeController {
           ? 0
           : Math.max(this.bulletTimeTimer, this.redirectWindowTimer),
       activeSlot: this.activeSlot,
-      slots: [
-        { keyLabel: formatKeyCode(this.settings.bindings.slot1), ...this.slotHudInfo[0] },
-        { keyLabel: formatKeyCode(this.settings.bindings.slot2), ...this.slotHudInfo[1] },
-        { keyLabel: formatKeyCode(this.settings.bindings.slot3), ...this.slotHudInfo[2] },
-      ],
+      slots: this.isGamepadConnected()
+        ? [
+            {
+              keyLabel: formatGamepadButtonShort(this.settings.gamepadBindings.slot1),
+              gamepadButton: this.settings.gamepadBindings.slot1,
+              ...this.slotHudInfo[0],
+            },
+            {
+              keyLabel: formatGamepadButtonShort(this.settings.gamepadBindings.slot2),
+              gamepadButton: this.settings.gamepadBindings.slot2,
+              ...this.slotHudInfo[1],
+            },
+            {
+              keyLabel: formatGamepadButtonShort(this.settings.gamepadBindings.slot3),
+              gamepadButton: this.settings.gamepadBindings.slot3,
+              ...this.slotHudInfo[2],
+            },
+          ]
+        : [
+            { keyLabel: formatKeyCode(this.settings.bindings.slot1), ...this.slotHudInfo[0] },
+            { keyLabel: formatKeyCode(this.settings.bindings.slot2), ...this.slotHudInfo[1] },
+            { keyLabel: formatKeyCode(this.settings.bindings.slot3), ...this.slotHudInfo[2] },
+          ],
       domeBounceFlash: this.domeBounceFlash,
       inkOverlayIntensity: this.inkOverlayIntensity,
       waveNumber: this.waveNumber,

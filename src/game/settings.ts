@@ -502,3 +502,29 @@ export const GAMEPAD_BUTTON_LABELS: Record<GamepadButtonIndex, string> = {
 export function formatGamepadButton(index: GamepadButtonIndex): string {
   return GAMEPAD_BUTTON_LABELS[index] ?? `Botón ${index}`;
 }
+
+const GAMEPAD_BUTTON_SHORT: Record<GamepadButtonIndex, string> = {
+  0: '✕',
+  1: '○',
+  2: '□',
+  3: '△',
+  4: 'L1',
+  5: 'R1',
+  6: 'L2',
+  7: 'R2',
+  8: 'SH',
+  9: 'OP',
+  10: 'L3',
+  11: 'R3',
+  12: '▲',
+  13: '▼',
+  14: '◀',
+  15: '▶',
+  16: 'PS',
+  17: 'TP',
+};
+
+/** Símbolo corto para badges del HUD (cuadrado izq=2, triángulo arriba=3, círculo der=1, X abajo=0). */
+export function formatGamepadButtonShort(index: GamepadButtonIndex): string {
+  return GAMEPAD_BUTTON_SHORT[index] ?? `B${index}`;
+}
