@@ -269,6 +269,24 @@ export class DomeFloatingSlabManager {
   }
 
   /**
+   * Materializa al instante los suelos activos al iniciar/cambiar de oleada
+   * (sin esperar 0.5–1 s de fade-in) para que el Cangrejo Artillero nazca
+   * anclado a un suelo desde el frame 0 en vez de flotando en el vacío.
+   */
+  materializeActiveImmediate(cameraPos?: THREE.Vector3, cameraFwd?: THREE.Vector3): void {
+    for (const slab of this.slabs) {
+      if (!slab.active) continue;
+      if (!slab.hasChord) {
+        this.assignChord(slab, cameraPos, cameraFwd, 18, 56);
+      }
+      slab.exiting = false;
+      slab.shattered = false;
+      slab.transition = 1;
+    }
+    this.update(0.016, 0, cameraPos, cameraFwd);
+  }
+
+  /**
    * Nivel de aviso global (0..1) para los suelos activos: pulso rojo/ámbar
    * cuando un suelo de Miniboss está a punto de desaparecer.
    */

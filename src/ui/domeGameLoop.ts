@@ -238,17 +238,22 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     for (const slab of sphereTiles.getActiveColliders()) activeSlabs.push(slab);
   };
   const activeEnemies: ManagedWaveEnemy[] = [];
+  waveMgr.setDifficultyScaling(!settingsRef.current.easyMode);
   if (training) {
     // Modo Entrenamiento: sin oleadas automáticas ni elección inicial de
     // cartas; suelos básicos para el Cangrejo Artillero y los escombros del
     // Campo Gravitacional. El enemigo único lo spawnea el puente de abajo.
     progression.pendingInitialPick = false;
     applyFloorMode('basic');
+    floatingSlabs.materializeActiveImmediate();
+    refillActiveSlabs();
     musicPlayer.play('waveA');
   } else {
+    applyFloorMode(waveMgr.getFloorModeForWave(1));
+    floatingSlabs.materializeActiveImmediate();
+    refillActiveSlabs();
     waveMgr.startWave(1, activeSlabs);
     runTracker.recordWave(1);
-    applyFloorMode(waveMgr.getWaveInfo().floorMode);
     syncWaveMusic(waveMgr.getWaveInfo().label);
   }
   let nextWaveDelay = 0;
@@ -1114,9 +1119,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           nextWaveDelay -= worldDt;
           if (nextWaveDelay <= 0) {
             const nextWave = waveMgr.getWaveInfo().wave + 1;
+            applyFloorMode(waveMgr.getFloorModeForWave(nextWave));
+            floatingSlabs.materializeActiveImmediate(camera.position, controller.getAimForward());
+            sphereTiles.update(0.016, elapsed);
+            refillActiveSlabs();
             waveMgr.startWave(nextWave, activeSlabs);
             runTracker.recordWave(nextWave);
-            applyFloorMode(waveMgr.getWaveInfo().floorMode);
             syncWaveMusic(waveMgr.getWaveInfo().label);
           }
         }
@@ -1175,14 +1183,18 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         }
       }
 
+      const easyMode = settingsRef.current.easyMode;
+      const easyMult = easyMode ? 2 : 1;
+      waveMgr.setDifficultyScaling(!easyMode);
+
       const waveInfo = waveMgr.getWaveInfo();
       // Sincronizar estadísticas/slots con NyxDomeController (payload
       // persistente mutado in-place: cero objetos nuevos por frame).
       syncPayload.level = progression.level;
       syncPayload.exp = progression.exp;
       syncPayload.expToNext = progression.expToNext;
-      syncPayload.maxHp = progression.maxHp;
-      syncPayload.maxEden = progression.maxEden;
+      syncPayload.maxHp = progression.maxHp * easyMult;
+      syncPayload.maxEden = progression.maxEden * easyMult;
       syncPayload.speedMultiplier = mods.speedMultiplier;
       syncPayload.edenRegenFrac = mods.edenRegenPctPerSec;
       syncPayload.hpRegenFrac = mods.hpRegenPctPerSec;

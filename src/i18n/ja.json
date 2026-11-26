@@ -1,6 +1,6 @@
 {
   "menu": {
-    "tagline": "ZERO-G ROGUELITE",
+    "tagline": "無重力ローグライク",
     "play": "出撃",
     "training": "トレーニング",
     "trainingDebug": "[デバッグ]",
@@ -121,6 +121,7 @@
     "sfxVolume": "効果音 (SFX) 音量",
     "invertY": "Y軸反転",
     "halftone": "ハーフトーン効果（コミック調）",
+    "easyMode": "イージーモード（HP・エデン2倍、難易度上昇なし）",
     "skipTutorials": "チュートリアルをスキップ",
     "language": "言語",
     "restoreAll": "すべて初期設定に戻す"

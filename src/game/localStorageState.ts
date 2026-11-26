@@ -36,6 +36,7 @@ export type OtherSettingKey =
   | 'musicVolume'
   | 'sfxVolume'
   | 'halftonesEnabled'
+  | 'easyMode'
   | 'gamepadSensitivity'
   | 'gamepadDeadzone';
 
@@ -177,6 +178,7 @@ const OTHER_SETTING_KEYS: OtherSettingKey[] = [
   'musicVolume',
   'sfxVolume',
   'halftonesEnabled',
+  'easyMode',
   'gamepadSensitivity',
   'gamepadDeadzone',
 ];

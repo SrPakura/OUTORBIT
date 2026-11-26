@@ -421,17 +421,16 @@ interface WavePlan {
   speedMult: number;
 }
 
-/** Cantidad escalonada de básicos entre `from` y `to` a lo largo de la banda. */
-function rampCount(bandIndex: number, bandSize: number, from: number, to: number): number {
-  const t = bandSize <= 1 ? 1 : bandIndex / (bandSize - 1);
-  return Math.round(from + (to - from) * t);
-}
-
-function getWavePlan(waveNumber: number): WavePlan {
+function getWavePlan(waveNumber: number, difficultyScaling = true): WavePlan {
   const cycle = Math.floor((waveNumber - 1) / CYCLE_LENGTH);
   const inCycle = ((waveNumber - 1) % CYCLE_LENGTH) + 1;
-  const speedMult = 1 + cycle * 0.2;
-  const extra = 2 * cycle;
+  const speedMult = difficultyScaling ? 1 + cycle * 0.2 : 1.0;
+  // Nº de oleadas de miniboss superadas hasta ahora (2 por ciclo: rondas 5 y 10).
+  const minibossesPassed = difficultyScaling
+    ? cycle * 2 + (inCycle > 10 ? 2 : inCycle > 5 ? 1 : 0)
+    : 0;
+  // Nº de oleadas de boss superadas hasta ahora (1 por ciclo: ronda 15).
+  const bossesPassed = difficultyScaling ? cycle : 0;
   const spawns: WaveSpawn[] = [];
 
   let label = 'BÁSICOS';
@@ -450,29 +449,13 @@ function getWavePlan(waveNumber: number): WavePlan {
     floorMode = 'boss';
     spawns.push({ archetype: 'kronos_leviathan', count: 1 });
   } else {
-    // Bandas de básicos: 1–4 (4→8), 6–9 (7→11), 11–14 (9→13).
-    let bandStart = 1;
-    let bandEnd = 4;
-    let from = 4;
-    let to = 8;
-    if (inCycle >= 6 && inCycle <= 9) {
-      bandStart = 6;
-      bandEnd = 9;
-      from = 7;
-      to = 11;
-    } else if (inCycle >= 11 && inCycle <= 14) {
-      bandStart = 11;
-      bandEnd = 14;
-      from = 9;
-      to = 13;
-    }
-    const count = rampCount(inCycle - bandStart, bandEnd - bandStart + 1, from, to) + extra;
-    spawns.push({ archetype: 'basic_mix', count });
+    // Oleadas básicas: 4 enemigos base en 1–4, +1 tras cada oleada de miniboss.
+    spawns.push({ archetype: 'basic_mix', count: 4 + minibossesPassed });
   }
 
-  // En ciclos avanzados, los miniboss/boss traen escoltas básicos (+2*cycle).
-  if (extra > 0 && (floorMode === 'miniboss' || floorMode === 'boss')) {
-    spawns.push({ archetype: 'basic_mix', count: extra });
+  // Tras cada oleada de boss, se añade 1 enemigo básico a las oleadas de miniboss.
+  if (bossesPassed > 0 && floorMode === 'miniboss') {
+    spawns.push({ archetype: 'basic_mix', count: bossesPassed });
   }
 
   return { wave: waveNumber, label, floorMode, spawns, speedMult };
@@ -1114,6 +1097,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   onInternalKill?: (enemy: ManagedWaveEnemy) => void;
 
   private currentWave = 0;
+  private difficultyScaling = true;
   private waveTime = 0;
   speedMult = 1;
   /** Modo Entrenamiento: los enemigos no atacan ni esquivan (sacos de boxeo). */
@@ -1468,7 +1452,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.currentWave = waveNumber;
     this.waveTime = 0;
 
-    const plan = getWavePlan(waveNumber);
+    const plan = getWavePlan(waveNumber, this.difficultyScaling);
     this.speedMult = plan.speedMult;
 
     const rng = makeRng(waveNumber * 7919 + 13);
@@ -1773,10 +1757,21 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   // API pública
   // -------------------------------------------------------------------------
 
+  setDifficultyScaling(enabled: boolean): void {
+    this.difficultyScaling = enabled;
+    if (this.currentWave > 0) {
+      this.speedMult = getWavePlan(this.currentWave, this.difficultyScaling).speedMult;
+    }
+  }
+
+  getFloorModeForWave(waveNumber: number): WaveFloorMode {
+    return getWavePlan(Math.max(1, waveNumber), this.difficultyScaling).floorMode;
+  }
+
   getWaveInfo(): WaveInfo {
     // Objeto persistente (solo lectura): el bucle de juego lo consulta cada
     // frame sin generar basura.
-    const plan = getWavePlan(Math.max(1, this.currentWave));
+    const plan = getWavePlan(Math.max(1, this.currentWave), this.difficultyScaling);
     this.waveInfoCache.wave = this.currentWave;
     this.waveInfoCache.label = plan.label;
     this.waveInfoCache.floorMode = plan.floorMode;

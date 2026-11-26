@@ -1,6 +1,6 @@
 {
   "menu": {
-    "tagline": "ZERO-G ROGUELITE",
+    "tagline": "ZERO-G ROGUELIKE",
     "play": "PLAY",
     "training": "Training",
     "trainingDebug": "[Debug]",
@@ -8,7 +8,7 @@
     "leaderboard": "Leaderboard",
     "languageEs": "ESPAÑOL",
     "languageEn": "ENGLISH",
-    "languageJa": "JAPANESE"
+    "languageJa": "日本語"
   },
   "controls": {
     "keyboardHint": "Sensitivity and the Y axis affect the in-game camera; FOV and the halftone pattern are visible instantly in the diorama and in the game.",
@@ -121,6 +121,7 @@
     "sfxVolume": "Sounds & effects volume",
     "invertY": "Invert Y axis",
     "halftone": "Halftone pattern (comic)",
+    "easyMode": "Easy mode (2x HP & Eden, no wave scaling)",
     "skipTutorials": "Skip tutorials",
     "language": "Language",
     "restoreAll": "RESTORE ALL DEFAULTS"

@@ -370,6 +370,12 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                 onChange={(checked) => patch((draft) => ({ ...draft, halftonesEnabled: checked }))}
               />
               <ToggleRow
+                label={t('settings.easyMode')}
+                accent="#fbbf24"
+                checked={settings.easyMode}
+                onChange={(checked) => patch((draft) => ({ ...draft, easyMode: checked }))}
+              />
+              <ToggleRow
                 label={t('settings.skipTutorials')}
                 accent="#fbbf24"
                 checked={skipTutorials}

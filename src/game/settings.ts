@@ -108,6 +108,8 @@ export interface GameSettings {
   sfxVolume: number;
   /** Trama halftone cómic en los materiales cel y en el cielo. */
   halftonesEnabled: boolean;
+  /** Modo fácil: duplica Vida/Edén máximos (x2) y desactiva la escalada de dificultad. */
+  easyMode: boolean;
   /** Tecla primaria de cada acción (valores de `KeyboardEvent.code`). */
   bindings: Record<ControlAction, string>;
   /** Multiplicador de sensibilidad del stick derecho del mando (0.5 .. 3.0). */
@@ -174,6 +176,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   musicVolume: 1.0,
   sfxVolume: 1.0,
   halftonesEnabled: true,
+  easyMode: false,
   bindings: { ...DEFAULT_BINDINGS },
   gamepadSensitivity: 1.4,
   gamepadDeadzone: 0.14,
@@ -315,6 +318,10 @@ function sanitizeSettings(raw: unknown): GameSettings {
       typeof source.halftonesEnabled === 'boolean'
         ? source.halftonesEnabled
         : DEFAULT_SETTINGS.halftonesEnabled,
+    easyMode:
+      typeof source.easyMode === 'boolean'
+        ? source.easyMode
+        : DEFAULT_SETTINGS.easyMode,
     bindings,
     gamepadSensitivity: clampNumber(
       source.gamepadSensitivity,

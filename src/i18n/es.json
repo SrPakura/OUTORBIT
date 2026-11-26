@@ -1,6 +1,6 @@
 {
   "menu": {
-    "tagline": "ZERO-G ROGUELITE",
+    "tagline": "ZERO-G ROGUELIKE",
     "play": "JUGAR",
     "training": "Entrenamiento",
     "trainingDebug": "[Debug]",
@@ -8,7 +8,7 @@
     "leaderboard": "Leaderboard",
     "languageEs": "ESPAÑOL",
     "languageEn": "ENGLISH",
-    "languageJa": "JAPONÉS"
+    "languageJa": "日本語"
   },
   "controls": {
     "keyboardHint": "La sensibilidad y el eje Y afectan a la cámara de la partida; el FOV y la trama halftone se ven al instante en el diorama y en el juego.",
@@ -121,6 +121,7 @@
     "sfxVolume": "Volumen de sonidos y efectos",
     "invertY": "Invertir eje Y",
     "halftone": "Trama halftone (cómic)",
+    "easyMode": "Modo fácil (Vida y Edén x2, sin escalada)",
     "skipTutorials": "Omitir tutoriales",
     "language": "Idioma",
     "restoreAll": "RESTAURAR TODO POR DEFECTO"
