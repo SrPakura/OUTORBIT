@@ -136,7 +136,7 @@ export function createNecrozBossState(
   mesh: THREE.Object3D,
 ): NecrozBossState {
   const shieldRadius = enemyRadius + NECROZ_SHIELD_PAD;
-  const ico = new THREE.IcosahedronGeometry(shieldRadius, 1);
+  const ico = new THREE.IcosahedronGeometry(shieldRadius, 0);
   const nonIdx = ico.index ? ico.toNonIndexed() : ico;
   const pos = nonIdx.getAttribute('position');
   const triCount = Math.floor(pos.count / 3);
@@ -180,8 +180,8 @@ export function createNecrozBossState(
   const shieldMat = new THREE.MeshBasicMaterial({
     color: 0xa855f7,
     transparent: true,
-    opacity: 0.42,
-    side: THREE.DoubleSide,
+    opacity: 0.48,
+    side: THREE.FrontSide,
     depthWrite: false,
     wireframe: false,
   });
@@ -395,6 +395,7 @@ export function tryBreakNecrozShieldTriangle(
   enemyPos: THREE.Vector3,
   meshQuat: THREE.Quaternion,
   fromPos: THREE.Vector3,
+  onBreakPos?: THREE.Vector3,
 ): boolean {
   _v2.subVectors(fromPos, enemyPos);
   if (_v2.lengthSq() < 1e-6) return false;
@@ -402,6 +403,9 @@ export function tryBreakNecrozShieldTriangle(
   if (tri && tri.intact) {
     tri.intact = false;
     tri.spikeH = 0;
+    if (onBreakPos) {
+      onBreakPos.copy(tri.center).applyQuaternion(meshQuat).add(enemyPos);
+    }
     // Si estaba reconstruyendo y le rompen triángulos, se harta y aborta a medias.
     if (n.building && n.buildDuration > 1.5) {
       n.building = false;

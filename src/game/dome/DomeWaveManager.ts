@@ -2521,7 +2521,17 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   tryBreakNecrozShieldTriangle(enemy: ManagedWaveEnemy, fromPos: THREE.Vector3): boolean {
     const internal = this.internals.get(enemy.id);
     if (!internal?.necroz) return false;
-    return tryBreakNecrozShieldTriangle(internal.necroz, enemy.position, enemy.mesh.quaternion, fromPos);
+    const broken = tryBreakNecrozShieldTriangle(
+      internal.necroz,
+      enemy.position,
+      enemy.mesh.quaternion,
+      fromPos,
+      _aimDir,
+    );
+    if (broken) {
+      this.onEnemyExplode?.(_aimDir.clone(), 2.2, 0xc084fc);
+    }
+    return broken;
   }
 
   /** Prisma Necroz: dispara clip de impacto al recibir daño por un hueco. */

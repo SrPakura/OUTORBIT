@@ -1330,9 +1330,15 @@ export class DomeSkillExecutor {
       let killed = false;
       for (const enemy of enemies) {
         if (p.hitIds.has(enemy.id)) continue;
-        if (p.mesh.position.distanceTo(enemy.position) <= enemy.radius + p.hitRadius) {
+        const isNecroz = enemy.id.includes('prisma_necroz');
+        const hitDist = isNecroz ? enemy.radius + 1.15 + p.hitRadius : enemy.radius + p.hitRadius;
+        if (p.mesh.position.distanceTo(enemy.position) <= hitDist) {
           p.hitIds.add(enemy.id);
-          _impulse.copy(p.velocity).normalize().multiplyScalar(9);
+          if (isNecroz) {
+            _impulse.copy(enemy.position).sub(p.mesh.position).normalize().multiplyScalar(9);
+          } else {
+            _impulse.copy(p.velocity).normalize().multiplyScalar(9);
+          }
           onDamageEnemy(enemy, p.damage, _impulse);
           if (!p.pierce) {
             killed = true;
