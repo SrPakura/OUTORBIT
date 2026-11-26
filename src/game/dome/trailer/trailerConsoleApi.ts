@@ -166,9 +166,17 @@ Atajos en Modo Teatro (Replay):
     }
     const config = normalizeStartConfig(opts);
     console.info(
-      `[OUTORBIT Trailer] Iniciando Bot | wave=${config.wave} seed=${config.seed} style=${config.style}`,
+      `[OUTORBIT Trailer] Iniciando ${config.style === 'manual' ? 'Grabación Manual' : 'Bot'} | wave=${config.wave} seed=${config.seed} style=${config.style}`,
     );
     hostHooks.launchSession({ mode: 'record', config });
+  },
+
+  recordManual(opts: Omit<TrailerStartOptions, 'style'> = {}): void {
+    outorbitTrailerApi.start({
+      ...opts,
+      style: 'manual',
+      hud: opts.hud ?? true,
+    });
   },
 
   stop(): ReplayFileV1 | null {

@@ -293,7 +293,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   };
   const activeEnemies: ManagedWaveEnemy[] = [];
   const activeThreats: TrailerThreatInfo[] = [];
-  const trailerBot = trailerSession?.mode === 'record' ? new DomeTrailerBot(trailerSession.config) : null;
+  const isManualRecord =
+    trailerSession?.mode === 'record' && trailerSession.config.style === 'manual';
+  const trailerBot =
+    trailerSession?.mode === 'record' && !isManualRecord
+      ? new DomeTrailerBot(trailerSession.config)
+      : null;
   const replayRecorder =
     trailerSession?.mode === 'record'
       ? new DomeReplayRecorder({
@@ -838,6 +843,11 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
             : trailerSession.replay.header.godMode;
         controller.setInfiniteEden(infEden);
         controller.setGodMode(god);
+        if (isManualRecord && replayRecorder) {
+          controller.setRecordInputTap((inp) => {
+            replayRecorder.recordFrame(inp);
+          });
+        }
         const startWaveNum =
           trailerSession.mode === 'record'
             ? trailerSession.config.wave
@@ -1014,7 +1024,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   let gamepadActiveMode = isGamepadPreferred();
 
   const isWaitingPointerCapture = (): boolean =>
-    !trailerSession &&
+    (!trailerSession || isManualRecord) &&
     document.pointerLockElement !== canvas &&
     !gamepadActiveMode &&
     !(training && debugPanelOpenRef.current);
@@ -1676,6 +1686,20 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
             controller.setSyntheticInput(botInput);
             if (botInput.extraSkill) onTrailerExtraSkill?.(botInput.extraSkill);
             replayRecorder.recordFrame(botInput);
+            stepSimulation(TRAILER_FIXED_DT);
+            replayRecorder.maybeRecordCheckpoint(
+              trailerTickCount,
+              controller.getPosition(),
+              controller.getVelocity(),
+              waveMgr.enemies.length,
+            );
+            trailerTickCount += 1;
+          } else if (isManualRecord && replayRecorder) {
+            if (isWaitingPointerCapture()) {
+              trailerAccumulator = 0;
+              break;
+            }
+            controller.setSyntheticInput(null);
             stepSimulation(TRAILER_FIXED_DT);
             replayRecorder.maybeRecordCheckpoint(
               trailerTickCount,

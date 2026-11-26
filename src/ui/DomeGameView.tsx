@@ -505,7 +505,11 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         <DomeHudSketch
           hud={hud}
           hidePointerLockPrompt={
-            trailerSessionRef.current !== null ||
+            (trailerSessionRef.current !== null &&
+              !(
+                trailerSessionRef.current.mode === 'record' &&
+                trailerSessionRef.current.config.style === 'manual'
+              )) ||
             levelUpState.isOpen ||
             battleReport !== null ||
             isPauseOpen ||

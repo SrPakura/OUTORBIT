@@ -437,6 +437,9 @@ export class NyxDomeController {
   private wantParryStrike = false;
   private parryStarHovered = false;
   private syntheticInput: SyntheticPlayerInput | null = null;
+  private recordInputTap: ((input: SyntheticPlayerInput) => void) | null = null;
+  private pendingLookDx = 0;
+  private pendingLookDy = 0;
   private infiniteEden = false;
   private godMode = false;
   private kickRecoverFromAttack = false;
@@ -945,6 +948,10 @@ export class NyxDomeController {
     const effDx = dx * steerScale;
     const invertSign = !ignoreInvertY && this.settings.invertY ? -1 : 1;
     const pitch = -dy * steerScale * invertSign;
+    if (this.recordInputTap) {
+      this.pendingLookDx += dx;
+      this.pendingLookDy += dy * invertSign;
+    }
 
     if (this.mode === 'grounded') {
       // Cámara libre 360°: dos ángulos escalares sobre el marco del suelo.
@@ -1102,6 +1109,13 @@ export class NyxDomeController {
   /** Inyecta entrada sintética (Trailer Bot o ReplayPlayer) para el próximo tick. */
   setSyntheticInput(input: SyntheticPlayerInput | null): void {
     this.syntheticInput = input;
+  }
+
+  /** Registra los inputs reales del jugador en cada tick (modo trailer manual). */
+  setRecordInputTap(cb: ((input: SyntheticPlayerInput) => void) | null): void {
+    this.recordInputTap = cb;
+    this.pendingLookDx = 0;
+    this.pendingLookDy = 0;
   }
 
   setInfiniteEden(enabled: boolean): void {
@@ -1616,6 +1630,22 @@ export class NyxDomeController {
     }
     const hasMoveInput = f !== 0 || r !== 0;
     const sprintHeld = this.isDown('sprint');
+    if (this.recordInputTap && !this.syntheticInput) {
+      this.recordInputTap({
+        moveX: r,
+        moveY: -f,
+        lookDx: this.pendingLookDx,
+        lookDy: this.pendingLookDy,
+        wantAttack: this.wantAttack,
+        attackHeld: this.attackHeld || this.gpAttackHeld,
+        wantDash: this.wantDash,
+        dashHeld: this.dashHeld || this.gpDashHeld,
+        wantJump: this.wantJump,
+        wantSlot: this.wantSlot,
+      });
+      this.pendingLookDx = 0;
+      this.pendingLookDy = 0;
+    }
 
     // --- Mira: detección de enemigo en el visor (lock / break) con oclusión
     // tras suelos, puntos rojos del radar de enemigos (Tab) y aros pasivos
