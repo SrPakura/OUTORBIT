@@ -1031,6 +1031,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
 
   const onCanvasClick = () => {
     audio.unlock();
+    if (trailerSession && !isManualRecord) return;
     if (tutorialOpenRef.current) return;
     markPointerUsed();
     gamepadActiveMode = false;
@@ -1078,16 +1079,19 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   };
 
   const onMouseMove = (e: MouseEvent) => {
+    if (trailerSession && !isManualRecord) return;
     if (document.pointerLockElement !== canvas) return;
     controller?.onMouseMove(e.movementX, e.movementY);
   };
 
   const onMouseDown = (e: MouseEvent) => {
+    if (trailerSession && !isManualRecord) return;
     if (document.pointerLockElement !== canvas) return;
     controller?.onMouseDown(e.button);
   };
 
   const onMouseUp = (e: MouseEvent) => {
+    if (trailerSession && !isManualRecord) return;
     controller?.onMouseUp(e.button);
   };
 
@@ -1192,6 +1196,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       return;
     }
     if (pauseOpenRef.current || tutorialOpenRef.current || isWaitingPointerCapture()) return;
+    if (trailerSession && !isManualRecord) return;
     if (document.pointerLockElement === canvas) {
       gamepadActiveMode = false;
     }
@@ -1203,6 +1208,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
 
   const onKeyUp = (e: KeyboardEvent) => {
     if (pauseOpenRef.current) return;
+    if (trailerSession && !isManualRecord) return;
     controller?.onKeyUp(e.code);
   };
 

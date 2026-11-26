@@ -930,7 +930,7 @@ export class NyxDomeController {
   }
 
   onMouseMove(dx: number, dy: number): void {
-    if (!this.pointerLocked) return;
+    if (this.syntheticInput || !this.pointerLocked) return;
     const sens = 0.0023 * this.settings.mouseSensitivity;
     this.rotateLook(dx * sens, dy * sens);
   }
@@ -981,7 +981,7 @@ export class NyxDomeController {
   }
 
   onMouseDown(button: number): void {
-    if (!this.pointerLocked) return;
+    if (this.syntheticInput || !this.pointerLocked) return;
     if (button === 0) {
       this.wantAttack = true;
       this.attackHeld = true;
@@ -997,6 +997,7 @@ export class NyxDomeController {
   }
 
   onKeyDown(code: string): void {
+    if (this.syntheticInput) return;
     if (this.codesDown.has(code)) return; // ignora auto-repeat
     this.codesDown.add(code);
     const action = this.actionByCode.get(code);
@@ -1617,8 +1618,12 @@ export class NyxDomeController {
     this.computeCameraBasis();
 
     // --- Entrada de movimiento (WASD + stick izquierdo analógico del mando)
-    let f = (this.isDown('forward') ? 1 : 0) - (this.isDown('back') ? 1 : 0);
-    let r = (this.isDown('right') ? 1 : 0) - (this.isDown('left') ? 1 : 0);
+    let f = this.syntheticInput
+      ? 0
+      : (this.isDown('forward') ? 1 : 0) - (this.isDown('back') ? 1 : 0);
+    let r = this.syntheticInput
+      ? 0
+      : (this.isDown('right') ? 1 : 0) - (this.isDown('left') ? 1 : 0);
     if (this.gpLeftX !== 0 || this.gpLeftY !== 0) {
       f = THREE.MathUtils.clamp(f - this.gpLeftY, -1, 1);
       r = THREE.MathUtils.clamp(r + this.gpLeftX, -1, 1);
