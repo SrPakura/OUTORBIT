@@ -2622,6 +2622,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         this.butterflyCtx.activeSlabs = activeSlabs;
         this.butterflyCtx.playerAttacking = playerAttackTime > 0 || playerKickAnim || playerDashing;
         this.butterflyCtx.incomingProjectiles = this.incomingSkillProjectiles;
+        this.butterflyCtx.onBreakProjectileHoming = this.onBreakProjectileHoming;
         this.butterflyCtx.onPlayerHit = onPlayerHit;
         updateButterflyEnemy(
           this.butterflyCtx,

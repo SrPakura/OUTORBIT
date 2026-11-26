@@ -162,8 +162,8 @@ export const DOME_ENEMY_ARCHETYPES: Record<EnemyArchetype, EnemyArchetypeStats> 
   crab_gunner: { maxHp: 60, radius: 1.8, fleshThickness: 35, expValue: 1.25, isElite: false, isBoss: false, weakPoints: 1, evasive: false },
   // Gólem Rompesuelos: mucha carne/blindaje, manotazo que aturde.
   ground_golem: { maxHp: 140, radius: 3.2, fleshThickness: 80, expValue: 2.0, isElite: false, isBoss: false, weakPoints: 1, evasive: false },
-  // Mariposa Relámpago: se revienta de un golpe básico o bola eléctrica devuelta (ráfagas 1–5 dashes).
-  lightning_butterfly: { maxHp: 25, radius: 1.2, fleshThickness: 8, expValue: 1.5, isElite: false, isBoss: false, weakPoints: 1, evasive: false },
+  // Mariposa Relámpago: aguanta 2 rocas pequeñas (30 dmg), muere con 1 mediana (32 dmg) o bola eléctrica devuelta.
+  lightning_butterfly: { maxHp: 31, radius: 1.2, fleshThickness: 8, expValue: 1.5, isElite: false, isBoss: false, weakPoints: 1, evasive: false },
   // Gorrión Gigante (Élite): 2 cristales — pecho y boca (solo con mouthOpen).
   giant_sparrow: { maxHp: 520, radius: 4.5, fleshThickness: 85, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 2, evasive: false },
   // Prisma Necroz (Élite): 1 cristal en el pecho, saca pinchos de frente.

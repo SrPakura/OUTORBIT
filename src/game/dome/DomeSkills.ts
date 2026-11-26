@@ -468,6 +468,7 @@ export class DomeSkillExecutor {
    */
   clearProjectileHoming(targetId: string, center: THREE.Vector3, radius: number): void {
     for (const p of this.projectiles) {
+      if (p.isButterflyMagnet) continue;
       if (p.homingTarget?.id === targetId && p.mesh.position.distanceTo(center) <= radius) {
         p.homingTarget = null;
         p.homingStrength = 0;
@@ -982,7 +983,7 @@ export class DomeSkillExecutor {
   /** Stats de roca por tamaño (daño, radio de impacto y escala visual). */
   private rockStats(sizeKind: GravityRockSize): { scale: number; damage: number; hitRadius: number } {
     if (sizeKind === 'large') return { scale: 2.85, damage: 58, hitRadius: 1.85 };
-    if (sizeKind === 'medium') return { scale: 1.7, damage: 28, hitRadius: 1.25 };
+    if (sizeKind === 'medium') return { scale: 1.7, damage: 32, hitRadius: 1.25 };
     return { scale: 0.95, damage: 15, hitRadius: 0.85 };
   }
 

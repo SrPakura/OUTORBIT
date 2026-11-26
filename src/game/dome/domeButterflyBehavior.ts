@@ -69,6 +69,7 @@ export interface ButterflyBehaviorContext {
   onElectricDashSfx?: () => void;
   onElectricBallSfx?: () => void;
   onElectricBeamSfx?: () => void;
+  onBreakProjectileHoming?: (targetId: string, center: THREE.Vector3, radius: number) => void;
 }
 
 const BUTTERFLY_BOUND = DOME_PLAYER_BOUND_RADIUS - 10.0; // ~78.6 m
@@ -78,6 +79,7 @@ const BUTTERFLY_RECHARGE_PER_SEC = 28.0; // piezoelectricidad al aletear
 
 const BUTTERFLY_DASH_SEC = 0.8;
 const BUTTERFLY_DASH_SPEED = 35.7; // -15% de 42.0 m/s (techo de velocidad)
+const BUTTERFLY_EVADE_DASH_SPEED = 45.0; // dash amplio para evadir rocas/proyectiles sin auto-aim
 const BUTTERFLY_PIVOT_SEC = 0.2;
 const BUTTERFLY_BURST_CD_MIN = 1.5;
 const BUTTERFLY_BURST_CD_MAX = 2.0;
@@ -107,6 +109,7 @@ const _side = new THREE.Vector3();
 const _upVec = new THREE.Vector3(0, 1, 0);
 const _upLocal = new THREE.Vector3();
 const _projDir = new THREE.Vector3();
+const _threatProjDir = new THREE.Vector3();
 const _diff = new THREE.Vector3();
 const _headPos = new THREE.Vector3();
 const _slabContact: SlabContact = {
@@ -252,34 +255,50 @@ function pickDashDirection(
   playerAimForward: THREE.Vector3,
   dashIndex: number,
   outDir: THREE.Vector3,
+  avoidProjDir?: THREE.Vector3,
 ): void {
-  _toPlayer.subVectors(playerPos, pos);
-  if (_toPlayer.lengthSq() < 1e-4) _toPlayer.set(0, 0, 1);
-  else _toPlayer.normalize();
+  if (avoidProjDir && avoidProjDir.lengthSq() > 0.5) {
+    // Evasión perpendicular amplia respecto a la trayectoria del proyectil/roca entrante.
+    _side.crossVectors(avoidProjDir, _upVec);
+    if (_side.lengthSq() < 1e-4) _side.set(1, 0, 0);
+    else _side.normalize();
+    _upLocal.crossVectors(_side, avoidProjDir).normalize();
+    const lateralSign = dashIndex % 2 === 0 ? 1 : -1;
+    const vertSign = dashIndex % 3 === 0 ? -0.38 : 0.42;
+    outDir
+      .copy(_side)
+      .multiplyScalar(0.9 * lateralSign)
+      .addScaledVector(_upLocal, vertSign)
+      .addScaledVector(avoidProjDir, 0.18);
+  } else {
+    _toPlayer.subVectors(playerPos, pos);
+    if (_toPlayer.lengthSq() < 1e-4) _toPlayer.set(0, 0, 1);
+    else _toPlayer.normalize();
 
-  _side.crossVectors(_toPlayer, _upVec);
-  if (_side.lengthSq() < 1e-4) _side.set(1, 0, 0);
-  else _side.normalize();
-  _upLocal.crossVectors(_side, _toPlayer).normalize();
+    _side.crossVectors(_toPlayer, _upVec);
+    if (_side.lengthSq() < 1e-4) _side.set(1, 0, 0);
+    else _side.normalize();
+    _upLocal.crossVectors(_side, _toPlayer).normalize();
 
-  // Cambia drásticamente de dirección entre dashes (derecha -> izquierda -> abajo -> arriba-diagonal -> flanco).
-  const pattern = dashIndex % 5;
-  switch (pattern) {
-    case 0: // Derecha limpia
-      outDir.copy(_side).multiplyScalar(0.92).addScaledVector(_upLocal, 0.25);
-      break;
-    case 1: // Izquierda agresiva
-      outDir.copy(_side).multiplyScalar(-0.92).addScaledVector(_upLocal, 0.3);
-      break;
-    case 2: // Picado abajo
-      outDir.copy(_upLocal).multiplyScalar(-0.88).addScaledVector(_side, 0.42);
-      break;
-    case 3: // Diagonal superior contraria
-      outDir.copy(_upLocal).multiplyScalar(0.84).addScaledVector(_side, -0.5);
-      break;
-    default: // Flanco frontal manteniendo presión delante de Nyx
-      outDir.copy(playerAimForward).multiplyScalar(-0.5).addScaledVector(_side, 0.86);
-      break;
+    // Cambia drásticamente de dirección entre dashes (derecha -> izquierda -> abajo -> arriba-diagonal -> flanco).
+    const pattern = dashIndex % 5;
+    switch (pattern) {
+      case 0: // Derecha limpia
+        outDir.copy(_side).multiplyScalar(0.92).addScaledVector(_upLocal, 0.25);
+        break;
+      case 1: // Izquierda agresiva
+        outDir.copy(_side).multiplyScalar(-0.92).addScaledVector(_upLocal, 0.3);
+        break;
+      case 2: // Picado abajo
+        outDir.copy(_upLocal).multiplyScalar(-0.88).addScaledVector(_side, 0.42);
+        break;
+      case 3: // Diagonal superior contraria
+        outDir.copy(_upLocal).multiplyScalar(0.84).addScaledVector(_side, -0.5);
+        break;
+      default: // Flanco frontal manteniendo presión delante de Nyx
+        outDir.copy(playerAimForward).multiplyScalar(-0.5).addScaledVector(_side, 0.86);
+        break;
+    }
   }
 
   // Empuja ligeramente hacia el interior si está cerca del borde de la cúpula.
@@ -298,13 +317,34 @@ function detectsIncomingThreat(
   playerAimForward: THREE.Vector3,
   playerAttacking: boolean,
   incoming: readonly IncomingSkillProjectile[],
+  outThreatProjDir?: THREE.Vector3,
 ): boolean {
+  if (outThreatProjDir) outThreatProjDir.set(0, 0, 0);
+
+  // 1) Proyectiles / rocas / objetos lanzados dirigidos a la Mariposa (prioridad máxima).
+  for (let i = 0; i < incoming.length; i++) {
+    const proj = incoming[i];
+    const prSpeed = proj.velocity.length();
+    if (prSpeed < 1.0) continue;
+    _diff.subVectors(pos, proj.position);
+    const prDist = _diff.length();
+    if (prDist > 58.0) continue;
+    _projDir.copy(proj.velocity).multiplyScalar(1 / prSpeed);
+    const along = _diff.dot(_projDir);
+    if (along <= 0) continue;
+    _side.copy(_diff).addScaledVector(_projDir, -along);
+    if (_side.length() <= radius + 8.5) {
+      if (outThreatProjDir) outThreatProjDir.copy(_projDir);
+      return true;
+    }
+  }
+
   _toPlayer.subVectors(playerPos, pos);
   const dist = _toPlayer.length();
   if (dist < 1e-3) return true;
   _toButterfly.copy(_toPlayer).multiplyScalar(-1 / dist);
 
-  // 1) Aproximación directa o ataque cuerpo a cuerpo / mira encima.
+  // 2) Aproximación directa o ataque cuerpo a cuerpo / mira encima.
   if (dist <= 11.5) return true;
   if (playerAttacking && dist <= 32.0) {
     const aimDot = playerAimForward.dot(_toButterfly);
@@ -315,41 +355,39 @@ function detectsIncomingThreat(
     const velDot = playerVel.dot(_toButterfly) / pSpeed;
     if (velDot >= 0.76) return true;
   }
-
-  // 2) Proyectiles / rocas dirigidos a la Mariposa.
-  for (let i = 0; i < incoming.length; i++) {
-    const proj = incoming[i];
-    const prSpeed = proj.velocity.length();
-    if (prSpeed < 1.0) continue;
-    _diff.subVectors(pos, proj.position);
-    const prDist = _diff.length();
-    if (prDist > 42.0) continue;
-    _projDir.copy(proj.velocity).multiplyScalar(1 / prSpeed);
-    const along = _diff.dot(_projDir);
-    if (along <= 0) continue;
-    _side.copy(_diff).addScaledVector(_projDir, -along);
-    if (_side.length() <= radius + 4.8) {
-      return true;
-    }
-  }
   return false;
 }
 
 function startElectricDash(
   state: ButterflyBossState,
+  entityId: string,
   pos: THREE.Vector3,
   velocity: THREE.Vector3,
   playerPos: THREE.Vector3,
   ctx: ButterflyBehaviorContext,
   actions: Map<string, THREE.AnimationAction> | null,
+  avoidProjDir?: THREE.Vector3,
 ): void {
   state.state = 'dash';
   state.stateTimer = BUTTERFLY_DASH_SEC;
-  state.dashSpeed = Math.min(35.7, BUTTERFLY_DASH_SPEED * ctx.speedMult);
+  const isProjectileDodge = avoidProjDir !== undefined && avoidProjDir.lengthSq() > 0.5;
+  state.dashSpeed = isProjectileDodge
+    ? BUTTERFLY_EVADE_DASH_SPEED
+    : Math.min(35.7, BUTTERFLY_DASH_SPEED * ctx.speedMult);
   state.trailOrigin.copy(pos);
   state.trailAlpha = 1.0;
 
-  pickDashDirection(pos, playerPos, ctx.playerAimForward, state.nextDashIndex, state.dashDir);
+  // Rompe el auto-aim de proyectiles/rocas (salvo su propia Bola Eléctrica devuelta).
+  ctx.onBreakProjectileHoming?.(entityId, pos, 65);
+
+  pickDashDirection(
+    pos,
+    playerPos,
+    ctx.playerAimForward,
+    state.nextDashIndex,
+    state.dashDir,
+    avoidProjDir,
+  );
   state.nextDashIndex++;
   velocity.copy(state.dashDir).multiplyScalar(state.dashSpeed);
 
@@ -486,7 +524,7 @@ export function updateButterflyEnemy(
       if (state.stateTimer <= 0) {
         if (state.burstDashesLeft > 0) {
           state.burstDashesLeft--;
-          startElectricDash(state, pos, velocity, playerPos, ctx, actions);
+          startElectricDash(state, entity.id, pos, velocity, playerPos, ctx, actions);
         } else {
           state.state = 'hover';
         }
@@ -495,6 +533,24 @@ export function updateButterflyEnemy(
     }
 
     case 'shoot_ball': {
+      if (
+        state.burstCooldown <= 0 &&
+        detectsIncomingThreat(
+          pos,
+          entity.radius,
+          playerPos,
+          ctx.playerVelocity,
+          ctx.playerAimForward,
+          ctx.playerAttacking,
+          ctx.incomingProjectiles,
+          _threatProjDir,
+        )
+      ) {
+        state.burstDashesLeft = Math.floor(Math.random() * 4) + 1;
+        startElectricDash(state, entity.id, pos, velocity, playerPos, ctx, actions, _threatProjDir);
+        break;
+      }
+
       state.stateTimer -= dt;
       chargeVisual = 1.1;
       // Recarga algo incluso al soltar y mantiene deriva suave frontal.
@@ -570,11 +626,12 @@ export function updateButterflyEnemy(
           ctx.playerAimForward,
           ctx.playerAttacking,
           ctx.incomingProjectiles,
+          _threatProjDir,
         )
       ) {
         if (state.beamLine) state.beamLine.visible = false;
         state.burstDashesLeft = Math.floor(Math.random() * 4) + 1; // 1–5 dashes totales
-        startElectricDash(state, pos, velocity, playerPos, ctx, actions);
+        startElectricDash(state, entity.id, pos, velocity, playerPos, ctx, actions, _threatProjDir);
         break;
       }
 
@@ -601,10 +658,11 @@ export function updateButterflyEnemy(
           ctx.playerAimForward,
           ctx.playerAttacking,
           ctx.incomingProjectiles,
+          _threatProjDir,
         )
       ) {
         state.burstDashesLeft = Math.floor(Math.random() * 5); // + este dash = ráfaga de 1 a 5
-        startElectricDash(state, pos, velocity, playerPos, ctx, actions);
+        startElectricDash(state, entity.id, pos, velocity, playerPos, ctx, actions, _threatProjDir);
         break;
       }
 
