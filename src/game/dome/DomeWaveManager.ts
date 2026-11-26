@@ -19,6 +19,7 @@ import {
   type EnemyArchetype,
 } from './DomeCombatSystem';
 import {
+  collectButterflyRig,
   collectGolemRig,
   collectKronosRig,
   collectPrismaNecrozRig,
@@ -33,6 +34,7 @@ import {
   STAR_CORE_COLOR,
   STAR_CORE_EMISSIVE,
   STAR_CORE_RIM,
+  type ButterflyRig,
   type EnemyBone,
   type GolemRig,
   type KronosRig,
@@ -139,6 +141,15 @@ import {
   type SparrowBehaviorContext,
   type SparrowBossState,
 } from './domeSparrowBehavior';
+import {
+  createButterflyState,
+  disposeButterflyState,
+  notifyButterflyHit,
+  resetButterflyState,
+  updateButterflyEnemy,
+  type ButterflyBehaviorContext,
+  type ButterflyBossState,
+} from './domeButterflyBehavior';
 
 // ============================================================================
 // DomeWaveManager — ciclo infinito de oleadas de la cúpula.
@@ -206,10 +217,8 @@ const HIT_FLASH_DECAY = 3.2;
 const HIT_FLASH_SCALE = 0.35;
 const HIT_FLASH_EMISSIVE = 0.85;
 
-/** Arquetipos con dash evasivo al ser lockeados/atacados. */
-const EVASIVE_ARCHETYPES: ReadonlySet<EnemyArchetype> = new Set([
-  'lightning_butterfly',
-]);
+/** Arquetipos con dash evasivo genérico (todos migrados a sus propias FSM). */
+const EVASIVE_ARCHETYPES: ReadonlySet<EnemyArchetype> = new Set();
 
 const BASIC_ARCHETYPES: readonly EnemyArchetype[] = [
   'abyssal_cell',
@@ -740,6 +749,10 @@ export interface EnemyInternal {
   sparrowRig: SparrowRig | null;
   /** Gorrión Gigante: FSM aerodinámica + IA presente (domeSparrowBehavior). */
   sparrow: SparrowBossState | null;
+  /** Mariposa Relámpago: 9 huesos de butterfly_rig + materiales de cuarzo. */
+  butterflyRig: ButterflyRig | null;
+  /** Mariposa Relámpago: FSM piezoeléctrica + ráfagas de dashes + rayo/bolas. */
+  butterfly: ButterflyBossState | null;
   /** Ave: fase integrada del aleteo (la velocidad cambia sin saltos). */
   flapPhase: number;
   /** Ave: apertura suavizada del jaw (0 = cerrado, 1 = abierto). */
@@ -918,13 +931,13 @@ function findBodyMaterial(root: THREE.Object3D): THREE.ShaderMaterial | null {
 interface WaveProjectile {
   mesh: THREE.Mesh;
   active: boolean;
-  kind: 'dark' | 'ink_ball' | 'ink_giant' | 'laser' | 'air_ball';
+  kind: 'dark' | 'ink_ball' | 'ink_giant' | 'laser' | 'air_ball' | 'electric_ball' | 'electric_ball_reflected';
   damage: number;
   velocity: THREE.Vector3;
   life: number;
   /** Tinta ácida del pulpo: deceleración constante (m/s²; 0 en el resto). */
   decel: number;
-  /** Auto-aim leve hacia Nyx (rad/s; solo las 15 de la Bola Gigante). */
+  /** Auto-aim leve hacia Nyx (rad/s; solo las 15 de la Bola Gigante y bolas eléctricas). */
   autoAimRate: number;
   /**
    * Capturada por el Campo Gravitacional: la malla pasó a orbitar a Nyx como
@@ -932,6 +945,8 @@ interface WaveProjectile {
    * globales para no robarla de la órbita).
    */
   captured: boolean;
+  /** Id del enemigo objetivo cuando una Bola Eléctrica es reflejada por Empuje. */
+  reflectedTargetId: string | null;
 }
 
 /**
@@ -984,6 +999,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private readonly darkProjectileMaterial: THREE.ShaderMaterial;
   private readonly inkProjectileMaterial: THREE.ShaderMaterial;
   private readonly windProjectileMaterial: THREE.ShaderMaterial;
+  private readonly electricProjectileMaterial: THREE.ShaderMaterial;
+  private readonly reflectedElectricMaterial: THREE.ShaderMaterial;
   /**
    * Tandas de dispersión de las Bolas Gigantes del pulpo (hasta 3 bolas
    * gigantes reventando a la vez — suficientes para cualquier oleada).
@@ -999,8 +1016,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private readonly necrozCtx: NecrozBehaviorContext;
   /** Gorrión Gigante: contexto y estado agregado (shriek SFX + sacudida). */
   private readonly sparrowCtx: SparrowBehaviorContext;
+  private readonly butterflyCtx: ButterflyBehaviorContext;
   private incomingSkillProjectiles: readonly IncomingSkillProjectile[] = [];
   private sparrowShriekPulse = false;
+  private butterflyDashPulse = false;
+  private butterflyBallPulse = false;
+  private butterflyBeamPulse = false;
   private sparrowCameraShake = 0;
   private sparrowSlowMoScale = 1;
   /** Destruye rocas/proyectiles de Nyx golpeados por habilidades enemigas. */
@@ -1134,6 +1155,24 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         this.sparrowShriekPulse = true;
       },
     };
+    this.butterflyCtx = {
+      scene,
+      speedMult: 1,
+      playerVelocity: this.playerVelocity,
+      playerAimForward: this.playerAimForward,
+      playerAttacking: false,
+      incomingProjectiles: [],
+      onPlayerHit: () => {},
+      onElectricDashSfx: () => {
+        this.butterflyDashPulse = true;
+      },
+      onElectricBallSfx: () => {
+        this.butterflyBallPulse = true;
+      },
+      onElectricBeamSfx: () => {
+        this.butterflyBeamPulse = true;
+      },
+    };
     this.unsubModelLoaded = onEnemyModelLoaded((archetype) => {
       this.upgradeSpawnedVisuals(archetype);
     });
@@ -1232,6 +1271,62 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       emissiveBoost: 0.78,
     });
 
+    // Bolas Eléctricas de la Mariposa Relámpago: plasma de alto voltaje 3D con arcos.
+    const makeElectricBallShader = (coreHex: THREE.Color, arcHex: THREE.Color, haloHex: THREE.Color) =>
+      new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uCoreCol: { value: coreHex },
+          uArcCol: { value: arcHex },
+          uHaloCol: { value: haloHex },
+        },
+        vertexShader: /* glsl */ `
+          uniform float uTime;
+          varying vec3 vLocalPos;
+          varying vec3 vNormalW;
+          varying vec3 vViewDir;
+          void main() {
+            vLocalPos = position;
+            float spike = sin(position.x * 18.0 + uTime * 28.0) * sin(position.y * 16.0 - uTime * 24.0) * 0.055;
+            vec3 displaced = position + normal * spike;
+            vec4 worldPos = modelMatrix * vec4(displaced, 1.0);
+            vNormalW = normalize(mat3(modelMatrix) * normal);
+            vViewDir = normalize(cameraPosition - worldPos.xyz);
+            gl_Position = projectionMatrix * viewMatrix * worldPos;
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          uniform float uTime;
+          uniform vec3 uCoreCol;
+          uniform vec3 uArcCol;
+          uniform vec3 uHaloCol;
+          varying vec3 vLocalPos;
+          varying vec3 vNormalW;
+          varying vec3 vViewDir;
+          void main() {
+            vec3 d = normalize(vLocalPos + vec3(1e-4));
+            float a1 = abs(sin(d.x * 16.0 + uTime * 25.0 + cos(d.y * 14.0 - uTime * 19.0)));
+            float a2 = abs(cos(d.z * 19.0 - uTime * 31.0 + sin(d.y * 11.0 + uTime * 14.0)));
+            float bolt = smoothstep(0.18, 0.0, a1) + smoothstep(0.14, 0.0, a2) * 0.85;
+            vec3 col = mix(uCoreCol, uArcCol, clamp(bolt, 0.0, 1.0));
+            col += vec3(0.95, 0.99, 1.0) * pow(clamp(bolt, 0.0, 1.0), 2.2) * 1.45;
+            float fresnel = pow(1.0 - max(0.0, dot(normalize(vNormalW), normalize(vViewDir))), 1.9);
+            col += uHaloCol * fresnel * 1.5;
+            gl_FragColor = vec4(col, 1.0);
+          }
+        `,
+      });
+    this.electricProjectileMaterial = makeElectricBallShader(
+      new THREE.Color(0x091a45),
+      new THREE.Color(0x38bdf8),
+      new THREE.Color(0x7dd3fc),
+    );
+    this.reflectedElectricMaterial = makeElectricBallShader(
+      new THREE.Color(0x064e3b),
+      new THREE.Color(0x34d399),
+      new THREE.Color(0x67e8f9),
+    );
+
     // Anillos de Contención de KRONOS: ondas expansivas azul eléctrico brillante.
     this.kronosRingMaterial = createComicCelMaterial(0x9fd8ff, {
       rimColor: 0x66e0ff,
@@ -1254,6 +1349,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         decel: 0,
         autoAimRate: 0,
         captured: false,
+        reflectedTargetId: null,
       });
     }
 
@@ -1438,6 +1534,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         if (internal.sparrow) {
           internal.sparrow.activeClip = null;
         }
+      } else if (enemy.entity.archetype === 'lightning_butterfly') {
+        internal.butterflyRig = collectButterflyRig(glbVisual.root);
+        if (internal.butterfly) {
+          internal.butterfly.activeClip = null;
+        }
       } else if (enemy.entity.archetype === 'prisma_necroz') {
         internal.prismaNecrozRig = collectPrismaNecrozRig(glbVisual.root);
         if (internal.necroz) {
@@ -1592,6 +1693,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       jump: null,
       sparrowRig: archetype === 'giant_sparrow' ? collectSparrowRig(mesh) : null,
       sparrow: archetype === 'giant_sparrow' ? createSparrowState(enemy.phase) : null,
+      butterflyRig: archetype === 'lightning_butterfly' ? collectButterflyRig(mesh) : null,
+      butterfly: archetype === 'lightning_butterfly' ? createButterflyState(enemy.phase) : null,
       flapPhase: enemy.phase,
       jawOpen: 0,
       burstTimer: 0,
@@ -1790,6 +1893,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     if (internal.sparrow) {
       resetSparrowState(internal.sparrow);
     }
+    if (internal.butterfly) {
+      resetButterflyState(internal.butterfly);
+    }
     // Célula Abisal: cancela cualquier fase ofensiva/telegraph en curso.
     if (internal.cellState !== 'seek' && internal.cellState !== 'stalk') {
       internal.cellState = 'stalk';
@@ -1839,6 +1945,84 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     const internal = this.internals.get(enemy.id);
     if (internal?.sparrow && internal.enemy.entity.alive) {
       notifySparrowHit(internal.sparrow, internal.enemy.entity);
+    }
+  }
+
+  private readonly butterflySfxResult = { dash: false, ball: false, beam: false };
+
+  consumeButterflySfxPulses(): { dash: boolean; ball: boolean; beam: boolean } {
+    this.butterflySfxResult.dash = this.butterflyDashPulse;
+    this.butterflySfxResult.ball = this.butterflyBallPulse;
+    this.butterflySfxResult.beam = this.butterflyBeamPulse;
+    this.butterflyDashPulse = false;
+    this.butterflyBallPulse = false;
+    this.butterflyBeamPulse = false;
+    return this.butterflySfxResult;
+  }
+
+  captureElectricBallsInRadius(center: THREE.Vector3, radius: number): THREE.Mesh[] {
+    const captured: THREE.Mesh[] = [];
+    for (const projectile of this.projectiles) {
+      if (!projectile.active || projectile.captured || projectile.kind !== 'electric_ball') {
+        continue;
+      }
+      if (projectile.mesh.position.distanceTo(center) > radius) {
+        continue;
+      }
+      projectile.active = false;
+      projectile.captured = true;
+      projectile.life = 0;
+      projectile.decel = 0;
+      projectile.autoAimRate = 0;
+      projectile.reflectedTargetId = null;
+      captured.push(projectile.mesh);
+    }
+    return captured;
+  }
+
+  /**
+   * Empuje reflejante: toma las Bolas Eléctricas activas dentro del radio de
+   * Empuje alrededor de Nyx y las redirige contra los enemigos cercanos.
+   */
+  reflectElectricBallsInRadius(
+    center: THREE.Vector3,
+    radius: number,
+    playerPos: THREE.Vector3,
+  ): void {
+    for (const projectile of this.projectiles) {
+      if (!projectile.active || projectile.captured || projectile.kind !== 'electric_ball') {
+        continue;
+      }
+      if (projectile.mesh.position.distanceTo(center) > radius) {
+        continue;
+      }
+      let bestTarget: ManagedWaveEnemy | null = null;
+      let bestDist = 75;
+      for (const enemy of this.enemies) {
+        if (!enemy.entity.alive) continue;
+        const d = projectile.mesh.position.distanceTo(enemy.position);
+        if (d < bestDist) {
+          bestDist = d;
+          bestTarget = enemy;
+        }
+      }
+      if (bestTarget) {
+        _aimDir.subVectors(bestTarget.position, projectile.mesh.position);
+      } else {
+        _aimDir.subVectors(projectile.mesh.position, playerPos);
+      }
+      if (_aimDir.lengthSq() < 1e-4) _aimDir.set(0, 0, 1);
+      else _aimDir.normalize();
+
+      projectile.kind = 'electric_ball_reflected';
+      projectile.damage = 38;
+      projectile.life = 3.5;
+      projectile.decel = 0;
+      projectile.autoAimRate = 4.5;
+      projectile.reflectedTargetId = bestTarget?.id ?? null;
+      projectile.velocity.copy(_aimDir).multiplyScalar(46);
+      projectile.mesh.material = this.reflectedElectricMaterial;
+      projectile.mesh.scale.setScalar(1.2);
     }
   }
 
@@ -1903,6 +2087,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     if (internal.sparrow && internal.enemy.entity.alive) {
       notifySparrowHit(internal.sparrow, internal.enemy.entity);
+    }
+    if (internal.butterfly && internal.enemy.entity.alive) {
+      notifyButterflyHit(internal.butterfly, internal.enemy.entity);
     }
     internal.enemy.hitFlash = Math.min(1.8, kineticMult);
     internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
@@ -2046,6 +2233,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.hideCrabDangerRing(enemy.id);
     if (internal.sparrow) {
       disposeSparrowState(internal.sparrow, this.scene);
+    }
+    if (internal.butterfly) {
+      disposeButterflyState(internal.butterfly, this.scene);
     }
     this.internals.delete(enemy.id);
     const idx = this.enemies.indexOf(enemy);
@@ -2432,6 +2622,29 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
             continue;
           }
         }
+      } else if (enemy.entity.archetype === 'lightning_butterfly' && internal.butterfly) {
+        this.butterflyCtx.speedMult = this.speedMult;
+        this.butterflyCtx.activeSlabs = activeSlabs;
+        this.butterflyCtx.playerAttacking = playerAttackTime > 0 || playerKickAnim || playerDashing;
+        this.butterflyCtx.incomingProjectiles = this.incomingSkillProjectiles;
+        this.butterflyCtx.onPlayerHit = onPlayerHit;
+        updateButterflyEnemy(
+          this.butterflyCtx,
+          enemy.entity,
+          enemy.position,
+          enemy.velocity,
+          enemy.mesh,
+          internal.butterflyRig,
+          internal.actions,
+          internal.butterfly,
+          dt,
+          elapsed,
+          playerPos,
+          this.enemiesPassive,
+          (origin, targetPos) => {
+            this.fireProjectile(enemy, targetPos, 'electric_ball', 10, 27 * this.speedMult, 0, origin);
+          },
+        );
       } else {
         this.applyFloatMovement(enemy, internal, dt, elapsed);
       }
@@ -2441,7 +2654,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         !this.enemiesPassive &&
         enemy.entity.archetype !== 'abyssal_cell' &&
         enemy.entity.archetype !== 'prisma_necroz' &&
-        enemy.entity.archetype !== 'giant_sparrow'
+        enemy.entity.archetype !== 'giant_sparrow' &&
+        enemy.entity.archetype !== 'lightning_butterfly'
       ) {
         this.updateEnemyBehavior(
           enemy,
@@ -2471,6 +2685,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       const isKronos = enemy.entity.archetype === 'kronos_leviathan';
       const isNecroz = enemy.entity.archetype === 'prisma_necroz';
       const isSparrow = enemy.entity.archetype === 'giant_sparrow';
+      const isButterfly = enemy.entity.archetype === 'lightning_butterfly';
       if (
         activeSlabs &&
         !crabOnSlab &&
@@ -2478,6 +2693,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         !isKronos &&
         !isNecroz &&
         !isSparrow &&
+        !isButterfly &&
         resolveSphereSlabCollision(activeSlabs, enemy.position, enemy.radius, _slabContact)
       ) {
         if (enemy.entity.archetype === 'ground_golem' && _slabContact.slab && onSlabSmash) {
@@ -2518,6 +2734,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         this.updateOctopusPose(enemy, internal, dt, elapsed, playerPos);
       } else if (enemy.entity.archetype === 'giant_sparrow') {
         // Pose y clips gobernados por updateSparrowEnemy (domeSparrowBehavior.ts).
+      } else if (enemy.entity.archetype === 'lightning_butterfly') {
+        // Pose y clips gobernados por updateButterflyEnemy (domeButterflyBehavior.ts).
       } else if (enemy.entity.archetype === 'prisma_necroz') {
         // Pose y clips gobernados por updateNecrozEnemy (domeNecrozBehavior.ts).
       } else if (enemy.entity.archetype === 'ground_golem') {
@@ -2562,6 +2780,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
 
     this.inkProjectileMaterial.uniforms.uTime.value = elapsed;
+    this.electricProjectileMaterial.uniforms.uTime.value = elapsed;
+    this.reflectedElectricMaterial.uniforms.uTime.value = elapsed;
     this.updateProjectiles(
       dt,
       playerPos,
@@ -2601,6 +2821,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.darkProjectileMaterial.dispose();
     this.inkProjectileMaterial.dispose();
     this.windProjectileMaterial.dispose();
+    this.electricProjectileMaterial.dispose();
+    this.reflectedElectricMaterial.dispose();
     for (const ring of this.kronosRings) {
       this.scene.remove(ring.mesh);
     }
@@ -3629,7 +3851,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   fireProjectile(
     enemy: ManagedWaveEnemy,
     playerPos: THREE.Vector3,
-    kind: 'dark' | 'ink_ball' | 'ink_giant' | 'laser' | 'air_ball',
+    kind: 'dark' | 'ink_ball' | 'ink_giant' | 'laser' | 'air_ball' | 'electric_ball' | 'electric_ball_reflected',
     damage: number,
     speed: number,
     spreadRad = 0,
@@ -3668,6 +3890,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     projectile.decel = 0;
     projectile.autoAimRate = 0;
     projectile.captured = false;
+    projectile.reflectedTargetId = null;
     projectile.velocity.copy(_shotDir).multiplyScalar(speed);
     projectile.mesh.material =
       kind === 'ink_ball' || kind === 'ink_giant'
@@ -3676,9 +3899,15 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           ? this.laserProjectileMaterial
           : kind === 'air_ball'
             ? this.windProjectileMaterial
-            : this.darkProjectileMaterial;
+            : kind === 'electric_ball'
+              ? this.electricProjectileMaterial
+              : kind === 'electric_ball_reflected'
+                ? this.reflectedElectricMaterial
+                : this.darkProjectileMaterial;
     // Perla láser algo menor que la esfera oscura estándar del pool.
-    projectile.mesh.scale.setScalar(kind === 'laser' ? 0.55 : kind === 'air_ball' ? 0.95 : 1);
+    projectile.mesh.scale.setScalar(
+      kind === 'laser' ? 0.55 : kind === 'air_ball' ? 0.95 : kind === 'electric_ball' ? 1.05 : 1,
+    );
     projectile.mesh.position.copy(from).addScaledVector(
       _shotDir,
       origin ? 0.35 : enemy.radius + 0.6,
@@ -3722,9 +3951,84 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
             projectile.velocity.multiplyScalar(newSpeed / speed);
           }
         }
+      } else if (projectile.kind === 'electric_ball') {
+        // Energía llamando a energía: cuanto más rápido va Nyx, más fuerte
+        // persigue la bola eléctrica su rastro energético.
+        const speed = projectile.velocity.length();
+        if (speed > 1e-4) {
+          const nyxSpeed = this.playerVelocity.length();
+          const energyPull = THREE.MathUtils.clamp((nyxSpeed - 4.0) / 28.0, 0.04, 1.0);
+          const aimRate = 0.25 + energyPull * 5.2;
+          _aimDir.subVectors(playerPos, projectile.mesh.position);
+          if (_aimDir.lengthSq() > 1e-4) {
+            _aimDir.normalize();
+            _shotDir.copy(projectile.velocity).multiplyScalar(1 / speed);
+            const angle = _shotDir.angleTo(_aimDir);
+            if (angle > 1e-4) {
+              _shotDir.lerp(_aimDir, Math.min(1, (aimRate * dt) / angle)).normalize();
+            }
+            projectile.velocity.copy(_shotDir).multiplyScalar(speed);
+          }
+        }
+      } else if (projectile.kind === 'electric_ball_reflected') {
+        // Bola Eléctrica reflejada por Empuje: persigue a otros enemigos.
+        const speed = projectile.velocity.length();
+        let targetEnemy =
+          (projectile.reflectedTargetId
+            ? this.enemies.find((e) => e.id === projectile.reflectedTargetId && e.entity.alive)
+            : undefined) ?? null;
+        if (!targetEnemy) {
+          let bestDist = 75;
+          for (const candidate of this.enemies) {
+            if (!candidate.entity.alive) continue;
+            const d = projectile.mesh.position.distanceTo(candidate.position);
+            if (d < bestDist) {
+              bestDist = d;
+              targetEnemy = candidate;
+            }
+          }
+          projectile.reflectedTargetId = targetEnemy?.id ?? null;
+        }
+        if (targetEnemy && speed > 1e-4) {
+          _aimDir.subVectors(targetEnemy.position, projectile.mesh.position);
+          if (_aimDir.lengthSq() > 1e-4) {
+            _aimDir.normalize();
+            _shotDir.copy(projectile.velocity).multiplyScalar(1 / speed);
+            const angle = _shotDir.angleTo(_aimDir);
+            if (angle > 1e-4) {
+              _shotDir.lerp(_aimDir, Math.min(1, (4.5 * dt) / angle)).normalize();
+            }
+            projectile.velocity.copy(_shotDir).multiplyScalar(speed);
+          }
+        }
       }
 
       projectile.mesh.position.addScaledVector(projectile.velocity, dt);
+
+      // Bola Eléctrica reflejada por Empuje: impacta enemigos y explota.
+      if (projectile.kind === 'electric_ball_reflected') {
+        let hitEnemy: ManagedWaveEnemy | null = null;
+        const projRadius = projectile.mesh.scale.x * 0.6;
+        for (const candidate of this.enemies) {
+          if (!candidate.entity.alive) continue;
+          if (projectile.mesh.position.distanceTo(candidate.position) <= candidate.radius + projRadius) {
+            hitEnemy = candidate;
+            break;
+          }
+        }
+        if (hitEnemy) {
+          hitEnemy.hitFlash = 1.3;
+          hitEnemy.entity.hitFlash = 1.3;
+          hitEnemy.entity.hp = Math.max(0, hitEnemy.entity.hp - projectile.damage);
+          this.onEnemyExplode?.(projectile.mesh.position.clone(), 2.2, 0x34d399);
+          if (hitEnemy.entity.hp <= 0) {
+            this.onInternalKill?.(hitEnemy);
+            this.killEnemy(hitEnemy);
+          }
+          this.deactivateProjectile(projectile);
+          continue;
+        }
+      }
 
       // Colisión contra suelos flotantes: las bolas no atraviesan los slabs.
       const ballRadius = projectile.mesh.scale.x * 0.55;
@@ -3757,8 +4061,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       }
 
       const hitPlayer =
+        projectile.kind !== 'electric_ball_reflected' &&
         projectile.mesh.position.distanceTo(playerPos) <
-        PROJECTILE_PLAYER_RADIUS + projectile.mesh.scale.x * 0.55;
+          PROJECTILE_PLAYER_RADIUS + projectile.mesh.scale.x * 0.55;
       const outOfBounds = projectile.mesh.position.length() > PROJECTILE_BOUND_RADIUS;
 
       if (hitPlayer) {
@@ -3792,6 +4097,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     projectile.life = 0;
     projectile.decel = 0;
     projectile.autoAimRate = 0;
+    projectile.reflectedTargetId = null;
   }
 
   private deactivateAllProjectiles(): void {
@@ -4641,6 +4947,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.sparrowCameraShake = 0;
     this.sparrowShriekPulse = false;
     this.sparrowSlowMoScale = 1;
+    this.butterflyDashPulse = false;
+    this.butterflyBallPulse = false;
+    this.butterflyBeamPulse = false;
   }
 
   /**

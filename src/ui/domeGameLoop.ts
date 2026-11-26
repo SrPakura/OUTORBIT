@@ -710,6 +710,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           // tinta ácida del pulpo dentro de su radio EN VEZ de coger rocas.
           captureEnemyProjectiles: (center, radius) =>
             waveMgr.captureInkBallsInRadius(center, radius),
+          captureElectricBalls: (center, radius) =>
+            waveMgr.captureElectricBallsInRadius(center, radius),
+          onReflectEnemyProjectiles: (center, radius, playerPos) =>
+            waveMgr.reflectElectricBallsInRadius(center, radius, playerPos),
           onStartImplosion: (target) => {
             if (implosionCinematic !== null) return false;
             const managed = waveMgr.getActiveEnemies().find((e) => e.id === target.id);
@@ -1211,6 +1215,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       if (waveMgr.consumeSparrowShriekPulse()) {
         audio.playSparrowShriek();
       }
+      const bflySfx = waveMgr.consumeButterflySfxPulses();
+      if (bflySfx.dash) audio.playElectricDash();
+      if (bflySfx.ball) audio.playElectricBall();
+      if (bflySfx.beam) audio.playElectricBeamTick();
       controller.setKronosControlsInverted(kronosFx.controlsInverted);
       controller.setKronosSlowMoScale(
         Math.min(kronosFx.phase4 ? 0.75 : 1, waveMgr.getSparrowSlowMoScale()),

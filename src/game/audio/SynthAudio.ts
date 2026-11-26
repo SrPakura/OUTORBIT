@@ -1212,6 +1212,70 @@ export class SynthAudio {
     this.noise(0.55, 0.35, 2200);
   }
 
+  /** Dash eléctrico de la Mariposa Relámpago: chispazo seco + barrido agudo. */
+  playElectricDash(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const t0 = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(1400, t0);
+    osc.frequency.exponentialRampToValueAtTime(320, t0 + 0.14);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(0.16, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.15);
+    osc.connect(gain).connect(master);
+    osc.start(t0);
+    osc.stop(t0 + 0.16);
+  }
+
+  /** Bola eléctrica lanzada por la Mariposa Relámpago: pulso voltaico FM. */
+  playElectricBall(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const t0 = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(880, t0);
+    osc.frequency.exponentialRampToValueAtTime(1760, t0 + 0.06);
+    osc.frequency.exponentialRampToValueAtTime(520, t0 + 0.18);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(0.15, t0 + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.19);
+    osc.connect(gain).connect(master);
+    osc.start(t0);
+    osc.stop(t0 + 0.2);
+  }
+
+  /** Descarga del rayo eléctrico cercano de la Mariposa Relámpago. */
+  playElectricBeamTick(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const t0 = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(440, t0);
+    osc.frequency.exponentialRampToValueAtTime(980, t0 + 0.08);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(0.11, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.1);
+    osc.connect(gain).connect(master);
+    osc.start(t0);
+    osc.stop(t0 + 0.11);
+  }
+
   /** Iris de cierre: colapso del círculo + parpadeo final del punto. */
   playIrisWink(): void {
     if (!this.audible) return;

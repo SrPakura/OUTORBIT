@@ -58,6 +58,17 @@ export interface SkillTriggerContext {
    */
   captureEnemyProjectiles?: (center: THREE.Vector3, radius: number) => THREE.Mesh[];
   /**
+   * Captura las Bolas Eléctricas de la Mariposa Relámpago dentro de `radius`
+   * de `center`: toman shader Cosmos + Eléctrico y al dispararlas ignoran
+   * toda física contra la Mariposa con 100% de auto-aim y aceleración por cercanía.
+   */
+  captureElectricBalls?: (center: THREE.Vector3, radius: number) => THREE.Mesh[];
+  /**
+   * Empuje reflejante: invierte las Bolas Eléctricas de la Mariposa dentro
+   * del radio de `Empuje` y las desvía hacia otros enemigos cercanos.
+   */
+  onReflectEnemyProjectiles?: (center: THREE.Vector3, radius: number, playerPos: THREE.Vector3) => void;
+  /**
    * Hook opcional para la cinemática de Implosión: devuelve false si el
    * objetivo no es válido (p.ej. KRONOS en fase 4 o ya implosionado antes).
    */
@@ -248,6 +259,8 @@ interface OrbitFragment {
    * inflige x3 el daño de una roca pequeña.
    */
   capturedInkBall?: boolean;
+  /** Bola eléctrica capturada de la Mariposa: magnetismo infalible 100%. */
+  isElectricBall?: boolean;
 }
 
 interface GravityFieldState {
@@ -288,8 +301,10 @@ interface ProjectileState {
   rollRad?: number;
   /** True si pertenece a Horizonte de Rebote. */
   isBounceSlash?: boolean;
-  /** Bola de tinta ácida capturada del pulpo: al morir se devuelve al pool. */
+  /** Bola de tinta ácida o eléctrica capturada: al morir se devuelve al pool. */
   capturedInkBall: boolean;
+  /** Magnetismo puro contra la Mariposa Relámpago (100% auto-aim, acelera al acercarse). */
+  isButterflyMagnet?: boolean;
 }
 
 interface PendingSlashBurst {
@@ -504,6 +519,11 @@ export class DomeSkillExecutor {
    * con estrellas titilantes en espacio de pantalla).
    */
   private readonly capturedInkBallMaterial: THREE.ShaderMaterial;
+  /**
+   * Shader híbrido de Cosmos de Nyx + Electricidad de la Mariposa: nebulosa
+   * cósmica con estrellas cruzada por arcos voltaicos cian/blanco brillantes.
+   */
+  private readonly capturedElectricBallMaterial: THREE.ShaderMaterial;
   private readonly waveMaterial = new THREE.MeshBasicMaterial({
     color: 0x7ae8dc,
     transparent: true,
@@ -644,6 +664,88 @@ export class DomeSkillExecutor {
         }
       `,
     });
+
+    this.capturedElectricBallMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uDeepColor: { value: new THREE.Color(0x0b0420) },
+        uNebulaA: { value: new THREE.Color(0x7e22ce) },
+        uElectricCyan: { value: new THREE.Color(0x22d3ee) },
+        uRimColor: { value: new THREE.Color(0xe0f2fe) },
+        uTime: { value: 0 },
+      },
+      transparent: true,
+      depthWrite: true,
+      vertexShader: /* glsl */ `
+        varying vec3 vLocalPos;
+        varying vec3 vNormalW;
+        varying vec3 vViewDir;
+        void main() {
+          vLocalPos = position;
+          vec4 worldPos = modelMatrix * vec4( position, 1.0 );
+          vNormalW = normalize( mat3( modelMatrix ) * normal );
+          vViewDir = normalize( cameraPosition - worldPos.xyz );
+          gl_Position = projectionMatrix * viewMatrix * worldPos;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uDeepColor;
+        uniform vec3 uNebulaA;
+        uniform vec3 uElectricCyan;
+        uniform vec3 uRimColor;
+        uniform float uTime;
+        varying vec3 vLocalPos;
+        varying vec3 vNormalW;
+        varying vec3 vViewDir;
+        float hash21( vec2 p ) {
+          p = fract( p * vec2( 234.34, 435.345 ) );
+          p += dot( p, p + 34.23 );
+          return fract( p.x * p.y );
+        }
+        float noise2( vec2 p ) {
+          vec2 i = floor( p );
+          vec2 f = fract( p );
+          f = f * f * ( 3.0 - 2.0 * f );
+          return mix(
+            mix( hash21( i ), hash21( i + vec2( 1.0, 0.0 ) ), f.x ),
+            mix( hash21( i + vec2( 0.0, 1.0 ) ), hash21( i + vec2( 1.0, 1.0 ) ), f.x ),
+            f.y
+          );
+        }
+        float fbm( vec2 p ) {
+          float v = 0.0; float a = 0.5;
+          mat2 m = mat2( 0.8, 0.6, -0.6, 0.8 );
+          for ( int i = 0; i < 4; i++ ) { v += a * noise2( p ); p = m * p * 2.02; a *= 0.5; }
+          return v;
+        }
+        void main() {
+          vec2 uv = gl_FragCoord.xy * 0.022;
+          vec2 drift = vec2( uTime * 0.08, -uTime * 0.05 );
+          float n = fbm( uv + drift );
+          vec3 col = uDeepColor;
+          col = mix( col, uNebulaA * 0.9, smoothstep( 0.36, 0.84, n ) );
+
+          // Estrellas cósmicas titilantes.
+          vec2 gv = fract( uv * 8.5 ) - 0.5;
+          vec2 id = floor( uv * 8.5 );
+          float h = hash21( id );
+          float star = h > 0.72 ? smoothstep( 0.12, 0.0, length( gv ) ) * ( 0.6 + 0.4 * sin( uTime * 3.5 + h * 40.0 ) ) : 0.0;
+          col += vec3( 1.0 ) * star * 1.2;
+
+          // Arcos eléctricos de alto voltaje saltando por toda la esfera.
+          vec3 p = normalize( vLocalPos + vec3( 1e-4 ) );
+          float boltWave = abs( sin( p.x * 16.0 + uTime * 22.0 + sin( p.y * 12.0 - uTime * 15.0 ) ) );
+          float boltMask = smoothstep( 0.16, 0.0, boltWave );
+          float bolt2 = smoothstep( 0.12, 0.0, abs( cos( p.z * 19.0 - uTime * 27.0 + sin( p.x * 14.0 ) ) ) );
+          float spark = clamp( boltMask + bolt2 * 0.85, 0.0, 1.0 );
+          col = mix( col, uElectricCyan, spark * 0.85 );
+          col += vec3( 0.92, 0.98, 1.0 ) * pow( spark, 2.5 ) * 1.6;
+
+          float fresnel = pow( 1.0 - max( dot( normalize( vNormalW ), normalize( vViewDir ) ), 0.0 ), 1.8 );
+          col += mix( uElectricCyan, uRimColor, 0.5 ) * smoothstep( 0.18, 0.9, fresnel ) * 1.25;
+          gl_FragColor = vec4( col, 0.98 );
+        }
+      `,
+    });
   }
 
   // ------------------------------------------------------------------
@@ -725,7 +827,9 @@ export class DomeSkillExecutor {
 
     // Bola de tinta capturada: SIN full auto-aim — sale en la dirección de
     // apuntado de Nyx (homing nulo), aunque haya enemigo lockeado en la mira.
-    const directAim = fragment.capturedInkBall === true;
+    // Bola eléctrica capturada: imán 100% infalible hacia la Mariposa Relámpago.
+    const isElectric = fragment.isElectricBall === true;
+    const directAim = fragment.capturedInkBall === true && !isElectric;
     const aimPoint =
       directAim || target === null
         ? _v1.copy(playerPos).addScaledVector(forwardDir, 45)
@@ -734,20 +838,21 @@ export class DomeSkillExecutor {
     if (_v2.lengthSq() < 1e-6) _v2.copy(forwardDir);
     _v2.normalize();
 
-    const speed = 34 + gf.level * 6;
+    const speed = isElectric ? 52 : 34 + gf.level * 6;
     this.projectiles.push({
       mesh: fragment.mesh,
       material: null,
       velocity: _v2.clone().multiplyScalar(speed),
-      remainingLife: 3.2,
-      damage: fragment.damage,
-      hitRadius: fragment.hitRadius,
-      homingTarget: directAim ? null : target,
+      remainingLife: isElectric ? 5.0 : 3.2,
+      damage: isElectric ? 140 : fragment.damage,
+      hitRadius: isElectric ? 1.15 : fragment.hitRadius,
+      homingTarget: isElectric ? target : directAim ? null : target,
       homingStrength: directAim ? 0 : target !== null ? 10.5 : 0,
       hitIds: new Set<string>(),
       pierce: false,
       orientToVelocity: false,
       capturedInkBall: fragment.capturedInkBall === true,
+      isButterflyMagnet: isElectric,
     });
     return true;
   }
@@ -819,6 +924,29 @@ export class DomeSkillExecutor {
       }, i, plan.length);
       fragment.capturedInkBall = true;
       this.gravityField.fragments.push(fragment);
+    }
+
+    // Bolas Eléctricas de la Mariposa Relámpago dentro del radio de captura:
+    // adoptan shader híbrido Cosmos + Eléctrico y al dispararse persiguen
+    // a la Mariposa con 100% de auto-aim ignorando toda física.
+    const electricSlotsLeft = plan.length - this.gravityField.fragments.length;
+    if (electricSlotsLeft > 0 && ctx.captureElectricBalls) {
+      const electricBalls = ctx.captureElectricBalls(ctx.playerPos, captureRadius);
+      const cappedElectric = electricBalls.slice(0, electricSlotsLeft);
+      for (let i = 0; i < cappedElectric.length; i++) {
+        const ballMesh = cappedElectric[i];
+        ballMesh.material = this.capturedElectricBallMaterial;
+        const fragment = this.makeOrbitFragment(
+          ballMesh,
+          'small',
+          { damage: 140, hitRadius: 1.1 },
+          this.gravityField.fragments.length,
+          plan.length,
+        );
+        fragment.capturedInkBall = true;
+        fragment.isElectricBall = true;
+        this.gravityField.fragments.push(fragment);
+      }
     }
 
     // Escombros agarrables: los más cercanos a Nyx se convierten en rocas
@@ -1007,6 +1135,7 @@ export class DomeSkillExecutor {
     }
 
     this.spawnExpandingWave(ctx.playerPos, radius + 2.5, 0.55, this.waveMaterial);
+    ctx.onReflectEnemyProjectiles?.(ctx.playerPos, radius, ctx.playerPos);
     // Lectura de área en 3 capas: anillo pegado al suelo + cúpula iridiscente
     // con el radio exacto (el giro 0G va en el impulso tangencial de arriba).
     this.spawnAreaDome(ctx.playerPos, radius, 0.55);
@@ -1253,6 +1382,7 @@ export class DomeSkillExecutor {
     // Reloj de la nebulosa cósmica de las bolas capturadas (en órbita y en vuelo,
     // mientras la Mesh viva en escena).
     this.capturedInkBallMaterial.uniforms.uTime.value += dt;
+    this.capturedElectricBallMaterial.uniforms.uTime.value += dt;
     this.updateGravityField(dt, playerPos, forwardDir);
     this.updateSlashBursts(dt, enemies, playerPos, forwardDir);
     this.updateLooseDebris(dt);
@@ -1337,8 +1467,29 @@ export class DomeSkillExecutor {
       const p = this.projectiles[i];
       p.remainingLife -= dt;
 
-      // Auto-aim / Homing hacia objetivo vivo sin golpear (Horizonte de Rebote Nv2+).
-      if (p.homingStrength > 0) {
+      // Auto-aim infalible (100% ignorando física): Bola Eléctrica capturada
+      // contra la Mariposa Relámpago (acelera inversamente a la distancia).
+      if (p.isButterflyMagnet) {
+        const butterfly =
+          (p.homingTarget &&
+          !p.hitIds.has(p.homingTarget.id) &&
+          enemies.some((e) => e.id === p.homingTarget!.id && e.id.includes('lightning_butterfly'))
+            ? p.homingTarget
+            : enemies.find((e) => e.id.includes('lightning_butterfly') && !p.hitIds.has(e.id))) ??
+          null;
+        if (butterfly) {
+          p.homingTarget = butterfly;
+          _v1.subVectors(butterfly.position, p.mesh.position);
+          const dist = _v1.length();
+          if (dist > 1e-4) {
+            _v1.multiplyScalar(1 / dist);
+            const magnetSpeed = Math.min(220, 48 + 380 / Math.max(1.2, dist));
+            p.velocity.copy(_v1).multiplyScalar(magnetSpeed);
+            p.remainingLife = Math.max(p.remainingLife, 0.5);
+          }
+        }
+      } else if (p.homingStrength > 0) {
+        // Auto-aim / Homing hacia objetivo vivo sin golpear (Horizonte de Rebote Nv2+).
         const targetAlive =
           p.homingTarget !== null &&
           !p.hitIds.has(p.homingTarget.id) &&
@@ -1383,7 +1534,7 @@ export class DomeSkillExecutor {
           } else {
             _impulse.copy(p.velocity).normalize().multiplyScalar(9);
           }
-          onDamageEnemy(enemy, p.damage, _impulse);
+          onDamageEnemy(enemy, p.damage, _impulse, p.isButterflyMagnet === true);
           if (!p.pierce) {
             killed = true;
             break;
@@ -1873,6 +2024,7 @@ export class DomeSkillExecutor {
     this.groundRingGeometry.dispose();
     this.rockMaterial.dispose();
     this.capturedInkBallMaterial.dispose();
+    this.capturedElectricBallMaterial.dispose();
     this.waveMaterial.dispose();
     this.sliceMaterial.dispose();
     this.coreMaterial.dispose();

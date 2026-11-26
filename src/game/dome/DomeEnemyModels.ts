@@ -31,7 +31,7 @@ export const ENEMY_MODEL_COLORS: Record<EnemyArchetype, EnemyModelPalette> = {
   spiral_octopus: { color: 0x4b1369, rim: 0x2563eb },
   crab_gunner: { color: 0x7c192d, rim: 0xff2a9d },
   ground_golem: { color: 0x3b0f54, rim: 0x1e40af },
-  lightning_butterfly: { color: 0x831843, rim: 0xff2a9d },
+  lightning_butterfly: { color: 0x164e63, rim: 0x38bdf8 },
   giant_sparrow: { color: 0x7f1d1d, rim: 0x2563eb },
   prisma_necroz: { color: 0x4c1d95, rim: 0xff2a9d },
   kronos_leviathan: { color: 0x31105c, rim: 0x1d4ed8 },
@@ -255,6 +255,103 @@ export function createEnemyNebulaMaterial(
 }
 
 /**
+ * Cuarzo Eléctrico (Mariposa Relámpago): cristal facetado translúcido con
+ * refracción interna azul cian y arcos eléctricos saltando entre las ranuras
+ * de las placas piezoeléctricas al vibrar (`uCharge` 0..1.5).
+ */
+function createButterflyQuartzMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uCharge: { value: 0.45 },
+      uEmissiveBoost: { value: 0 },
+    },
+    vertexShader: /* glsl */ `
+      #include <common>
+      #include <skinning_pars_vertex>
+      varying vec3 vLocalPos;
+      varying vec3 vNormalW;
+      varying vec3 vViewDir;
+
+      void main() {
+        #include <beginnormal_vertex>
+        #include <skinbase_vertex>
+        #include <skinnormal_vertex>
+        #include <begin_vertex>
+        vLocalPos = position;
+        #include <skinning_vertex>
+        vec4 worldPos = modelMatrix * vec4( transformed, 1.0 );
+        vNormalW = normalize( mat3( modelMatrix ) * objectNormal );
+        vViewDir = normalize( cameraPosition - worldPos.xyz );
+        gl_Position = projectionMatrix * viewMatrix * worldPos;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime;
+      uniform float uCharge;
+      uniform float uEmissiveBoost;
+      varying vec3 vLocalPos;
+      varying vec3 vNormalW;
+      varying vec3 vViewDir;
+
+      float qHash( vec3 p ) {
+        p = fract( p * vec3( 0.1031, 0.1030, 0.0973 ) );
+        p += dot( p, p.yxz + 33.33 );
+        return fract( ( p.x + p.y ) * p.z );
+      }
+
+      float qNoise( vec3 x ) {
+        vec3 i = floor( x );
+        vec3 f = fract( x );
+        f = f * f * ( 3.0 - 2.0 * f );
+        return mix(
+          mix( mix( qHash( i ), qHash( i + vec3( 1,0,0 ) ), f.x ),
+               mix( qHash( i + vec3( 0,1,0 ) ), qHash( i + vec3( 1,1,0 ) ), f.x ), f.y ),
+          mix( mix( qHash( i + vec3( 0,0,1 ) ), qHash( i + vec3( 1,0,1 ) ), f.x ),
+               mix( qHash( i + vec3( 0,1,1 ) ), qHash( i + vec3( 1,1,1 ) ), f.x ), f.y ),
+          f.z
+        );
+      }
+
+      void main() {
+        vec3 N = normalize( vNormalW );
+        vec3 V = normalize( vViewDir );
+
+        // Facetado de cuarzo: bandas celulares escalonadas + brillo interno.
+        float facet = floor( abs( dot( N, vec3( 0.42, 0.78, 0.46 ) ) ) * 4.5 ) / 4.5;
+        vec3 quartzDeep = vec3( 0.08, 0.22, 0.48 );
+        vec3 quartzMid = vec3( 0.16, 0.62, 0.88 );
+        vec3 quartzSpec = vec3( 0.76, 0.96, 1.0 );
+        vec3 col = mix( quartzDeep, quartzMid, 0.35 + facet * 0.65 );
+
+        // Ranuras y grietas con arcos piezoeléctricos saltando a gran velocidad.
+        vec3 p = vLocalPos * 7.5;
+        float n1 = qNoise( p + vec3( uTime * 7.0, -uTime * 5.2, uTime * 3.8 ) );
+        float n2 = qNoise( p * 2.3 - vec3( uTime * 11.5, uTime * 8.4, -uTime * 6.0 ) );
+        float ridge = 1.0 - abs( n1 * 2.0 - 1.0 );
+        float groove = smoothstep( 0.82, 0.985, ridge * ( 0.6 + 0.4 * n2 ) );
+        float pulse = 0.55 + 0.45 * sin( uTime * 28.0 + vLocalPos.x * 9.0 + vLocalPos.y * 11.0 );
+        float arcIntensity = groove * pulse * ( 0.65 + uCharge * 1.45 );
+
+        col += vec3( 0.32, 0.86, 1.0 ) * arcIntensity * 1.35;
+        col += quartzSpec * pow( groove, 3.0 ) * ( 0.5 + uCharge );
+
+        // Fresnel cristalino brillante.
+        float fresnel = pow( 1.0 - max( dot( N, V ), 0.0 ), 2.0 );
+        col += mix( vec3( 0.25, 0.88, 1.0 ), vec3( 0.68, 0.48, 1.0 ), fresnel * 0.45 )
+             * ( 0.65 + uCharge * 0.6 ) * fresnel;
+        col += vec3( 0.4, 0.9, 1.0 ) * uEmissiveBoost;
+
+        float alpha = mix( 0.74, 0.96, clamp( fresnel + arcIntensity * 0.4, 0.0, 1.0 ) );
+        gl_FragColor = vec4( col, alpha );
+      }
+    `,
+    transparent: true,
+    depthWrite: true,
+  });
+}
+
+/**
  * Contorno de tinta Inverted Hull que vibra con la misma energía descontrolada
  * que la carne (`uTime` compartido): la silueta de tinta acompaña al cuerpo
  * tembloroso en cada frame. Devuelve la malla de contorno.
@@ -344,7 +441,7 @@ const gltfLoader = new GLTFLoader();
  * bumpar esta constante la URL cambia y todo el mundo descarga el asset nuevo
  * a la primera. Bump obligatorio en cada re-export de cualquier .glb.
  */
-const GLB_CACHE_VERSION = 9;
+const GLB_CACHE_VERSION = 10;
 
 function loadEnemyModel(archetype: EnemyArchetype): Promise<void> {
   if (modelCache.has(archetype)) {
@@ -544,7 +641,9 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       ? 0xf59e0b
       : archetype === 'spiral_octopus'
         ? 0xc084fc
-        : 0xff2a9d;
+        : archetype === 'lightning_butterfly'
+          ? 0x38bdf8
+          : 0xff2a9d;
 
   root.traverse((obj) => {
     // Los contornos que añadimos aquí mismo no se re-visten.
@@ -588,6 +687,17 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       outline.renderOrder = 2;
       outline.name = OUTLINE_MARKER;
       animatedMaterials.push(fleshMaterial, outline.material as THREE.ShaderMaterial);
+    } else if (archetype === 'lightning_butterfly') {
+      // Mariposa Relámpago: placas de Cuarzo Eléctrico con arcos en ranuras.
+      const quartzMat = createButterflyQuartzMaterial();
+      mesh.material = quartzMat;
+      animatedMaterials.push(quartzMat);
+      addComicOutline(
+        mesh,
+        DETAIL_OUTLINE_THICKNESS * enemyInkScale,
+        0x7dd3fc,
+        INK_DISTANCE_SCALE,
+      ).name = OUTLINE_MARKER;
     } else {
       mesh.material = createComicCelMaterial(DETAIL_COLOR, {
         rimColor: DETAIL_RIM,
@@ -615,7 +725,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       // congelan en su último frame hasta que el comportamiento los
       // reinicie con reset(). Las espirales y la guardia del gólem son
       // bucles sostenidos ("Bucle + Pose" de enemigos_base.md §7.4).
-      if (/loop|idle|float|observe|ready|duplicate|spiral|guard|fresh|lazy|build|summon|chase_fly|air_drill/.test(clip.name)) {
+      if (/loop|idle|float|observe|ready|duplicate|spiral|guard|fresh|lazy|build|summon|chase_fly|air_drill|fast_flap|lightning_beam/.test(clip.name)) {
         action.setLoop(THREE.LoopRepeat, Infinity);
       } else {
         action.setLoop(THREE.LoopOnce, 1);
@@ -628,6 +738,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       actions.get('kronos_swim_idle') ??
       actions.get('necroz_idle_fresh') ??
       actions.get('sparrow_chase_fly') ??
+      actions.get('butterfly_fast_flap') ??
       actions.get('cell_idle_float') ??
       actions.get('crab_idle_breathe') ??
       actions.get('golem_helicopter_loop') ??
@@ -777,6 +888,45 @@ export function collectSparrowRig(root: THREE.Object3D): SparrowRig {
       mouthStarMesh?.isMesh && mouthStarMesh.material instanceof THREE.ShaderMaterial
         ? mouthStarMesh.material
         : null,
+  };
+}
+
+// --- Mariposa Relámpago (lightning_butterfly.glb, 9 joints) ---
+
+export interface ButterflyRig {
+  root: EnemyBone | null;
+  body: EnemyBone | null;
+  head: EnemyBone | null;
+  wingTopLInner: EnemyBone | null;
+  wingTopLOuter: EnemyBone | null;
+  wingTopRInner: EnemyBone | null;
+  wingTopROuter: EnemyBone | null;
+  wingBotL: EnemyBone | null;
+  wingBotR: EnemyBone | null;
+  quartzMaterials: THREE.ShaderMaterial[];
+}
+
+/** Localiza los 9 huesos de `butterfly_rig` y los materiales de Cuarzo Eléctrico. */
+export function collectButterflyRig(root: THREE.Object3D): ButterflyRig {
+  const quartzMaterials: THREE.ShaderMaterial[] = [];
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || obj.name === OUTLINE_MARKER) return;
+    if (mesh.material instanceof THREE.ShaderMaterial && mesh.material.uniforms.uCharge) {
+      quartzMaterials.push(mesh.material);
+    }
+  });
+  return {
+    root: findBone(root, 'root'),
+    body: findBone(root, 'body'),
+    head: findBone(root, 'head'),
+    wingTopLInner: findBone(root, 'wing_top_L_inner'),
+    wingTopLOuter: findBone(root, 'wing_top_L_outer'),
+    wingTopRInner: findBone(root, 'wing_top_R_inner'),
+    wingTopROuter: findBone(root, 'wing_top_R_outer'),
+    wingBotL: findBone(root, 'wing_bot_L'),
+    wingBotR: findBone(root, 'wing_bot_R'),
+    quartzMaterials,
   };
 }
 
