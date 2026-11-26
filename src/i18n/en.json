@@ -69,7 +69,9 @@
     "menuButton": "← MENU",
     "training": "TRAINING",
     "easyModeTipBadge": "TIP",
-    "easyModeBanner": "Too intense? Enable Easy Mode in Settings (2x HP & Eden, no scaling, Tab = 0.75x)."
+    "easyModeHintTitle": "EASY MODE AVAILABLE",
+    "easyModeBanner": "Too intense? Enable Easy Mode in Settings (2x HP & Eden, no scaling, Tab = 0.75x).",
+    "easyModeHintOk": "GOT IT"
   },
   "pause": {
     "subtitle": "DOME · FROZEN SIMULATION",

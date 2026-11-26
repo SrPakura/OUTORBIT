@@ -69,7 +69,9 @@
     "menuButton": "← メニュー",
     "training": "トレーニング",
     "easyModeTipBadge": "ヒント",
-    "easyModeBanner": "難しすぎますか？設定でイージーモードを有効にできます（HP・エデン2倍、難易度上昇なし、Tab = x0.75）。"
+    "easyModeHintTitle": "イージーモード搭載",
+    "easyModeBanner": "難しすぎますか？設定でイージーモードを有効にできます（HP・エデン2倍、難易度上昇なし、Tab = x0.75）。",
+    "easyModeHintOk": "了解"
   },
   "pause": {
     "subtitle": "ドーム内部 · シミュレーション停止中",

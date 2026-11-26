@@ -11,13 +11,10 @@ import { DomeRunTracker, submitDomeRunToLeaderboard } from '@/game/dome/DomeRunS
 import type { DomeHudState } from '@/game/dome/domeTypes';
 import type { GameSettings } from '@/game/settings';
 import {
-  hasSeenEasyModeHint,
   loadTutorialProgress,
-  markEasyModeHintSeen,
   setTutorialCompleted,
   type TutorialProgressId,
 } from '@/game/localStorageState';
-import { useI18n } from '@/i18n';
 import { SynthAudio } from '@/game/audio/SynthAudio';
 import { musicPlayer } from '@/game/audio/MusicPlayer';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
@@ -80,7 +77,6 @@ const INITIAL_HUD: DomeHudState = {
 
 export default function DomeGameView({ settings, onExit, onUpdateSettings, trainingMode }: DomeGameViewProps) {
   const training = trainingMode ?? false;
-  const { t } = useI18n();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const controllerRef = useRef<NyxDomeController | null>(null);
   const audioRef = useRef<SynthAudio | null>(null);
@@ -348,40 +344,6 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
     canvasRef.current?.requestPointerLock?.();
   }, [activeTutorial]);
 
-  // Aviso temporal (7 s, una vez salvo reset) informando del Modo Fácil en Ajustes.
-  const [easyModeBannerVisible, setEasyModeBannerVisible] = useState(false);
-  useEffect(() => {
-    if (
-      training ||
-      settings.easyMode ||
-      activeTutorial !== null ||
-      isPauseOpen ||
-      levelUpState.isOpen ||
-      battleReport !== null ||
-      hasSeenEasyModeHint()
-    ) {
-      return;
-    }
-    markEasyModeHintSeen();
-    setEasyModeBannerVisible(true);
-  }, [
-    training,
-    settings.easyMode,
-    activeTutorial,
-    isPauseOpen,
-    levelUpState.isOpen,
-    battleReport,
-  ]);
-  useEffect(() => {
-    if (!easyModeBannerVisible) return;
-    if (settings.easyMode || battleReport !== null) {
-      setEasyModeBannerVisible(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setEasyModeBannerVisible(false), 7000);
-    return () => window.clearTimeout(timer);
-  }, [easyModeBannerVisible, settings.easyMode, battleReport]);
-
   const handleSubmitScore = useCallback(async (playerName: string) => {
     const tracker = runTrackerRef.current;
     const prog = progressionRef.current;
@@ -513,18 +475,6 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         />
       )}
       <DomeTutorialCard tutorialId={activeTutorial} onDismiss={handleDismissTutorial} />
-      {easyModeBannerVisible && (
-        <div className="pointer-events-none fixed left-1/2 top-5 z-30 -translate-x-1/2 px-4">
-          <div className="flex items-center gap-3 -skew-x-12 border-2 border-[#0b0d12] bg-[#f1f1ed] px-4 py-2 text-[#0b0d12] shadow-[4px_4px_0_#06b6d4]">
-            <span className="skew-x-12 bg-[#0b0d12] px-2 py-0.5 text-[10px] font-black tracking-[0.2em] text-[#22d3ee]">
-              {t('hud.easyModeTipBadge')}
-            </span>
-            <span className="skew-x-12 text-[11px] font-bold tracking-[0.06em] text-[#0b0d12]">
-              {t('hud.easyModeBanner')}
-            </span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

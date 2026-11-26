@@ -69,7 +69,9 @@
     "menuButton": "← MENÚ",
     "training": "ENTRENAMIENTO",
     "easyModeTipBadge": "CONSEJO",
-    "easyModeBanner": "¿Muy intenso? Activa el Modo Fácil en Ajustes (Vida y Edén x2, sin escalada, Tab = x0.75)."
+    "easyModeHintTitle": "MODO FÁCIL DISPONIBLE",
+    "easyModeBanner": "¿Muy intenso? Activa el Modo Fácil en Ajustes (Vida y Edén x2, sin escalada, Tab = x0.75).",
+    "easyModeHintOk": "ENTENDIDO"
   },
   "pause": {
     "subtitle": "CÚPULA · SIMULACIÓN CONGELADA",

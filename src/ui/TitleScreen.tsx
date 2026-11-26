@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameSettings } from '@/game/settings';
+import { hasSeenEasyModeHint, markEasyModeHintSeen } from '@/game/localStorageState';
 import { musicPlayer } from '@/game/audio/MusicPlayer';
 import { useI18n } from '@/i18n';
 import { TitleDioramaSandbox } from '@/ui/TitleDioramaSandbox';
@@ -8,7 +9,7 @@ import SettingsScreen from '@/ui/SettingsScreen';
 import LeaderboardModal from '@/ui/LeaderboardModal';
 import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
 
-type MenuModal = 'settings' | 'leaderboard' | null;
+type MenuModal = 'settings' | 'leaderboard' | 'easyHint' | null;
 
 /** Paleta unificada del menú: carmesí -> violeta -> cian. */
 const MENU_STOPS = ['#e11d48', '#7c3aed', '#22d3ee'];
@@ -43,9 +44,18 @@ export default function TitleScreen({
 
   const [modal, setModal] = useState<MenuModal>(null);
 
+  const handlePlayClick = () => {
+    if (!settingsRef.current.easyMode && !hasSeenEasyModeHint()) {
+      markEasyModeHintSeen();
+      setModal('easyHint');
+      return;
+    }
+    onPlay();
+  };
+
   // Navegación con mando: D-Pad/stick mueve, Cruz (A) activa.
   const actions = [
-    { id: 'play', run: onPlay },
+    { id: 'play', run: handlePlayClick },
     ...(onPlayTraining ? [{ id: 'training', run: onPlayTraining }] : []),
     { id: 'settings', run: () => setModal('settings') },
     { id: 'leaderboard', run: () => setModal('leaderboard') },
@@ -109,7 +119,7 @@ export default function TitleScreen({
             vbHeight={116}
             labelFontSize="1.5rem"
             focused={padIndex === 0}
-            onClick={onPlay}
+            onClick={handlePlayClick}
           />
           {onPlayTraining && (
             <FluidInkButton
@@ -191,6 +201,44 @@ export default function TitleScreen({
       )}
 
       {modal === 'leaderboard' && <LeaderboardModal onClose={() => setModal(null)} />}
+
+      {modal === 'easyHint' && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#05010f]/75 p-4 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="relative w-full max-w-md border-[3px] border-[#0b0d12] bg-[#f1f1ed] p-6 text-[#0b0d12] shadow-[8px_8px_0_#22d3ee]">
+            <div className="mb-3 inline-block -skew-x-12 bg-[#0b0d12] px-3 py-1">
+              <span className="block skew-x-12 text-[10px] font-black tracking-[0.22em] text-[#22d3ee]">
+                {t('hud.easyModeTipBadge')}
+              </span>
+            </div>
+            <h2 className="mb-2 text-xl font-black italic tracking-tight text-[#0b0d12]">
+              {t('hud.easyModeHintTitle')}
+            </h2>
+            <p className="mb-6 text-sm font-semibold leading-relaxed text-[#0b0d12]/80">
+              {t('hud.easyModeBanner')}
+            </p>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setModal('settings')}
+                className="-skew-x-12 cursor-pointer border-2 border-[#0b0d12] bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.14em] text-[#0b0d12] shadow-[3px_3px_0_#0b0d12] transition-transform hover:-translate-y-0.5"
+              >
+                <span className="block skew-x-12">{t('menu.controls')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setModal(null)}
+                className="-skew-x-12 cursor-pointer border-2 border-[#0b0d12] bg-[#e11d48] px-5 py-2 text-xs font-black uppercase tracking-[0.16em] text-white shadow-[3px_3px_0_#0b0d12] transition-transform hover:-translate-y-0.5"
+              >
+                <span className="block skew-x-12">{t('hud.easyModeHintOk')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .title-tag {
