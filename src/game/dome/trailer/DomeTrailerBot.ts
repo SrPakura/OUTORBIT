@@ -58,7 +58,7 @@ type BotFsmState =
   | 'trickshot_360'
   | 'flow_slalom';
 
-const DOME_SOFT_BOUND = 76;
+const DOME_SOFT_BOUND = 66;
 const RANGED_TRICKSHOT_SKILLS: readonly ActiveSkillId[] = [
   'gravity_field',
   'bounce_horizon',

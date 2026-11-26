@@ -3860,11 +3860,13 @@ export class NyxDomeController {
     const inward = this.velocity.dot(n);
     if (inward > -3) this.velocity.addScaledVector(n, -3 - inward);
 
-    this.hp = Math.max(0, this.hp - DOME_BOUNCE_DAMAGE);
-    if (this.onDomeBounceDamage) {
-      this.onDomeBounceDamage(DOME_BOUNCE_DAMAGE);
-    } else if (this.hp <= 0) {
-      this.hp = this.maxHp; // reset temporal hasta tener respawn real
+    if (!this.godMode) {
+      this.hp = Math.max(0, this.hp - DOME_BOUNCE_DAMAGE);
+      if (this.onDomeBounceDamage) {
+        this.onDomeBounceDamage(DOME_BOUNCE_DAMAGE);
+      } else if (this.hp <= 0) {
+        this.hp = this.maxHp; // reset temporal hasta tener respawn real
+      }
     }
 
     if (this.mode === 'speed_attack') {

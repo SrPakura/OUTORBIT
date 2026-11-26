@@ -328,6 +328,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       : trailerSession?.mode === 'replay'
         ? trailerSession.replay.header.trainingArchetype
         : null;
+  const trailerGodMode =
+    trailerSession?.mode === 'record'
+      ? trailerSession.config.godMode
+      : trailerSession?.mode === 'replay'
+        ? trailerSession.replay.header.godMode
+        : false;
 
   waveMgr.setDifficultyScaling(!settingsRef.current.easyMode);
   if (trailerSession) {
@@ -852,6 +858,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       // Gravity Shift: el material de nebulosa de Nyx se enciende en vuelo.
       controller.attachNyxMaterial(nyx.universeMat);
       controller.onDomeBounceDamage = () => {
+        if (trailerGodMode) return;
         combat.applyDomeBarrierDamageToNyx();
       };
       controller.onRedirectionSuccess = () => {
@@ -1538,8 +1545,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       runTracker.tick(worldDt);
       runTracker.recordSpeed(controller.getCurrentSpeed());
 
-      // Entrenamiento: Nyx es inmortal, nunca se muestra el Battle Report.
-      if (!training && controller.getHp() <= 0 && !gameOverTriggered) {
+      // Entrenamiento o trailerGodMode: Nyx es inmortal, nunca se muestra el Battle Report.
+      if (!training && !trailerGodMode && controller.getHp() <= 0 && !gameOverTriggered) {
         gameOverTriggered = true;
         musicPlayer.stop();
         if (document.pointerLockElement === canvas) {
