@@ -287,7 +287,7 @@ function DomeHudSketchInner({
   }
   prevInkRef.current = inkIntensity;
   const inkSplash = useMemo(
-    () => buildInkSplash(inkGenRef.current * 9301 + Math.floor(Math.random() * 100000)),
+    () => buildInkSplash(inkGenRef.current * 9301 + 49297),
     [inkGenRef.current],
   );
 
