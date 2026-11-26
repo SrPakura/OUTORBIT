@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createComicCelMaterial } from '@/game/render/toonMaterials';
-import { DOME_PLAYER_BOUND_RADIUS } from './domeTypes';
+import { DOME_PLAYER_BOUND_RADIUS, type SlabCollider } from './domeTypes';
 
 // ============================================================================
 // Prisma Necroz — Fortaleza estacionaria de IA Perfecta & Pereza extrema
@@ -130,6 +130,7 @@ export interface NecrozBehaviorContext {
   domeSpikes: DomeSpikeSlot[];
   playerVelocity: THREE.Vector3;
   speedMult: number;
+  activeSlabs?: readonly SlabCollider[];
   onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void;
 }
 
@@ -457,13 +458,67 @@ export function tryBreakNecrozShieldTriangle(
   return false;
 }
 
-/** Invoca una pirámide de 75 m sobre la Esfera Blanca exterior (85 m). */
+const SPHERE_TILE_MIN_R = 72.0;
+const SPHERE_TILE_EXCLUDE_DIST = 15.5;
+
+/** Comprueba si una dirección de la esfera está ocupada por un suelo esférico activo. */
+function isCoveredBySphereTile(
+  dirOnSphere: THREE.Vector3,
+  activeSlabs?: readonly SlabCollider[],
+): boolean {
+  if (!activeSlabs || activeSlabs.length === 0) return false;
+  _v5.copy(dirOnSphere).normalize().multiplyScalar(DOME_SPIKE_BASE_RADIUS);
+  for (const slab of activeSlabs) {
+    // Solo los suelos de la esfera exterior (radio > 72 m); los suelos flotantes
+    // interiores de Entrenamiento no bloquean las pirámides de la Esfera Blanca.
+    if (slab.center.lengthSq() < SPHERE_TILE_MIN_R * SPHERE_TILE_MIN_R) continue;
+    if (_v5.distanceTo(slab.center) < SPHERE_TILE_EXCLUDE_DIST) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Busca una dirección libre (sin suelo esférico) cerca de `dirOnSphere`. */
+function findFreeSphereDir(
+  dirOnSphere: THREE.Vector3,
+  activeSlabs?: readonly SlabCollider[],
+): THREE.Vector3 | null {
+  _v1.copy(dirOnSphere).normalize();
+  if (!isCoveredBySphereTile(_v1, activeSlabs)) return _v1;
+
+  _v2.crossVectors(_v1, _up);
+  if (_v2.lengthSq() < 1e-4) _v2.set(1, 0, 0);
+  _v2.normalize();
+  _v3.crossVectors(_v1, _v2).normalize();
+
+  for (let ring = 1; ring <= 4; ring++) {
+    const step = ring * 0.24;
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      _v4
+        .copy(_v1)
+        .addScaledVector(_v2, Math.cos(a) * step)
+        .addScaledVector(_v3, Math.sin(a) * step)
+        .normalize();
+      if (!isCoveredBySphereTile(_v4, activeSlabs)) {
+        return _v1.copy(_v4);
+      }
+    }
+  }
+  return null;
+}
+
+/** Invoca una pirámide de 75 m sobre la Esfera Blanca exterior (85 m), excluyendo suelos. */
 function spawnDomeSpike(
   slots: DomeSpikeSlot[],
   dirOnSphere: THREE.Vector3,
   playerPos: THREE.Vector3,
   homing: boolean,
+  activeSlabs?: readonly SlabCollider[],
 ): boolean {
+  const freeDir = findFreeSphereDir(dirOnSphere, activeSlabs);
+  if (!freeDir) return false;
   const slot = slots.find((s) => !s.active);
   if (!slot) return false;
 
@@ -474,9 +529,8 @@ function spawnDomeSpike(
   slot.height = 0.5;
   slot.hitCooldown = 0;
 
-  _v1.copy(dirOnSphere).normalize();
-  slot.baseCenter.copy(_v1).multiplyScalar(DOME_SPIKE_BASE_RADIUS);
-  slot.inward.copy(_v1).negate();
+  slot.baseCenter.copy(freeDir).multiplyScalar(DOME_SPIKE_BASE_RADIUS);
+  slot.inward.copy(freeDir).negate();
 
   // Construir triángulo base equilátero tangente a la esfera exterior.
   _v2.crossVectors(slot.inward, _up);
@@ -532,6 +586,15 @@ export function updateDomeSpikes(
 
     if (slot.hitCooldown > 0) {
       slot.hitCooldown = Math.max(0, slot.hitCooldown - dt);
+    }
+
+    // Si un suelo esférico rotado (ciclo de 10 s) cubre esta púa, se retrae.
+    if (slot.phase !== 'retract') {
+      _v4.copy(slot.baseCenter).normalize();
+      if (isCoveredBySphereTile(_v4, ctx.activeSlabs)) {
+        slot.phase = 'retract';
+        slot.timer = Math.min(slot.timer, DOME_SPIKE_RETRACT_SEC);
+      }
     }
 
     // Púas teledirigidas: se deslizan sobre la esfera persiguiendo a Nyx a 5 m/s.
@@ -733,7 +796,7 @@ export function updateNecrozEnemy(
         const jitter = n.offensivePairStep === 0 ? 0.14 : -0.14;
         _v1.x += jitter * 14;
         _v1.z -= jitter * 14;
-        spawnDomeSpike(ctx.domeSpikes, _v1, playerPos, false);
+        spawnDomeSpike(ctx.domeSpikes, _v1, playerPos, false, ctx.activeSlabs);
 
         if (n.offensivePairStep === 0) {
           n.offensivePairStep = 1;
@@ -755,7 +818,7 @@ export function updateNecrozEnemy(
       _v1.copy(playerPos).addScaledVector(_up, -4).normalize();
       const basePt = _v2.copy(_v1).multiplyScalar(DOME_SPIKE_BASE_RADIUS);
       if (!n.hasLastHoming || basePt.distanceTo(n.lastHomingBase) >= HOMING_SPIKE_MIN_SEP) {
-        if (spawnDomeSpike(ctx.domeSpikes, _v1, playerPos, true)) {
+        if (spawnDomeSpike(ctx.domeSpikes, _v1, playerPos, true, ctx.activeSlabs)) {
           n.lastHomingBase.copy(basePt);
           n.hasLastHoming = true;
           n.homingLeft--;

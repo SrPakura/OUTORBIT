@@ -2303,6 +2303,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         this.updateOctopusEnemy(enemy, internal, dt, playerPos);
       } else if (enemy.entity.archetype === 'prisma_necroz' && internal.necroz) {
         this.necrozCtx.speedMult = this.speedMult;
+        this.necrozCtx.activeSlabs = activeSlabs;
         this.necrozCtx.onGolemSmash = onGolemSmash;
         updateNecrozEnemy(
           this.necrozCtx,
@@ -2446,6 +2447,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.updateOctopusSplitBursts(dt, playerPos);
     updateKronosRings(this, dt, playerPos, onGolemSmash);
     updateKronosPortals(this.kronosPortals, dt, elapsed);
+    this.necrozCtx.activeSlabs = activeSlabs;
     this.necrozCtx.onGolemSmash = onGolemSmash;
     updateDomeSpikes(this.necrozCtx, dt, playerPos);
 
