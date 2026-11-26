@@ -864,6 +864,10 @@ export interface EnemyInternal {
   currentClipAction: THREE.AnimationAction | null;
   /** Célula: segundos restantes del flinch de cell_hit sobre la IA. */
   cellHitTimer: number;
+  /** Célula: true si nació de duplicación (no puede volver a replicarse). */
+  cellIsReplica: boolean;
+  /** Célula: id de la réplica activa generada por esta célula (máx. 1 viva). */
+  cellActiveReplicaId: string | null;
   // --- Pulpo Espiral (rediseño) ---
   /** Cuenta atrás del ciclo de dash de 5.0 s (≤1 s = alerta/contra-parry). */
   octopusDashTimer: number;
@@ -902,9 +906,9 @@ interface DyingEnemy {
 }
 
 /** Temblor previo al estallido (s). */
-const DEATH_SHAKE_TIME = 0.22;
+const DEATH_SHAKE_TIME = 0.10;
 /** Inflado final antes de desaparecer (s). */
-const DEATH_POP_TIME = 0.16;
+const DEATH_POP_TIME = 0.09;
 
 /**
  * Localiza el material del cuerpo del enemigo para el flash de impacto:
@@ -996,6 +1000,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
 
   private readonly scene: THREE.Scene;
   private readonly internals = new Map<string, EnemyInternal>();
+  private nextEnemySeq = 0;
   private readonly visuals: Record<EnemyArchetype, ArchetypeVisual>;
   private readonly starGeometry = new THREE.OctahedronGeometry(1, 0);
   private readonly projectiles: WaveProjectile[] = [];
@@ -1583,9 +1588,10 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     let animatedMaterials: THREE.ShaderMaterial[] = [];
     let standHeight: number;
 
+    const uniqueName = `waveEnemy_${this.currentWave}_${archetype}_${++this.nextEnemySeq}`;
     if (glbVisual) {
       mesh = glbVisual.root;
-      mesh.name = `waveEnemy_${this.currentWave}_${archetype}_${index}`;
+      mesh.name = uniqueName;
       starCores = glbVisual.starCores;
       mixer = glbVisual.mixer;
       animatedMaterials = glbVisual.animatedMaterials;
@@ -1598,7 +1604,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         emissiveBoost: 0.0,
       });
       const fallbackMesh = new THREE.Mesh(visual.geometry, material);
-      fallbackMesh.name = `waveEnemy_${this.currentWave}_${archetype}_${index}`;
+      fallbackMesh.name = uniqueName;
       const outline = addComicOutline(
         fallbackMesh,
         visual.outlineThickness * enemyInkScaleForWave(this.currentWave),
@@ -1754,6 +1760,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       actions: glbVisual ? glbVisual.actions : null,
       currentClipAction: null,
       cellHitTimer: 0,
+      cellIsReplica: false,
+      cellActiveReplicaId: null,
       // Pulpo Espiral: ciclo de dash desincronizado (2.5–5 s) para que varios
       // pulpos de una oleada no entren en alerta a la vez.
       octopusDashTimer:
@@ -2063,10 +2071,18 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     const homePos = mother.position.clone().add(offset);
     const index = this.enemies.length;
     this.spawnEnemy('abyssal_cell', index, rng, undefined, homePos);
-    const child = this.enemies[index];
+    const child = this.enemies[this.enemies.length - 1];
     if (child) {
       child.entity.expValue = CELL_CHILD_EXP;
       child.attackTimer = 1.5;
+      const childInternal = this.internals.get(child.id);
+      if (childInternal) {
+        childInternal.cellIsReplica = true;
+      }
+      const motherInternal = this.internals.get(mother.id);
+      if (motherInternal) {
+        motherInternal.cellActiveReplicaId = child.id;
+      }
     }
     mother.entity.hp = Math.max(1, mother.entity.hp * 0.6);
   }
@@ -2245,6 +2261,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     enemy.entity.alive = false;
     enemy.entity.hp = 0;
+    if (this.cellDirector.duplicateOwnerId === enemy.id) {
+      this.cellDirector.duplicateOwnerId = null;
+    }
     this.hideCrabLaser(enemy.id);
     this.hideCrabDangerRing(enemy.id);
     if (internal.sparrow) {
@@ -2290,10 +2309,16 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     for (const animatedMaterial of internal.animatedMaterials) {
       materials.add(animatedMaterial);
     }
-    // Estrella interior y piezas: material propio por enemigo.
-    for (const child of enemy.mesh.children) {
-      if (child instanceof THREE.Mesh) materials.add(child.material as THREE.Material);
-    }
+    // Estrella interior y piezas (incluyendo jerarquías GLB anidadas): material propio por enemigo.
+    enemy.mesh.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        if (Array.isArray(obj.material)) {
+          for (const mat of obj.material) materials.add(mat);
+        } else if (obj.material) {
+          materials.add(obj.material as THREE.Material);
+        }
+      }
+    });
     return [...materials];
   }
 
@@ -2417,7 +2442,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.golemInfo.hpRatio = THREE.MathUtils.clamp(playerHpRatio, 0, 1);
     this.golemInfo.edenRatio = THREE.MathUtils.clamp(playerEdenRatio, 0, 1);
     this.golemInfo.attacking = playerAttackTime > 0.15 || playerKickAnim;
-    this.updateDying(dt);
+    this.updateDying(dt > 0 ? Math.max(dt, 0.012) : 0);
     const lockedId = lockedEnemy?.id ?? null;
 
     // Enjambre de Células Abisales: foco de Nyx + slots de órbita + token.

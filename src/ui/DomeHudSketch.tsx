@@ -377,9 +377,9 @@ function DomeHudSketchInner({
               viewBox="0 0 1600 900"
               preserveAspectRatio="xMidYMid slice"
               style={{
-                transform: `translateY(${shiftY}%) rotate(${rot}deg) scale(${(0.95 + hurt * 0.14).toFixed(3)})`,
+                transform: `translateY(${shiftY}%) rotate(${rot}deg) scale(${((0.95 + hurt * 0.14) * 0.6).toFixed(3)})`,
                 transformOrigin: '50% 50%',
-                filter: 'drop-shadow(0 0 16px rgba(255, 30, 66, 0.85))',
+                filter: 'drop-shadow(0 0 12px rgba(255, 30, 66, 0.85))',
               }}
             >
               <defs>

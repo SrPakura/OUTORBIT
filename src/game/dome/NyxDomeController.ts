@@ -1152,7 +1152,7 @@ export class NyxDomeController {
   isPlayerStill(): boolean {
     return (
       (this.mode === 'grounded' || this.mode === 'floating') &&
-      this.velocity.length() < 1.25 &&
+      this.velocity.length() < 3.55 &&
       !this.attackHeld &&
       !this.dashHeld &&
       !this.gpAttackHeld &&

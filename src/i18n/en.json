@@ -263,7 +263,7 @@
       "skillsTitle": "SKILLS SUMMARY & EXTRAS",
       "s1": "Gravity Field: orbits rocks to fire (Left Click). Extra: grabs slab debris, Octopus Ink Balls (90 dmg) & Butterfly Electric Balls (140 dmg unbreakable magnet).",
       "s2": "Repulse Push: radial knockback blast. Extra: instant KO slamming foes into the White Barrier & reflects Electric Balls.",
-      "s3": "Eden Absorb: stand still (< 1.25 m/s) to restore Health & Eden instantly (0 Eden).",
+      "s3": "Eden Absorb: slow below 3.55 m/s to restore Health & Eden instantly (0 Eden).",
       "s4": "Attraction Well: slams 2 foes together. Extra: against a single foe, crushes them between the 2 nearest slabs.",
       "s5": "Bounce Horizon: fires piercing crescent slashes. Extra: gains auto-aim from Lv 2 onward.",
       "s6": "Black Hole: drifting suction vortex dealing AoE damage for 4.5 s.",

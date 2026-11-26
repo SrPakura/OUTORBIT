@@ -742,6 +742,17 @@ export function updateCellEnemy(
 
     // -----------------------------------------------------------------
     case 'duplicate': {
+      if (
+        internal.cellIsReplica ||
+        (internal.cellActiveReplicaId !== null &&
+          ctx.enemies.some((e) => e.id === internal.cellActiveReplicaId && e.entity.alive))
+      ) {
+        if (director.duplicateOwnerId === enemy.id) {
+          director.duplicateOwnerId = null;
+        }
+        internal.cellState = 'stalk';
+        return;
+      }
       internal.cellTimer -= dt;
       // Canal quieta: pulso creciente de energía (la estrella partiéndose).
       enemy.hitFlash = Math.max(
@@ -804,7 +815,14 @@ export function updateCellEnemy(
       }
 
       // --- ¿Duplicarse? Oculta, solitaria, bajo el cap y sin otra copiándose ---
+      // Las réplicas no pueden volver a replicarse, y cada célula original
+      // solo puede mantener 1 réplica viva al mismo tiempo.
+      const hasLiveReplica =
+        internal.cellActiveReplicaId !== null &&
+        ctx.enemies.some((e) => e.id === internal.cellActiveReplicaId && e.entity.alive);
       if (
+        !internal.cellIsReplica &&
+        !hasLiveReplica &&
         director.duplicateOwnerId === null &&
         internal.cellHiddenFor >= CELL_DUP_HIDDEN_SEC &&
         distToPlayer > CELL_DUP_SPOTTED_DIST &&
