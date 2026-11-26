@@ -165,7 +165,7 @@ export const DOME_ENEMY_ARCHETYPES: Record<EnemyArchetype, EnemyArchetypeStats> 
   // Mariposa Relámpago: aguanta 2 rocas pequeñas (30 dmg), muere con 1 mediana (32 dmg) o bola eléctrica devuelta.
   lightning_butterfly: { maxHp: 31, radius: 1.2, fleshThickness: 8, expValue: 1.5, isElite: false, isBoss: false, weakPoints: 1, evasive: false },
   // Gorrión Gigante (Élite): 2 cristales — pecho y boca (solo con mouthOpen).
-  giant_sparrow: { maxHp: 520, radius: 4.5, fleshThickness: 85, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 2, evasive: false },
+  giant_sparrow: { maxHp: 416, radius: 4.5, fleshThickness: 85, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 2, evasive: false },
   // Prisma Necroz (Élite): 1 cristal en el pecho, saca pinchos de frente.
   prisma_necroz: { maxHp: 300, radius: 3.8, fleshThickness: 65, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 1, evasive: false },
   // Leviatán KRONOS (Boss, rediseño): la barra genérica de HP NO existe — su

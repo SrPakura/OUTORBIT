@@ -170,7 +170,7 @@ export const es = {
         name: 'GORRIÓN GIGANTE',
         role: 'ÉLITE AÉREO DE OLEADA 5 · 2 PUNTOS DÉBILES',
         summary:
-          'Cazador aéreo de 520 HP y carne de 85 con 2 cristales débiles (pecho y boca interior). Dispara bolas de aire sin daño que empujan fuerte (32.3 m/s), ejecuta chillido con sacudida de cámara y picado taladro a 49.4 m/s.',
+          'Cazador aéreo de 416 HP y carne de 85 con 2 cristales débiles (pecho y boca interior). Dispara bolas de aire sin daño que empujan fuerte (32.3 m/s), ejecuta chillido con sacudida de cámara y picado taladro a 49.4 m/s.',
         aiFlow: ['CHASE FLY (27.5–35.1 m/s)', 'AIR BALL / WILD FLAP', 'SHRIEK (CAM SHAKE)', 'DRILL DIVE (49.4 m/s)', 'CRASH STUN (2.5s · 2 CRISTALES)'],
         counter:
           'Cuando lance su Drill Dive, sitúate detrás de una losa flotante para que se estrelle contra ella: sufre 55 de autodaño y entra en Crash Stun de 2.5 s con slow-mo 0.75× exponiendo ambos cristales.',

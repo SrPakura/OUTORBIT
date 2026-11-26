@@ -170,7 +170,7 @@ export const en: WebDictionary = {
         name: 'GIANT SPARROW',
         role: 'WAVE 5 ELITE · 2 WEAK POINTS',
         summary:
-          '520 HP aerial elite (85 flesh) with 2 weak crystals (chest & mouth). Fires zero-damage knockback air balls (32.3 m/s), screeches with camera shake, and dives at 49.4 m/s.',
+          '416 HP aerial elite (85 flesh) with 2 weak crystals (chest & mouth). Fires zero-damage knockback air balls (32.3 m/s), screeches with camera shake, and dives at 49.4 m/s.',
         aiFlow: ['CHASE FLY (27.5–35.1 m/s)', 'AIR BALL / WILD FLAP', 'SHRIEK', 'DRILL DIVE (49.4 m/s)', 'CRASH STUN (2.5s)'],
         counter:
           'Bait its Drill Dive behind a floating slab so it crashes: takes 55 self-damage and enters a 2.5 s Crash Stun (0.75× slow-mo) exposing both crystals.',

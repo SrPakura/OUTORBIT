@@ -178,7 +178,7 @@ export const BESTIARY_ENTITIES: EntityArchiveSpec[] = [
     modelPath: '/models/enemies/giant_sparrow.glb',
     rimHex: '#2563eb',
     colorHex: '#7f1d1d',
-    hp: 520,
+    hp: 416,
     fleshThickness: 85,
     radiusM: 4.5,
     expValue: 3.0,
