@@ -30,8 +30,11 @@ import DomeTrainingPanel, { type TrainingSlotInfo } from '@/ui/DomeTrainingPanel
 import DomeTutorialCard from '@/ui/DomeTutorialCard';
 import {
   installTrailerConsoleGlobal,
+  outorbitTrailerApi,
   registerTrailerHost,
+  type TrailerReplayOptions,
 } from '@/game/dome/trailer/trailerConsoleApi';
+import { parseReplayFile } from '@/game/dome/trailer/DomeReplaySystem';
 import type { TrailerSessionRequest } from '@/game/dome/trailer/trailerTypes';
 
 interface DomeGameViewProps {
@@ -93,6 +96,8 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
   const [runSeed, setRunSeed] = useState(0);
   const trailerSessionRef = useRef<TrailerSessionRequest | null>(null);
   const [trailerHudVisible, setTrailerHudVisible] = useState(true);
+  const [replayPickerOpts, setReplayPickerOpts] = useState<TrailerReplayOptions | null>(null);
+  const replayFileInputRef = useRef<HTMLInputElement | null>(null);
   const [hud, setHud] = useState<DomeHudState>(INITIAL_HUD);
   const [levelUpState, setLevelUpState] = useState<DomeLevelUpUiState>({
     isOpen: false,
@@ -412,6 +417,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
     installTrailerConsoleGlobal();
     registerTrailerHost({
       launchSession: (request) => {
+        setReplayPickerOpts(null);
         trailerSessionRef.current = request;
         setTrailerHudVisible(
           request === null
@@ -434,6 +440,12 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         setHud(INITIAL_HUD);
         hadPointerLockRef.current = false;
         setRunSeed((s) => s + 1);
+      },
+      openReplayPicker: (opts) => {
+        if (document.pointerLockElement === canvasRef.current) {
+          document.exitPointerLock?.();
+        }
+        setReplayPickerOpts(opts);
       },
     });
     return () => {
@@ -568,6 +580,69 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         />
       )}
       <DomeTutorialCard tutorialId={activeTutorial} onDismiss={handleDismissTutorial} />
+      {replayPickerOpts && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={async (e) => {
+            e.preventDefault();
+            const file = e.dataTransfer.files?.[0];
+            if (!file) return;
+            try {
+              const replay = await parseReplayFile(file);
+              const opts = replayPickerOpts;
+              setReplayPickerOpts(null);
+              outorbitTrailerApi.startLoadedReplay(replay, opts);
+            } catch (err) {
+              console.error('[OUTORBIT Trailer] Error leyendo replay:', err);
+            }
+          }}
+        >
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-cyan-400/50 bg-slate-950/95 px-6 py-5 text-center text-slate-100 shadow-2xl">
+            <div className="text-sm font-semibold tracking-wide text-cyan-300">
+              Cargar Replay (.outorbit-replay.json)
+            </div>
+            <p className="text-xs text-slate-300">
+              Haz clic en el botón o arrastra el archivo aquí
+            </p>
+            <input
+              ref={replayFileInputRef}
+              type="file"
+              accept=".json,.outorbit-replay.json,application/json"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                try {
+                  const replay = await parseReplayFile(file);
+                  const opts = replayPickerOpts;
+                  setReplayPickerOpts(null);
+                  outorbitTrailerApi.startLoadedReplay(replay, opts);
+                } catch (err) {
+                  console.error('[OUTORBIT Trailer] Error leyendo replay:', err);
+                }
+              }}
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => replayFileInputRef.current?.click()}
+                className="cursor-pointer rounded-lg bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400"
+              >
+                Elegir archivo
+              </button>
+              <button
+                type="button"
+                onClick={() => setReplayPickerOpts(null)}
+                className="cursor-pointer rounded-lg border border-slate-600 px-4 py-2 text-xs text-slate-300 hover:bg-slate-800"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

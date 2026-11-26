@@ -153,6 +153,11 @@ export function downloadReplayFile(replay: ReplayFileV1, filename?: string): str
   return safeName;
 }
 
+export async function parseReplayFile(file: File): Promise<ReplayFileV1> {
+  const text = await file.text();
+  return validateReplayFile(JSON.parse(text));
+}
+
 export function pickReplayFileFromDisk(): Promise<ReplayFileV1> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');

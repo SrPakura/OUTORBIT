@@ -2,7 +2,6 @@ import type { EnemyArchetype } from '@/game/dome/DomeCombatSystem';
 import type { ActiveSkillId } from '@/game/dome/DomeProgression';
 import {
   downloadReplayFile,
-  pickReplayFileFromDisk,
 } from './DomeReplaySystem';
 import { generateRandomSeed } from './seededRandom';
 import type {
@@ -50,6 +49,7 @@ export interface TrailerRuntimeBridge {
 
 export interface TrailerHostHooks {
   launchSession: (request: TrailerSessionRequest | null) => void;
+  openReplayPicker: (opts: TrailerReplayOptions) => void;
 }
 
 let hostHooks: TrailerHostHooks | null = null;
@@ -218,12 +218,16 @@ Atajos en Modo Teatro (Replay):
     });
   },
 
-  async loadReplay(opts: TrailerReplayOptions = {}): Promise<void> {
+  loadReplay(opts: TrailerReplayOptions = {}): void {
     if (!hostHooks) {
       console.warn('[OUTORBIT Trailer] Entra primero en el modo Cúpula.');
       return;
     }
-    const replay = await pickReplayFileFromDisk();
+    hostHooks.openReplayPicker(opts);
+  },
+
+  startLoadedReplay(replay: ReplayFileV1, opts: TrailerReplayOptions = {}): void {
+    if (!hostHooks) return;
     lastRecordedReplay = replay;
     hostHooks.launchSession({
       mode: 'replay',
