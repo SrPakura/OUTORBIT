@@ -34,7 +34,7 @@
       "parry": "パリィ",
       "stasis": "ステイシス",
       "lockOn": "ターゲットロック",
-      "radar": "エネミーレーダー（ドーム）",
+      "radar": "ゲーム減速 x0.75（イージーモード）",
       "slot1": "スロット 1",
       "slot2": "スロット 2",
       "slot3": "スロット 3"
@@ -67,7 +67,9 @@
     "speedAttackControls": "スピードアタック（2エデン/秒）: [左クリック]（敵ロック＝キック/ドリル · 敵なし＝ヴォイドフォール） · [スペース] フリップキャンセル",
     "gamepadConnected": "コントローラー接続完了 · [OPTIONS] ポーズ",
     "menuButton": "← メニュー",
-    "training": "トレーニング"
+    "training": "トレーニング",
+    "easyModeTipBadge": "ヒント",
+    "easyModeBanner": "難しすぎますか？設定でイージーモードを有効にできます（HP・エデン2倍、難易度上昇なし、Tab = x0.75）。"
   },
   "pause": {
     "subtitle": "ドーム内部 · シミュレーション停止中",
@@ -121,7 +123,7 @@
     "sfxVolume": "効果音 (SFX) 音量",
     "invertY": "Y軸反転",
     "halftone": "ハーフトーン効果（コミック調）",
-    "easyMode": "イージーモード（HP・エデン2倍、難易度上昇なし）",
+    "easyMode": "イージーモード（HP・エデン2倍、難易度上昇なし、Tab = x0.75）",
     "skipTutorials": "チュートリアルをスキップ",
     "language": "言語",
     "restoreAll": "すべて初期設定に戻す"

@@ -465,9 +465,11 @@ export class NyxDomeController {
   private readonly lockedScreenPos = { x: 0, y: 0 };
   private lockedEnemyScreenPos: { x: number; y: number } | null = null;
 
-  // --- Radar de enemigos (Tab): toggle ON/OFF que proyecta a todos los
-  // enemigos vivos a puntos 2D de pantalla (pegados al borde si quedan
-  // fuera del encuadre, apuntando hacia su dirección).
+  // --- Modo fácil: Tab alterna cámara lenta suave a 0.75x sin efecto visual
+  private easyMode = false;
+  private easySlowMoActive = false;
+
+  // --- Radar de enemigos (Tab): desactivado en favor de los aros pasivos
   private radarEnabled = false;
   private readonly radarDots: DomeRadarDot[] = [];
   private readonly radarDotPool: DomeRadarDot[] = Array.from(
@@ -670,6 +672,10 @@ export class NyxDomeController {
 
   applySettings(settings: GameSettings): void {
     this.settings = settings;
+    this.easyMode = settings.easyMode;
+    if (!this.easyMode) {
+      this.easySlowMoActive = false;
+    }
     const resolved = resolveActionCodes(settings.bindings);
     this.actionByCode.clear();
     for (const action of Object.keys(resolved) as ControlAction[]) {
@@ -759,8 +765,9 @@ export class NyxDomeController {
 
   /** Escala de tiempo del mundo: 0.20 en redirección, 0.10 en parry (1.0 en el dash de entrada). */
   getTimeScale(): number {
+    const easyScale = this.easyMode && this.easySlowMoActive ? 0.75 : 1.0;
     if (this.parryWindowActive && this.parryPhase === 'parry_dash') {
-      return 1.0 * this.kronosSlowMo;
+      return 1.0 * this.kronosSlowMo * easyScale;
     }
     let scale = 1.0;
     if (this.redirectWindowTimer > 0) {
@@ -768,8 +775,8 @@ export class NyxDomeController {
     } else if (this.bulletTimeTimer > 0) {
       scale = BULLET_TIME_SCALE;
     }
-    // Slow-mo global de KRONOS (Fase 4): multiplica cualquier cámara lenta.
-    return scale * this.kronosSlowMo;
+    // Slow-mo global de KRONOS (Fase 4) y x0.75 de Modo Fácil (sin efecto visual).
+    return scale * this.kronosSlowMo * easyScale;
   }
 
   /**
@@ -973,7 +980,9 @@ export class NyxDomeController {
     else if (action === 'slot1') this.wantSlot = 1;
     else if (action === 'slot2') this.wantSlot = 2;
     else if (action === 'slot3') this.wantSlot = 3;
-    else if (action === 'radar') this.radarEnabled = !this.radarEnabled;
+    else if (action === 'radar' && this.easyMode) {
+      this.easySlowMoActive = !this.easySlowMoActive;
+    }
   }
 
   onKeyUp(code: string): void {

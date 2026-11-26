@@ -34,7 +34,7 @@
       "parry": "Parry",
       "stasis": "Stasis",
       "lockOn": "Lock on target",
-      "radar": "Enemy radar (Dome)",
+      "radar": "Slow game x0.75 (Easy mode)",
       "slot1": "Character 1",
       "slot2": "Character 2",
       "slot3": "Character 3"
@@ -67,7 +67,9 @@
     "speedAttackControls": "SPEED ATTACK (2 EDEN/S): LEFT CLICK (WITH ENEMY IN SIGHT = KICK/DRILL · NO ENEMY = VOID FALL) · SPACE CANCELS WITH FLIP",
     "gamepadConnected": "GAMEPAD CONNECTED · OPTIONS PAUSE",
     "menuButton": "← MENU",
-    "training": "TRAINING"
+    "training": "TRAINING",
+    "easyModeTipBadge": "TIP",
+    "easyModeBanner": "Too intense? Enable Easy Mode in Settings (2x HP & Eden, no scaling, Tab = 0.75x)."
   },
   "pause": {
     "subtitle": "DOME · FROZEN SIMULATION",
@@ -121,7 +123,7 @@
     "sfxVolume": "Sounds & effects volume",
     "invertY": "Invert Y axis",
     "halftone": "Halftone pattern (comic)",
-    "easyMode": "Easy mode (2x HP & Eden, no wave scaling)",
+    "easyMode": "Easy mode (2x HP & Eden, no wave scaling, Tab = 0.75x)",
     "skipTutorials": "Skip tutorials",
     "language": "Language",
     "restoreAll": "RESTORE ALL DEFAULTS"

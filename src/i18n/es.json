@@ -34,7 +34,7 @@
       "parry": "Parry",
       "stasis": "Estasis",
       "lockOn": "Fijar objetivo",
-      "radar": "Radar de enemigos (Cúpula)",
+      "radar": "Ralentizar juego x0.75 (Modo fácil)",
       "slot1": "Personaje 1",
       "slot2": "Personaje 2",
       "slot3": "Personaje 3"
@@ -67,7 +67,9 @@
     "speedAttackControls": "ATAQUE VELOCIDAD (2 EDÉN/S): CLIC IZQ (CON ENEMIGO EN MIRA = PATADA/TALADRO · SIN ENEMIGO = CAÍDA AL VACÍO) · ESPACIO CANCELAR CON FLIP",
     "gamepadConnected": "MANDO CONECTADO · OPTIONS PAUSA",
     "menuButton": "← MENÚ",
-    "training": "ENTRENAMIENTO"
+    "training": "ENTRENAMIENTO",
+    "easyModeTipBadge": "CONSEJO",
+    "easyModeBanner": "¿Muy intenso? Activa el Modo Fácil en Ajustes (Vida y Edén x2, sin escalada, Tab = x0.75)."
   },
   "pause": {
     "subtitle": "CÚPULA · SIMULACIÓN CONGELADA",
@@ -121,7 +123,7 @@
     "sfxVolume": "Volumen de sonidos y efectos",
     "invertY": "Invertir eje Y",
     "halftone": "Trama halftone (cómic)",
-    "easyMode": "Modo fácil (Vida y Edén x2, sin escalada)",
+    "easyMode": "Modo fácil (Vida y Edén x2, sin escalada, Tab = x0.75)",
     "skipTutorials": "Omitir tutoriales",
     "language": "Idioma",
     "restoreAll": "RESTAURAR TODO POR DEFECTO"

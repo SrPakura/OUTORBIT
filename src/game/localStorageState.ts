@@ -20,6 +20,7 @@ export const STORAGE_KEYS = {
   buttonMapping: 'outorbit_button_mapping',
   otherSettings: 'outorbit_other_settings',
   tutorial: 'outorbit_tutorial',
+  easyModeHintSeen: 'outorbit_easy_mode_hint_seen',
 } as const;
 
 export interface ButtonMappingEntry {
@@ -252,7 +253,18 @@ export function setAllTutorialsCompleted(completed: boolean): TutorialProgressEn
     completed,
   }));
   saveTutorialProgress(next);
+  if (!completed) {
+    safeSetItem(STORAGE_KEYS.easyModeHintSeen, '0');
+  }
   return next;
+}
+
+export function hasSeenEasyModeHint(): boolean {
+  return safeGetItem(STORAGE_KEYS.easyModeHintSeen) === '1';
+}
+
+export function markEasyModeHintSeen(): void {
+  safeSetItem(STORAGE_KEYS.easyModeHintSeen, '1');
 }
 
 export function ensureTutorialStorageInitialized(): void {
