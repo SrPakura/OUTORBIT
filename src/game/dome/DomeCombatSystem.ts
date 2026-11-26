@@ -165,7 +165,7 @@ export const DOME_ENEMY_ARCHETYPES: Record<EnemyArchetype, EnemyArchetypeStats> 
   // Mariposa Relámpago: se revienta de un golpe básico pero es escurridiza.
   lightning_butterfly: { maxHp: 25, radius: 1.2, fleshThickness: 8, expValue: 1.5, isElite: false, isBoss: false, weakPoints: 1, evasive: true },
   // Gorrión Gigante (Élite): 2 cristales — pecho y boca (solo con mouthOpen).
-  giant_sparrow: { maxHp: 640, radius: 4.5, fleshThickness: 60, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 2, evasive: true },
+  giant_sparrow: { maxHp: 320, radius: 4.5, fleshThickness: 60, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 2, evasive: false },
   // Prisma Necroz (Élite): 1 cristal en el pecho, saca pinchos de frente.
   prisma_necroz: { maxHp: 300, radius: 3.8, fleshThickness: 65, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 1, evasive: false },
   // Leviatán KRONOS (Boss, rediseño): la barra genérica de HP NO existe — su

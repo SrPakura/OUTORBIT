@@ -415,6 +415,16 @@ export class DomeSkillExecutor {
   private readonly scene: THREE.Scene;
 
   private readonly projectiles: ProjectileState[] = [];
+  private readonly activeProjViews: Array<{ position: THREE.Vector3; velocity: THREE.Vector3 }> = [];
+
+  /** Vista de solo lectura de proyectiles/rocas en vuelo (para IA presente). */
+  getActiveProjectiles(): ReadonlyArray<{ position: THREE.Vector3; velocity: THREE.Vector3 }> {
+    this.activeProjViews.length = 0;
+    for (const p of this.projectiles) {
+      this.activeProjViews.push({ position: p.mesh.position, velocity: p.velocity });
+    }
+    return this.activeProjViews;
+  }
   private readonly slashBursts: PendingSlashBurst[] = [];
   private readonly waves: ExpandingWave[] = [];
   private readonly wells: AttractionWellState[] = [];

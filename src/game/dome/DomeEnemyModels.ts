@@ -344,7 +344,7 @@ const gltfLoader = new GLTFLoader();
  * bumpar esta constante la URL cambia y todo el mundo descarga el asset nuevo
  * a la primera. Bump obligatorio en cada re-export de cualquier .glb.
  */
-const GLB_CACHE_VERSION = 8;
+const GLB_CACHE_VERSION = 9;
 
 function loadEnemyModel(archetype: EnemyArchetype): Promise<void> {
   if (modelCache.has(archetype)) {
@@ -615,7 +615,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       // congelan en su último frame hasta que el comportamiento los
       // reinicie con reset(). Las espirales y la guardia del gólem son
       // bucles sostenidos ("Bucle + Pose" de enemigos_base.md §7.4).
-      if (/loop|idle|float|observe|ready|duplicate|spiral|guard|fresh|lazy|build|summon/.test(clip.name)) {
+      if (/loop|idle|float|observe|ready|duplicate|spiral|guard|fresh|lazy|build|summon|chase_fly|air_drill/.test(clip.name)) {
         action.setLoop(THREE.LoopRepeat, Infinity);
       } else {
         action.setLoop(THREE.LoopOnce, 1);
@@ -627,6 +627,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
     const idle =
       actions.get('kronos_swim_idle') ??
       actions.get('necroz_idle_fresh') ??
+      actions.get('sparrow_chase_fly') ??
       actions.get('cell_idle_float') ??
       actions.get('crab_idle_breathe') ??
       actions.get('golem_helicopter_loop') ??
@@ -639,6 +640,34 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
   }
 
   return { root, starCores, mixer, actions, animatedMaterials, standHeight };
+}
+
+/**
+ * Crea un clon fantasma del Gorrión Gigante para la habilidad Dispersión (`clone_split`).
+ */
+export function createSparrowMirageClone(): THREE.Object3D {
+  const cached = modelCache.get('giant_sparrow');
+  if (cached) {
+    const clone = cloneSkinned(cached.scene);
+    const mat = createComicCelMaterial(0x991b1b, {
+      rimColor: 0x60a5fa,
+      rimStrength: 1.15,
+      emissiveBoost: 0.45,
+    });
+    clone.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.material = mat;
+      }
+    });
+    return clone;
+  }
+  const mat = createComicCelMaterial(0x991b1b, {
+    rimColor: 0x60a5fa,
+    rimStrength: 1.15,
+    emissiveBoost: 0.45,
+  });
+  return new THREE.Mesh(new THREE.ConeGeometry(2.6, 6.2, 6), mat);
 }
 
 /** Libera las escenas GLB cacheadas (geometrías y materiales originales). */

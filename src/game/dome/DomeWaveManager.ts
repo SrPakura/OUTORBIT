@@ -129,6 +129,16 @@ import {
   type CellState,
 } from './domeCellBehavior';
 import { faceTowards, lookAtQuat } from './domeEnemyOrient';
+import {
+  createSparrowState,
+  disposeSparrowState,
+  notifySparrowHit,
+  resetSparrowState,
+  updateSparrowEnemy,
+  type IncomingSkillProjectile,
+  type SparrowBehaviorContext,
+  type SparrowBossState,
+} from './domeSparrowBehavior';
 
 // ============================================================================
 // DomeWaveManager — ciclo infinito de oleadas de la cúpula.
@@ -199,7 +209,6 @@ const HIT_FLASH_EMISSIVE = 0.85;
 /** Arquetipos con dash evasivo al ser lockeados/atacados. */
 const EVASIVE_ARCHETYPES: ReadonlySet<EnemyArchetype> = new Set([
   'lightning_butterfly',
-  'giant_sparrow',
 ]);
 
 const BASIC_ARCHETYPES: readonly EnemyArchetype[] = [
@@ -223,17 +232,9 @@ const PRISMA_NECROZ_BASE_RIM = 0xd9baff;
 /** Rim de reposo de las mallas detail (DETAIL_RIM de DomeEnemyModels). */
 const PRISMA_NECROZ_DETAIL_RIM = 0x6b5f8a;
 
-// --- Ave Legendaria Cristalizada: ráfaga de 3 esferas con la boca abierta ---
-const SPARROW_BURST_WINDOW_SEC = 1.8;
-/** Momentos de disparo dentro de la ventana (telegraph ~0.75 s + 3 esferas). */
-const SPARROW_BURST_FIRE_AT = [1.05, 0.75, 0.45];
-const SPARROW_BURST_DAMAGE = 12;
-const SPARROW_CHARGE_DAMAGE = 12;
-const SPARROW_FLAP_SPEED_BASE = 6.2;
-const SPARROW_FLAP_SPEED_BURST = 9.5;
-const SPARROW_FLAP_SPEED_DIVE = 15.0;
-const SPARROW_JAW_OPEN_RAD = 0.55;
-const SPARROW_TURN_RATE = 2.4;
+// --- Gorrión Gigante (rediseño): IA presente + física aerodinámica + skills
+// en domeSparrowBehavior.ts. Aquí solo queda el empuje de la Bola de Aire. ---
+const SPARROW_AIR_BALL_PUSH_SPEED = 24.0;
 
 // --- Gólem Rompesuelos (rediseño §7.4): constantes de FSM/movimiento en
 // domeGolemBehavior.ts; aquí solo queda el telegraph material del puño. ---
@@ -737,6 +738,8 @@ export interface EnemyInternal {
   crabTurretAimQuat?: THREE.Quaternion;
   /** Ave: huesos del GLB para aleteo, cuello/cabeza, cola y jaw. */
   sparrowRig: SparrowRig | null;
+  /** Gorrión Gigante: FSM aerodinámica + IA presente (domeSparrowBehavior). */
+  sparrow: SparrowBossState | null;
   /** Ave: fase integrada del aleteo (la velocidad cambia sin saltos). */
   flapPhase: number;
   /** Ave: apertura suavizada del jaw (0 = cerrado, 1 = abierto). */
@@ -915,7 +918,7 @@ function findBodyMaterial(root: THREE.Object3D): THREE.ShaderMaterial | null {
 interface WaveProjectile {
   mesh: THREE.Mesh;
   active: boolean;
-  kind: 'dark' | 'ink_ball' | 'ink_giant' | 'laser';
+  kind: 'dark' | 'ink_ball' | 'ink_giant' | 'laser' | 'air_ball';
   damage: number;
   velocity: THREE.Vector3;
   life: number;
@@ -980,6 +983,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private readonly projectileGeometry = new THREE.SphereGeometry(0.55, 12, 10);
   private readonly darkProjectileMaterial: THREE.ShaderMaterial;
   private readonly inkProjectileMaterial: THREE.ShaderMaterial;
+  private readonly windProjectileMaterial: THREE.ShaderMaterial;
   /**
    * Tandas de dispersión de las Bolas Gigantes del pulpo (hasta 3 bolas
    * gigantes reventando a la vez — suficientes para cualquier oleada).
@@ -993,6 +997,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   /** Púas piramidales de la Esfera Blanca (Prisma Necroz). */
   readonly domeSpikes: DomeSpikeSlot[];
   private readonly necrozCtx: NecrozBehaviorContext;
+  /** Gorrión Gigante: contexto y estado agregado (shriek SFX + sacudida). */
+  private readonly sparrowCtx: SparrowBehaviorContext;
+  private incomingSkillProjectiles: readonly IncomingSkillProjectile[] = [];
+  private sparrowShriekPulse = false;
+  private sparrowCameraShake = 0;
   /**
    * Efectos de cosmos_fusion sobre Nyx (Fase 4): el game loop los empuja al
    * controller cada frame y consume los pulsos one-shot.
@@ -1109,6 +1118,16 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       playerVelocity: this.playerVelocity,
       speedMult: 1,
     };
+    this.sparrowCtx = {
+      scene,
+      speedMult: 1,
+      playerVelocity: this.playerVelocity,
+      playerAimForward: this.playerAimForward,
+      incomingProjectiles: [],
+      onSparrowShriek: () => {
+        this.sparrowShriekPulse = true;
+      },
+    };
     this.unsubModelLoaded = onEnemyModelLoaded((archetype) => {
       this.upgradeSpawnedVisuals(archetype);
     });
@@ -1199,6 +1218,12 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       rimColor: 0xffd9d9,
       rimStrength: 1.0,
       emissiveBoost: 1.3,
+    });
+    // Bolas de Aire del Gorrión Gigante: esfera celeste brillante de viento.
+    this.windProjectileMaterial = createComicCelMaterial(0xbff4ff, {
+      rimColor: 0xffffff,
+      rimStrength: 1.0,
+      emissiveBoost: 0.78,
     });
 
     // Anillos de Contención de KRONOS: ondas expansivas azul eléctrico brillante.
@@ -1404,6 +1429,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       // Rigs de los élites y el gólem: huesos y mallas detail del GLB real.
       if (enemy.entity.archetype === 'giant_sparrow') {
         internal.sparrowRig = collectSparrowRig(glbVisual.root);
+        if (internal.sparrow) {
+          internal.sparrow.activeClip = null;
+        }
       } else if (enemy.entity.archetype === 'prisma_necroz') {
         internal.prismaNecrozRig = collectPrismaNecrozRig(glbVisual.root);
         if (internal.necroz) {
@@ -1557,6 +1585,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       attachFrom: homePos.clone(),
       jump: null,
       sparrowRig: archetype === 'giant_sparrow' ? collectSparrowRig(mesh) : null,
+      sparrow: archetype === 'giant_sparrow' ? createSparrowState(enemy.phase) : null,
       flapPhase: enemy.phase,
       jawOpen: 0,
       burstTimer: 0,
@@ -1752,6 +1781,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     if (internal.necroz) {
       resetNecrozState(internal.necroz, this.necrozCtx);
     }
+    if (internal.sparrow) {
+      resetSparrowState(internal.sparrow);
+    }
     // Célula Abisal: cancela cualquier fase ofensiva/telegraph en curso.
     if (internal.cellState !== 'seek' && internal.cellState !== 'stalk') {
       internal.cellState = 'stalk';
@@ -1772,6 +1804,31 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       internal.octopusHitTimer = 0;
       internal.octopusCounterTimer = 0;
       internal.octopusForceRestart = false;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Gorrión Gigante (rediseño): telemetría de proyectiles y sacudida/Garrido
+  // -------------------------------------------------------------------------
+
+  setSkillProjectiles(projectiles: readonly IncomingSkillProjectile[]): void {
+    this.incomingSkillProjectiles = projectiles;
+  }
+
+  consumeSparrowShriekPulse(): boolean {
+    const fired = this.sparrowShriekPulse;
+    this.sparrowShriekPulse = false;
+    return fired;
+  }
+
+  getSparrowCameraShake(): number {
+    return this.sparrowCameraShake;
+  }
+
+  notifySparrowSkillHit(enemy: TestEnemySphere): void {
+    const internal = this.internals.get(enemy.id);
+    if (internal?.sparrow && internal.enemy.entity.alive) {
+      notifySparrowHit(internal.sparrow, internal.enemy.entity);
     }
   }
 
@@ -1833,6 +1890,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     if (internal.necroz && internal.enemy.entity.alive) {
       internal.necroz.hitTimer = 0.3;
+    }
+    if (internal.sparrow && internal.enemy.entity.alive) {
+      notifySparrowHit(internal.sparrow, internal.enemy.entity);
     }
     internal.enemy.hitFlash = Math.min(1.8, kineticMult);
     internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
@@ -1974,6 +2034,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     enemy.entity.hp = 0;
     this.hideCrabLaser(enemy.id);
     this.hideCrabDangerRing(enemy.id);
+    if (internal.sparrow) {
+      disposeSparrowState(internal.sparrow, this.scene);
+    }
     this.internals.delete(enemy.id);
     const idx = this.enemies.indexOf(enemy);
     if (idx >= 0) {
@@ -2109,6 +2172,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     golemParryHeadPos: THREE.Vector3 | null;
   } {
     let didEnemyEvadeDash = false;
+    this.sparrowCameraShake = 0;
     this.waveTime += dt;
     this.playerPosCache.copy(playerPos);
     // Ventana del parry: si el gólem propietario murió por otra vía
@@ -2316,6 +2380,43 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           playerPos,
           this.enemiesPassive,
         );
+      } else if (enemy.entity.archetype === 'giant_sparrow' && internal.sparrow) {
+        this.sparrowCtx.speedMult = this.speedMult;
+        this.sparrowCtx.activeSlabs = activeSlabs;
+        this.sparrowCtx.incomingProjectiles = this.incomingSkillProjectiles;
+        this.sparrowCtx.onGolemSmash = onGolemSmash;
+        this.sparrowCtx.onSlabSmash = onSlabSmash;
+        const sparrowRes = updateSparrowEnemy(
+          this.sparrowCtx,
+          enemy.entity,
+          enemy.position,
+          enemy.velocity,
+          enemy.mesh,
+          internal.sparrowRig,
+          internal.actions,
+          internal.sparrow,
+          dt,
+          elapsed,
+          playerPos,
+          this.enemiesPassive,
+          (origin, targetPos, speed) => {
+            this.fireProjectile(enemy, targetPos, 'air_ball', 0, speed, 0, origin);
+          },
+        );
+        if (internal.sparrow.shriekShakeTimer > 0) {
+          const fade = Math.min(1, internal.sparrow.shriekShakeTimer / 1.2);
+          this.sparrowCameraShake = Math.max(this.sparrowCameraShake, 0.56 * fade);
+        }
+        if (sparrowRes.crashDamage > 0) {
+          enemy.hitFlash = Math.max(enemy.hitFlash, sparrowRes.hitFlash);
+          enemy.entity.hitFlash = enemy.hitFlash;
+          enemy.entity.hp = Math.max(0, enemy.entity.hp - sparrowRes.crashDamage);
+          if (enemy.entity.hp <= 0) {
+            this.onInternalKill?.(enemy);
+            this.killEnemy(enemy);
+            continue;
+          }
+        }
       } else {
         this.applyFloatMovement(enemy, internal, dt, elapsed);
       }
@@ -2324,7 +2425,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       if (
         !this.enemiesPassive &&
         enemy.entity.archetype !== 'abyssal_cell' &&
-        enemy.entity.archetype !== 'prisma_necroz'
+        enemy.entity.archetype !== 'prisma_necroz' &&
+        enemy.entity.archetype !== 'giant_sparrow'
       ) {
         this.updateEnemyBehavior(
           enemy,
@@ -2353,12 +2455,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       const crabOnSlab = isCrab && (internal.jump !== null || internal.attachedSlabId !== null);
       const isKronos = enemy.entity.archetype === 'kronos_leviathan';
       const isNecroz = enemy.entity.archetype === 'prisma_necroz';
+      const isSparrow = enemy.entity.archetype === 'giant_sparrow';
       if (
         activeSlabs &&
         !crabOnSlab &&
         !golemSpiral &&
         !isKronos &&
         !isNecroz &&
+        !isSparrow &&
         resolveSphereSlabCollision(activeSlabs, enemy.position, enemy.radius, _slabContact)
       ) {
         if (enemy.entity.archetype === 'ground_golem' && _slabContact.slab && onSlabSmash) {
@@ -2398,7 +2502,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       if (enemy.entity.archetype === 'spiral_octopus') {
         this.updateOctopusPose(enemy, internal, dt, elapsed, playerPos);
       } else if (enemy.entity.archetype === 'giant_sparrow') {
-        this.updateSparrowPose(enemy, internal, dt, elapsed, playerPos);
+        // Pose y clips gobernados por updateSparrowEnemy (domeSparrowBehavior.ts).
       } else if (enemy.entity.archetype === 'prisma_necroz') {
         // Pose y clips gobernados por updateNecrozEnemy (domeNecrozBehavior.ts).
       } else if (enemy.entity.archetype === 'ground_golem') {
@@ -2443,7 +2547,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
 
     this.inkProjectileMaterial.uniforms.uTime.value = elapsed;
-    this.updateProjectiles(dt, playerPos, activeSlabs ?? [], onPlayerHit, onOctopusInk);
+    this.updateProjectiles(
+      dt,
+      playerPos,
+      activeSlabs ?? [],
+      onPlayerHit,
+      onOctopusInk,
+      onGolemSmash,
+    );
     this.updateOctopusSplitBursts(dt, playerPos);
     updateKronosRings(this, dt, playerPos, onGolemSmash);
     updateKronosPortals(this.kronosPortals, dt, elapsed);
@@ -2474,6 +2585,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.projectileGeometry.dispose();
     this.darkProjectileMaterial.dispose();
     this.inkProjectileMaterial.dispose();
+    this.windProjectileMaterial.dispose();
     for (const ring of this.kronosRings) {
       this.scene.remove(ring.mesh);
     }
@@ -2566,14 +2678,6 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     onSlabSmash?: (slab: SlabCollider) => void,
   ): void {
     const archetype = enemy.entity.archetype;
-
-    // Ave Legendaria: ráfaga en curso (telegraph + 3 esferas, boca abierta).
-    if (archetype === 'giant_sparrow') {
-      if (this.updateSparrowBurst(enemy, internal, dt, playerPos)) {
-        return;
-      }
-      enemy.entity.mouthOpen = false;
-    }
 
     // Prisma Necroz: saca los pinchos cuando Nyx se acerca de frente
     // (< 10 m); en su ventana vulnerable (tras dash o ráfaga) los retrae.
@@ -2670,22 +2774,6 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     const mult = this.speedMult;
 
     switch (archetype) {
-      case 'giant_sparrow':
-        // Élite: alterna embestida aérea (picado) y ráfaga de 3 esferas oscuras
-        // por la boca (que abre durante el telegraph + disparo).
-        if (internal.nextAttack === 'charge') {
-          this.startCharge(enemy, internal, playerPos, 21 * mult, SPARROW_CHARGE_DAMAGE);
-          internal.nextAttack = 'burst';
-          enemy.attackTimer = 3.2 / mult;
-        } else {
-          internal.burstTimer = SPARROW_BURST_WINDOW_SEC;
-          internal.burstShotsLeft = SPARROW_BURST_FIRE_AT.length;
-          enemy.entity.mouthOpen = true;
-          internal.nextAttack = 'charge';
-          enemy.attackTimer = SPARROW_BURST_WINDOW_SEC + 3.2 / mult;
-        }
-        break;
-
       case 'prisma_necroz': {
         // Élite: ráfaga prismática de 2 esferas; tras disparar abre su
         // ventana vulnerable (pinchos retraídos, star_core rematable).
@@ -2707,65 +2795,6 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         enemy.attackTimer = 1.0;
         break;
     }
-  }
-
-  /**
-   * Progresa la ráfaga del Ave Legendaria: boca abierta (mouthOpen), frenado
-   * suave en el aire y 3 esferas oscuras desde el hueso `jaw`. Devuelve true
-   * mientras la ráfaga siga en curso.
-   */
-  private updateSparrowBurst(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    dt: number,
-    playerPos: THREE.Vector3,
-  ): boolean {
-    if (internal.burstTimer <= 0) {
-      return false;
-    }
-    internal.burstTimer -= dt;
-    enemy.entity.mouthOpen = true;
-    // Se frena en el aire mientras telegrafiza y dispara.
-    enemy.velocity.multiplyScalar(Math.exp(-2.5 * dt));
-
-    const shotIndex = SPARROW_BURST_FIRE_AT.length - internal.burstShotsLeft;
-    if (
-      internal.burstShotsLeft > 0 &&
-      shotIndex < SPARROW_BURST_FIRE_AT.length &&
-      internal.burstTimer <= SPARROW_BURST_FIRE_AT[shotIndex]
-    ) {
-      this.fireSparrowShot(enemy, internal, playerPos, (shotIndex - 1) * 0.12);
-      internal.burstShotsLeft--;
-    }
-    if (internal.burstTimer <= 0) {
-      enemy.entity.mouthOpen = false;
-    }
-    return true;
-  }
-
-  /** Esfera oscura del Ave naciendo en la boca (hueso `jaw`). */
-  private fireSparrowShot(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    playerPos: THREE.Vector3,
-    spreadRad: number,
-  ): void {
-    const jaw = internal.sparrowRig?.jaw;
-    if (jaw) {
-      jaw.bone.updateWorldMatrix(true, false);
-      jaw.bone.getWorldPosition(_muzzlePos);
-    } else {
-      _muzzlePos.copy(enemy.position);
-    }
-    this.fireProjectile(
-      enemy,
-      playerPos,
-      'dark',
-      SPARROW_BURST_DAMAGE,
-      13 * this.speedMult,
-      spreadRad,
-      _muzzlePos,
-    );
   }
 
 
@@ -3585,7 +3614,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   fireProjectile(
     enemy: ManagedWaveEnemy,
     playerPos: THREE.Vector3,
-    kind: 'dark' | 'ink_ball' | 'ink_giant' | 'laser',
+    kind: 'dark' | 'ink_ball' | 'ink_giant' | 'laser' | 'air_ball',
     damage: number,
     speed: number,
     spreadRad = 0,
@@ -3630,9 +3659,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         ? this.inkProjectileMaterial
         : kind === 'laser'
           ? this.laserProjectileMaterial
-          : this.darkProjectileMaterial;
+          : kind === 'air_ball'
+            ? this.windProjectileMaterial
+            : this.darkProjectileMaterial;
     // Perla láser algo menor que la esfera oscura estándar del pool.
-    projectile.mesh.scale.setScalar(kind === 'laser' ? 0.55 : 1);
+    projectile.mesh.scale.setScalar(kind === 'laser' ? 0.55 : kind === 'air_ball' ? 0.95 : 1);
     projectile.mesh.position.copy(from).addScaledVector(
       _shotDir,
       origin ? 0.35 : enemy.radius + 0.6,
@@ -3646,6 +3677,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     activeSlabs: SlabCollider[],
     onPlayerHit: (damage: number) => void,
     onOctopusInk: (durationSec: number, opacity: number) => void,
+    onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void,
   ): void {
     for (const projectile of this.projectiles) {
       if (!projectile.active) {
@@ -3715,7 +3747,16 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       const outOfBounds = projectile.mesh.position.length() > PROJECTILE_BOUND_RADIUS;
 
       if (hitPlayer) {
-        if (projectile.kind === 'ink_ball' || projectile.kind === 'ink_giant') {
+        if (projectile.kind === 'air_ball') {
+          // Bola de Aire del Gorrión Gigante: 0 daño, 0 mancha — solo empuja.
+          _aimDir.copy(projectile.velocity);
+          if (_aimDir.lengthSq() > 1e-4) {
+            _aimDir.normalize();
+          } else {
+            _aimDir.set(0, 0, 1);
+          }
+          onGolemSmash?.(0, _aimDir, SPARROW_AIR_BALL_PUSH_SPEED);
+        } else if (projectile.kind === 'ink_ball' || projectile.kind === 'ink_giant') {
           // Bola de tinta ácida: daño directo (8 HP) + mancha negra en el HUD
           // (55 % de opacidad durante 3.0 s) con DoT ácido de 4 HP/s.
           onPlayerHit(projectile.damage);
@@ -4009,78 +4050,6 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     _boneEuler.set(rotX, rotY, rotZ);
     _boneQuat.setFromEuler(_boneEuler);
     bone.bone.quaternion.copy(bone.rest).multiply(_boneQuat);
-  }
-
-  /**
-   * Ave Legendaria Cristalizada: encara a Nyx, aleteo potente y coordinado de
-   * las 4 alas (acelera antes del picado/embestida), movimiento orgánico de
-   * cuello/cabeza/cola y apertura del hueso `jaw` durante la ráfaga, con el
-   * star_core_mouth brillando al quedar expuesto.
-   */
-  private updateSparrowPose(
-    enemy: ManagedWaveEnemy,
-    internal: EnemyInternal,
-    dt: number,
-    elapsed: number,
-    playerPos: THREE.Vector3,
-  ): void {
-    // Encara a Nyx con giro suave (también con la forma provisional).
-    _lookDir.subVectors(playerPos, enemy.position);
-    if (_lookDir.lengthSq() < 1e-6) {
-      _lookDir.set(0, 0, 1);
-    } else {
-      _lookDir.normalize();
-    }
-    faceTowards(enemy.mesh, _lookDir, SPARROW_TURN_RATE, dt);
-
-    const rig = internal.sparrowRig;
-    if (!rig) {
-      return;
-    }
-
-    // Aleteo coordinado: fase integrada para acelerar sin saltos bruscos.
-    const preDive =
-      internal.nextAttack === 'charge' && enemy.attackTimer > 0 && enemy.attackTimer < 0.7;
-    const flapSpeed =
-      internal.chargeTimer > 0 || preDive
-        ? SPARROW_FLAP_SPEED_DIVE
-        : internal.burstTimer > 0
-          ? SPARROW_FLAP_SPEED_BURST
-          : SPARROW_FLAP_SPEED_BASE;
-    internal.flapPhase += flapSpeed * dt;
-    const flap = Math.sin(internal.flapPhase);
-    const flapLag = Math.sin(internal.flapPhase + 0.7);
-    const flapQuad = Math.sin(internal.flapPhase + Math.PI * 0.5);
-    this.poseBone(rig.wingTopLInner, flap * 0.5, 0, flap * 0.1);
-    this.poseBone(rig.wingTopLOuter, flapLag * 0.75, 0, flapLag * 0.14);
-    this.poseBone(rig.wingTopRInner, flap * 0.5, 0, -flap * 0.1);
-    this.poseBone(rig.wingTopROuter, flapLag * 0.75, 0, -flapLag * 0.14);
-    this.poseBone(rig.wingBotL, -flap * 0.45, 0, flapQuad * 0.08);
-    this.poseBone(rig.wingBotR, -flap * 0.45, 0, -flapQuad * 0.08);
-
-    // Cuello, cabeza y cola con vaivén orgánico independiente del aleteo.
-    this.poseBone(
-      rig.neck,
-      Math.sin(elapsed * 0.8 + enemy.phase) * 0.09,
-      Math.sin(elapsed * 1.2 + enemy.phase) * 0.14,
-      0,
-    );
-    this.poseBone(rig.head, Math.sin(elapsed * 1.6 + enemy.phase * 1.3) * 0.2, 0, 0);
-    this.poseBone(rig.tail, Math.sin(elapsed * 1.1) * 0.12, Math.sin(elapsed * 1.9 + enemy.phase) * 0.24, 0);
-
-    // jaw: abre claramente durante la ráfaga (mouthOpen) y permanece cerrada
-    // fuera de esa ventana.
-    const targetOpen = enemy.entity.mouthOpen === true ? 1 : 0;
-    internal.jawOpen += (targetOpen - internal.jawOpen) * Math.min(1, dt * 12);
-    this.poseBone(rig.jaw, -SPARROW_JAW_OPEN_RAD * internal.jawOpen, 0, 0);
-
-    // star_core_mouth: brilla intensamente mientras la boca está abierta.
-    if (rig.mouthStarMaterial) {
-      rig.mouthStarMaterial.uniforms.uEmissiveBoost.value =
-        enemy.entity.mouthOpen === true
-          ? 2.3 + Math.sin(elapsed * 14) * 0.3
-          : STAR_CORE_EMISSIVE;
-    }
   }
 
   /**
@@ -4654,6 +4623,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     // Nyx (el game loop empuja este estado al controller en el mismo frame).
     deactivateKronosPortals(this);
     this.resetKronosNyxEffects();
+    this.sparrowCameraShake = 0;
+    this.sparrowShriekPulse = false;
   }
 
   /**

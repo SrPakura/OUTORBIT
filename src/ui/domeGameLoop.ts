@@ -439,6 +439,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     } else {
       waveMgr.notifyNecrozHit(enemy);
     }
+    if (enemy.entity.archetype === 'giant_sparrow') {
+      waveMgr.notifySparrowSkillHit(enemy);
+    }
     enemy.hitFlash = 1;
     runTracker.recordDamage(Math.max(amount, res.damage));
     if (enemy.entity.hp <= 0 || res.killed) {
@@ -1017,6 +1020,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       sphereTiles.update(worldDt, elapsed);
       refillActiveSlabs();
 
+      waveMgr.setSkillProjectiles(skillExecutor.getActiveProjectiles());
+
       const {
         didEnemyEvadeDash,
         golemParryTarget,
@@ -1193,7 +1198,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       // manager es la única fuente de verdad; el controller solo aplica.
       const kronosFx = waveMgr.getKronosNyxEffects();
       controller.setKronosDeformed(kronosFx.deformActive);
-      controller.setKronosCameraShake(kronosFx.cameraShake);
+      controller.setKronosCameraShake(Math.max(kronosFx.cameraShake, waveMgr.getSparrowCameraShake()));
+      if (waveMgr.consumeSparrowShriekPulse()) {
+        audio.playSparrowShriek();
+      }
       controller.setKronosControlsInverted(kronosFx.controlsInverted);
       controller.setKronosSlowMoScale(kronosFx.phase4 ? 0.75 : 1);
       if (kronosFx.shakePulse > 0) {

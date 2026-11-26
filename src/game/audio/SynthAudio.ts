@@ -1158,6 +1158,60 @@ export class SynthAudio {
     src.stop(t0 + 0.52);
   }
 
+  /** Garrido estridente del Gorrión Gigante: chillido agudo modulado + ráfaga aérea. */
+  playSparrowShriek(): void {
+    if (!this.audible) return;
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const t0 = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc1.type = 'sawtooth';
+    osc2.type = 'triangle';
+    osc1.frequency.setValueAtTime(1650, t0);
+    osc1.frequency.exponentialRampToValueAtTime(3250, t0 + 0.14);
+    osc1.frequency.exponentialRampToValueAtTime(1380, t0 + 0.72);
+
+    osc2.frequency.setValueAtTime(2480, t0);
+    osc2.frequency.exponentialRampToValueAtTime(3900, t0 + 0.16);
+    osc2.frequency.exponentialRampToValueAtTime(1820, t0 + 0.72);
+
+    lfo.frequency.value = 34;
+    lfoGain.gain.value = 180;
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc1.frequency);
+    lfoGain.connect(osc2.frequency);
+
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(2400, t0);
+    filter.Q.value = 1.8;
+
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(0.28, t0 + 0.05);
+    gain.gain.setValueAtTime(0.26, t0 + 0.42);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.78);
+
+    osc1.connect(filter);
+    osc2.connect(filter);
+    filter.connect(gain).connect(master);
+
+    osc1.start(t0);
+    osc2.start(t0);
+    lfo.start(t0);
+    osc1.stop(t0 + 0.8);
+    osc2.stop(t0 + 0.8);
+    lfo.stop(t0 + 0.8);
+
+    this.noise(0.55, 0.35, 2200);
+  }
+
   /** Iris de cierre: colapso del círculo + parpadeo final del punto. */
   playIrisWink(): void {
     if (!this.audible) return;
