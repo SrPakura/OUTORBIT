@@ -273,7 +273,7 @@
       "s4": "Attraction Well: slams 2 foes together. Extra: against a single foe, crushes them between the 2 nearest slabs.",
       "s5": "Bounce Horizon: fires piercing crescent slashes. Extra: gains auto-aim from Lv 2 onward.",
       "s6": "Black Hole: drifting suction vortex dealing AoE damage for 4.5 s.",
-      "s7": "Implosion (Legendary): instakills basics, deals -20% max HP to elites, or breaks 1 KRONOS Dorsal Star (locked in Phase 4).",
+      "s7": "Implosion (Legendary): instakills basics, deals -20% max HP to elites, or breaks 1 KRONOS Dorsal Star (Phases 2 & 3 only).",
       "paragraph1": "Press 1, 2, or 3 to cast the skill in that slot. Many interact directly with slabs and enemy projectiles.",
       "paragraph2": "Watch the ring glow and icon brightness under your Yin-Yang bar to read ready, active, or cooldown states at a glance."
     }

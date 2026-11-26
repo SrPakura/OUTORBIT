@@ -28,6 +28,11 @@ import DomeBattleReport, { type DomeBattleReportData } from '@/ui/DomeBattleRepo
 import DomePauseModal from '@/ui/DomePauseModal';
 import DomeTrainingPanel, { type TrainingSlotInfo } from '@/ui/DomeTrainingPanel';
 import DomeTutorialCard from '@/ui/DomeTutorialCard';
+import {
+  installTrailerConsoleGlobal,
+  registerTrailerHost,
+} from '@/game/dome/trailer/trailerConsoleApi';
+import type { TrailerSessionRequest } from '@/game/dome/trailer/trailerTypes';
 
 interface DomeGameViewProps {
   settings: GameSettings;
@@ -86,6 +91,8 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
   settingsRef.current = settings;
 
   const [runSeed, setRunSeed] = useState(0);
+  const trailerSessionRef = useRef<TrailerSessionRequest | null>(null);
+  const [trailerHudVisible, setTrailerHudVisible] = useState(true);
   const [hud, setHud] = useState<DomeHudState>(INITIAL_HUD);
   const [levelUpState, setLevelUpState] = useState<DomeLevelUpUiState>({
     isOpen: false,
@@ -402,6 +409,39 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
   }, []);
 
   useEffect(() => {
+    installTrailerConsoleGlobal();
+    registerTrailerHost({
+      launchSession: (request) => {
+        trailerSessionRef.current = request;
+        setTrailerHudVisible(
+          request === null
+            ? true
+            : request.mode === 'record'
+              ? request.config.hud
+              : request.hud,
+        );
+        setIsPauseOpen(false);
+        setBattleReport(null);
+        setActiveTutorial(null);
+        setLevelUpState((prev) => ({
+          isOpen: false,
+          newLevel: 1,
+          pendingLevels: [],
+          choices: null,
+          requiresSlotReplacement: false,
+          openId: prev.openId + 1,
+        }));
+        setHud(INITIAL_HUD);
+        hadPointerLockRef.current = false;
+        setRunSeed((s) => s + 1);
+      },
+    });
+    return () => {
+      registerTrailerHost(null);
+    };
+  }, []);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     return startDomeGameLoop({
@@ -427,6 +467,8 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
       tutorialOpenRef,
       hadPointerLockRef,
       onFirstSkillUsed: handleFirstSkillUsed,
+      trailerSession: trailerSessionRef.current,
+      setTrailerHudVisible,
     });
   }, [runSeed, training]);
 
@@ -446,19 +488,22 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
     <div className="relative h-screen w-screen overflow-hidden bg-[#040510]">
       <canvas key={runSeed} ref={canvasRef} className="block h-full w-full cursor-none" />
       {/* Aros de materia oscura: enemigos lejanos marcados en pantalla (bajo el HUD). */}
-      <DomeDarkMatterRings controllerRef={controllerRef} />
-      <DomeHudSketch
-        hud={hud}
-        hidePointerLockPrompt={
-          levelUpState.isOpen ||
-          battleReport !== null ||
-          isPauseOpen ||
-          activeTutorial !== null ||
-          (training && debugPanelOpen)
-        }
-        audioRef={audioRef}
-        alertsEnabled={!isPauseOpen && !levelUpState.isOpen && battleReport === null && activeTutorial === null}
-      />
+      {trailerHudVisible && <DomeDarkMatterRings controllerRef={controllerRef} />}
+      {trailerHudVisible && (
+        <DomeHudSketch
+          hud={hud}
+          hidePointerLockPrompt={
+            trailerSessionRef.current !== null ||
+            levelUpState.isOpen ||
+            battleReport !== null ||
+            isPauseOpen ||
+            activeTutorial !== null ||
+            (training && debugPanelOpen)
+          }
+          audioRef={audioRef}
+          alertsEnabled={!isPauseOpen && !levelUpState.isOpen && battleReport === null && activeTutorial === null}
+        />
+      )}
       {training && (debugPanelOpen || isPauseOpen) && (
         <DomeTrainingPanel
           archetype={trainingArchetype}

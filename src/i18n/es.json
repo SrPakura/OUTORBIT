@@ -273,7 +273,7 @@
       "s4": "Pozo de Atracción: choca 2 enemigos entre sí. Extra: si solo hay 1, lo aplasta entre las 2 losas más cercanas.",
       "s5": "Horizonte de Rebote: lanza ondas perforantes. Extra: desde Nv. 2 ganan auto-aim.",
       "s6": "Agujero Negro: vórtice móvil de succión y daño continuo durante 4.5 s.",
-      "s7": "Implosión (Legendaria): colapsa básicos al instante, quita -20% HP a élites o rompe 1 estrella de KRONOS (bloqueada en Fase 4).",
+      "s7": "Implosión (Legendaria): colapsa básicos al instante, quita -20% HP a élites o rompe 1 estrella de KRONOS (solo en Fases 2 y 3).",
       "paragraph1": "Pulsa 1, 2 o 3 para activar la habilidad de esa ranura. Muchas combinan efectos con el escenario y los proyectiles enemigos.",
       "paragraph2": "Fíjate en el color del aro y el brillo del icono bajo tu barra Yin-Yang para saber al instante si están listas, activas o recargándose."
     }

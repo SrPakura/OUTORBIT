@@ -494,6 +494,15 @@ export function preloadEnemyModels(): void {
   }
 }
 
+/**
+ * Precarga asíncrona determinista: espera a que todos los GLB de enemigos estén
+ * en caché antes de arrancar el tick 0 de una sesión de grabación/replay.
+ */
+export async function preloadEnemyModelsAsync(): Promise<void> {
+  const archetypes = Object.keys(DOME_ENEMY_ARCHETYPES) as EnemyArchetype[];
+  await Promise.all(archetypes.map((archetype) => loadEnemyModel(archetype)));
+}
+
 const loadedCallbacks = new Set<(archetype: EnemyArchetype) => void>();
 
 export function onEnemyModelLoaded(cb: (archetype: EnemyArchetype) => void): () => void {

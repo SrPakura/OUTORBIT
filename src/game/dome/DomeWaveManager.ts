@@ -15,8 +15,10 @@ import {
   INK_COUNTER_OPACITY,
   INK_STAIN_OPACITY,
   INK_STAIN_SEC,
+  type DomeCombatSystem,
   type DomeEnemyEntity,
   type EnemyArchetype,
+  type KineticImpactResult,
 } from './DomeCombatSystem';
 import {
   collectButterflyRig,
@@ -41,6 +43,7 @@ import {
   type PrismaNecrozRig,
   type SparrowRig,
 } from './DomeEnemyModels';
+import type { TrailerThreatInfo } from './trailer/trailerTypes';
 import {
   GOLEM_BLOCK_RAISE_CLIP_SEC,
   GOLEM_EXHAUSTED_TURN_RATE,
@@ -73,7 +76,11 @@ import {
   createKronosBossState,
   deactivateKronosPortals,
   deactivateKronosRings,
+  findHitKronosStarIndex,
+  KRONOS_PHASE_FLESH,
+  KRONOS_PHASE_MAX_HP,
   KRONOS_RING_POOL_SIZE,
+  KRONOS_SEGMENT_HIT_RADIUS,
   resetKronosOffense,
   updateKronosAttack,
   updateKronosMovement,
@@ -1055,6 +1062,33 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   readonly playerAimForward = new THREE.Vector3(0, 0, 1);
   /** Foto por frame de la velocidad de Nyx (física de cadena + esquivas). */
   readonly playerVelocity = new THREE.Vector3();
+  /** Foto por frame de si Nyx está ejecutando una patada/taladro. */
+  playerInKickAnim = false;
+  /** Proxy reutilizable para evaluar daño cinético sobre los 350 HP de fase de KRONOS. */
+  private readonly kronosPhaseProxy: DomeEnemyEntity = {
+    id: '__kronos_phase__',
+    archetype: 'kronos_leviathan',
+    position: new THREE.Vector3(),
+    velocity: new THREE.Vector3(),
+    radius: 3.2,
+    mesh: new THREE.Object3D(),
+    hp: KRONOS_PHASE_MAX_HP,
+    maxHp: KRONOS_PHASE_MAX_HP,
+    fleshThickness: KRONOS_PHASE_FLESH,
+    hasInnerStar: true,
+    expValue: 0,
+    isElite: false,
+    isBoss: true,
+    weakPointsRemaining: 4,
+    evasive: false,
+    evadeCooldown: 0,
+    hitFlash: 0,
+    stunTimer: 0,
+    spikesActive: false,
+    mouthOpen: false,
+    vulnerableTimer: 0,
+    alive: true,
+  };
   /** Hilos/haces láser de los cangrejos (pool fijo, uno por atacante). */
   private readonly crabLasers: CrabLaserBeam[] = [];
   private readonly crabLaserGeometry = new THREE.CylinderGeometry(1, 1, 1, 10, 1, true);
@@ -1466,6 +1500,46 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   // -------------------------------------------------------------------------
 
   /**
+   * Consulta de solo lectura de amenazas activas (proyectiles y enemigos en
+   * embestida) para el sistema de esquive y robo de bolas del Bot de tráiler.
+   */
+  getActiveThreats(out: TrailerThreatInfo[] = []): TrailerThreatInfo[] {
+    out.length = 0;
+    for (const p of this.projectiles) {
+      if (!p.active || p.captured) continue;
+      if (p.kind === 'electric_ball_reflected') continue;
+      const stealable = p.kind === 'ink_ball' || p.kind === 'electric_ball';
+      out.push({
+        kind:
+          p.kind === 'ink_ball' || p.kind === 'ink_giant'
+            ? 'ink_ball'
+            : p.kind === 'electric_ball'
+              ? 'electric_ball'
+              : p.kind === 'air_ball'
+                ? 'wind_projectile'
+                : 'dark_projectile',
+        position: p.mesh.position,
+        velocity: p.velocity,
+        radius: p.kind === 'ink_giant' ? 1.6 : 0.65,
+        stealable,
+      });
+    }
+    for (const e of this.enemies) {
+      if (e.entity.hp <= 0) continue;
+      if (e.velocity.lengthSq() > 144) {
+        out.push({
+          kind: 'enemy_charge',
+          position: e.position,
+          velocity: e.velocity,
+          radius: e.radius,
+          stealable: false,
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
    * Limpia la oleada anterior y despliega la composición de `waveNumber`.
    * Con `activeSlabs`, los Cangrejos Artilleros aparecen pegados a un suelo
    * flotante dentro de la cúpula (center < 70 m).
@@ -1780,6 +1854,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           ? createNecrozBossState(this.scene, entity.radius, mesh)
           : null,
     });
+    if (archetype === 'kronos_leviathan') {
+      const kronosInternal = this.internals.get(enemy.id);
+      if (kronosInternal) {
+        enemy.bodyPoints = kronosInternal.kronos.chain.pos;
+        enemy.bodyRadius = KRONOS_SEGMENT_HIT_RADIUS;
+        enemy.bodySubmerged = kronosInternal.kronos.chain.submerged;
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -2437,6 +2519,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     // Foto de Nyx para KRONOS: velocidad (predicción honesta de trayectoria,
     // esquivas) y aim (Portal 2 a la espalda de Nyx).
     this.playerVelocity.copy(playerVel);
+    this.playerInKickAnim = playerKickAnim;
     this.playerAimForward.copy(playerAimForward);
     this.golemInfo.aimForward.copy(playerAimForward);
     this.golemInfo.hpRatio = THREE.MathUtils.clamp(playerHpRatio, 0, 1);
@@ -3642,12 +3725,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       if (crabLaserContactDistanceSq(other.position, from, dir, dist) > reach * reach) {
         continue;
       }
-      // KRONOS: proyectil de entorno — puede romper UNA Estrella Dorsal (con
-      // las puertas anti-skip del manager), pero jamás daña su "HP" (4 = 4
-      // estrellas: la barra genérica no existe).
+      // KRONOS: el láser de entorno daña la fase actual (350 HP) si no da en una estrella.
       if (other.entity.archetype === 'kronos_leviathan') {
-        this.tryBreakKronosStarFromEnv(other);
-        other.hitFlash = Math.max(other.hitFlash, 0.3);
+        this.applyKronosRawPhaseDamage(other, damage);
         continue;
       }
       // El láser quema la carne amortiguadora y daña directo.
@@ -3719,12 +3799,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         continue;
       }
       const [damage, push] = DomeWaveManager.kamikazeBand(dist);
-      // KRONOS: proyectil de entorno — 1 Estrella Dorsal a lo sumo (con las
-      // puertas anti-skip del manager), sin tocar su "HP" (vidas = estrellas).
+      // KRONOS: la detonación kamikaze daña la fase actual (350 HP).
       if (other.entity.archetype === 'kronos_leviathan') {
-        this.tryBreakKronosStarFromEnv(other);
-        other.hitFlash = 1;
-        other.entity.hitFlash = 1;
+        this.applyKronosRawPhaseDamage(other, damage);
         continue;
       }
       other.entity.fleshThickness = Math.max(0, other.entity.fleshThickness - damage * 0.5);
@@ -4054,14 +4131,29 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         const projRadius = projectile.mesh.scale.x * 0.6;
         for (const candidate of this.enemies) {
           if (!candidate.entity.alive) continue;
-          if (projectile.mesh.position.distanceTo(candidate.position) <= candidate.radius + projRadius) {
+          const directHit =
+            projectile.mesh.position.distanceTo(candidate.position) <=
+            candidate.radius + projRadius;
+          const extraHit =
+            !directHit &&
+            candidate.entity.archetype === 'kronos_leviathan' &&
+            this.checkKronosExtraHit(candidate, projectile.mesh.position, projRadius);
+          if (directHit || extraHit) {
             hitEnemy = candidate;
             break;
           }
         }
         if (hitEnemy) {
           if (hitEnemy.entity.archetype === 'kronos_leviathan') {
-            this.tryBreakKronosStarFromSkill(hitEnemy);
+            if (
+              !this.tryBreakKronosStarFromSkillAtPoint(
+                hitEnemy,
+                projectile.mesh.position,
+                projRadius,
+              )
+            ) {
+              this.applyKronosRawPhaseDamage(hitEnemy, projectile.damage);
+            }
             hitEnemy.hitFlash = 1.3;
             hitEnemy.entity.hitFlash = 1.3;
             this.onEnemyExplode?.(projectile.mesh.position.clone(), 2.2, 0x34d399);
@@ -5048,37 +5140,87 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
   }
 
-  /**
-   * Rotura de Estrella Dorsal por impacto CINÉTICO de Nyx (Patada Taladro o
-   * velocidad > umbral cinético) o por el barrido de las hitboxes de la
-   * cadena. Puertas anti-skip: Fase 4 invulnerable y ~0.5 s de
-   * invulnerabilidad de transición (nunca más de 1 estrella por uso).
-   */
-  tryBreakKronosStar(enemy: ManagedWaveEnemy, impactSpeed: number, isDrill: boolean): boolean {
+  /** Fase actual del Leviatán KRONOS (1..4) o null si no aplica. */
+  getKronosPhase(enemy: { id: string }): 1 | 2 | 3 | 4 | null {
+    const internal = this.internals.get(enemy.id);
+    if (
+      !internal ||
+      internal.enemy.entity.archetype !== 'kronos_leviathan' ||
+      !internal.enemy.entity.alive
+    ) {
+      return null;
+    }
+    const stars = internal.kronos.stars;
+    if (stars >= 4) return 1;
+    if (stars === 3) return 2;
+    if (stars === 2) return 3;
+    return 4;
+  }
+
+  /** Implosión contra KRONOS: solo permitida en Fase 2 y Fase 3. */
+  canImplodeKronos(enemy: { id: string }): boolean {
+    const phase = this.getKronosPhase(enemy);
+    return phase === 2 || phase === 3;
+  }
+
+  /** Ejecuta la rotura de estrella por Implosión (solo Fase 2 o Fase 3). */
+  breakKronosStarFromImplosion(enemy: ManagedWaveEnemy): boolean {
     const internal = this.internals.get(enemy.id);
     if (!internal || !enemy.entity.alive) {
       return false;
     }
     const k = internal.kronos;
-    if (k.phase4) {
-      return false; // Fase 4: invulnerable al daño.
-    }
-    if (k.starInvulnSec > 0) {
-      return false; // Invulnerabilidad de transición (~0.5 s por rotura).
-    }
-    if (!isDrill && impactSpeed < 18) {
-      return false; // Sin taladro y sin velocidad: no rompe.
+    if (k.stars !== 3 && k.stars !== 2) {
+      return false;
     }
     return applyKronosStarBreak(internal.enemy, internal, this.kronosNyxEffects);
   }
 
   /**
-   * Rotura de Estrella Dorsal por HABILIDAD gravitatoria (Campo
-   * Gravitacional, agujero negro, Implosión legendaria...): sin umbral de
-   * velocidad, pero con las MISMAS puertas anti-skip (1 por uso; las skills
-   * de daño continuo quedan limitadas por la invulnerabilidad de transición).
+   * Comprueba si un proyectil de habilidad impacta alguna Estrella Dorsal
+   * activa o segmento corporal no sumergido de KRONOS (más allá de su cabeza).
    */
-  tryBreakKronosStarFromSkill(enemy: ManagedWaveEnemy): boolean {
+  checkKronosExtraHit(
+    enemy: { id: string },
+    point: THREE.Vector3,
+    extraRadius = 0,
+  ): boolean {
+    const internal = this.internals.get(enemy.id);
+    if (
+      !internal ||
+      internal.enemy.entity.archetype !== 'kronos_leviathan' ||
+      !internal.enemy.entity.alive
+    ) {
+      return false;
+    }
+    if (findHitKronosStarIndex(internal, point, extraRadius) >= 0) {
+      return true;
+    }
+    const chain = internal.kronos.chain;
+    const reachSq =
+      (KRONOS_SEGMENT_HIT_RADIUS + extraRadius) *
+      (KRONOS_SEGMENT_HIT_RADIUS + extraRadius);
+    for (let j = 1; j < chain.pos.length; j++) {
+      if (chain.submerged[j]) continue;
+      if (chain.pos[j].distanceToSquared(point) <= reachSq) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Rotura de Estrella Dorsal por impacto CINÉTICO directo sobre una estrella
+   * activa (Patada Taladro o velocidad >= 18 m/s). Si `point` no toca ninguna
+   * estrella activa, devuelve false para aplicar los 350 HP de fase.
+   */
+  tryBreakKronosStarAtPoint(
+    enemy: ManagedWaveEnemy,
+    point: THREE.Vector3,
+    impactSpeed: number,
+    isDrill: boolean,
+    extraRadius = 0,
+  ): boolean {
     const internal = this.internals.get(enemy.id);
     if (!internal || !enemy.entity.alive) {
       return false;
@@ -5087,15 +5229,107 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     if (k.phase4 || k.starInvulnSec > 0) {
       return false;
     }
+    if (!isDrill && impactSpeed < 18) {
+      return false;
+    }
+    if (findHitKronosStarIndex(internal, point, extraRadius) < 0) {
+      return false;
+    }
     return applyKronosStarBreak(internal.enemy, internal, this.kronosNyxEffects);
   }
 
   /**
-   * Rotura de Estrella Dorsal por PROYECTIL DE ENTORNO (fuego amigo del láser
-   * del cangrejo, detonación kamikaze). Mismas puertas anti-skip.
+   * Rotura de Estrella Dorsal por PROYECTIL de habilidad que acierta
+   * directamente sobre una estrella activa.
    */
-  tryBreakKronosStarFromEnv(enemy: ManagedWaveEnemy): boolean {
-    return this.tryBreakKronosStarFromSkill(enemy);
+  tryBreakKronosStarFromSkillAtPoint(
+    enemy: ManagedWaveEnemy,
+    point: THREE.Vector3,
+    extraRadius = 0,
+  ): boolean {
+    const internal = this.internals.get(enemy.id);
+    if (!internal || !enemy.entity.alive) {
+      return false;
+    }
+    const k = internal.kronos;
+    if (k.phase4 || k.starInvulnSec > 0) {
+      return false;
+    }
+    if (findHitKronosStarIndex(internal, point, extraRadius) < 0) {
+      return false;
+    }
+    return applyKronosStarBreak(internal.enemy, internal, this.kronosNyxEffects);
+  }
+
+  /**
+   * Daño cinético contra la barra de 350 HP de la fase actual de KRONOS
+   * (cuando el impacto/habilidad golpea cuerpo o cabeza sin acertar en una
+   * estrella). Al llegar a 0, rompe la estrella de la fase actual.
+   */
+  damageKronosPhase(
+    enemy: ManagedWaveEnemy,
+    combat: DomeCombatSystem,
+    impactSpeed: number,
+    forceMultiplier: number,
+    isDrill: boolean,
+    bypassFlesh = false,
+  ): KineticImpactResult {
+    const internal = this.internals.get(enemy.id);
+    if (!internal || !enemy.entity.alive || internal.kronos.phase4 || internal.kronos.starInvulnSec > 0) {
+      return {
+        damage: 0,
+        penetratedStar: false,
+        killed: false,
+        knockbackSpeed: 0,
+        recoilBounce: false,
+        hitStopSec: 0,
+        reason: 'normal',
+      };
+    }
+    const k = internal.kronos;
+    const proxy = this.kronosPhaseProxy;
+    proxy.hp = k.phaseHp;
+    proxy.maxHp = KRONOS_PHASE_MAX_HP;
+    proxy.fleshThickness = k.phaseFlesh;
+    proxy.weakPointsRemaining = k.stars;
+    proxy.alive = true;
+
+    const res = combat.computeKineticImpact(
+      proxy,
+      impactSpeed,
+      forceMultiplier,
+      isDrill,
+      bypassFlesh,
+    );
+    k.phaseFlesh = Math.max(0, proxy.fleshThickness);
+    k.phaseHp = Math.max(0, proxy.hp);
+    enemy.hitFlash = 1;
+    enemy.entity.hitFlash = 1;
+    if (k.phaseHp <= 0) {
+      applyKronosStarBreak(internal.enemy, internal, this.kronosNyxEffects);
+    }
+    return {
+      ...res,
+      killed: false,
+    };
+  }
+
+  /** Daño directo (entorno/proyectil reflejado) sobre los 350 HP de la fase actual. */
+  private applyKronosRawPhaseDamage(enemy: ManagedWaveEnemy, rawDamage: number): void {
+    const internal = this.internals.get(enemy.id);
+    if (!internal || !enemy.entity.alive || rawDamage <= 0) {
+      return;
+    }
+    const k = internal.kronos;
+    if (k.phase4 || k.starInvulnSec > 0) {
+      return;
+    }
+    k.phaseHp = Math.max(0, k.phaseHp - rawDamage);
+    enemy.hitFlash = Math.max(enemy.hitFlash, 0.4);
+    enemy.entity.hitFlash = enemy.hitFlash;
+    if (k.phaseHp <= 0) {
+      applyKronosStarBreak(internal.enemy, internal, this.kronosNyxEffects);
+    }
   }
 
   /**

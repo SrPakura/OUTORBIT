@@ -28,6 +28,8 @@ import { NyxAnimator, type NyxAnimParams, type NyxAnimState } from '@/game/rende
 import type { NyxWalkPlayer } from '@/game/render/nyxWalkPlayer';
 import type { NyxClips } from '@/game/render/nyxModelLoader';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
+import type { SyntheticPlayerInput } from '@/game/dome/trailer/trailerTypes';
+import type { BotKineticBounceInfo, BotParryInfo } from '@/game/dome/trailer/DomeTrailerBot';
 import {
   formatGamepadButtonShort,
   formatKeyCode,
@@ -434,6 +436,9 @@ export class NyxDomeController {
   private parryDashElapsed = 0;
   private wantParryStrike = false;
   private parryStarHovered = false;
+  private syntheticInput: SyntheticPlayerInput | null = null;
+  private infiniteEden = false;
+  private godMode = false;
   private kickRecoverFromAttack = false;
   /**
    * El golpe de Nyx rebotó contra el brazo del Gólem en bloqueo (rebote de
@@ -932,13 +937,14 @@ export class NyxDomeController {
    * ratón y el stick derecho del mando). En suelo mueve los ángulos escalares
    * camYaw/camPitch; en vuelo rota aimForward con transporte paralelo.
    */
-  private rotateLook(dx: number, dy: number): void {
+  private rotateLook(dx: number, dy: number, ignoreInvertY = false): void {
     const steerScale =
       this.mode === 'speed_attack' && this.speedAttackKind === 'void_fall'
         ? VOID_FALL_STEER_DAMP
         : 1.0;
     const effDx = dx * steerScale;
-    const pitch = -dy * steerScale * (this.settings.invertY ? -1 : 1);
+    const invertSign = !ignoreInvertY && this.settings.invertY ? -1 : 1;
+    const pitch = -dy * steerScale * invertSign;
 
     if (this.mode === 'grounded') {
       // Cámara libre 360°: dos ángulos escalares sobre el marco del suelo.
@@ -1093,6 +1099,54 @@ export class NyxDomeController {
     return this.mode === 'speed_attack' ? this.attackElapsed : 0;
   }
 
+  /** Inyecta entrada sintética (Trailer Bot o ReplayPlayer) para el próximo tick. */
+  setSyntheticInput(input: SyntheticPlayerInput | null): void {
+    this.syntheticInput = input;
+  }
+
+  setInfiniteEden(enabled: boolean): void {
+    this.infiniteEden = enabled;
+    if (enabled) this.eden = this.maxEden;
+  }
+
+  setGodMode(enabled: boolean): void {
+    this.godMode = enabled;
+    if (enabled) this.hp = this.maxHp;
+  }
+
+  getAimUp(): THREE.Vector3 {
+    return this.aimUp;
+  }
+
+  getMode(): 'grounded' | 'floating' | 'speed_attack' | 'kinetic_bounce' {
+    if (this.mode === 'grounded' || this.mode === 'floating' || this.mode === 'speed_attack' || this.mode === 'kinetic_bounce') {
+      return this.mode;
+    }
+    return 'floating';
+  }
+
+  getParryInfo(): BotParryInfo {
+    return {
+      active: this.parryWindowActive,
+      phase: this.parryPhase,
+      starPoint: this.parryStarPoint,
+      headPoint: this.parryHeadPoint,
+    };
+  }
+
+  getKineticBounceInfo(): BotKineticBounceInfo {
+    return {
+      state:
+        this.kinetic.phase === 'committed' || this.mode === 'kinetic_bounce'
+          ? 'ready'
+          : this.kinetic.phase === 'idle' && this.kinetic.aimReady
+            ? 'charging'
+            : 'none',
+      aimReady: this.kinetic.aimReady,
+      surfaceNormal: this.kinetic.wallNormal,
+    };
+  }
+
   getAimForward(): THREE.Vector3 {
     return this.aimForward;
   }
@@ -1173,6 +1227,10 @@ export class NyxDomeController {
   }
 
   spendEden(amount: number): boolean {
+    if (this.infiniteEden) {
+      this.eden = this.maxEden;
+      return true;
+    }
     if (this.eden < amount) return false;
     this.eden = Math.max(0, this.eden - amount);
     return true;
@@ -1191,6 +1249,7 @@ export class NyxDomeController {
     amount: number,
     options?: { hurtSlash?: boolean; shake?: boolean; sound?: boolean },
   ): void {
+    if (this.godMode) return;
     if (amount <= 0) return;
     this.hp = Math.max(0, this.hp - amount);
     if (options?.hurtSlash !== false) {
@@ -1521,8 +1580,24 @@ export class NyxDomeController {
     this.fovPunch *= Math.exp(-14 * rawDt);
     this.edenFlash = Math.max(0, this.edenFlash - rawDt * 2.6);
 
-    // --- Entrada de mando (Gamepad API): stick derecho = cámara, botones = acciones
-    this.applyGamepadInput(rawDt);
+    // --- Entrada sintética (Trailer Bot / Replay) o mando real ---
+    if (this.syntheticInput) {
+      const s = this.syntheticInput;
+      if (s.lookDx !== 0 || s.lookDy !== 0) {
+        this.rotateLook(s.lookDx, s.lookDy, true);
+      }
+      this.gpLeftX = s.moveX;
+      this.gpLeftY = s.moveY;
+      if (s.wantAttack) this.wantAttack = true;
+      this.gpAttackHeld = s.attackHeld;
+      if (s.wantDash) this.wantDash = true;
+      this.gpDashHeld = s.dashHeld;
+      if (s.wantJump) this.wantJump = true;
+      if (s.wantSlot !== null) this.wantSlot = s.wantSlot;
+      if (this.infiniteEden) this.eden = this.maxEden;
+    } else {
+      this.applyGamepadInput(rawDt);
+    }
 
     // --- Base de cámara del frame (dirección de mira según el modo)
     this.computeCameraBasis();
@@ -1640,14 +1715,14 @@ export class NyxDomeController {
       if (this.mode === 'speed_attack' && enemies && enemies.length > 0) {
         const hitTarget = this.lockedEnemy;
         if (hitTarget) {
-          if (this.nyxRoot.position.distanceTo(hitTarget.position) <= PLAYER_RADIUS + hitTarget.radius + 0.45) {
+          if (this.isTouchingEnemyForAttack(hitTarget)) {
             this.impactEnemy(onHitEnemy);
           }
         } else {
           for (const enemy of enemies) {
             // Contra-parryado hace un instante: su hitbox se atraviesa limpia.
             if (enemy.id === this.counterParryIgnoreId) continue;
-            if (this.nyxRoot.position.distanceTo(enemy.position) <= PLAYER_RADIUS + enemy.radius + 0.45) {
+            if (this.isTouchingEnemyForAttack(enemy)) {
               this.lockedEnemy = enemy;
               this.impactEnemy(onHitEnemy);
               break;
@@ -2963,6 +3038,26 @@ export class NyxDomeController {
     }
   }
 
+  private isTouchingEnemyForAttack(enemy: TestEnemySphere): boolean {
+    const reach = PLAYER_RADIUS + enemy.radius + 0.45;
+    if (this.nyxRoot.position.distanceToSquared(enemy.position) <= reach * reach) {
+      return true;
+    }
+    const pts = enemy.bodyPoints;
+    if (pts && pts.length > 0) {
+      const bodyReach = PLAYER_RADIUS + (enemy.bodyRadius ?? enemy.radius) + 0.45;
+      const bodyReachSq = bodyReach * bodyReach;
+      const sub = enemy.bodySubmerged;
+      for (let i = 0; i < pts.length; i++) {
+        if (sub && sub[i]) continue;
+        if (this.nyxRoot.position.distanceToSquared(pts[i]) <= bodyReachSq) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   private updateSpeedAttack(
     dt: number,
     onHitEnemy: HitEnemyCallback | undefined,
@@ -2999,8 +3094,8 @@ export class NyxDomeController {
         this.rotateToward(this.aimForward, toEnemy, trackRate * dt);
         this.rotateToward(this.facing, toEnemy, trackRate * dt);
       }
-      // Impacto contra la esfera enemiga.
-      if (dist <= PLAYER_RADIUS + this.lockedEnemy.radius + 0.45) {
+      // Impacto contra la esfera enemiga (o segmentos corporales de KRONOS).
+      if (this.isTouchingEnemyForAttack(this.lockedEnemy)) {
         this.impactEnemy(onHitEnemy);
         return;
       }
@@ -3041,8 +3136,7 @@ export class NyxDomeController {
       for (const enemy of enemies) {
         // Contra-parryado hace un instante: su hitbox se atraviesa limpia.
         if (enemy.id === this.counterParryIgnoreId) continue;
-        const dist = this.nyxRoot.position.distanceTo(enemy.position);
-        if (dist <= PLAYER_RADIUS + enemy.radius + 0.45) {
+        if (this.isTouchingEnemyForAttack(enemy)) {
           this.lockedEnemy = enemy;
           this.impactEnemy(onHitEnemy);
           return;

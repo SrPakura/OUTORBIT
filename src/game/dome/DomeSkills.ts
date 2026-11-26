@@ -30,8 +30,16 @@ export type DamageEnemyFn = (
   enemy: SkillTargetEnemy,
   amount: number,
   impulse: THREE.Vector3,
-  bypassFlesh?: boolean
+  bypassFlesh?: boolean,
+  hitPos?: THREE.Vector3,
+  allowStarBreak?: boolean,
 ) => void;
+
+export type ExtraEnemyHitFn = (
+  enemy: SkillTargetEnemy,
+  point: THREE.Vector3,
+  hitRadius: number,
+) => boolean;
 
 export type SkillAnimOverride =
   | 'stasis_cast'
@@ -70,7 +78,7 @@ export interface SkillTriggerContext {
   onReflectEnemyProjectiles?: (center: THREE.Vector3, radius: number, playerPos: THREE.Vector3) => void;
   /**
    * Hook opcional para la cinemática de Implosión: devuelve false si el
-   * objetivo no es válido (p.ej. KRONOS en fase 4 o ya implosionado antes).
+   * objetivo no es válido (p.ej. KRONOS en fase 1 o fase 4).
    */
   onStartImplosion?: (target: SkillTargetEnemy) => boolean;
 }
@@ -1379,6 +1387,7 @@ export class DomeSkillExecutor {
     onDamageEnemy: DamageEnemyFn,
     playerPos?: THREE.Vector3,
     forwardDir?: THREE.Vector3,
+    checkExtraHit?: ExtraEnemyHitFn,
   ): void {
     // Reloj de la nebulosa cósmica de las bolas capturadas (en órbita y en vuelo,
     // mientras la Mesh viva en escena).
@@ -1387,7 +1396,7 @@ export class DomeSkillExecutor {
     this.updateGravityField(dt, playerPos, forwardDir);
     this.updateSlashBursts(dt, enemies, playerPos, forwardDir);
     this.updateLooseDebris(dt);
-    this.updateProjectiles(dt, enemies, onDamageEnemy);
+    this.updateProjectiles(dt, enemies, onDamageEnemy, checkExtraHit);
     this.updateWaves(dt);
     this.updateWells(dt, enemies, onDamageEnemy);
     this.updateBlackHoles(dt, enemies, onDamageEnemy);
@@ -1462,7 +1471,8 @@ export class DomeSkillExecutor {
   private updateProjectiles(
     dt: number,
     enemies: SkillTargetEnemy[],
-    onDamageEnemy: DamageEnemyFn
+    onDamageEnemy: DamageEnemyFn,
+    checkExtraHit?: ExtraEnemyHitFn,
   ): void {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
@@ -1528,14 +1538,23 @@ export class DomeSkillExecutor {
         if (p.hitIds.has(enemy.id)) continue;
         const isNecroz = enemy.id.includes('prisma_necroz');
         const hitDist = isNecroz ? enemy.radius + 1.15 + p.hitRadius : enemy.radius + p.hitRadius;
-        if (p.mesh.position.distanceTo(enemy.position) <= hitDist) {
+        const hitPrimary = p.mesh.position.distanceTo(enemy.position) <= hitDist;
+        const hitExtra = !hitPrimary && checkExtraHit?.(enemy, p.mesh.position, p.hitRadius) === true;
+        if (hitPrimary || hitExtra) {
           p.hitIds.add(enemy.id);
           if (isNecroz) {
             _impulse.copy(enemy.position).sub(p.mesh.position).normalize().multiplyScalar(9);
           } else {
             _impulse.copy(p.velocity).normalize().multiplyScalar(9);
           }
-          onDamageEnemy(enemy, p.damage, _impulse, p.isButterflyMagnet === true);
+          onDamageEnemy(
+            enemy,
+            p.damage,
+            _impulse,
+            p.isButterflyMagnet === true,
+            p.mesh.position,
+            !p.isBounceSlash,
+          );
           if (!p.pierce) {
             killed = true;
             break;

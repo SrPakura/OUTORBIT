@@ -15,6 +15,7 @@ import { loadNyxRigged, type LoadedNyx } from '@/game/render/nyxModelLoader';
 import { DomeFloatingSlabManager } from '@/game/dome/DomeFloatingSlabs';
 import { DomeSphereTileManager } from '@/game/dome/DomeSphereTiles';
 import { DomeWaveManager, type ManagedWaveEnemy, type WaveFloorMode } from '@/game/dome/DomeWaveManager';
+import { KRONOS_PHASE_MAX_HP } from '@/game/dome/domeKronosBehavior';
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
 import { ComicImpactVfxSystem } from '@/game/dome/ComicImpactVfx';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
@@ -42,6 +43,25 @@ import type { GameSettings } from '@/game/settings';
 import { SynthAudio } from '@/game/audio/SynthAudio';
 import { musicPlayer } from '@/game/audio/MusicPlayer';
 import type { DomeBattleReportData } from '@/ui/DomeBattleReport';
+import { preloadEnemyModelsAsync } from '@/game/dome/DomeEnemyModels';
+import { installScopedRandom } from '@/game/dome/trailer/seededRandom';
+import {
+  DomeReplayPlayer,
+  DomeReplayRecorder,
+} from '@/game/dome/trailer/DomeReplaySystem';
+import { DomeTrailerBot } from '@/game/dome/trailer/DomeTrailerBot';
+import { DomeTheaterCamera } from '@/game/dome/trailer/DomeTheaterCamera';
+import {
+  outorbitTrailerApi,
+  registerTrailerRuntime,
+  setLastRecordedReplay,
+} from '@/game/dome/trailer/trailerConsoleApi';
+import {
+  TRAILER_FIXED_DT,
+  type ReplayCameraMode,
+  type TrailerSessionRequest,
+  type TrailerThreatInfo,
+} from '@/game/dome/trailer/trailerTypes';
 
 /**
  * Puente del panel de entrenamiento hacia el loop: el panel debug muta el
@@ -102,6 +122,8 @@ export interface DomeGameLoopParams {
   tutorialOpenRef: { current: boolean };
   hadPointerLockRef: { current: boolean };
   onFirstSkillUsed?: () => void;
+  trailerSession?: TrailerSessionRequest | null;
+  setTrailerHudVisible?: (visible: boolean) => void;
 }
 
 /**
@@ -133,7 +155,26 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     tutorialOpenRef,
     hadPointerLockRef,
     onFirstSkillUsed,
+    trailerSession = null,
+    setTrailerHudVisible,
   } = params;
+
+  const trailerSeed =
+    trailerSession?.mode === 'record'
+      ? trailerSession.config.seed
+      : trailerSession?.mode === 'replay'
+        ? trailerSession.replay.header.seed
+        : null;
+  const restoreScopedRandom = trailerSeed !== null ? installScopedRandom(trailerSeed) : null;
+
+  const simViewportW =
+    trailerSession?.mode === 'replay' ? trailerSession.replay.header.viewportW : window.innerWidth;
+  const simViewportH =
+    trailerSession?.mode === 'replay' ? trailerSession.replay.header.viewportH : window.innerHeight;
+  const simBaseFov =
+    trailerSession?.mode === 'replay'
+      ? trailerSession.replay.header.baseFov
+      : settingsRef.current.baseFov;
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -141,11 +182,15 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(
-    settingsRef.current.baseFov,
-    window.innerWidth / window.innerHeight,
+    simBaseFov,
+    simViewportW / Math.max(1, simViewportH),
     0.1,
     2500,
   );
+  const theaterCamera =
+    trailerSession?.mode === 'replay'
+      ? new DomeTheaterCamera(canvas, camera, trailerSession.camera)
+      : null;
 
   const sun = new THREE.DirectionalLight(0xdbeafe, 1.5);
   sun.position.set(60, 120, 40);
@@ -247,8 +292,63 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     for (const slab of sphereTiles.getActiveColliders()) activeSlabs.push(slab);
   };
   const activeEnemies: ManagedWaveEnemy[] = [];
+  const activeThreats: TrailerThreatInfo[] = [];
+  const trailerBot = trailerSession?.mode === 'record' ? new DomeTrailerBot(trailerSession.config) : null;
+  const replayRecorder =
+    trailerSession?.mode === 'record'
+      ? new DomeReplayRecorder({
+          seed: trailerSession.config.seed,
+          viewportW: simViewportW,
+          viewportH: simViewportH,
+          baseFov: simBaseFov,
+          wave: trailerSession.config.wave,
+          trainingArchetype: trailerSession.config.trainingArchetype,
+          loadout: trailerSession.config.loadout,
+          infiniteEden: trailerSession.config.infiniteEden,
+          godMode: trailerSession.config.godMode,
+        })
+      : null;
+  const replayPlayer =
+    trailerSession?.mode === 'replay' ? new DomeReplayPlayer(trailerSession.replay) : null;
+  let trailerAssetsReady = trailerSession === null;
+  let trailerSimPaused = false;
+  let trailerPlaybackSpeed = trailerSession?.mode === 'replay' ? trailerSession.speed : 1;
+  let trailerHudVisible =
+    trailerSession === null
+      ? true
+      : trailerSession.mode === 'record'
+        ? trailerSession.config.hud
+        : trailerSession.hud;
+  let trailerTickCount = 0;
+  let trailerAccumulator = 0;
+
   waveMgr.setDifficultyScaling(!settingsRef.current.easyMode);
-  if (training) {
+  if (trailerSession) {
+    const startWaveNum =
+      trailerSession.mode === 'record'
+        ? trailerSession.config.wave
+        : trailerSession.replay.header.wave;
+    const loadout =
+      trailerSession.mode === 'record'
+        ? trailerSession.config.loadout
+        : trailerSession.replay.header.loadout;
+    progression.pendingInitialPick = false;
+    for (let i = 0; i < 3; i++) {
+      const skillId = loadout[i];
+      const def = ACTIVE_SKILLS_CATALOG[skillId];
+      progression.slots[i] = {
+        skillId,
+        level: def.maxLevel,
+        cooldownRemaining: 0,
+        maxCooldown: def.cooldown,
+      };
+    }
+    progression.setPassiveLevel('speed_force', 3);
+    applyFloorMode(waveMgr.getFloorModeForWave(startWaveNum));
+    floatingSlabs.materializeActiveImmediate();
+    refillActiveSlabs();
+    syncWaveMusic(waveMgr.getWaveInfo().label);
+  } else if (training) {
     // Modo Entrenamiento: sin oleadas automáticas ni elección inicial de
     // cartas; suelos básicos para el Cangrejo Artillero y los escombros del
     // Campo Gravitacional. El enemigo único lo spawnea el puente de abajo.
@@ -276,6 +376,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   let pauseResumeGraceUntil = 0;
 
   const openLevelUpModal = (levels: number[], skipPlanetAnimation = false) => {
+    if (trailerSession) return;
     if (levels.length === 0) return;
     if (document.pointerLockElement === canvas) {
       document.exitPointerLock?.();
@@ -407,6 +508,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     amount: number,
     impulse: THREE.Vector3,
     bypassFlesh = false,
+    hitPos?: THREE.Vector3,
+    allowStarBreak = false,
   ) => {
     const enemy = waveMgr.getActiveEnemies().find((e) => e.id === target.id);
     if (!enemy || !enemy.entity.alive) return;
@@ -418,7 +521,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       lastSkillComicTime = elapsed;
       const impulseLen = impulse.length();
       comicVfx.spawnComicHit(
-        enemy.position,
+        hitPos ?? enemy.position,
         impulseLen > 0.01
           ? skillImpulseDir.copy(impulse).multiplyScalar(1 / impulseLen)
           : null,
@@ -431,13 +534,27 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       controller?.punchCamera(Math.min(1.3, 0.35 + impulseLen / 26 + amount * 0.003));
     }
 
-    // Leviatán KRONOS: las habilidades gravitatorias (Campo Gravitacional,
-    // agujero negro, Implosión legendaria...) rompen UNA Estrella Dorsal a
-    // lo sumo por uso — con la invulnerabilidad de transición del manager
-    // limitando a las skills de daño continuo. Sin daño genérico de HP.
+    // Leviatán KRONOS: un proyectil directo sobre una Estrella Dorsal activa
+    // la rompe al instante; cualquier otra habilidad o impacto fuera de
+    // estrella resta vida a los 350 HP de la fase actual (Fase 4 invulnerable).
     if (enemy.entity.archetype === 'kronos_leviathan') {
-      waveMgr.tryBreakKronosStarFromSkill(enemy);
-      runTracker.recordDamage(amount);
+      if (
+        allowStarBreak &&
+        hitPos &&
+        waveMgr.tryBreakKronosStarFromSkillAtPoint(enemy, hitPos, 1.0)
+      ) {
+        runTracker.recordDamage(KRONOS_PHASE_MAX_HP);
+        return;
+      }
+      const res = waveMgr.damageKronosPhase(
+        enemy,
+        combat,
+        Math.max(12, amount * 0.4),
+        progression.getModifiers().forceMultiplier,
+        false,
+        bypassFlesh,
+      );
+      runTracker.recordDamage(res.damage);
       return;
     }
     // Prisma Necroz: 1 roca pequeña (o skill a distancia) destruye 1 triángulo
@@ -541,16 +658,31 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         return;
       }
       if (!managed.entity.alive) return;
-      // Leviatán KRONOS: su vida son 4 Estrellas Dorsales, no HP genérico.
-      // Un impacto de alta velocidad (Patada Taladro o velocidad > umbral
-      // cinético) rompe UNA estrella con las puertas anti-skip del manager
-      // (nunca más de 1 por uso: el daño cinético clásico no se aplica).
+      // Leviatán KRONOS: un golpe cinético directo sobre una Estrella Dorsal
+      // activa la rompe al instante; si golpea cabeza o cuerpo fuera de
+      // estrella, daña los 350 HP de la fase actual.
       if (managed.entity.archetype === 'kronos_leviathan') {
-        waveMgr.tryBreakKronosStar(
+        const playerPos = controller?.getPosition() ?? enemy.position;
+        if (
+          waveMgr.tryBreakKronosStarAtPoint(
+            managed,
+            playerPos,
+            impactSpeed ?? 14,
+            isDrill,
+            0.9,
+          )
+        ) {
+          runTracker.recordDamage(KRONOS_PHASE_MAX_HP);
+          return;
+        }
+        const res = waveMgr.damageKronosPhase(
           managed,
+          combat,
           impactSpeed ?? 14,
+          progression.getModifiers().forceMultiplier,
           isDrill,
         );
+        runTracker.recordDamage(res.damage);
         return;
       }
       // Prisma Necroz: escudo triangulado — bloquea si el triángulo en esa
@@ -626,7 +758,6 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     startHeight: number;
   }
   let implosionCinematic: ImplosionCinematicState | null = null;
-  let kronosImplosionUsedOnId: string | null = null;
 
   // --- Payload persistente de syncProgression (cero objetos por frame) ---
   const syncPayload: Parameters<NyxDomeController['syncProgression']>[0] = {
@@ -648,8 +779,13 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     ],
   };
 
-  loadNyxRigged()
-    .then((nyx) => {
+  let onTrailerExtraSkill: ((skillId: ActiveSkillId) => void) | null = null;
+
+  Promise.all([
+    loadNyxRigged(),
+    trailerSession ? preloadEnemyModelsAsync() : Promise.resolve(),
+  ])
+    .then(([nyx]) => {
       if (disposed) {
         nyx.dispose();
         return;
@@ -668,7 +804,27 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         audio,
         gamepad,
       );
-      controller.setViewportSize(window.innerWidth, window.innerHeight);
+      controller.setViewportSize(simViewportW, simViewportH);
+      if (trailerSession) {
+        const infEden =
+          trailerSession.mode === 'record'
+            ? trailerSession.config.infiniteEden
+            : trailerSession.replay.header.infiniteEden;
+        const god =
+          trailerSession.mode === 'record'
+            ? trailerSession.config.godMode
+            : trailerSession.replay.header.godMode;
+        controller.setInfiniteEden(infEden);
+        controller.setGodMode(god);
+        const startWaveNum =
+          trailerSession.mode === 'record'
+            ? trailerSession.config.wave
+            : trailerSession.replay.header.wave;
+        waveMgr.startWave(startWaveNum, activeSlabs);
+        runTracker.recordWave(startWaveNum);
+        syncWaveMusic(waveMgr.getWaveInfo().label);
+        trailerAssetsReady = true;
+      }
       // KRONOS lee la física del mundo: V_base = velocidad máxima de Nyx
       // SIN pasivas (getBaseMaxSpeed() = FLOAT_MAX_SPEED = 28 m/s). Las
       // fases del boss se escalan sobre ese valor exacto.
@@ -699,23 +855,16 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         }
         return fired;
       };
-      controller.onSlotTriggered = (slotIdx) => {
-        if (levelUpOpenRef.current || battleReportOpenRef.current || pauseOpenRef.current || !controller) return;
-        const slot = progression.slots[slotIdx];
-        if (!slot.skillId) return;
-        onFirstSkillUsed?.();
-        // Si pulsa el slot de Campo Gravitacional teniendo rocas activas -> cancela y las suelta
-        if (slot.skillId === 'gravity_field' && skillExecutor.hasActiveGravityRocks()) {
+      let triggerSkillDirect: (skillId: ActiveSkillId, level: number) => boolean = () => false;
+      triggerSkillDirect = (skillId, level) => {
+        if (!controller) return false;
+        if (skillId === 'gravity_field' && skillExecutor.hasActiveGravityRocks()) {
           skillExecutor.cancelGravityField();
-          return;
+          return false;
         }
-        if (slot.cooldownRemaining > 0) return;
-        const def = ACTIVE_SKILLS_CATALOG[slot.skillId];
-        if (controller.getEden() < def.edenCost) return;
-
         const activeTargets = waveMgr.getActiveEnemies();
         const locked = controller.getLockedEnemy();
-        const res = skillExecutor.triggerSkill(slot.skillId, slot.level, {
+        const res = skillExecutor.triggerSkill(skillId, level, {
           playerPos: controller.getPosition(),
           forwardDir: controller.getAimForward(),
           isGrounded: controller.isPlayerGrounded(),
@@ -725,8 +874,6 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           slabs: activeSlabs,
           onDamageEnemy: handleSkillDamageEnemy,
           onHealPlayer: (hp, eden) => controller?.restoreResources(hp, eden),
-          // Bolas de Doble Filo: el Campo Gravitacional captura las bolas de
-          // tinta ácida del pulpo dentro de su radio EN VEZ de coger rocas.
           captureEnemyProjectiles: (center, radius) =>
             waveMgr.captureInkBallsInRadius(center, radius),
           captureElectricBalls: (center, radius) =>
@@ -741,10 +888,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
             let mode: ImplosionMode = 'one_hit';
             let duration = 1.15;
             if (managed.entity.archetype === 'kronos_leviathan') {
-              if (kronosImplosionUsedOnId === managed.id || waveMgr.isKronosPhase4Active()) {
+              if (!waveMgr.canImplodeKronos(managed)) {
                 return false;
               }
-              kronosImplosionUsedOnId = managed.id;
               mode = 'kronos_crystal';
               duration = 1.2;
             } else if (managed.entity.isElite) {
@@ -779,14 +925,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           },
         });
         if (res.triggered) {
-          controller.spendEden(def.edenCost);
-          // El cooldown de gravity_field empieza al gastar/cancelar la última roca
-          if (slot.skillId !== 'gravity_field') {
-            slot.cooldownRemaining = def.cooldown;
-          }
           if (res.animOverride) controller.triggerSkillAnim(res.animOverride);
-          // Firma sonora por habilidad: viento, gravedad y energía propias.
-          switch (slot.skillId) {
+          switch (skillId) {
             case 'gravity_field':
               audio.playStasisGrab();
               break;
@@ -810,6 +950,30 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
               break;
           }
         }
+        return res.triggered;
+      };
+      onTrailerExtraSkill = (skillId) => {
+        triggerSkillDirect(skillId, ACTIVE_SKILLS_CATALOG[skillId].maxLevel);
+      };
+      controller.onSlotTriggered = (slotIdx) => {
+        if (levelUpOpenRef.current || battleReportOpenRef.current || pauseOpenRef.current || !controller) return;
+        const slot = progression.slots[slotIdx];
+        if (!slot.skillId) return;
+        onFirstSkillUsed?.();
+        if (slot.skillId === 'gravity_field' && skillExecutor.hasActiveGravityRocks()) {
+          skillExecutor.cancelGravityField();
+          return;
+        }
+        if (slot.cooldownRemaining > 0) return;
+        const def = ACTIVE_SKILLS_CATALOG[slot.skillId];
+        if (controller.getEden() < def.edenCost) return;
+
+        if (triggerSkillDirect(slot.skillId, slot.level)) {
+          controller.spendEden(def.edenCost);
+          if (slot.skillId !== 'gravity_field') {
+            slot.cooldownRemaining = def.cooldown;
+          }
+        }
       };
       controllerRef.current = controller;
       controller.setGamepadActive(gamepadActiveMode);
@@ -823,6 +987,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   let gamepadActiveMode = isGamepadPreferred();
 
   const isWaitingPointerCapture = (): boolean =>
+    !trailerSession &&
     document.pointerLockElement !== canvas &&
     !gamepadActiveMode &&
     !(training && debugPanelOpenRef.current);
@@ -900,6 +1065,47 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       musicPlayer.setMuted(audio.toggleMute());
       return;
     }
+    // Atajos exclusivos de Modo Teatro (Replay)
+    if (trailerSession?.mode === 'replay' && theaterCamera) {
+      if (e.code === 'Digit1') {
+        if (controller) theaterCamera.setMode('bot', camera, controller.getPosition());
+        return;
+      }
+      if (e.code === 'Digit2') {
+        if (controller) theaterCamera.setMode('free', camera, controller.getPosition());
+        return;
+      }
+      if (e.code === 'Digit3') {
+        if (controller) theaterCamera.setMode('orbit', camera, controller.getPosition());
+        return;
+      }
+      if (e.code === 'Digit4') {
+        if (controller) theaterCamera.setMode('director', camera, controller.getPosition());
+        return;
+      }
+      if (e.code === 'Space') {
+        e.preventDefault();
+        trailerSimPaused = !trailerSimPaused;
+        return;
+      }
+      if (e.code === 'BracketLeft') {
+        trailerPlaybackSpeed = Math.max(0.05, Math.round((trailerPlaybackSpeed * 0.5) * 100) / 100);
+        return;
+      }
+      if (e.code === 'BracketRight') {
+        trailerPlaybackSpeed = Math.min(2.0, Math.round((trailerPlaybackSpeed * 2.0) * 100) / 100);
+        return;
+      }
+      if (e.code === 'KeyH') {
+        trailerHudVisible = !trailerHudVisible;
+        setTrailerHudVisible?.(trailerHudVisible);
+        return;
+      }
+      if (e.code === 'KeyR') {
+        outorbitTrailerApi.restartReplay();
+        return;
+      }
+    }
     // Entrenamiento: F2/Tab muestran u ocultan el panel debug; T recarga
     // Vida + Edén al instante (tecla rápida de recarga).
     if (training && (e.code === 'F2' || e.code === 'Tab')) {
@@ -964,9 +1170,13 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   };
 
   const onResize = () => {
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    if (trailerSession?.mode === 'replay') {
+      theaterCamera?.syncAspect(window.innerWidth / window.innerHeight);
+      return;
+    }
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight, false);
     controller?.setViewportSize(window.innerWidth, window.innerHeight);
   };
 
@@ -990,71 +1200,48 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   const parryStarScratch = new THREE.Vector3();
   const parryHeadScratch = new THREE.Vector3();
 
-  const tick = () => {
-    raf = requestAnimationFrame(tick);
-    const now = performance.now();
-    const rawDt = Math.min((now - last) / 1000, 0.05);
-    last = now;
-
-    if (prevSettingsOpen && !settingsOpenRef.current) {
-      circlePauseGraceUntil = now + 220;
-    }
-    prevSettingsOpen = settingsOpenRef.current;
-
-    // --- Mando (Gamepad API): se lee SIEMPRE cada frame, incluso en pausa,
-    // para poder abrir/cerrar DomePauseModal con Options y cerrarla con
-    // Círculo (B). El resto de botones los consume el controlador al jugar.
-    gamepad.update();
-    // Cualquier botón del mando también desbloquea el AudioContext (se puede
-    // jugar una run entera sin tocar el ratón ni el teclado).
-    const rawPad = readConnectedGamepad();
-    if (!rawPad) {
-      gamepadActiveMode = false;
-    } else {
-      if (hasGamepadActivity(rawPad)) {
-        audio.unlock();
-        gamepadActiveMode = true;
-        markGamepadUsed();
-        hadPointerLockRef.current = false;
-      } else if (isGamepadPreferred() && document.pointerLockElement !== canvas) {
-        gamepadActiveMode = true;
-      }
-    }
-    controller?.setGamepadActive(gamepadActiveMode);
-    if (gamepad.justPressedAction('pause')) {
-      if (
-        !levelUpOpenRef.current &&
-        !battleReportOpenRef.current &&
-        !settingsOpenRef.current &&
-        !tutorialOpenRef.current
-      ) {
-        if (pauseOpenRef.current) {
-          // Reanudar con mando NO captura el ratón: se puede seguir jugando
-          // solo con el mando y el puntero libre.
-          setIsPauseOpen(false);
-        } else {
-          setIsPauseOpen(true);
-          if (document.pointerLockElement === canvas) {
-            document.exitPointerLock?.();
-          }
+  registerTrailerRuntime(
+    trailerSession
+      ? {
+          stopRecording: () => {
+            if (!replayRecorder) return null;
+            const file = replayRecorder.buildReplayFile();
+            setLastRecordedReplay(file);
+            return file;
+          },
+          setCamera: (mode: ReplayCameraMode) => {
+            if (theaterCamera && controller) {
+              theaterCamera.setMode(mode, camera, controller.getPosition());
+            }
+          },
+          setSpeed: (speed: number) => {
+            trailerPlaybackSpeed = Math.max(0, Math.min(4, speed));
+            if (speed === 0) trailerSimPaused = true;
+            else trailerSimPaused = false;
+          },
+          togglePause: () => {
+            trailerSimPaused = !trailerSimPaused;
+            return trailerSimPaused;
+          },
+          setHud: (visible: boolean) => {
+            trailerHudVisible = visible;
+            setTrailerHudVisible?.(visible);
+          },
+          getStatus: () => ({
+            mode: trailerSession.mode,
+            tick: trailerTickCount,
+            totalTicks: replayPlayer?.totalTicks ?? replayRecorder?.frameCount ?? 0,
+            camera: theaterCamera?.getMode() ?? 'bot',
+            paused: trailerSimPaused,
+            speed: trailerPlaybackSpeed,
+            maxDrift: replayPlayer?.maxDrift ?? 0,
+            hud: trailerHudVisible,
+          }),
         }
-      }
-    } else if (
-      pauseOpenRef.current &&
-      !settingsOpenRef.current &&
-      now >= circlePauseGraceUntil &&
-      gamepad.justPressed(1)
-    ) {
-      setIsPauseOpen(false);
-    }
+      : null,
+  );
 
-    const menuPaused =
-      levelUpOpenRef.current ||
-      battleReportOpenRef.current ||
-      pauseOpenRef.current ||
-      tutorialOpenRef.current;
-    const isPaused = menuPaused || isWaitingPointerCapture() || implosionCinematic !== null;
-    const effRawDt = isPaused ? 0 : rawDt;
+  const stepSimulation = (effRawDt: number) => {
     const timeScale = controller ? controller.getTimeScale() : 1.0;
     const worldDt = effRawDt * timeScale;
     elapsed += worldDt;
@@ -1065,7 +1252,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
 
     backdrop.update(worldDt, elapsed);
 
-    if (controller && !isPaused) {
+    if (controller && effRawDt > 0) {
       progression.updateCooldowns(effRawDt);
       // Entrenamiento: el Edén se regenerá rapidísimo (+25/s) para poder
       // probar habilidades en cadena sin farmear.
@@ -1197,10 +1384,11 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         handleSkillDamageEnemy,
         controller.getPosition(),
         controller.getAimForward(),
+        (target, point, hitRadius) => waveMgr.checkKronosExtraHit(target, point, hitRadius),
       );
 
       // VFX cómic de materia oscura (picos, estrellas, humo).
-      comicVfx.update(worldDt, camera);
+      comicVfx.update(worldDt, theaterCamera ? theaterCamera.camera : camera);
 
       // Motor gravitacional: el viento sigue la velocidad real de Nyx (30
       // m/s = tope de dash/taladro) y el zumbido grave acompaña a las rocas
@@ -1359,7 +1547,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         });
       }
 
-      hudTimer += rawDt;
+      hudTimer += effRawDt;
       if (hudTimer >= 1 / 30) {
         hudTimer = 0;
         setHud(controller.getHudState());
@@ -1367,6 +1555,132 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     } else if (!controller) {
       camera.position.set(0, 2.8, 7.5);
       camera.lookAt(0, 1.0, 0);
+    }
+  };
+
+  const tick = () => {
+    raf = requestAnimationFrame(tick);
+    const now = performance.now();
+    const rawDt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+
+    if (prevSettingsOpen && !settingsOpenRef.current) {
+      circlePauseGraceUntil = now + 220;
+    }
+    prevSettingsOpen = settingsOpenRef.current;
+
+    gamepad.update();
+    const rawPad = readConnectedGamepad();
+    if (!rawPad) {
+      gamepadActiveMode = false;
+    } else {
+      if (hasGamepadActivity(rawPad)) {
+        audio.unlock();
+        gamepadActiveMode = true;
+        markGamepadUsed();
+        hadPointerLockRef.current = false;
+      } else if (isGamepadPreferred() && document.pointerLockElement !== canvas) {
+        gamepadActiveMode = true;
+      }
+    }
+    controller?.setGamepadActive(gamepadActiveMode);
+    if (!trailerSession && gamepad.justPressedAction('pause')) {
+      if (
+        !levelUpOpenRef.current &&
+        !battleReportOpenRef.current &&
+        !settingsOpenRef.current &&
+        !tutorialOpenRef.current
+      ) {
+        if (pauseOpenRef.current) {
+          setIsPauseOpen(false);
+        } else {
+          setIsPauseOpen(true);
+          if (document.pointerLockElement === canvas) {
+            document.exitPointerLock?.();
+          }
+        }
+      }
+    } else if (
+      !trailerSession &&
+      pauseOpenRef.current &&
+      !settingsOpenRef.current &&
+      now >= circlePauseGraceUntil &&
+      gamepad.justPressed(1)
+    ) {
+      setIsPauseOpen(false);
+    }
+
+    const menuPaused =
+      levelUpOpenRef.current ||
+      battleReportOpenRef.current ||
+      pauseOpenRef.current ||
+      tutorialOpenRef.current;
+
+    if (trailerSession) {
+      if (trailerAssetsReady && controller && !menuPaused && implosionCinematic === null) {
+        const effSpeed = trailerSimPaused ? 0 : trailerPlaybackSpeed;
+        trailerAccumulator = Math.min(
+          trailerAccumulator + rawDt * effSpeed,
+          TRAILER_FIXED_DT * 4,
+        );
+        while (trailerAccumulator >= TRAILER_FIXED_DT) {
+          if (trailerBot && replayRecorder) {
+            waveMgr.getActiveThreats(activeThreats);
+            const botInput = trailerBot.step({
+              dt: TRAILER_FIXED_DT,
+              tick: trailerTickCount,
+              playerPos: controller.getPosition(),
+              playerVel: controller.getVelocity(),
+              playerSpeed: controller.getCurrentSpeed(),
+              aimForward: controller.getAimForward(),
+              aimUp: controller.getAimUp(),
+              mode: controller.getMode(),
+              enemies: waveMgr.enemies,
+              slabs: activeSlabs,
+              threats: activeThreats,
+              progression,
+              parry: controller.getParryInfo(),
+              kineticBounce: controller.getKineticBounceInfo(),
+            });
+            controller.setSyntheticInput(botInput);
+            if (botInput.extraSkill) onTrailerExtraSkill?.(botInput.extraSkill);
+            replayRecorder.recordFrame(botInput);
+            stepSimulation(TRAILER_FIXED_DT);
+            replayRecorder.maybeRecordCheckpoint(
+              trailerTickCount,
+              controller.getPosition(),
+              controller.getVelocity(),
+              waveMgr.enemies.length,
+            );
+            trailerTickCount += 1;
+          } else if (replayPlayer) {
+            const inp = replayPlayer.nextInput();
+            if (!inp) {
+              trailerSimPaused = true;
+              trailerAccumulator = 0;
+              break;
+            }
+            controller.setSyntheticInput(inp);
+            if (inp.extraSkill) onTrailerExtraSkill?.(inp.extraSkill);
+            stepSimulation(TRAILER_FIXED_DT);
+            replayPlayer.verifyCheckpoint(
+              trailerTickCount,
+              controller.getPosition(),
+              waveMgr.enemies.length,
+            );
+            trailerTickCount += 1;
+          }
+          trailerAccumulator -= TRAILER_FIXED_DT;
+        }
+      } else if (!controller) {
+        stepSimulation(0);
+      }
+      if (theaterCamera && controller) {
+        theaterCamera.update(rawDt, camera, controller.getPosition(), controller.getVelocity());
+      }
+    } else {
+      const isPaused = menuPaused || isWaitingPointerCapture() || implosionCinematic !== null;
+      stepSimulation(isPaused ? 0 : rawDt);
     }
 
     // --- Cinemática de Implosión: cámara dinámica + compresión/repulsión/cristal ---
@@ -1475,8 +1789,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         } else {
           if (!cin.resolved) {
             cin.resolved = true;
-            waveMgr.tryBreakKronosStarFromSkill(enemy);
-            runTracker.recordDamage(1);
+            waveMgr.breakKronosStarFromImplosion(enemy);
+            runTracker.recordDamage(KRONOS_PHASE_MAX_HP);
             enemy.hitFlash = 1;
             audio.playBossHit();
             comicVfx.spawnComicExplosion(targetPos, Math.max(3.5, enemy.radius * 1.4));
@@ -1495,7 +1809,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
 
       // Anima los VFX activos durante el freeze cinemático
       skillExecutor.update(rawDt, [], handleSkillDamageEnemy);
-      comicVfx.update(rawDt, camera);
+      comicVfx.update(rawDt, theaterCamera ? theaterCamera.camera : camera);
 
       if (cin.elapsed >= cin.duration) {
         if (cin.mode !== 'one_hit' && enemy.entity.alive) {
@@ -1512,13 +1826,20 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       }
     }
 
-    renderer.render(scene, camera);
+    const activeRenderCamera = theaterCamera ? theaterCamera.camera : camera;
+    renderer.render(scene, activeRenderCamera);
   };
   raf = requestAnimationFrame(tick);
 
   return () => {
     disposed = true;
     cancelAnimationFrame(raf);
+    if (replayRecorder && replayRecorder.frameCount > 0) {
+      setLastRecordedReplay(replayRecorder.buildReplayFile());
+    }
+    registerTrailerRuntime(null);
+    theaterCamera?.dispose();
+    restoreScopedRandom?.();
     if (document.pointerLockElement === canvas) {
       document.exitPointerLock?.();
     }

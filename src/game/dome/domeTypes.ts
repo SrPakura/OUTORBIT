@@ -74,6 +74,12 @@ export interface TestEnemySphere {
   evasive: boolean;
   evadeCooldown: number;
   hitFlash: number;
+  /** Puntos de colisión adicionales para enemigos articulados (ej. cadena de KRONOS). */
+  bodyPoints?: readonly THREE.Vector3[];
+  /** Radio de cada esfera en `bodyPoints`. */
+  bodyRadius?: number;
+  /** Puntos de `bodyPoints` temporalmente ocultos/intocables (ej. dentro de un portal). */
+  bodySubmerged?: readonly boolean[];
 }
 
 export interface DomeHudState {

@@ -6,10 +6,10 @@
 // vs jugador frenético.
 //
 // - VIDA = 4 Estrellas Dorsales (star_core_1..4 vinculadas a seg_03/06/09/12):
-//   una estrella por fase, sin barra genérica de HP. Solo se rompen con
-//   impacto de ALTA velocidad de Nyx (taladro / umbral cinético) o con
-//   habilidades gravitatorias / proyectiles de entorno. Anti-skip: como mucho
-//   1 estrella por uso y ~0.5 s de invulnerabilidad de transición.
+//   una estrella por fase. Un impacto directo sobre una Estrella Dorsal
+//   activa la rompe al instante; si golpeas el cuerpo/cabeza o usas skills
+//   sin acertar en la estrella, cada estrella/fase tiene exactamente 350 HP.
+//   Anti-skip: como mucho 1 estrella por uso y ~0.5 s de invulnerabilidad.
 // - CERO clips de Blender (kronos_tail_idle desactivado en el mixer): la
 //   cadena head→seg_01..seg_12 se resuelve con física follow-the-leader en
 //   espacio de mundo con buffers prealocados, rigidez angular ~15-18° por
@@ -18,7 +18,7 @@
 // - Cuatro fases: Exploración (0.5·V_base + Anillos), Ataque (1.0·V_base +
 //   Latigazo de Cola), Cabdeo (1.35·V_base + Portales 'SOLAR RIFT' +
 //   Mordisco) y Destrucción (invulnerable, cuerpo 'VOID COSMOS', slow-mo
-//   global 0.75, supervivencia de 60 s con cosmos_fusion y supernova).
+//   global 0.75, supervivencia de 45 s con cosmos_fusion y supernova).
 //
 // Scratch de módulo y buffers por instancia: cero allocations por frame.
 // ============================================================================
@@ -39,6 +39,12 @@ const KRONOS_CHAIN_POINTS = 13;
 export const KRONOS_SEGMENT_HIT_RADIUS = 3.0;
 /** Índices de cadena que portan las 4 Estrellas Dorsales (seg_03/06/09/12). */
 export const KRONOS_STAR_SEGMENTS = [3, 6, 9, 12];
+/** Radios de impacto directo por estrella (star_core_1..4 según tamaño real del GLB). */
+export const KRONOS_STAR_HIT_RADII = [1.15, 1.0, 0.85, 0.75] as const;
+/** Vida por fase (Fases 1–3) si los impactos no aciertan directamente en una Estrella Dorsal. */
+export const KRONOS_PHASE_MAX_HP = 350;
+/** Blindaje inicial por fase (se reinicia al pasar de fase). */
+export const KRONOS_PHASE_FLESH = 90;
 
 // --- Física serpentina (follow-the-leader) ---
 const KRONOS_MAX_BEND_RAD = 0.28; // Rigidez angular: 15-18° por eslabón.
@@ -98,8 +104,8 @@ const KRONOS_BITE_FLIGHT_SEC = 0.8;
 const KRONOS_PORTAL_LIFE_SEC = 3.2;
 const KRONOS_PORTAL_COOLDOWN = 8.0;
 
-// --- Fase 4: Destrucción (supervivencia de 60 s) ---
-const KRONOS_PHASE4_TOTAL_SEC = 60.0;
+// --- Fase 4: Destrucción (supervivencia de 45 s) ---
+const KRONOS_PHASE4_TOTAL_SEC = 45.0;
 const KRONOS_COSMOS_DAMAGE = 16; // cosmos_fusion: impacto automático directo.
 const KRONOS_COSMOS_WINDUP_SEC = 0.3;
 const KRONOS_SUPERNOVA_SEC = 1.2; // Convulsión segmento a segmento final.
@@ -172,6 +178,8 @@ export interface KronosBehaviorContext {
   kronosBaseMaxSpeed: number;
   /** Foto por frame de la velocidad de Nyx (predicción honesta). */
   playerVelocity: THREE.Vector3;
+  /** True mientras Nyx ejecuta una patada/taladro (permite romper estrella al impactarla). */
+  playerInKickAnim: boolean;
   /** Foto por frame del aim de Nyx (portales a su espalda). */
   playerAimForward: THREE.Vector3;
   fireProjectile(
@@ -186,13 +194,16 @@ export interface KronosBehaviorContext {
   ): void;
   poseBone(bone: EnemyBone | null, rotX: number, rotY: number, rotZ: number): void;
   /**
-   * Rotura de Estrella Dorsal con TODAS las puertas anti-skip (Fase 4
-   * invulnerable, invulnerabilidad de transición, 1 por uso).
+   * Rotura de Estrella Dorsal al golpear directamente una estrella activa
+   * con TODAS las puertas anti-skip (Fase 4 invulnerable, invulnerabilidad de
+   * transición, 1 por uso).
    */
-  tryBreakKronosStar(
+  tryBreakKronosStarAtPoint(
     enemy: ManagedWaveEnemy,
+    point: THREE.Vector3,
     impactSpeed: number,
     isDrill: boolean,
+    extraRadius?: number,
   ): boolean;
   /** Fase 4: la convulsión de la supernova terminó — el boss muere. */
   finalizeKronosSupernova(enemy: ManagedWaveEnemy): void;
@@ -223,6 +234,10 @@ export interface KronosBossState {
   chain: KronosChain;
   /** Estrellas Dorsales restantes (4 = Fase 1 ... 1 = Fase 4). */
   stars: number;
+  /** HP restante de la fase actual (350 en Fases 1–3 para golpes fuera de estrella). */
+  phaseHp: number;
+  /** Blindaje restante de la fase actual (se reinicia al cambiar de fase). */
+  phaseFlesh: number;
   starInvulnSec: number;
   phase4: boolean;
   phase4Timer: number;
@@ -274,6 +289,7 @@ const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const AXIS_Z = new THREE.Vector3(0, 0, 1);
 const _shootFrom = new THREE.Vector3();
 const _shootDir = new THREE.Vector3();
+const _starPos = new THREE.Vector3();
 
 /**
  * Buffers prealocados de la cadena (cero allocations por frame):
@@ -544,22 +560,22 @@ export function updateKronosAttack(
   k.dodgeCd = Math.max(0, k.dodgeCd - dt);
   k.portalCd = Math.max(0, k.portalCd - dt);
 
-  // --- Hitboxes segmentadas vs impacto de alta velocidad de Nyx: un
-  // taladro/patada rápida que atraviesa CUALQUIER segmento del cuerpo rompe
-  // una Estrella Dorsal (las puertas anti-skip viven en el manager).
+  // --- Estrellas Dorsales vs impacto directo de alta velocidad/patada de Nyx:
+  // solo rompe en 1 golpe si Nyx impacta directamente una Estrella Dorsal
+  // activa (las puertas anti-skip viven en el manager).
   if (k.stars > 1 && k.starInvulnSec <= 0) {
     const nyxSpeed = ctx.playerVelocity.length();
-    if (nyxSpeed >= KRONOS_STAR_SWEEP_SPEED) {
-      const reach = KRONOS_SEGMENT_HIT_RADIUS + 0.9;
-      for (let j = 0; j < KRONOS_CHAIN_POINTS; j++) {
-        if (_v1.subVectors(playerPos, k.chain.pos[j]).lengthSq() < reach * reach) {
-          ctx.tryBreakKronosStar(
-            enemy,
-            nyxSpeed,
-            nyxSpeed >= KRONOS_STAR_BREAK_SPEED,
-          );
-          break;
-        }
+    const fastSweep = nyxSpeed >= KRONOS_STAR_BREAK_SPEED;
+    const kickSweep = ctx.playerInKickAnim && nyxSpeed >= KRONOS_STAR_SWEEP_SPEED;
+    if (fastSweep || kickSweep) {
+      if (findHitKronosStarIndex(internal, playerPos, 0.9) >= 0) {
+        ctx.tryBreakKronosStarAtPoint(
+          enemy,
+          playerPos,
+          nyxSpeed,
+          fastSweep || ctx.playerInKickAnim,
+          0.9,
+        );
       }
     }
   }
@@ -1532,11 +1548,46 @@ function initFallbackChainPositions(enemy: ManagedWaveEnemy, k: KronosBossState)
 // ============================================================================
 
 /**
+ * Devuelve el índice (0..stars-1) de la Estrella Dorsal activa alcanzada por
+ * `point` con margen `extraRadius`, o -1 si el impacto no tocó ninguna estrella
+ * visible (en cuyo caso el golpe restaura/daña los 350 HP de la fase).
+ */
+export function findHitKronosStarIndex(
+  internal: EnemyInternal,
+  point: THREE.Vector3,
+  extraRadius = 0,
+): number {
+  const k = internal.kronos;
+  if (k.stars <= 1 || k.phase4) {
+    return -1;
+  }
+  const rig = internal.kronosRig;
+  const activeCount = Math.min(k.stars, KRONOS_STAR_SEGMENTS.length);
+  for (let s = 0; s < activeCount; s++) {
+    const segIdx = KRONOS_STAR_SEGMENTS[s];
+    if (k.chain.submerged[segIdx]) {
+      continue;
+    }
+    const starMesh = rig?.starCoreMeshes[s];
+    if (starMesh) {
+      if (!starMesh.visible) continue;
+      starMesh.getWorldPosition(_starPos);
+    } else {
+      _starPos.copy(k.chain.pos[segIdx]);
+    }
+    const reach = KRONOS_STAR_HIT_RADII[s] + extraRadius;
+    if (_v1.subVectors(point, _starPos).lengthSq() <= reach * reach) {
+      return s;
+    }
+  }
+  return -1;
+}
+
+/**
  * Aplica la rotura de UNA Estrella Dorsal: apaga visualmente star_core_{n}
  * en orden (star_core_4 primero), enciende ~0.5 s de invulnerabilidad de
- * transición, corta el ataque en curso y avanza de fase. Devuelve true si se
- * rompió. Las PUERTAS anti-skip (Fase 4 invulnerable, transición, 1 por uso)
- * viven en DomeWaveManager.tryBreakKronosStar: único punto de entrada.
+ * transición, reinicia la vida de fase (350 HP) para la siguiente estrella,
+ * corta el ataque en curso y avanza de fase. Devuelve true si se rompió.
  */
 export function applyKronosStarBreak(
   enemy: ManagedWaveEnemy,
@@ -1550,10 +1601,13 @@ export function applyKronosStarBreak(
   }
   k.stars--;
   k.starInvulnSec = KRONOS_STAR_INVULN_SEC;
+  k.phaseHp = k.stars > 1 ? KRONOS_PHASE_MAX_HP : 0;
+  k.phaseFlesh = KRONOS_PHASE_FLESH;
   enemy.entity.hp = k.stars; // Cada estrella equivale a 1 punto de vida.
   enemy.entity.weakPointsRemaining = k.stars;
   enemy.hitFlash = Math.min(1.8, 0.8 + enemy.hitFlash);
   enemy.entity.hitFlash = enemy.hitFlash;
+  effects.shakePulse = Math.max(effects.shakePulse, 0.75);
   // Apaga/rompe visualmente la estrella: star_core_4 -> 3 -> 2 en orden.
   const rig = internal.kronosRig;
   if (rig && rig.starCoreMeshes[k.stars]) {
@@ -1578,9 +1632,9 @@ export function applyKronosStarBreak(
 
 /**
  * FASE 4 — Destrucción: cuerpo al shader 'VOID COSMOS', invulnerable al
- * daño, timer de supervivencia de 60 s y agenda de cosmos_fusion repartida
- * por el ciclo (deformación 15 s, temblor de cámara 20 s, ejes invertidos
- * 5x5 s), sin solapar la Deformación con toda la fase.
+ * daño, timer de supervivencia de 45 s y agenda de cosmos_fusion repartida
+ * por el ciclo (deformación ~11.25 s, temblor de cámara 15 s, ejes
+ * invertidos 5x3.75 s), sin solapar la Deformación con toda la fase.
  */
 export function enterKronosPhase4(
   enemy: ManagedWaveEnemy,
@@ -1598,41 +1652,39 @@ export function enterKronosPhase4(
   if (physics) {
     internal.material = physics;
   }
-  // Agenda de efectos sobre Nyx repartida por los 60 s:
-  //  - Temblor de cámara: 4 ráfagas que suman 20 s.
-  //  - Deformación: 2 ráfagas que suman 15 s (8 + 7).
-  //  - Ejes invertidos: 5 activaciones de 5 s (25 s).
-  // Agenda ordenada por marca de tiempo (kind: 0 deformación = 15 s,
-  // 1 temblor de cámara = 20 s, 2 ejes invertidos = 5x5 s = 25 s).
+  // Agenda de efectos sobre Nyx repartida por los 45 s:
+  //  - Temblor de cámara: 4 ráfagas que suman 15 s.
+  //  - Deformación: 2 ráfagas que suman 11.25 s (5.25 + 6).
+  //  - Ejes invertidos: 5 activaciones de 3.75 s (18.75 s).
   k.agenda = [
-    { at: 3.0, on: true, kind: 1 },
-    { at: 8.0, on: false, kind: 1 },
-    { at: 10.0, on: true, kind: 2 },
-    { at: 13.0, on: true, kind: 0 },
-    { at: 15.0, on: false, kind: 2 },
-    { at: 19.0, on: true, kind: 1 },
-    { at: 20.0, on: false, kind: 0 },
-    { at: 24.0, on: false, kind: 1 },
-    { at: 26.0, on: true, kind: 2 },
-    { at: 30.0, on: true, kind: 0 },
-    { at: 31.0, on: false, kind: 2 },
-    { at: 35.0, on: true, kind: 1 },
-    { at: 38.0, on: false, kind: 0 },
-    { at: 40.0, on: false, kind: 1 },
-    { at: 41.0, on: true, kind: 2 },
-    { at: 46.0, on: false, kind: 2 },
-    { at: 47.5, on: true, kind: 2 },
-    { at: 50.0, on: true, kind: 1 },
-    { at: 52.5, on: false, kind: 2 },
-    { at: 55.0, on: false, kind: 1 },
-    { at: 55.5, on: true, kind: 2 },
-    { at: 60.0, on: false, kind: 2 },
+    { at: 2.25, on: true, kind: 1 },
+    { at: 6.0, on: false, kind: 1 },
+    { at: 7.5, on: true, kind: 2 },
+    { at: 9.75, on: true, kind: 0 },
+    { at: 11.25, on: false, kind: 2 },
+    { at: 14.25, on: true, kind: 1 },
+    { at: 15.0, on: false, kind: 0 },
+    { at: 18.0, on: false, kind: 1 },
+    { at: 19.5, on: true, kind: 2 },
+    { at: 22.5, on: true, kind: 0 },
+    { at: 23.25, on: false, kind: 2 },
+    { at: 26.25, on: true, kind: 1 },
+    { at: 28.5, on: false, kind: 0 },
+    { at: 30.0, on: false, kind: 1 },
+    { at: 30.75, on: true, kind: 2 },
+    { at: 34.5, on: false, kind: 2 },
+    { at: 35.625, on: true, kind: 2 },
+    { at: 37.5, on: true, kind: 1 },
+    { at: 39.375, on: false, kind: 2 },
+    { at: 41.25, on: false, kind: 1 },
+    { at: 41.625, on: true, kind: 2 },
+    { at: 45.0, on: false, kind: 2 },
   ];
   k.agendaIdx = 0;
 }
 
 /**
- * Avanza la Fase 4: el timer de supervivencia de 60 s, la agenda de efectos
+ * Avanza la Fase 4: el timer de supervivencia de 45 s, la agenda de efectos
  * sobre Nyx (deformación / temblor / ejes invertidos) y la apertura de la
  * supernova al agotarse (la última estrella colapsa).
  */
@@ -1680,6 +1732,8 @@ export function createKronosBossState(): KronosBossState {
   return {
     chain: new KronosChain(),
     stars: 4,
+    phaseHp: KRONOS_PHASE_MAX_HP,
+    phaseFlesh: KRONOS_PHASE_FLESH,
     starInvulnSec: 0,
     phase4: false,
     phase4Timer: 0,
