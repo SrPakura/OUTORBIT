@@ -195,6 +195,11 @@ const EDEN_MOVE_DRAIN = 1.0;
 const EDEN_DASH_COST = 3.0;
 const EDEN_ATTACK_DRAIN = 2.0;
 const EDEN_IDLE_REGEN_FRAC = 0.01; // 1% de maxEden por segundo
+/** Por debajo de este Edén en 0G, Nyx nada físicamente sin gastar Edén. */
+const EDEN_SWIM_THRESHOLD = 5.5;
+const SWIM_ACCEL = 4.6;
+const SWIM_MAX_SPEED = 8.5;
+const SWIM_STROKE_RAD_PER_SEC = (Math.PI * 2) / 1.2;
 
 // --- Cámara Lenta (Bullet-Time)
 const BULLET_TIME_SCALE = 0.25;
@@ -500,6 +505,7 @@ export class NyxDomeController {
   private speedMultiplier = 1;
   private edenRegenFrac = EDEN_IDLE_REGEN_FRAC;
   private hpRegenFrac = 0.01;
+  private swimStrokePhase = 0;
   private inkOverlayIntensity = 0;
   private waveNumber = 1;
   private waveLabel = 'BÁSICOS';
@@ -1768,6 +1774,7 @@ export class NyxDomeController {
     this.clips.run?.update(simDt, speed);
     this.clips.floatIdle?.update(simDt);
     this.clips.float?.update(simDt);
+    this.clips.swim?.update(simDt);
     this.animator.update(simDt, _animParams);
     this.vfx.update(
       sdt,
@@ -2853,18 +2860,29 @@ export class NyxDomeController {
   private updateFloating(dt: number, f: number, r: number): void {
     // cosmos_fusion: la deformación de KRONOS reduce la velocidad base a 1/3.
     const kronosSpeedScale = this.kronosDeformed ? KRONOS_DEFORM_SPEED_SCALE : 1;
-    // WASD / stick izquierdo acelera hacia la cámara (1.0 Edén/s mientras se
-    // pulsa), con la magnitud analógica del mando escalando el empuje.
-    if ((f !== 0 || r !== 0) && this.eden > 0.01) {
+    const isSwimming = this.eden < EDEN_SWIM_THRESHOLD;
+    // WASD / stick izquierdo acelera hacia la cámara:
+    //  - Con Edén >= 5.5: propulsión gravitatoria plena (1.0 Edén/s).
+    //  - Con Edén < 5.5: nado físico por brazadas en 0G SIN gastar Edén.
+    if (f !== 0 || r !== 0) {
       const dir = this.tmpA.set(0, 0, 0).addScaledVector(this.camFwd, f).addScaledVector(this.camRight, r);
       if (dir.lengthSq() > 1e-6) {
         dir.normalize();
         const mag = Math.min(1, Math.hypot(f, r));
-        this.velocity.addScaledVector(
-          dir,
-          FLOAT_ACCEL * mag * this.speedMultiplier * kronosSpeedScale * dt,
-        );
-        this.eden = Math.max(0, this.eden - EDEN_MOVE_DRAIN * dt);
+        if (isSwimming) {
+          this.swimStrokePhase += dt * SWIM_STROKE_RAD_PER_SEC;
+          const strokePulse = 0.65 + 0.7 * Math.abs(Math.sin(this.swimStrokePhase));
+          this.velocity.addScaledVector(
+            dir,
+            SWIM_ACCEL * strokePulse * mag * this.speedMultiplier * kronosSpeedScale * dt,
+          );
+        } else {
+          this.velocity.addScaledVector(
+            dir,
+            FLOAT_ACCEL * mag * this.speedMultiplier * kronosSpeedScale * dt,
+          );
+          this.eden = Math.max(0, this.eden - EDEN_MOVE_DRAIN * dt);
+        }
       }
     }
 
@@ -2900,9 +2918,10 @@ export class NyxDomeController {
       return;
     }
 
-    // Tope suave ~28 m/s (escalado por pasiva de velocidad y por KRONOS).
+    // Tope suave ~28 m/s en vuelo normal (o ~8.5 m/s nadando con Edén < 5.5).
     const sp = this.velocity.length();
-    const floatMax = FLOAT_MAX_SPEED * this.speedMultiplier * kronosSpeedScale;
+    const baseCap = isSwimming ? SWIM_MAX_SPEED : FLOAT_MAX_SPEED;
+    const floatMax = baseCap * this.speedMultiplier * kronosSpeedScale;
     if (sp > floatMax) {
       this.velocity.setLength(THREE.MathUtils.lerp(sp, floatMax, 1 - Math.exp(-1.6 * dt)));
     }
@@ -3928,6 +3947,7 @@ export class NyxDomeController {
     if (this.mode !== 'floating') {
       this.clips.floatIdle?.cancel();
       this.clips.float?.cancel();
+      this.clips.swim?.cancel();
     }
     switch (this.mode) {
       case 'grounded': {
@@ -3979,12 +3999,20 @@ export class NyxDomeController {
         break;
       }
       case 'floating': {
-        // En 0G el clip manda: flotación direccional mientras haya input o
-        // inercia, y `zero_g_float` solo cuando se queda quieta de verdad
-        // (< 2 m/s sin pulsar nada). Sin GLB se usa el ciclo procedural.
+        // Con Edén < 5.5 e input de movimiento: nado físico sin gastar Edén (`nyx_swim.glb`).
+        // Por encima: flotación direccional mientras haya input o inercia, y
+        // `zero_g_float` solo cuando se queda quieta de verdad (< 2 m/s sin pulsar nada).
+        const isSwimming = this.eden < EDEN_SWIM_THRESHOLD && hasMoveInput;
         const idleFloat = !hasMoveInput && speed < FLOAT_IDLE_SPEED;
         const idle = this.clips.floatIdle;
         const float = this.clips.float;
+        const swim = this.clips.swim;
+        if (isSwimming && swim !== null) {
+          idle?.cancel();
+          float?.cancel();
+          swim.setActive(true);
+          return;
+        }
         if (!idleFloat && float !== null) {
           // El cuerpo mira siempre al aim de cámara, así que el banco sigue a
           // la componente lateral de la velocidad y no al vector completo:
@@ -3993,16 +4021,19 @@ export class NyxDomeController {
           const lateral = this.velocity.dot(
             this.tmpE.crossVectors(this.up, this.facing),
           );
+          swim?.cancel();
           idle?.cancel();
           float.setDirection(forward, lateral);
           float.setActive(true);
           return;
         }
         if (idleFloat && idle !== null) {
+          swim?.cancel();
           float?.cancel();
           idle.setActive(true);
           return;
         }
+        swim?.cancel();
         idle?.cancel();
         float?.cancel();
         this.animator.setState('zero_g_float');
@@ -4366,6 +4397,7 @@ export class NyxDomeController {
     this.clips.run?.cancel();
     this.clips.floatIdle?.cancel();
     this.clips.float?.cancel();
+    this.clips.swim?.cancel();
     this.animator.setState(state);
     this.animLock = state;
     // Los estados sostenidos no terminan solos: se les pone un tope para que el

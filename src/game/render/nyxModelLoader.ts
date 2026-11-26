@@ -168,6 +168,8 @@ export interface NyxClips {
   floatIdle: NyxLoopPlayer | null;
   /** Flotación en 0G con input, direccional (banco derecha/izquierda/centro/atrás). */
   float: NyxFloatPlayer | null;
+  /** Nado físico en 0G cuando Edén < 5.5 (sin gasto de Edén). */
+  swim: NyxLoopPlayer | null;
 }
 
 export interface LoadedNyx {
@@ -315,9 +317,11 @@ export async function loadNyxRigged(): Promise<LoadedNyx> {
 
   // La flotación sin input es un movimiento lento sin cadencia que escalar, así
   // que va a ritmo fijo. La direccional mezcla cuatro clips en un solo mixer.
-  const [floatIdleClip, floatClips] = await Promise.all([
+  // El nado físico (`nyx_swim.glb`) entra en 0G cuando el Edén baja de 5.5.
+  const [floatIdleClip, floatClips, swimClip] = await Promise.all([
     loadLoopClip(loader, '/models/nyx_zero_g_float.glb', 'flotación 0G'),
     loadFloatClips(loader),
+    loadLoopClip(loader, '/models/nyx_swim.glb', 'nado 0G'),
   ]);
 
   const clips: NyxClips = {
@@ -327,6 +331,9 @@ export async function loadNyxRigged(): Promise<LoadedNyx> {
       ? new NyxLoopPlayer(model, animator, floatIdleClip, { blend: 0.3 })
       : null,
     float: floatClips ? new NyxFloatPlayer(model, animator, floatClips) : null,
+    swim: swimClip
+      ? new NyxLoopPlayer(model, animator, swimClip, { blend: 0.25 })
+      : null,
   };
 
   const dispose = (): void => {
@@ -334,6 +341,7 @@ export async function loadNyxRigged(): Promise<LoadedNyx> {
     clips.run?.dispose();
     clips.floatIdle?.dispose();
     clips.float?.dispose();
+    clips.swim?.dispose();
     const materials = new Set<THREE.Material>();
     model.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
