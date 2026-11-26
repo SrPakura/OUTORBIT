@@ -414,6 +414,18 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       runTracker.recordDamage(amount);
       return;
     }
+    // Prisma Necroz: 1 roca pequeña (o skill a distancia) destruye 1 triángulo
+    // del escudo cristalino, abriendo un hueco físico real. Si esa cara ya
+    // tiene hueco, la habilidad/roca impacta a Necroz directamente.
+    if (enemy.entity.archetype === 'prisma_necroz') {
+      const hitFrom =
+        impulse.lengthSq() > 0.01
+          ? skillImpulseDir.copy(enemy.position).sub(impulse)
+          : (controller?.getPosition() ?? enemy.position);
+      if (waveMgr.tryBreakNecrozShieldTriangle(enemy, hitFrom)) {
+        return;
+      }
+    }
     enemy.entity.position.copy(enemy.position);
     const res = combat.computeKineticImpact(
       enemy.entity,
@@ -422,7 +434,11 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       false,
       bypassFlesh,
     );
-    enemy.velocity.add(impulse);
+    if (enemy.entity.archetype !== 'prisma_necroz') {
+      enemy.velocity.add(impulse);
+    } else {
+      waveMgr.notifyNecrozHit(enemy);
+    }
     enemy.hitFlash = 1;
     runTracker.recordDamage(Math.max(amount, res.damage));
     if (enemy.entity.hp <= 0 || res.killed) {
@@ -506,6 +522,16 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           isDrill,
         );
         return;
+      }
+      // Prisma Necroz: escudo triangulado — bloquea si el triángulo en esa
+      // dirección está intacto (0 daño + rebote); si hay hueco, entra limpio.
+      if (managed.entity.archetype === 'prisma_necroz') {
+        const playerPos = controller?.getPosition() ?? enemy.position;
+        if (waveMgr.checkNecrozShieldBlock(managed, playerPos) === 'blocked') {
+          controller?.punchCamera(0.25);
+          controller?.bounceOffGolemGuard(enemy.position, enemy.radius + 1.1);
+          return;
+        }
       }
       // Gólem Rompesuelos: la pared maciza del bloqueo absorbe los impactos
       // frontales (0 daño) y DEVUELVE la patada con la MISMA mecánica y

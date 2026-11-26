@@ -89,6 +89,20 @@ import {
   createKronosPortalVisual,
   disposeKronosPortalShared,
 } from './DomeEnemyModels';
+import {
+  checkNecrozShieldBlock,
+  createDomeSpikePool,
+  createNecrozBossState,
+  disposeDomeSpikePool,
+  disposeNecrozState,
+  resetNecrozState,
+  tryBreakNecrozShieldTriangle,
+  updateDomeSpikes,
+  updateNecrozEnemy,
+  type DomeSpikeSlot,
+  type NecrozBehaviorContext,
+  type NecrozBossState,
+} from './domeNecrozBehavior';
 import { FLOAT_MAX_SPEED } from './NyxDomeController';
 import {
   crabLaserContactDistanceSq,
@@ -186,7 +200,6 @@ const HIT_FLASH_EMISSIVE = 0.85;
 const EVASIVE_ARCHETYPES: ReadonlySet<EnemyArchetype> = new Set([
   'lightning_butterfly',
   'giant_sparrow',
-  'prisma_necroz',
 ]);
 
 const BASIC_ARCHETYPES: readonly EnemyArchetype[] = [
@@ -848,6 +861,8 @@ export interface EnemyInternal {
   octopusCounterTimer: number;
   /** Forzar el reinicio del clip one-shot actual (re-disparo directo). */
   octopusForceRestart: boolean;
+  /** Prisma Necroz: escudo triangulado, pereza y púas de esfera. */
+  necroz: NecrozBossState | null;
 }
 
 /**
@@ -975,6 +990,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private readonly kronosRingMaterial: THREE.ShaderMaterial;
   /** Portales Cósmicos 'SOLAR RIFT' de KRONOS (2 slots: entrada y salida). */
   readonly kronosPortals: KronosPortal[] = [];
+  /** Púas piramidales de la Esfera Blanca (Prisma Necroz). */
+  readonly domeSpikes: DomeSpikeSlot[];
+  private readonly necrozCtx: NecrozBehaviorContext;
   /**
    * Efectos de cosmos_fusion sobre Nyx (Fase 4): el game loop los empuja al
    * controller cada frame y consume los pulsos one-shot.
@@ -1084,6 +1102,13 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   constructor(scene: THREE.Scene) {
     this.scene = scene;
     this.visuals = buildArchetypeVisuals();
+    this.domeSpikes = createDomeSpikePool(scene);
+    this.necrozCtx = {
+      scene,
+      domeSpikes: this.domeSpikes,
+      playerVelocity: this.playerVelocity,
+      speedMult: 1,
+    };
     this.unsubModelLoaded = onEnemyModelLoaded((archetype) => {
       this.upgradeSpawnedVisuals(archetype);
     });
@@ -1381,6 +1406,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         internal.sparrowRig = collectSparrowRig(glbVisual.root);
       } else if (enemy.entity.archetype === 'prisma_necroz') {
         internal.prismaNecrozRig = collectPrismaNecrozRig(glbVisual.root);
+        if (internal.necroz) {
+          glbVisual.root.add(internal.necroz.shieldMesh);
+        }
       } else if (enemy.entity.archetype === 'ground_golem') {
         internal.golemRig = collectGolemRig(glbVisual.root);
       } else if (enemy.entity.archetype === 'kronos_leviathan') {
@@ -1457,13 +1485,16 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     // posición explícita del Modo Entrenamiento (delante de Nyx).
     const angle = (index / Math.max(1, this.enemies.length + 6)) * Math.PI * 2 + rng() * 1.2;
     const dist = 26 + rng() * 30;
-    const homePos = homePosOverride
-      ? homePosOverride.clone()
-      : new THREE.Vector3(
-          Math.cos(angle) * dist,
-          6 + rng() * 30,
-          Math.sin(angle) * dist,
-        );
+    const homePos =
+      archetype === 'prisma_necroz'
+        ? new THREE.Vector3(0, 0, 0)
+        : homePosOverride
+          ? homePosOverride.clone()
+          : new THREE.Vector3(
+              Math.cos(angle) * dist,
+              6 + rng() * 30,
+              Math.sin(angle) * dist,
+            );
 
     // Cangrejo Artillero: aparece directamente encima de un suelo flotante
     // dentro de la cúpula (preferiblemente center < 70 m).
@@ -1593,6 +1624,10 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       octopusHitTimer: 0,
       octopusCounterTimer: 0,
       octopusForceRestart: false,
+      necroz:
+        archetype === 'prisma_necroz'
+          ? createNecrozBossState(this.scene, entity.radius, mesh)
+          : null,
     });
   }
 
@@ -1714,6 +1749,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       // portales) y cierra los portales abiertos.
       resetKronosOffense(this, internal.enemy, internal);
     }
+    if (internal.necroz) {
+      resetNecrozState(internal.necroz, this.necrozCtx);
+    }
     // Célula Abisal: cancela cualquier fase ofensiva/telegraph en curso.
     if (internal.cellState !== 'seek' && internal.cellState !== 'stalk') {
       internal.cellState = 'stalk';
@@ -1787,8 +1825,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     // Velocidad ANTES del knockback: si la pared del gólem absorbe el golpe,
     // se restaura (300 kg de brazo macizo no se apartan tras cada patada).
     _preHitVel.copy(internal.enemy.velocity);
-    if (internal.enemy.entity.archetype !== 'kronos_leviathan') {
+    if (
+      internal.enemy.entity.archetype !== 'kronos_leviathan' &&
+      internal.enemy.entity.archetype !== 'prisma_necroz'
+    ) {
       internal.enemy.velocity.addScaledVector(hitDir, baseKnockback * kineticMult);
+    }
+    if (internal.necroz && internal.enemy.entity.alive) {
+      internal.necroz.hitTimer = 0.3;
     }
     internal.enemy.hitFlash = Math.min(1.8, kineticMult);
     internal.enemy.entity.hitFlash = internal.enemy.hitFlash;
@@ -2257,12 +2301,30 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         // su PROPIO ciclo de dash de 5.0 s — sin homePos estático, sin dash
         // evasivo genérico. La contención dura vive a 80 m.
         this.updateOctopusEnemy(enemy, internal, dt, playerPos);
+      } else if (enemy.entity.archetype === 'prisma_necroz' && internal.necroz) {
+        this.necrozCtx.speedMult = this.speedMult;
+        this.necrozCtx.onGolemSmash = onGolemSmash;
+        updateNecrozEnemy(
+          this.necrozCtx,
+          enemy.position,
+          enemy.velocity,
+          enemy.mesh,
+          internal.actions,
+          internal.necroz,
+          dt,
+          playerPos,
+          this.enemiesPassive,
+        );
       } else {
         this.applyFloatMovement(enemy, internal, dt, elapsed);
       }
 
       // --- Comportamiento ofensivo por arquetipo (desactivado en modo pasivo) ---
-      if (!this.enemiesPassive && enemy.entity.archetype !== 'abyssal_cell') {
+      if (
+        !this.enemiesPassive &&
+        enemy.entity.archetype !== 'abyssal_cell' &&
+        enemy.entity.archetype !== 'prisma_necroz'
+      ) {
         this.updateEnemyBehavior(
           enemy,
           internal,
@@ -2289,11 +2351,13 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         (internal.golemState === 'thin_spiral' || internal.golemState === 'thick_spiral');
       const crabOnSlab = isCrab && (internal.jump !== null || internal.attachedSlabId !== null);
       const isKronos = enemy.entity.archetype === 'kronos_leviathan';
+      const isNecroz = enemy.entity.archetype === 'prisma_necroz';
       if (
         activeSlabs &&
         !crabOnSlab &&
         !golemSpiral &&
         !isKronos &&
+        !isNecroz &&
         resolveSphereSlabCollision(activeSlabs, enemy.position, enemy.radius, _slabContact)
       ) {
         if (enemy.entity.archetype === 'ground_golem' && _slabContact.slab && onSlabSmash) {
@@ -2335,7 +2399,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       } else if (enemy.entity.archetype === 'giant_sparrow') {
         this.updateSparrowPose(enemy, internal, dt, elapsed, playerPos);
       } else if (enemy.entity.archetype === 'prisma_necroz') {
-        this.updatePrismaNecrozPose(enemy, internal, dt, elapsed, playerPos);
+        // Pose y clips gobernados por updateNecrozEnemy (domeNecrozBehavior.ts).
       } else if (enemy.entity.archetype === 'ground_golem') {
         this.updateGolemPose(enemy, internal, dt, elapsed, playerPos);
       } else if (enemy.entity.archetype === 'kronos_leviathan') {
@@ -2382,6 +2446,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     this.updateOctopusSplitBursts(dt, playerPos);
     updateKronosRings(this, dt, playerPos, onGolemSmash);
     updateKronosPortals(this.kronosPortals, dt, elapsed);
+    this.necrozCtx.onGolemSmash = onGolemSmash;
+    updateDomeSpikes(this.necrozCtx, dt, playerPos);
 
     // Ventana de parry abierta este frame: el game loop arranca el slow-mo
     // con el gólem y el punto de su estrella (clonado: el manager seguirá
@@ -2419,6 +2485,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     this.kronosPortals.length = 0;
     disposeKronosPortalShared();
+    disposeDomeSpikePool(this.domeSpikes);
     this.resetKronosNyxEffects();
     for (const beam of this.crabLasers) {
       this.scene.remove(beam.mesh);
@@ -2441,6 +2508,28 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     }
     this.starGeometry.dispose();
     this.projectiles.length = 0;
+  }
+
+  /** Prisma Necroz: bloquea ataque cuerpo a cuerpo si el triángulo en esa dirección está intacto. */
+  checkNecrozShieldBlock(enemy: ManagedWaveEnemy, playerPos: THREE.Vector3): 'blocked' | 'passed_hole' {
+    const internal = this.internals.get(enemy.id);
+    if (!internal?.necroz) return 'passed_hole';
+    return checkNecrozShieldBlock(internal.necroz, enemy.position, enemy.mesh.quaternion, playerPos);
+  }
+
+  /** Prisma Necroz: 1 roca pequeña / habilidad destruye 1 triángulo del escudo. */
+  tryBreakNecrozShieldTriangle(enemy: ManagedWaveEnemy, fromPos: THREE.Vector3): boolean {
+    const internal = this.internals.get(enemy.id);
+    if (!internal?.necroz) return false;
+    return tryBreakNecrozShieldTriangle(internal.necroz, enemy.position, enemy.mesh.quaternion, fromPos);
+  }
+
+  /** Prisma Necroz: dispara clip de impacto al recibir daño por un hueco. */
+  notifyNecrozHit(enemy: ManagedWaveEnemy): void {
+    const internal = this.internals.get(enemy.id);
+    if (internal?.necroz) {
+      internal.necroz.hitTimer = 0.3;
+    }
   }
 
   // -------------------------------------------------------------------------

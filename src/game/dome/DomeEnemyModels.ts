@@ -344,7 +344,7 @@ const gltfLoader = new GLTFLoader();
  * bumpar esta constante la URL cambia y todo el mundo descarga el asset nuevo
  * a la primera. Bump obligatorio en cada re-export de cualquier .glb.
  */
-const GLB_CACHE_VERSION = 7;
+const GLB_CACHE_VERSION = 8;
 
 function loadEnemyModel(archetype: EnemyArchetype): Promise<void> {
   if (modelCache.has(archetype)) {
@@ -615,7 +615,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
       // congelan en su último frame hasta que el comportamiento los
       // reinicie con reset(). Las espirales y la guardia del gólem son
       // bucles sostenidos ("Bucle + Pose" de enemigos_base.md §7.4).
-      if (/loop|idle|float|observe|ready|duplicate|spiral|guard/.test(clip.name)) {
+      if (/loop|idle|float|observe|ready|duplicate|spiral|guard|fresh|lazy|build|summon/.test(clip.name)) {
         action.setLoop(THREE.LoopRepeat, Infinity);
       } else {
         action.setLoop(THREE.LoopOnce, 1);
@@ -626,6 +626,7 @@ export function instantiateEnemyVisual(archetype: EnemyArchetype): EnemyVisual |
     // Solo arranca en reposo el clip de idle; el resto los activa la IA.
     const idle =
       actions.get('kronos_swim_idle') ??
+      actions.get('necroz_idle_fresh') ??
       actions.get('cell_idle_float') ??
       actions.get('crab_idle_breathe') ??
       actions.get('golem_helicopter_loop') ??

@@ -167,7 +167,7 @@ export const DOME_ENEMY_ARCHETYPES: Record<EnemyArchetype, EnemyArchetypeStats> 
   // Gorrión Gigante (Élite): 2 cristales — pecho y boca (solo con mouthOpen).
   giant_sparrow: { maxHp: 640, radius: 4.5, fleshThickness: 60, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 2, evasive: true },
   // Prisma Necroz (Élite): 1 cristal en el pecho, saca pinchos de frente.
-  prisma_necroz: { maxHp: 600, radius: 3.8, fleshThickness: 65, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 1, evasive: true },
+  prisma_necroz: { maxHp: 300, radius: 3.8, fleshThickness: 65, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 1, evasive: false },
   // Leviatán KRONOS (Boss, rediseño): la barra genérica de HP NO existe — su
   // vida son 4 Estrellas Dorsales (hp 4 = 1 punto por estrella; se rompen en
   // el manager con las reglas anti-skip, jamás vía computeKineticImpact).
