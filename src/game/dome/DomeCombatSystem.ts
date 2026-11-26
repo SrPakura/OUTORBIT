@@ -165,7 +165,7 @@ export const DOME_ENEMY_ARCHETYPES: Record<EnemyArchetype, EnemyArchetypeStats> 
   // Mariposa Relámpago: se revienta de un golpe básico pero es escurridiza.
   lightning_butterfly: { maxHp: 25, radius: 1.2, fleshThickness: 8, expValue: 1.5, isElite: false, isBoss: false, weakPoints: 1, evasive: true },
   // Gorrión Gigante (Élite): 2 cristales — pecho y boca (solo con mouthOpen).
-  giant_sparrow: { maxHp: 320, radius: 4.5, fleshThickness: 60, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 2, evasive: false },
+  giant_sparrow: { maxHp: 520, radius: 4.5, fleshThickness: 85, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 2, evasive: false },
   // Prisma Necroz (Élite): 1 cristal en el pecho, saca pinchos de frente.
   prisma_necroz: { maxHp: 300, radius: 3.8, fleshThickness: 65, expValue: 3.0, isElite: true, isBoss: false, weakPoints: 1, evasive: false },
   // Leviatán KRONOS (Boss, rediseño): la barra genérica de HP NO existe — su
@@ -321,7 +321,11 @@ export class DomeCombatSystem {
         reason = 'skill';
       }
       enemy.weakPointsRemaining = Math.max(0, enemy.weakPointsRemaining - 1);
-      damage = Math.max(kineticForce * STAR_DAMAGE_PER_FORCE, enemy.maxHp * STAR_DAMAGE_MIN_FRACTION);
+      const starFloor =
+        enemy.isElite && !isDrill && impactSpeed < 16
+          ? 0
+          : enemy.maxHp * STAR_DAMAGE_MIN_FRACTION;
+      damage = Math.max(kineticForce * STAR_DAMAGE_PER_FORCE, starFloor);
     } else {
       // Solo alcanza la carne: la desgasta y hace daño parcial proporcional.
       const wear = Math.min(enemy.fleshThickness, kineticForce * FLESH_WEAR_PER_FORCE);
