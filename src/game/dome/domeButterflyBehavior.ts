@@ -77,7 +77,7 @@ const BUTTERFLY_ENERGY_MAX = 100.0;
 const BUTTERFLY_RECHARGE_PER_SEC = 28.0; // piezoelectricidad al aletear
 
 const BUTTERFLY_DASH_SEC = 0.8;
-const BUTTERFLY_DASH_SPEED = 42.0; // cruza ~33 m en 0.8 s
+const BUTTERFLY_DASH_SPEED = 35.7; // -15% de 42.0 m/s (techo de velocidad)
 const BUTTERFLY_PIVOT_SEC = 0.2;
 const BUTTERFLY_BURST_CD_MIN = 1.5;
 const BUTTERFLY_BURST_CD_MAX = 2.0;
@@ -85,8 +85,8 @@ const BUTTERFLY_BURST_CD_MAX = 2.0;
 const BUTTERFLY_BALL_COST = 14.0;
 const BUTTERFLY_BALL_DURATION = 0.45;
 const BUTTERFLY_BALL_FIRE_AT = 0.16;
-const BUTTERFLY_BALL_CD_MIN = 1.25;
-const BUTTERFLY_BALL_CD_MAX = 1.85;
+const BUTTERFLY_BALL_CD_MIN = 2.2;
+const BUTTERFLY_BALL_CD_MAX = 3.1;
 const BUTTERFLY_BALL_MIN_RANGE = 13.5;
 
 const BUTTERFLY_BEAM_RANGE = 14.5;
@@ -345,7 +345,7 @@ function startElectricDash(
 ): void {
   state.state = 'dash';
   state.stateTimer = BUTTERFLY_DASH_SEC;
-  state.dashSpeed = BUTTERFLY_DASH_SPEED * ctx.speedMult;
+  state.dashSpeed = Math.min(35.7, BUTTERFLY_DASH_SPEED * ctx.speedMult);
   state.trailOrigin.copy(pos);
   state.trailAlpha = 1.0;
 

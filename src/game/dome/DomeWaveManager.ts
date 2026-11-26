@@ -2637,7 +2637,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           playerPos,
           this.enemiesPassive,
           (origin, targetPos) => {
-            this.fireProjectile(enemy, targetPos, 'electric_ball', 10, 27 * this.speedMult, 0, origin);
+            const ballSpeed = Math.min(22.95, 22.95 * this.speedMult);
+            this.fireProjectile(enemy, targetPos, 'electric_ball', 10, ballSpeed, 0, origin);
           },
         );
       } else {
@@ -3881,7 +3882,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     projectile.active = true;
     projectile.kind = kind;
     projectile.damage = damage;
-    projectile.life = PROJECTILE_LIFE_SEC;
+    projectile.life = kind === 'electric_ball' ? 10.0 : PROJECTILE_LIFE_SEC;
     projectile.decel = 0;
     projectile.autoAimRate = 0;
     projectile.captured = false;
@@ -4081,6 +4082,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         }
         this.deactivateProjectile(projectile);
       } else if (projectile.life <= 0 || outOfBounds) {
+        if (projectile.kind === 'electric_ball' && projectile.life <= 0) {
+          this.onEnemyExplode?.(projectile.mesh.position.clone(), 1.6, 0x38bdf8);
+        }
         this.deactivateProjectile(projectile);
       }
     }
