@@ -88,7 +88,7 @@ const DOME_KEEP_RADIUS = 86;
 const BLACK_HOLE_DURATION = 4.5;
 const BLACK_HOLE_SPEED = 7;
 const BLACK_HOLE_TICK = 0.5;
-const ATTRACTION_DURATION = 1.8;
+const ATTRACTION_DURATION = 2.2;
 const CRUSH_CONTACT_DISTANCE = 2.4;
 
 // --- Escombros de suelos rotos (Gólem Rompesuelos): agarrables por el
@@ -1593,8 +1593,8 @@ export class DomeSkillExecutor {
         if (!aliveIds.has(well.enemyA.id) || !aliveIds.has(well.enemyB.id)) {
           done = true;
         } else {
-          const pullAccel = 70 + well.level * 20;
-          const directSpeed = 14 + well.level * 4;
+          const pullAccel = 95 + well.level * 25;
+          const directSpeed = 20 + well.level * 5;
           _v1.addVectors(well.enemyA.position, well.enemyB.position).multiplyScalar(0.5);
           this.pullEnemy(well.enemyA, _v1, pullAccel, dt, directSpeed);
           this.pullEnemy(well.enemyB, _v1, pullAccel, dt, directSpeed);
@@ -1602,14 +1602,15 @@ export class DomeSkillExecutor {
 
           const dist = well.enemyA.position.distanceTo(well.enemyB.position);
           if (dist <= well.enemyA.radius + well.enemyB.radius + 0.8) {
-            const damage = 15 + well.level * 7;
+            const damage = 45 + well.level * 15;
             onDamageEnemy(
               well.enemyA,
               damage,
               _impulse
                 .subVectors(well.enemyB.position, well.enemyA.position)
                 .normalize()
-                .multiplyScalar(12)
+                .multiplyScalar(12),
+              true,
             );
             onDamageEnemy(
               well.enemyB,
@@ -1617,7 +1618,8 @@ export class DomeSkillExecutor {
               _impulse
                 .subVectors(well.enemyA.position, well.enemyB.position)
                 .normalize()
-                .multiplyScalar(12)
+                .multiplyScalar(12),
+              true,
             );
             _v3.addVectors(well.enemyA.position, well.enemyB.position).multiplyScalar(0.5);
             this.spawnExpandingWave(_v3, 3.5, 0.35, this.flashMaterial);
@@ -1630,8 +1632,8 @@ export class DomeSkillExecutor {
         } else {
           const distA = well.slabA.center.distanceTo(well.crushTarget.position);
           const distB = well.slabB.center.distanceTo(well.crushTarget.position);
-          const speedA = Math.max(16 + well.level * 4, distA / 0.9);
-          const speedB = Math.max(16 + well.level * 4, distB / 0.9);
+          const speedA = Math.max(20 + well.level * 5, distA / 0.75);
+          const speedB = Math.max(20 + well.level * 5, distB / 0.75);
           this.moveSlabToward(well.slabA, well.crushTarget.position, speedA, dt);
           this.moveSlabToward(well.slabB, well.crushTarget.position, speedB, dt);
           // Retiene al enemigo en el punto medio entre ambos suelos mientras se cierran.
@@ -1639,7 +1641,7 @@ export class DomeSkillExecutor {
           this.pullEnemy(well.crushTarget, _v1, 32 + well.level * 8, dt, 6);
           this.orientLink(well.link, well.slabA.center, well.slabB.center);
 
-          const damage = 18 + well.level * 8;
+          const damage = 30 + well.level * 7;
           if (
             !well.crushedA &&
             well.slabA.center.distanceTo(well.crushTarget.position) <=
@@ -1652,7 +1654,8 @@ export class DomeSkillExecutor {
               _impulse
                 .subVectors(well.slabA.center, well.crushTarget.position)
                 .normalize()
-                .multiplyScalar(8)
+                .multiplyScalar(8),
+              true,
             );
             this.spawnExpandingWave(well.crushTarget.position, 2.5, 0.3, this.flashMaterial);
           }
@@ -1668,7 +1671,8 @@ export class DomeSkillExecutor {
               _impulse
                 .subVectors(well.slabB.center, well.crushTarget.position)
                 .normalize()
-                .multiplyScalar(8)
+                .multiplyScalar(8),
+              true,
             );
             this.spawnExpandingWave(well.crushTarget.position, 2.5, 0.3, this.flashMaterial);
           }
