@@ -356,6 +356,68 @@ function DomeHudSketchInner({
         />
       )}
 
+      {/* 2a. Raja roja estilo cómic al recibir daño enemigo */}
+      {(hud.hurtFlash ?? 0) > 0.01 && (() => {
+        const hurt = Math.min(1, hud.hurtFlash ?? 0);
+        const seed = hud.hurtSlashSeed ?? 0;
+        const angles = [-24, 22, -13, 31, -36];
+        const offsetsY = [-6, 8, -14, 12, 0];
+        const rot = angles[seed % angles.length];
+        const shiftY = offsetsY[seed % offsetsY.length];
+        return (
+          <div
+            className="pointer-events-none absolute inset-0 overflow-hidden"
+            style={{
+              opacity: Math.min(1, hurt * 1.15),
+              boxShadow: `inset 0 0 125px 28px rgba(225, 29, 72, ${(hurt * 0.5).toFixed(2)})`,
+            }}
+          >
+            <svg
+              className="h-full w-full"
+              viewBox="0 0 1600 900"
+              preserveAspectRatio="xMidYMid slice"
+              style={{
+                transform: `translateY(${shiftY}%) rotate(${rot}deg) scale(${(0.95 + hurt * 0.14).toFixed(3)})`,
+                transformOrigin: '50% 50%',
+                filter: 'drop-shadow(0 0 16px rgba(255, 30, 66, 0.85))',
+              }}
+            >
+              <defs>
+                <linearGradient id="domeHurtSlashGrad" x1="0%" y1="50%" x2="100%" y2="50%">
+                  <stop offset="0%" stopColor="#e11d48" stopOpacity="0" />
+                  <stop offset="18%" stopColor="#e11d48" stopOpacity="0.95" />
+                  <stop offset="50%" stopColor="#ff1e42" stopOpacity="1" />
+                  <stop offset="82%" stopColor="#e11d48" stopOpacity="0.95" />
+                  <stop offset="100%" stopColor="#e11d48" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              {/* Trazo negro exterior de tinta */}
+              <path
+                d="M-120,462 L380,446 L620,420 L800,402 L995,428 L1240,446 L1720,458 L1250,478 L985,486 L790,502 L610,482 L365,472 Z"
+                fill="#0b0d12"
+                opacity="0.88"
+              />
+              {/* Desgarro carmesí vivo */}
+              <path
+                d="M-80,460 L400,449 L625,427 L802,412 L990,434 L1235,449 L1680,458 L1238,471 L980,478 L794,491 L616,474 L390,468 Z"
+                fill="url(#domeHurtSlashGrad)"
+              />
+              {/* Núcleo blanco candente del corte */}
+              <path
+                d="M80,459 L540,448 L800,434 L1060,448 L1520,458 L1060,464 L800,471 L540,463 Z"
+                fill="#fff1f2"
+                opacity={Math.min(1, hurt * 1.1)}
+              />
+              {/* Esquirlas de corte cómic */}
+              <polygon points="510,398 575,382 540,408" fill="#ff1e42" stroke="#0b0d12" strokeWidth="2.5" />
+              <polygon points="1030,502 1098,522 1055,492" fill="#ff1e42" stroke="#0b0d12" strokeWidth="2.5" />
+              <polygon points="895,384 940,368 914,394" fill="#fff1f2" stroke="#0b0d12" strokeWidth="2" />
+              <polygon points="680,516 734,536 704,506" fill="#fff1f2" stroke="#0b0d12" strokeWidth="2" />
+            </svg>
+          </div>
+        );
+      })()}
+
       {/* 2b. Mancha de Tinta Ácida del Pulpo Espiral: salpicadura orgánica
           procedural (blobs irregulares + gotas + chorretes). La opacidad la
           fija el combate: bola base 55% durante 3 s, contra-parry 65%. */}

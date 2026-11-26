@@ -448,8 +448,29 @@ function getWavePlan(waveNumber: number, difficultyScaling = true): WavePlan {
     label = 'BOSS';
     floorMode = 'boss';
     spawns.push({ archetype: 'kronos_leviathan', count: 1 });
+  } else if (waveNumber === 1) {
+    // Oleada 1: fácil (Célula + Cangrejo)
+    spawns.push({ archetype: 'abyssal_cell', count: 1 });
+    spawns.push({ archetype: 'crab_gunner', count: 1 });
+  } else if (waveNumber === 2) {
+    // Oleada 2: Célula + Cangrejo + Pulpo
+    spawns.push({ archetype: 'abyssal_cell', count: 1 });
+    spawns.push({ archetype: 'crab_gunner', count: 1 });
+    spawns.push({ archetype: 'spiral_octopus', count: 1 });
+  } else if (waveNumber === 3) {
+    // Oleada 3: Célula + Cangrejo + Pulpo + Mariposa Relámpago
+    spawns.push({ archetype: 'abyssal_cell', count: 1 });
+    spawns.push({ archetype: 'crab_gunner', count: 1 });
+    spawns.push({ archetype: 'spiral_octopus', count: 1 });
+    spawns.push({ archetype: 'lightning_butterfly', count: 1 });
+  } else if (waveNumber === 4) {
+    // Oleada 4: Célula + Cangrejo + Pulpo + Gólem Rompesuelos
+    spawns.push({ archetype: 'abyssal_cell', count: 1 });
+    spawns.push({ archetype: 'crab_gunner', count: 1 });
+    spawns.push({ archetype: 'spiral_octopus', count: 1 });
+    spawns.push({ archetype: 'ground_golem', count: 1 });
   } else {
-    // Oleadas básicas: 4 enemigos base en 1–4, +1 tras cada oleada de miniboss.
+    // Desde la oleada 6+: básicos aleatorios (4 base + 1 por miniboss superado = 5 en Ol. 6).
     spawns.push({ archetype: 'basic_mix', count: 4 + minibossesPassed });
   }
 
@@ -1462,7 +1483,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       for (let i = 0; i < spawn.count; i++) {
         const archetype =
           spawn.archetype === 'basic_mix'
-            ? BASIC_ARCHETYPES[spawnIndex % BASIC_ARCHETYPES.length]
+            ? BASIC_ARCHETYPES[Math.floor(rng() * BASIC_ARCHETYPES.length)]
             : spawn.archetype;
         this.spawnEnemy(archetype, spawnIndex, rng, activeSlabs);
         spawnIndex++;

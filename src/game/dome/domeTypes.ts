@@ -121,6 +121,10 @@ export interface DomeHudState {
   waveLabel?: string;
   /** Flash de impacto (0..1) al golpear un enemigo o estrellarse de lado (hit_stagger) */
   impactFlash: number;
+  /** Destello/raja roja (0..1) al recibir daño enemigo */
+  hurtFlash?: number;
+  /** Semilla incremental para variar el ángulo de la raja roja por golpe */
+  hurtSlashSeed?: number;
   /** Ángulo de roll/inclinación lateral de la cámara en grados (-15..+15) para el giroscopio del visor */
   cameraRollDeg: number;
   /** Rotación acumulada en radianes de los arcos giroscópicos del visor según la velocidad */

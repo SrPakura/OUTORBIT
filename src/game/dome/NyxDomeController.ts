@@ -537,6 +537,9 @@ export class NyxDomeController {
   private hitStopTimer = 0; // segundos REALES de hit-stop restantes
   private fovPunch = 0; // grados de zoom puntual en el impacto
   private impactFlash = 0; // 0..1 para el HUD
+  private hurtFlash = 0; // 0..1 raja roja de daño recibido para el HUD
+  private hurtSlashSeed = 0;
+  private hurtSfxCooldown = 0;
   private gyroSpinRad = 0; // ángulo acumulado de los arcos giroscópicos del visor
 
   // --- Cámara de rebote (Sentadilla Cinética): anclada en el impacto
@@ -1176,6 +1179,12 @@ export class NyxDomeController {
     if (amount <= 0) return;
     this.hp = Math.max(0, this.hp - amount);
     this.impactFlash = Math.max(this.impactFlash, 0.85);
+    this.hurtFlash = 1.0;
+    if (this.hurtSfxCooldown <= 0) {
+      this.hurtSlashSeed += 1;
+      this.hurtSfxCooldown = 0.22;
+      this.audio?.playHurt();
+    }
     this.shake = Math.max(this.shake, 0.25);
   }
 
@@ -1341,6 +1350,8 @@ export class NyxDomeController {
       waveNumber: this.waveNumber,
       waveLabel: this.waveLabel,
       impactFlash: this.impactFlash,
+      hurtFlash: this.hurtFlash,
+      hurtSlashSeed: this.hurtSlashSeed,
       cameraRollDeg: this.cameraRollRad * (180 / Math.PI),
       gyroSpinRad: this.gyroSpinRad,
       edenFlash: this.edenFlash,
@@ -1463,6 +1474,10 @@ export class NyxDomeController {
     // El flash de impacto y el punch de FOV decaen en TIEMPO REAL para que
     // se sientan incluso dentro del hit-stop y de la cámara lenta.
     this.impactFlash = Math.max(0, this.impactFlash - rawDt * 3.8);
+    this.hurtFlash = Math.max(0, this.hurtFlash - rawDt * 2.2);
+    if (this.hurtSfxCooldown > 0) {
+      this.hurtSfxCooldown = Math.max(0, this.hurtSfxCooldown - rawDt);
+    }
     this.fovPunch *= Math.exp(-14 * rawDt);
     this.edenFlash = Math.max(0, this.edenFlash - rawDt * 2.6);
 
