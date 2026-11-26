@@ -446,6 +446,19 @@ export class DomeSkillExecutor {
     }
     return removed;
   }
+
+  /**
+   * Rompe el seguimiento (homing) de proyectiles que apunten a `targetId`
+   * cerca de `center` (cuando el Gorrión esquiva a tiempo o hace Dispersión).
+   */
+  clearProjectileHoming(targetId: string, center: THREE.Vector3, radius: number): void {
+    for (const p of this.projectiles) {
+      if (p.homingTarget?.id === targetId && p.mesh.position.distanceTo(center) <= radius) {
+        p.homingTarget = null;
+        p.homingStrength = 0;
+      }
+    }
+  }
   private readonly slashBursts: PendingSlashBurst[] = [];
   private readonly waves: ExpandingWave[] = [];
   private readonly wells: AttractionWellState[] = [];

@@ -1005,6 +1005,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private sparrowSlowMoScale = 1;
   /** Destruye rocas/proyectiles de Nyx golpeados por habilidades enemigas. */
   onDestroySkillProjectiles?: (center: THREE.Vector3, radius: number) => void;
+  /** Rompe el auto-aim de proyectiles dirigidos cuando el enemigo esquiva. */
+  onBreakProjectileHoming?: (targetId: string, center: THREE.Vector3, radius: number) => void;
   /**
    * Efectos de cosmos_fusion sobre Nyx (Fase 4): el game loop los empuja al
    * controller cada frame y consume los pulsos one-shot.
@@ -2397,6 +2399,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         this.sparrowCtx.onGolemSmash = onGolemSmash;
         this.sparrowCtx.onSlabSmash = onSlabSmash;
         this.sparrowCtx.onDestroySkillProjectiles = this.onDestroySkillProjectiles;
+        this.sparrowCtx.onBreakProjectileHoming = this.onBreakProjectileHoming;
         const sparrowRes = updateSparrowEnemy(
           this.sparrowCtx,
           enemy.entity,

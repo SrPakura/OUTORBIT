@@ -192,6 +192,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       comicVfx.spawnComicHit(center, null, 0.85, radius * 0.45);
     }
   };
+  waveMgr.onBreakProjectileHoming = (targetId, center, radius) => {
+    skillExecutor.clearProjectileHoming(targetId, center, radius);
+  };
   const audio = new SynthAudio();
   audio.setVolumeMultiplier(settingsRef.current.masterVolume);
   audioRef.current = audio;

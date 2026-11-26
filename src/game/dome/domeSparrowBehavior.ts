@@ -77,8 +77,9 @@ export interface SparrowBossState {
   hitTimer: number;
   bankRad: number;
   weavePhase: number;
-  /** Esquiva de ataque cuerpo a cuerpo de Nyx en el presente. */
+  /** Esquiva de ataque cuerpo a cuerpo o proyectil de Nyx en el presente. */
   meleeDodgeCooldown: number;
+  projDodgeBurstCd: number;
   meleeEvadeTimer: number;
   meleeEvadeDir: THREE.Vector3;
   /** Escala de tiempo táctica suave (0.75x en escenas clave, 1.0 en reposo). */
@@ -99,6 +100,7 @@ export interface SparrowBehaviorContext {
   onSlabSmash?: (slab: SlabCollider) => void;
   onSparrowShriek?: () => void;
   onDestroySkillProjectiles?: (center: THREE.Vector3, radius: number) => void;
+  onBreakProjectileHoming?: (targetId: string, center: THREE.Vector3, radius: number) => void;
 }
 
 export interface SparrowStepResult {
@@ -115,10 +117,10 @@ const SPARROW_ACCEL = 34.2;
 const SPARROW_TURN_RATE_LOW = 4.2; // rad/s a baja velocidad
 const SPARROW_TURN_RATE_HIGH = 1.45; // rad/s a alta velocidad (radio amplio)
 
-const SPARROW_DODGE_SCAN_RANGE = 42.0;
-const SPARROW_DODGE_MIN_REACT_SEC = 0.32;
-const SPARROW_DODGE_MAX_REACT_SEC = 1.4;
-const SPARROW_DODGE_ACCEL = 55.0;
+const SPARROW_DODGE_SCAN_RANGE = 50.0;
+const SPARROW_DODGE_MIN_REACT_SEC = 0.06;
+const SPARROW_DODGE_MAX_REACT_SEC = 1.8;
+const SPARROW_DODGE_ACCEL = 62.0;
 
 const SPARROW_MELEE_EVADE_SEC = 0.36;
 const SPARROW_MELEE_EVADE_CD = 3.2;
@@ -229,6 +231,7 @@ export function createSparrowState(seedPhase: number): SparrowBossState {
     bankRad: 0,
     weavePhase: seedPhase,
     meleeDodgeCooldown: 1.0,
+    projDodgeBurstCd: 0,
     meleeEvadeTimer: 0,
     meleeEvadeDir: new THREE.Vector3(1, 0, 0),
     slowMoScale: 1,
@@ -258,6 +261,7 @@ export function resetSparrowState(state: SparrowBossState): void {
   state.hitTimer = 0;
   state.bankRad = 0;
   state.meleeDodgeCooldown = 0.8;
+  state.projDodgeBurstCd = 0;
   state.meleeEvadeTimer = 0;
   state.slowMoScale = 1;
   state.slowMoHoldTimer = 0;
@@ -358,9 +362,10 @@ function computeProjectileDodge(
   radius: number,
   incoming: readonly IncomingSkillProjectile[],
   outDodge: THREE.Vector3,
-): boolean {
+): number {
   outDodge.set(0, 0, 0);
   let bestUrgency = 0;
+  let bestDist = Infinity;
 
   for (let i = 0; i < incoming.length; i++) {
     const proj = incoming[i];
@@ -369,22 +374,22 @@ function computeProjectileDodge(
 
     _diff.subVectors(pos, proj.position);
     const dist = _diff.length();
-    if (dist > SPARROW_DODGE_SCAN_RANGE || dist < 0.5) continue;
+    if (dist > SPARROW_DODGE_SCAN_RANGE || dist < 0.25) continue;
 
     _projDir.copy(proj.velocity).multiplyScalar(1 / pSpeed);
     const along = _diff.dot(_projDir);
-    if (along <= 0) continue; // ya pasó de largo
+    if (along <= -radius) continue; // ya pasó por detrás de largo
 
-    const closingSec = along / pSpeed;
-    // Disparos a bocajarro o ultraveloces (< 0.32 s): imposibles de esquivar.
+    const closingSec = Math.max(0.01, along) / pSpeed;
+    // Solo ignora disparos literalmente tocando la malla (< 0.06 s).
     if (closingSec < SPARROW_DODGE_MIN_REACT_SEC || closingSec > SPARROW_DODGE_MAX_REACT_SEC) {
       continue;
     }
 
-    // Distancia mínima de paso proyectil -> Gorrión.
+    // Distancia mínima de paso proyectil -> Gorrión (incluye margen para homing).
     _side.copy(_diff).addScaledVector(_projDir, -along);
     const missDist = _side.length();
-    if (missDist > radius + 3.4) continue;
+    if (missDist > radius + 5.5) continue;
 
     if (missDist > 1e-3) {
       _side.multiplyScalar(1 / missDist);
@@ -394,14 +399,15 @@ function computeProjectileDodge(
       else _side.normalize();
     }
 
-    const urgency = 1 / Math.max(0.2, closingSec);
+    const urgency = 1 / Math.max(0.12, closingSec);
     if (urgency > bestUrgency) {
       bestUrgency = urgency;
+      bestDist = dist;
       outDodge.copy(_side);
     }
   }
 
-  return bestUrgency > 0;
+  return bestDist;
 }
 
 function enterCrashStun(
@@ -551,6 +557,7 @@ export function updateSparrowEnemy(
   if (state.cloneSplitCooldown > 0) state.cloneSplitCooldown = Math.max(0, state.cloneSplitCooldown - dt);
   if (state.hardBrakeCooldown > 0) state.hardBrakeCooldown = Math.max(0, state.hardBrakeCooldown - dt);
   if (state.meleeDodgeCooldown > 0) state.meleeDodgeCooldown = Math.max(0, state.meleeDodgeCooldown - dt);
+  if (state.projDodgeBurstCd > 0) state.projDodgeBurstCd = Math.max(0, state.projDodgeBurstCd - dt);
   if (state.meleeEvadeTimer > 0) state.meleeEvadeTimer = Math.max(0, state.meleeEvadeTimer - dt);
   if (state.slowMoHoldTimer > 0) state.slowMoHoldTimer = Math.max(0, state.slowMoHoldTimer - dt);
   if ((entity.vulnerableTimer ?? 0) > 0) {
@@ -658,13 +665,9 @@ export function updateSparrowEnemy(
         }
       }
       // La ráfaga frontal del Aleteo Salvaje barre y destruye rocas/proyectiles.
-      if (
-        state.wildFlapWindupTimer >= 0.1 &&
-        state.wildFlapWindupTimer <= 0.42 &&
-        ctx.onDestroySkillProjectiles
-      ) {
-        _muzzlePos.copy(pos).addScaledVector(dirToPlayer, 5.0);
-        ctx.onDestroySkillProjectiles(_muzzlePos, 9.5);
+      if (state.wildFlapWindupTimer <= 0.48 && ctx.onDestroySkillProjectiles) {
+        _muzzlePos.copy(pos).addScaledVector(dirToPlayer, 3.5);
+        ctx.onDestroySkillProjectiles(_muzzlePos, 13.5);
       }
 
       entity.mouthOpen = false;
@@ -685,8 +688,8 @@ export function updateSparrowEnemy(
 
       // La onda sónica del Garrido pulveriza proyectiles cercanos en el aire.
       const shriekElapsed = SPARROW_SHRIEK_DURATION - state.stateTimer;
-      if (shriekElapsed >= 0.15 && shriekElapsed <= 0.7 && ctx.onDestroySkillProjectiles) {
-        ctx.onDestroySkillProjectiles(pos, 12.0);
+      if (shriekElapsed <= 0.75 && ctx.onDestroySkillProjectiles) {
+        ctx.onDestroySkillProjectiles(pos, 14.5);
       }
 
       entity.mouthOpen = true;
@@ -842,8 +845,43 @@ export function updateSparrowEnemy(
       // 2) Dispersión: Nyx se gira para encararlo frontalmente.
       if (state.facingTimer >= SPARROW_SPLIT_FACING_REACT_SEC && state.cloneSplitCooldown <= 0) {
         state.facingTimer = 0;
+        ctx.onBreakProjectileHoming?.(entity.id, pos, 32);
         beginCloneSplit(state, pos, playerPos, ctx.playerAimForward, ctx);
         break;
+      }
+
+      // 3) Lectura de proyectiles entrantes (Campo Gravitacional / Horizonte):
+      // si vienen hacia el Gorrión, intercepta/destruye con Aleteo o Garrido,
+      // o quiebra lateralmente rompiendo su auto-aim.
+      const projDist = computeProjectileDodge(
+        pos,
+        entity.radius,
+        ctx.incomingProjectiles,
+        _dodgeVec,
+      );
+      if (projDist < Infinity) {
+        if (projDist <= 16.5 && state.wildFlapCooldown <= 0) {
+          state.state = 'wild_flap';
+          state.stateTimer = SPARROW_WILD_FLAP_DURATION;
+          state.wildFlapWindupTimer = 0;
+          state.wildFlapPushed = false;
+          _muzzlePos.copy(pos).addScaledVector(dirToPlayer, 3.5);
+          ctx.onDestroySkillProjectiles?.(_muzzlePos, 13.5);
+          break;
+        }
+        if (projDist <= 15.5 && state.shriekCooldown <= 0) {
+          state.state = 'shriek';
+          state.stateTimer = SPARROW_SHRIEK_DURATION;
+          state.shriekShakeTimer = SPARROW_SHRIEK_SHAKE_SEC;
+          ctx.onSparrowShriek?.();
+          ctx.onDestroySkillProjectiles?.(pos, 14.5);
+          break;
+        }
+        if (state.projDodgeBurstCd <= 0) {
+          state.projDodgeBurstCd = 1.45;
+          velocity.addScaledVector(_dodgeVec, 28 * mult);
+          ctx.onBreakProjectileHoming?.(entity.id, pos, 28);
+        }
       }
 
       // 3) Aleteo Salvaje: Nyx entra en ≤ 11.5 m delante del Gorrión.
@@ -928,13 +966,8 @@ export function updateSparrowEnemy(
         }
       }
 
-      // Esquiva presente de proyectiles lentos/lejanos mediante alabeo.
-      const dodging = computeProjectileDodge(
-        pos,
-        entity.radius,
-        ctx.incomingProjectiles,
-        _dodgeVec,
-      );
+      // Aceleración lateral mientras esquiva proyectiles o ataques de Nyx.
+      const dodging = projDist < Infinity;
       if (state.meleeEvadeTimer > 0) {
         _desiredVel.addScaledVector(state.meleeEvadeDir, 44 * mult);
       } else if (dodging) {
