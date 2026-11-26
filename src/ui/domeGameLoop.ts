@@ -529,7 +529,10 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         const playerPos = controller?.getPosition() ?? enemy.position;
         if (waveMgr.checkNecrozShieldBlock(managed, playerPos) === 'blocked') {
           controller?.punchCamera(0.25);
-          controller?.bounceOffGolemGuard(enemy.position, enemy.radius + 1.1);
+          skillImpulseDir.subVectors(playerPos, enemy.position);
+          if (skillImpulseDir.lengthSq() < 1e-4) skillImpulseDir.set(0, 0.3, 1);
+          else skillImpulseDir.normalize();
+          controller?.applySmashKnockback(skillImpulseDir, 26);
           return;
         }
       }

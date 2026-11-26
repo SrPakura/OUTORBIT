@@ -1170,7 +1170,15 @@ export class NyxDomeController {
    * Rompesuelos): suma impulso a la velocidad de Nyx y reproduce `hit_stagger`.
    */
   applySmashKnockback(pushDir: THREE.Vector3, speed: number): void {
-    this.velocity.addScaledVector(pushDir, speed);
+    if (this.mode === 'speed_attack' || this.mode === 'dashing') {
+      this.mode = 'floating';
+      this.speedAttackKind = null;
+      this.lockedEnemy = null;
+      this.reticleLockState = 'none';
+      this.velocity.copy(pushDir).multiplyScalar(speed);
+    } else {
+      this.velocity.addScaledVector(pushDir, speed);
+    }
     this.playOneShot('hit_stagger');
     this.shake = Math.max(this.shake, 0.32);
     this.impactFlash = Math.max(this.impactFlash, 0.85);
