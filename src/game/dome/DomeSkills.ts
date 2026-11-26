@@ -924,6 +924,9 @@ export class DomeSkillExecutor {
     const captureRadius = NYX_HITBOX_RADIUS_M + extraCaptureRadius;
     const capturedBalls = ctx.captureEnemyProjectiles?.(ctx.playerPos, captureRadius) ?? [];
     const cappedBalls = capturedBalls.slice(0, plan.length);
+    for (let i = plan.length; i < capturedBalls.length; i++) {
+      this.onCapturedInkBallFreed?.(capturedBalls[i]);
+    }
     for (let i = 0; i < cappedBalls.length; i++) {
       const ballMesh = cappedBalls[i];
       ballMesh.material = this.capturedInkBallMaterial;
@@ -942,6 +945,9 @@ export class DomeSkillExecutor {
     if (electricSlotsLeft > 0 && ctx.captureElectricBalls) {
       const electricBalls = ctx.captureElectricBalls(ctx.playerPos, captureRadius);
       const cappedElectric = electricBalls.slice(0, electricSlotsLeft);
+      for (let i = electricSlotsLeft; i < electricBalls.length; i++) {
+        this.onCapturedInkBallFreed?.(electricBalls[i]);
+      }
       for (let i = 0; i < cappedElectric.length; i++) {
         const ballMesh = cappedElectric[i];
         ballMesh.material = this.capturedElectricBallMaterial;

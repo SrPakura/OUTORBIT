@@ -3393,6 +3393,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     projectile.mesh.material = this.inkProjectileMaterial;
     projectile.mesh.scale.setScalar(giant ? OCTOPUS_GIANT_SCALE : 1);
     projectile.mesh.position.copy(origin).addScaledVector(_shotDir, giant ? 2.4 : 1.2);
+    if (projectile.mesh.parent !== this.scene) {
+      this.scene.add(projectile.mesh);
+    }
     projectile.mesh.visible = true;
   }
 
@@ -3496,6 +3499,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     for (const projectile of this.projectiles) {
       if (projectile.mesh !== mesh) {
         continue;
+      }
+      if (projectile.mesh.parent !== this.scene) {
+        this.scene.add(projectile.mesh);
       }
       projectile.captured = false;
       this.deactivateProjectile(projectile);
@@ -4032,6 +4038,9 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       _shotDir,
       origin ? 0.35 : enemy.radius + 0.6,
     );
+    if (projectile.mesh.parent !== this.scene) {
+      this.scene.add(projectile.mesh);
+    }
     projectile.mesh.visible = true;
   }
 
