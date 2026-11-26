@@ -557,6 +557,20 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       runTracker.recordDamage(res.damage);
       if (managed.entity.hp <= 0 || res.killed) {
         killWaveEnemy(managed, false);
+      } else if (managed.entity.archetype === 'prisma_necroz') {
+        // Tras colar un golpe por el hueco del escudo: rebote muy largo hacia
+        // fuera y giro rápido de Necroz para evitar spam en el mismo hueco.
+        waveMgr.notifyNecrozHit(managed);
+        const playerPos = controller?.getPosition() ?? enemy.position;
+        skillImpulseDir.subVectors(playerPos, enemy.position);
+        if (skillImpulseDir.lengthSq() < 1e-4) {
+          skillImpulseDir.set(0, 0.3, 1);
+        } else {
+          skillImpulseDir.normalize();
+          skillImpulseDir.y += 0.25;
+          skillImpulseDir.normalize();
+        }
+        controller?.applySmashKnockback(skillImpulseDir, 34);
       }
     }
   };

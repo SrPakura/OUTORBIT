@@ -2534,11 +2534,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     return broken;
   }
 
-  /** Prisma Necroz: dispara clip de impacto al recibir daño por un hueco. */
+  /** Prisma Necroz: dispara clip de impacto y gira ~55° al recibir daño por un hueco. */
   notifyNecrozHit(enemy: ManagedWaveEnemy): void {
     const internal = this.internals.get(enemy.id);
     if (internal?.necroz) {
       internal.necroz.hitTimer = 0.3;
+      if (internal.necroz.slothTimer <= 0) {
+        internal.necroz.yawRad = (internal.necroz.yawRad + 0.95) % (Math.PI * 2);
+      }
     }
   }
 
