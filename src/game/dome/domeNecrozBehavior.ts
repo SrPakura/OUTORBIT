@@ -14,10 +14,10 @@ const NECROZ_REBUILD_MIN_BROKEN_FRAC = 0.45; // No reconstruye por agujeros < 45
 
 const NECROZ_DEF_SPIKE_HEIGHT = 1.5;
 const NECROZ_DEF_SPIKE_GROW_RATE = 10.0;
-const NECROZ_DEF_SPIKE_RANGE = 18.0;
-const NECROZ_DEF_RUSH_RANGE = 26.0;
-const NECROZ_DEF_IMPATIENCE_SEC = 1.8;
-const NECROZ_DEF_RELUCTANCE_DELAY_SEC = 0.35;
+const NECROZ_DEF_SPIKE_RANGE = 22.0;
+const NECROZ_DEF_RUSH_RANGE = 34.0;
+const NECROZ_DEF_IMPATIENCE_SEC = 10.0;
+const NECROZ_DEF_RELUCTANCE_DELAY_SEC = 0.25;
 const NECROZ_DEF_SPIKE_DAMAGE = 12;
 const NECROZ_DEF_SPIKE_PUSH = 24;
 
@@ -725,9 +725,11 @@ export function updateNecrozEnemy(
     return;
   }
 
-  // Rotación constante a 25°/s sobre su eje Y.
+  // Rotación constante a 25°/s sobre sus 3 ejes (fija en (0, 0, 0)).
   n.yawRad = (n.yawRad + NECROZ_ROT_SPEED_RAD * dt) % (Math.PI * 2);
-  mesh.rotation.set(0, n.yawRad, 0);
+  const pitchRad = Math.sin(n.yawRad * 0.6) * 0.28;
+  const rollRad = Math.cos(n.yawRad * 0.45) * 0.22;
+  mesh.rotation.set(pitchRad, n.yawRad, rollRad);
 
   // Construcción del escudo triángulo a triángulo (1.0 s inicial, 4.0 s reconstrucción).
   if (n.building) {
@@ -754,17 +756,18 @@ export function updateNecrozEnemy(
   const distToNyx = playerPos.length();
   const nyxSpeed = ctx.playerVelocity.length();
 
-  // --- 3.1 Púas Defensivas (1.5 m): se activan siempre que vayas a por él ---
-  const rushingToward =
+  // --- 3.1 Púas Defensivas (1.5 m): hasta 10 s ante cualquier acercamiento/patada ---
+  // (movimiento base, dash, caída al vacío o patada). Solo el agotamiento (100) las corta.
+  const approaching =
     distToNyx > 1e-3 &&
-    _v1.copy(playerPos).divideScalar(-distToNyx).dot(ctx.playerVelocity) > 8.0;
+    _v1.copy(playerPos).divideScalar(-distToNyx).dot(ctx.playerVelocity) > 2.0;
   const nyxNear =
     distToNyx <= NECROZ_DEF_SPIKE_RANGE ||
-    (rushingToward && distToNyx <= NECROZ_DEF_RUSH_RANGE);
-  if (nyxNear && !n.defensiveSpikesOut && !n.building) {
-    if (n.laziness > 65 && !rushingToward && n.defensiveDelayTimer <= 0) {
+    (approaching && distToNyx <= NECROZ_DEF_RUSH_RANGE);
+  if (nyxNear && !n.defensiveSpikesOut) {
+    if (n.laziness > 75 && !approaching && n.defensiveDelayTimer <= 0) {
       n.defensiveDelayTimer = NECROZ_DEF_RELUCTANCE_DELAY_SEC;
-    } else if (n.defensiveDelayTimer > 0 && !rushingToward) {
+    } else if (n.defensiveDelayTimer > 0 && !approaching) {
       n.defensiveDelayTimer -= dt;
       if (n.defensiveDelayTimer <= 0) {
         n.defensiveSpikesOut = true;
@@ -782,8 +785,8 @@ export function updateNecrozEnemy(
   } else if (n.defensiveSpikesOut) {
     n.defensiveHoldTimer += dt;
     addLaziness(n, ctx, LAZINESS_DEF_HOLD_PER_SEC * dt);
-    if (!nyxNear || (!rushingToward && n.defensiveHoldTimer >= NECROZ_DEF_IMPATIENCE_SEC)) {
-      // Se cansa de esperar amagos (1.8 s sin rush) -> retrae las púas.
+    if (!nyxNear || n.defensiveHoldTimer >= NECROZ_DEF_IMPATIENCE_SEC) {
+      // Se cansa tras 10 s o si Nyx se aleja -> retrae las púas.
       n.defensiveSpikesOut = false;
       n.defensiveDelayTimer = 0;
     }
