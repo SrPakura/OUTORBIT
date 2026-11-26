@@ -77,8 +77,13 @@ export interface SparrowBossState {
   hitTimer: number;
   bankRad: number;
   weavePhase: number;
+  /** Esquiva de ataque cuerpo a cuerpo de Nyx en el presente. */
+  meleeDodgeCooldown: number;
+  meleeEvadeTimer: number;
+  meleeEvadeDir: THREE.Vector3;
   /** Escala de tiempo táctica suave (0.75x en escenas clave, 1.0 en reposo). */
   slowMoScale: number;
+  slowMoHoldTimer: number;
   activeClip: string | null;
 }
 
@@ -87,11 +92,13 @@ export interface SparrowBehaviorContext {
   speedMult: number;
   playerVelocity: THREE.Vector3;
   playerAimForward: THREE.Vector3;
+  playerAttacking: boolean;
   activeSlabs?: SlabCollider[];
   incomingProjectiles: readonly IncomingSkillProjectile[];
   onGolemSmash?: (damage: number, pushDir: THREE.Vector3, pushSpeed?: number) => void;
   onSlabSmash?: (slab: SlabCollider) => void;
   onSparrowShriek?: () => void;
+  onDestroySkillProjectiles?: (center: THREE.Vector3, radius: number) => void;
 }
 
 export interface SparrowStepResult {
@@ -99,23 +106,26 @@ export interface SparrowStepResult {
   hitFlash: number;
 }
 
-// Parámetros de vuelo aerodinámico y combate (calibrados para ser exigentes)
+// Parámetros de vuelo aerodinámico y combate (-5% velocidad general)
 const SPARROW_FLIGHT_BOUND = DOME_PLAYER_BOUND_RADIUS - 11.0; // ~77.6 m
 const SPARROW_REAR_RING_DIST = 14.0; // centro del anillo trasero 10–18 m
-const SPARROW_CRUISE_SPEED = 29.0;
-const SPARROW_BURST_CHASE_SPEED = 37.0;
-const SPARROW_ACCEL = 36.0;
+const SPARROW_CRUISE_SPEED = 27.5;
+const SPARROW_BURST_CHASE_SPEED = 35.1;
+const SPARROW_ACCEL = 34.2;
 const SPARROW_TURN_RATE_LOW = 4.2; // rad/s a baja velocidad
 const SPARROW_TURN_RATE_HIGH = 1.45; // rad/s a alta velocidad (radio amplio)
 
 const SPARROW_DODGE_SCAN_RANGE = 42.0;
 const SPARROW_DODGE_MIN_REACT_SEC = 0.32;
 const SPARROW_DODGE_MAX_REACT_SEC = 1.4;
-const SPARROW_DODGE_ACCEL = 58.0;
+const SPARROW_DODGE_ACCEL = 55.0;
+
+const SPARROW_MELEE_EVADE_SEC = 0.36;
+const SPARROW_MELEE_EVADE_CD = 3.2;
 
 const SPARROW_AIR_BALL_CD_MIN = 1.45;
 const SPARROW_AIR_BALL_CD_MAX = 2.05;
-const SPARROW_AIR_BALL_SPEED = 34.0;
+const SPARROW_AIR_BALL_SPEED = 32.3;
 const SPARROW_AIR_BALL_MOUTH_SEC = 0.4;
 
 const SPARROW_WILD_FLAP_RANGE = 11.5;
@@ -138,7 +148,7 @@ const SPARROW_SPLIT_CD = 6.2;
 const SPARROW_DRILL_TRIGGER_SEC = 25.0;
 const SPARROW_DRILL_WINDUP_SEC = 0.45;
 const SPARROW_DRILL_DIVE_SEC = 1.65;
-const SPARROW_DRILL_SPEED = 52.0;
+const SPARROW_DRILL_SPEED = 49.4;
 const SPARROW_DRILL_ACCEL = 115.0;
 const SPARROW_DRILL_STEER_RATE = 0.48;
 const SPARROW_DRILL_DAMAGE = 25;
@@ -218,7 +228,11 @@ export function createSparrowState(seedPhase: number): SparrowBossState {
     hitTimer: 0,
     bankRad: 0,
     weavePhase: seedPhase,
+    meleeDodgeCooldown: 1.0,
+    meleeEvadeTimer: 0,
+    meleeEvadeDir: new THREE.Vector3(1, 0, 0),
     slowMoScale: 1,
+    slowMoHoldTimer: 0,
     activeClip: null,
   };
 }
@@ -243,7 +257,10 @@ export function resetSparrowState(state: SparrowBossState): void {
   state.drillHitPlayer = false;
   state.hitTimer = 0;
   state.bankRad = 0;
+  state.meleeDodgeCooldown = 0.8;
+  state.meleeEvadeTimer = 0;
   state.slowMoScale = 1;
+  state.slowMoHoldTimer = 0;
   state.activeClip = null;
   hideMirageClone(state);
 }
@@ -533,6 +550,9 @@ export function updateSparrowEnemy(
   if (state.shriekShakeTimer > 0) state.shriekShakeTimer = Math.max(0, state.shriekShakeTimer - dt);
   if (state.cloneSplitCooldown > 0) state.cloneSplitCooldown = Math.max(0, state.cloneSplitCooldown - dt);
   if (state.hardBrakeCooldown > 0) state.hardBrakeCooldown = Math.max(0, state.hardBrakeCooldown - dt);
+  if (state.meleeDodgeCooldown > 0) state.meleeDodgeCooldown = Math.max(0, state.meleeDodgeCooldown - dt);
+  if (state.meleeEvadeTimer > 0) state.meleeEvadeTimer = Math.max(0, state.meleeEvadeTimer - dt);
+  if (state.slowMoHoldTimer > 0) state.slowMoHoldTimer = Math.max(0, state.slowMoHoldTimer - dt);
   if ((entity.vulnerableTimer ?? 0) > 0) {
     entity.vulnerableTimer = Math.max(0, (entity.vulnerableTimer ?? 0) - dt);
   }
@@ -542,6 +562,7 @@ export function updateSparrowEnemy(
   if (passive) {
     hideMirageClone(state);
     state.slowMoScale = 1;
+    state.slowMoHoldTimer = 0;
     velocity.multiplyScalar(Math.exp(-4.0 * dt));
     _toPlayer.subVectors(playerPos, pos);
     if (_toPlayer.lengthSq() > 1e-4) {
@@ -636,6 +657,15 @@ export function updateSparrowEnemy(
           ctx.onGolemSmash(0, dirToPlayer, SPARROW_WILD_FLAP_PUSH_SPEED);
         }
       }
+      // La ráfaga frontal del Aleteo Salvaje barre y destruye rocas/proyectiles.
+      if (
+        state.wildFlapWindupTimer >= 0.1 &&
+        state.wildFlapWindupTimer <= 0.42 &&
+        ctx.onDestroySkillProjectiles
+      ) {
+        _muzzlePos.copy(pos).addScaledVector(dirToPlayer, 5.0);
+        ctx.onDestroySkillProjectiles(_muzzlePos, 9.5);
+      }
 
       entity.mouthOpen = false;
       playSparrowClip(state, actions, 'sparrow_wild_flap');
@@ -652,6 +682,12 @@ export function updateSparrowEnemy(
       velocity.multiplyScalar(Math.exp(-3.6 * dt));
       pos.addScaledVector(velocity, dt);
       orientSparrowMesh(mesh, dirToPlayer, 0, 9.0, dt);
+
+      // La onda sónica del Garrido pulveriza proyectiles cercanos en el aire.
+      const shriekElapsed = SPARROW_SHRIEK_DURATION - state.stateTimer;
+      if (shriekElapsed >= 0.15 && shriekElapsed <= 0.7 && ctx.onDestroySkillProjectiles) {
+        ctx.onDestroySkillProjectiles(pos, 12.0);
+      }
 
       entity.mouthOpen = true;
       playSparrowClip(state, actions, 'sparrow_shriek');
@@ -755,6 +791,11 @@ export function updateSparrowEnemy(
       orientSparrowMesh(mesh, _faceDir, 0, 12.0, dt);
       entity.mouthOpen = true;
       playSparrowClip(state, actions, 'sparrow_air_drill');
+
+      // La barrena supersónica tritura cualquier proyectil en su trayectoria.
+      if (ctx.onDestroySkillProjectiles) {
+        ctx.onDestroySkillProjectiles(pos, entity.radius + 2.4);
+      }
 
       // ¿Impacto contra Nyx? Daño brutal + 65 m/s de empuje directo a la Esfera.
       if (!state.drillHitPlayer && pos.distanceTo(playerPos) < entity.radius + 1.85) {
@@ -860,6 +901,33 @@ export function updateSparrowEnemy(
         _desiredVel.copy(dirToPlayer).multiplyScalar(SPARROW_CRUISE_SPEED * 0.45);
       }
 
+      // Esquiva presente de ataques cuerpo a cuerpo predecibles de Nyx (dash / patada).
+      if (
+        ctx.playerAttacking &&
+        state.meleeDodgeCooldown <= 0 &&
+        state.meleeEvadeTimer <= 0 &&
+        distToPlayer >= 9.5 &&
+        distToPlayer <= 25.0
+      ) {
+        const playerSpeed = ctx.playerVelocity.length();
+        const closingSec = playerSpeed > 1 ? distToPlayer / playerSpeed : 99;
+        if (playerSpeed >= 13.5 && playerSpeed <= 42.0 && closingSec >= 0.24 && closingSec <= 0.85) {
+          _velDir.copy(ctx.playerVelocity).multiplyScalar(1 / playerSpeed);
+          if (_velDir.dot(_toSparrow) >= 0.86) {
+            state.meleeEvadeDir.crossVectors(_velDir, _up);
+            if (state.meleeEvadeDir.lengthSq() < 1e-4) {
+              state.meleeEvadeDir.set(1, 0, 0);
+            } else {
+              state.meleeEvadeDir.normalize();
+            }
+            if (Math.sin(state.weavePhase) < 0) state.meleeEvadeDir.negate();
+            state.meleeEvadeTimer = SPARROW_MELEE_EVADE_SEC;
+            state.meleeDodgeCooldown = SPARROW_MELEE_EVADE_CD;
+            velocity.addScaledVector(state.meleeEvadeDir, 22 * mult);
+          }
+        }
+      }
+
       // Esquiva presente de proyectiles lentos/lejanos mediante alabeo.
       const dodging = computeProjectileDodge(
         pos,
@@ -867,7 +935,9 @@ export function updateSparrowEnemy(
         ctx.incomingProjectiles,
         _dodgeVec,
       );
-      if (dodging) {
+      if (state.meleeEvadeTimer > 0) {
+        _desiredVel.addScaledVector(state.meleeEvadeDir, 44 * mult);
+      } else if (dodging) {
         _desiredVel.addScaledVector(_dodgeVec, SPARROW_DODGE_ACCEL * mult);
       }
 
@@ -878,7 +948,12 @@ export function updateSparrowEnemy(
         SPARROW_ACCEL * mult,
         dt,
       );
-      targetBank = dodging ? THREE.MathUtils.clamp(_dodgeVec.dot(_side) * 0.85, -0.85, 0.85) : turnSign * 0.55;
+      targetBank =
+        state.meleeEvadeTimer > 0
+          ? THREE.MathUtils.clamp(state.meleeEvadeDir.dot(_side) * 0.9, -0.9, 0.9)
+          : dodging
+            ? THREE.MathUtils.clamp(_dodgeVec.dot(_side) * 0.85, -0.85, 0.85)
+            : turnSign * 0.55;
 
       // 6) Mira hacia delante para Frenado Rompesuelos vs Estrellarse contra slab.
       const curSpeed = velocity.length();
@@ -974,17 +1049,23 @@ export function updateSparrowEnemy(
   state.bankRad += (targetBank - state.bankRad) * Math.min(1, dt * 8);
 
   // Cámara lenta táctica leve (0.75x) en las escenas clave de lectura/reflejo:
-  // Dispersión, Frenado Rompesuelos, Aleteo Salvaje, Taladro cercano e impacto.
+  // Dispersión, Frenado Rompesuelos, Aleteo Salvaje, esquiva aérea, Taladro
+  // cercano e impacto. Con hold mínimo de 0.72 s para que se perciba claro.
   const postDist = pos.distanceTo(playerPos);
-  const slowMoScene =
+  const slowMoTrigger =
     state.state === 'clone_split' ||
     state.state === 'hard_brake' ||
     state.state === 'wild_flap' ||
     state.state === 'drill_windup' ||
-    (state.state === 'drill_dive' && postDist <= 30.0) ||
-    (state.state === 'crash_stun' && state.stateTimer >= SPARROW_CRASH_STUN_SEC - 0.75);
-  const targetSlowMo = slowMoScene ? 0.75 : 1.0;
-  state.slowMoScale += (targetSlowMo - state.slowMoScale) * Math.min(1, dt * 16);
+    state.meleeEvadeTimer > 0 ||
+    (state.state === 'drill_dive' && postDist <= 34.0) ||
+    (state.state === 'crash_stun' && state.stateTimer >= SPARROW_CRASH_STUN_SEC - 0.85);
+  if (slowMoTrigger) {
+    state.slowMoHoldTimer = Math.max(state.slowMoHoldTimer, 0.72);
+  }
+  const targetSlowMo = slowMoTrigger || state.slowMoHoldTimer > 0 ? 0.75 : 1.0;
+  const slowRate = targetSlowMo < state.slowMoScale ? 38 : 10;
+  state.slowMoScale += (targetSlowMo - state.slowMoScale) * Math.min(1, dt * slowRate);
 
   // Brillo del `star_core_mouth`: arde al abrir el pico (Garrido / Taladro / Crash Stun).
   if (rig?.mouthStarMaterial) {

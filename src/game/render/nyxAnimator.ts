@@ -425,8 +425,16 @@ export class NyxAnimator {
     // Persecución exponencial de la pose objetivo
     const a = 1 - Math.exp(-this.lambda * dt);
     const cur = this.cur, tgt = this.tgt;
-    for (let i = 0; i < BONE_COUNT * 3; i++) cur[i] += (tgt[i] - cur[i]) * a;
-    for (let i = 0; i < 3; i++) this.curPos[i] += (this.tgtPos[i] - this.curPos[i]) * a;
+    for (let i = 0; i < BONE_COUNT * 3; i++) {
+      const ti = Number.isFinite(tgt[i]) ? tgt[i] : 0;
+      const ci = Number.isFinite(cur[i]) ? cur[i] : 0;
+      cur[i] = ci + (ti - ci) * a;
+    }
+    for (let i = 0; i < 3; i++) {
+      const tp = Number.isFinite(this.tgtPos[i]) ? this.tgtPos[i] : 0;
+      const cp = Number.isFinite(this.curPos[i]) ? this.curPos[i] : 0;
+      this.curPos[i] = cp + (tp - cp) * a;
+    }
 
     const bones = this.bones;
     // Huesos de cuerpo (0..14 y 19..24); la cadena del pelo (15..18) la
@@ -725,13 +733,17 @@ export class NyxAnimator {
     const f0 = i * stride;
     const f1 = f0 + stride;
     for (let j = 0; j < stride; j++) {
-      tgt[j] = rot[f0 + j] + (rot[f1 + j] - rot[f0 + j]) * k;
+      const a0 = rot[f0 + j];
+      const a1 = rot[f1 + j];
+      tgt[j] = Number.isFinite(a0) && Number.isFinite(a1) ? a0 + (a1 - a0) * k : 0;
     }
     const off = clip.hipsOffset;
     const ho0 = i * 3;
     const ho1 = ho0 + 3;
     for (let a = 0; a < 3; a++) {
-      this.tgtPos[a] = off[ho0 + a] + (off[ho1 + a] - off[ho0 + a]) * k;
+      const p0 = off[ho0 + a];
+      const p1 = off[ho1 + a];
+      this.tgtPos[a] = Number.isFinite(p0) && Number.isFinite(p1) ? p0 + (p1 - p0) * k : 0;
     }
   }
 

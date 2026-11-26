@@ -1003,6 +1003,8 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
   private sparrowShriekPulse = false;
   private sparrowCameraShake = 0;
   private sparrowSlowMoScale = 1;
+  /** Destruye rocas/proyectiles de Nyx golpeados por habilidades enemigas. */
+  onDestroySkillProjectiles?: (center: THREE.Vector3, radius: number) => void;
   /**
    * Efectos de cosmos_fusion sobre Nyx (Fase 4): el game loop los empuja al
    * controller cada frame y consume los pulsos one-shot.
@@ -1124,6 +1126,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       speedMult: 1,
       playerVelocity: this.playerVelocity,
       playerAimForward: this.playerAimForward,
+      playerAttacking: false,
       incomingProjectiles: [],
       onSparrowShriek: () => {
         this.sparrowShriekPulse = true;
@@ -2389,9 +2392,11 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
       } else if (enemy.entity.archetype === 'giant_sparrow' && internal.sparrow) {
         this.sparrowCtx.speedMult = this.speedMult;
         this.sparrowCtx.activeSlabs = activeSlabs;
+        this.sparrowCtx.playerAttacking = playerAttackTime > 0 || playerKickAnim || playerDashing;
         this.sparrowCtx.incomingProjectiles = this.incomingSkillProjectiles;
         this.sparrowCtx.onGolemSmash = onGolemSmash;
         this.sparrowCtx.onSlabSmash = onSlabSmash;
+        this.sparrowCtx.onDestroySkillProjectiles = this.onDestroySkillProjectiles;
         const sparrowRes = updateSparrowEnemy(
           this.sparrowCtx,
           enemy.entity,

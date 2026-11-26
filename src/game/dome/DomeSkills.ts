@@ -425,6 +425,27 @@ export class DomeSkillExecutor {
     }
     return this.activeProjViews;
   }
+
+  /**
+   * Destruye en el aire proyectiles/rocas dentro de la esfera dada (habilidades
+   * defensivas/ofensivas del Gorrión Gigante: Aleteo Salvaje, Garrido, Taladro).
+   */
+  destroyProjectilesInSphere(center: THREE.Vector3, radius: number): number {
+    let removed = 0;
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const p = this.projectiles[i];
+      if (p.mesh.position.distanceTo(center) <= radius + p.hitRadius) {
+        this.scene.remove(p.mesh);
+        if (p.material !== null) p.material.dispose();
+        if (p.capturedInkBall) {
+          this.onCapturedInkBallFreed?.(p.mesh);
+        }
+        this.projectiles.splice(i, 1);
+        removed++;
+      }
+    }
+    return removed;
+  }
   private readonly slashBursts: PendingSlashBurst[] = [];
   private readonly waves: ExpandingWave[] = [];
   private readonly wells: AttractionWellState[] = [];

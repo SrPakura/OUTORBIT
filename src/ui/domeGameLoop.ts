@@ -186,6 +186,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     });
     controller?.punchCamera(0.75);
   };
+  waveMgr.onDestroySkillProjectiles = (center, radius) => {
+    const removed = skillExecutor.destroyProjectilesInSphere(center, radius);
+    if (removed > 0) {
+      comicVfx.spawnComicHit(center, null, 0.85, radius * 0.45);
+    }
+  };
   const audio = new SynthAudio();
   audio.setVolumeMultiplier(settingsRef.current.masterVolume);
   audioRef.current = audio;
