@@ -1148,7 +1148,7 @@ export class DomeSkillExecutor {
   private triggerEdenAbsorb(level: number, ctx: SkillTriggerContext): SkillTriggerResult {
     if (!ctx.isStill) return { triggered: false };
     const hp = 5 + level * 4;
-    const eden = 8 + level * 5;
+    const eden = 20 + level * 12;
     ctx.onHealPlayer(hp, eden);
     this.spawnHalo(ctx.playerPos);
     return { triggered: true, animOverride: 'eden_absorb' };

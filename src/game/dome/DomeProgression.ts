@@ -239,19 +239,19 @@ export const PASSIVES_CATALOG: Readonly<Record<PassiveId, PassiveDef>> = {
     accentColor: '#7dffa8',
     levels: [
       {
-        label: '1% / s',
-        value: 0.01,
-        description: 'Regenera un 1% de Vida por segundo, constante incluso moviéndote o peleando.',
-      },
-      {
         label: '1.5% / s',
         value: 0.015,
-        description: 'Regenera un 1.5% de Vida por segundo en todo momento.',
+        description: 'Regenera un 1.5% de Vida por segundo, constante incluso moviéndote o peleando.',
       },
       {
         label: '2% / s',
         value: 0.02,
         description: 'Regenera un 2% de Vida por segundo en todo momento.',
+      },
+      {
+        label: '3% / s',
+        value: 0.03,
+        description: 'Regenera un 3% de Vida por segundo en todo momento.',
       },
     ],
   },
@@ -259,6 +259,8 @@ export const PASSIVES_CATALOG: Readonly<Record<PassiveId, PassiveDef>> = {
 
 /** Regeneración base de Edén con la pasiva a Nv 0 (desde el minuto 1). */
 export const BASE_EDEN_REGEN_PCT_PER_SEC = 0.01;
+/** Regeneración base de Vida con la pasiva a Nv 0 (desde el minuto 1). */
+export const BASE_HP_REGEN_PCT_PER_SEC = 0.01;
 
 const RARITY_LABELS: Readonly<Record<SkillRarity, string>> = {
   base: 'BASE',
@@ -438,7 +440,7 @@ export class DomeProgressionManager {
     speedMultiplier: 1,
     forceMultiplier: 1,
     edenRegenPctPerSec: BASE_EDEN_REGEN_PCT_PER_SEC,
-    hpRegenPctPerSec: 0,
+    hpRegenPctPerSec: BASE_HP_REGEN_PCT_PER_SEC,
     magnetRadius: 6.5,
     magnetSpeed: 17,
   };
@@ -457,7 +459,8 @@ export class DomeProgressionManager {
       edenLvl > 0
         ? PASSIVES_CATALOG.eden_regen.levels[edenLvl - 1].value
         : BASE_EDEN_REGEN_PCT_PER_SEC;
-    cache.hpRegenPctPerSec = hpLvl > 0 ? PASSIVES_CATALOG.hp_regen.levels[hpLvl - 1].value : 0;
+    cache.hpRegenPctPerSec =
+      hpLvl > 0 ? PASSIVES_CATALOG.hp_regen.levels[hpLvl - 1].value : BASE_HP_REGEN_PCT_PER_SEC;
     cache.magnetRadius = 4 + this.level * 2.5;
     cache.magnetSpeed = 10 + this.level * 7;
   }

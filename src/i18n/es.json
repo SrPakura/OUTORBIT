@@ -291,9 +291,9 @@
     "edenRegen1": "Regenera un 2% de tu barra de Edén por segundo, solo cuando estás quieta.",
     "edenRegen2": "Regenera un 3% de Edén por segundo mientras flotes inmóvil o estés parada.",
     "edenRegen3": "Regenera un 5% de Edén por segundo en cuanto te detienes.",
-    "hpRegen1": "Regenera de forma pasiva y constante un 1% de Vida por segundo, incluso moviéndote o peleando.",
-    "hpRegen2": "Regenera un 1.5% de Vida por segundo en todo momento.",
-    "hpRegen3": "Regenera un 2% de Vida por segundo en todo momento. Gran margen de error en combate."
+    "hpRegen1": "Regenera de forma pasiva y constante un 1.5% de Vida por segundo, incluso moviéndote o peleando.",
+    "hpRegen2": "Regenera un 2% de Vida por segundo en todo momento.",
+    "hpRegen3": "Regenera un 3% de Vida por segundo en todo momento. Gran margen de error en combate."
   },
   "trainingPanel": {
     "title": "Entrenamiento",

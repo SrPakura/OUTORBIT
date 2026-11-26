@@ -291,9 +291,9 @@
     "edenRegen1": "Regenerates 2% of your Eden bar per second, only while standing completely still.",
     "edenRegen2": "Regenerates 3% of Eden per second while floating motionless or standing still.",
     "edenRegen3": "Regenerates 5% of Eden per second as soon as you come to a stop.",
-    "hpRegen1": "Passively and steadily regenerates 1% of max Health per second, even while moving or fighting.",
-    "hpRegen2": "Regenerates 1.5% of max Health per second continuously at all times.",
-    "hpRegen3": "Regenerates 2% of max Health per second continuously. Vastly improves combat survival."
+    "hpRegen1": "Passively and steadily regenerates 1.5% of max Health per second, even while moving or fighting.",
+    "hpRegen2": "Regenerates 2% of max Health per second continuously at all times.",
+    "hpRegen3": "Regenerates 3% of max Health per second continuously. Vastly improves combat survival."
   },
   "trainingPanel": {
     "title": "Training",

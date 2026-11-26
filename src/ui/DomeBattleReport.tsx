@@ -14,6 +14,7 @@ import {
   savePilotNickname,
 } from '@/game/localStorageState';
 import type { LeaderboardEntryRecord } from '@/game/types';
+import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
 import { useI18n, SKILL_I18N_KEYS } from '@/i18n';
 
 // ============================================================================
@@ -132,6 +133,16 @@ export function DomeBattleReport({
   const playAgainRef = useRef<HTMLButtonElement | null>(null);
   const autoSubmittedRef = useRef(false);
   const { t, language } = useI18n();
+
+  // Mando en Game Over: D-Pad / stick mueve entre [Jugar de nuevo] y [Menú principal]; Cruz (A) confirma.
+  const [padIndex] = useGamepadListNav(2, {
+    enabled: true,
+    columns: 2,
+    onConfirm: (i) => {
+      if (i === 0) onPlayAgain();
+      else onExitToMenu();
+    },
+  });
 
   const locale = language === 'ja' ? 'ja-JP' : language === 'es' ? 'es-ES' : 'en-US';
   const formatScore = (value: number): string => Math.round(value).toLocaleString(locale);
@@ -456,7 +467,7 @@ export function DomeBattleReport({
             ref={playAgainRef}
             type="button"
             onClick={onPlayAgain}
-            className="brep-action brep-action--primary"
+            className={`brep-action brep-action--primary${padIndex === 0 ? ' is-pad-focus' : ''}`}
             style={{ '--accent': '#22d3ee' } as CSSProperties}
           >
             <span className="brep-action__inner">
@@ -467,7 +478,7 @@ export function DomeBattleReport({
           <button
             type="button"
             onClick={onExitToMenu}
-            className="brep-action"
+            className={`brep-action${padIndex === 1 ? ' is-pad-focus' : ''}`}
             style={{ '--accent': '#0b0d12' } as CSSProperties}
           >
             <span className="brep-action__inner">
@@ -973,9 +984,9 @@ export function DomeBattleReport({
           letter-spacing: 0.12em;
           opacity: 0.52;
         }
-        .brep-action:hover {
+        .brep-action:hover, .brep-action.is-pad-focus {
           transform: skewX(-6deg) translateY(-2px);
-          box-shadow: 9px 9px 0 var(--accent, #0b0d12);
+          box-shadow: 9px 9px 0 #22d3ee;
           background: #fff;
         }
         .brep-action:active {
@@ -983,7 +994,7 @@ export function DomeBattleReport({
           box-shadow: 4px 4px 0 var(--accent, #0b0d12);
         }
         .brep-action--primary { background: #0b0d12; color: #fff; }
-        .brep-action--primary:hover { background: #161a24; }
+        .brep-action--primary:hover, .brep-action--primary.is-pad-focus { background: #161a24; }
 
         /* ---- móvil / pantallas estrechas ---- */
         @media (max-width: 780px) {

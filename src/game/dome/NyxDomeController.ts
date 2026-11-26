@@ -498,7 +498,7 @@ export class NyxDomeController {
   private expToNext = 1;
   private speedMultiplier = 1;
   private edenRegenFrac = EDEN_IDLE_REGEN_FRAC;
-  private hpRegenFrac = 0;
+  private hpRegenFrac = 0.01;
   private inkOverlayIntensity = 0;
   private waveNumber = 1;
   private waveLabel = 'BÁSICOS';

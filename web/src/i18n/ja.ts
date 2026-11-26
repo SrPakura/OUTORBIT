@@ -290,7 +290,7 @@ export const ja: WebDictionary = {
     passivesCopy: {
       speed_force: { name: '速度＋物理貫通力強化', desc: '飛行速度とキネティック貫通力を +20% / +50% / +75% 上昇。' },
       eden_regen: { name: 'エデン自然回復', desc: '静止またはスラブ接地中に毎秒 2% / 3% / 5% のエデンを回復。' },
-      hp_regen: { name: 'HP自動再生', desc: '戦闘中常に毎秒 1% / 1.5% / 2% のHPを自動回復。' },
+      hp_regen: { name: 'HP自動再生', desc: '基礎1% · パッシブで毎秒 1.5% / 2% / 3% のHPを自動回復。' },
     },
     controlsKicker: 'クイック操作ガイド',
     controlsTitle: 'DOMETUTORIALCARD',

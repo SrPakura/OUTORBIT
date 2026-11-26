@@ -1167,8 +1167,13 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           spawnTrainingEnemy();
         }
       } else if (waveMgr.getActiveEnemyCount() === 0) {
-        if (nextWaveDelay <= 0) nextWaveDelay = 1.6;
-        else {
+        if (nextWaveDelay <= 0) {
+          nextWaveDelay = 1.6;
+          const clearedMode = waveMgr.getFloorModeForWave(waveMgr.getWaveInfo().wave);
+          if (clearedMode === 'miniboss' || clearedMode === 'boss') {
+            controller.restoreResources(controller.getMaxHp(), controller.getMaxEden());
+          }
+        } else {
           nextWaveDelay -= worldDt;
           if (nextWaveDelay <= 0) {
             const nextWave = waveMgr.getWaveInfo().wave + 1;

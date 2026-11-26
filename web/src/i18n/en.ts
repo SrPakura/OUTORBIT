@@ -290,7 +290,7 @@ export const en: WebDictionary = {
     passivesCopy: {
       speed_force: { name: 'Speed + Physical Force', desc: '+20% / +50% / +75% flight speed and kinetic penetration.' },
       eden_regen: { name: 'Eden Regeneration', desc: '2% / 3% / 5% Eden per second while idle or grounded.' },
-      hp_regen: { name: 'HP Regeneration', desc: '1% / 1.5% / 2% continuous HP regeneration per second.' },
+      hp_regen: { name: 'HP Regeneration', desc: '1% base · Passive: 1.5% / 2% / 3% continuous HP regeneration per second.' },
     },
     controlsKicker: 'QUICK CONTROLS GUIDE',
     controlsTitle: 'DOMETUTORIALCARD',

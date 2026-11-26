@@ -290,7 +290,7 @@ export const es = {
     passivesCopy: {
       speed_force: { name: 'Velocidad + Fuerza Física', desc: '+20 % / +50 % / +75 % velocidad de vuelo y penetración cinética.' },
       eden_regen: { name: 'Regeneración de Edén', desc: '2 % / 3 % / 5 % de Edén por segundo en reposo o sobre losas.' },
-      hp_regen: { name: 'Regeneración de Vida', desc: '1 % / 1.5 % / 2 % de HP por segundo de forma constante.' },
+      hp_regen: { name: 'Regeneración de Vida', desc: '1 % base · Pasiva: 1.5 % / 2 % / 3 % de HP por segundo de forma constante.' },
     },
     controlsKicker: 'GUÍA RÁPIDA DE CONTROLES',
     controlsTitle: 'DOMETUTORIALCARD',
