@@ -21,17 +21,73 @@ import {
 const MAX_STANDARD_BUTTONS = 18;
 
 /**
- * Estado crudo de conexión leído de `navigator.getGamepads()`.
- * Lo usa el menú de Controles para el estado en vivo y la captura de botones.
+ * Patrones de dispositivos HID que el navegador expone en `navigator.getGamepads()`
+ * pero NO son mandos de juego (cascos/auriculares USB o Bluetooth, micrófonos,
+ * tarjetas de sonido, teclados, ratones, tabletas gráficas, webcams, etc.).
+ */
+const NON_GAMEPAD_ID_RE =
+  /\b(headset|headphone|headphones|earphone|earbuds|earbud|airpods|auricular|auriculares|cascos|audio|sound\s*card|soundcard|sound\s*blaster|soundbar|speaker|speakers|altavoz|mic|microphone|dac|amp|mixer|keyboard|keypad|keychron|ducky|numpad|mouse|trackpad|touchpad|trackball|wacom|tablet|stylus|digitizer|pen\s*display|huion|xp-pen|webcam|camera|stream\s*deck|elgato|spacemouse|3dconnexion|foot\s*pedal|arctis|virtuoso|void\s*(?:pro|elite|rgb)|kraken|blackshark|barracuda|nari|thresher|kaira|cloud\s*(?:ii|iii|alpha|stinger|flight|mix|core|revolver)|pulse\s*3d|inzone|sennheiser|epos|jabra|plantronics|bose|beats|jbl)\b/i;
+
+export type ActiveInputDevice = 'pointer' | 'gamepad';
+
+let lastInputDevice: ActiveInputDevice = 'pointer';
+
+export function markGamepadUsed(): void {
+  lastInputDevice = 'gamepad';
+}
+
+export function markPointerUsed(): void {
+  lastInputDevice = 'pointer';
+}
+
+/** True si el último dispositivo usado fue el mando y sigue habiendo un mando real conectado. */
+export function isGamepadPreferred(): boolean {
+  return lastInputDevice === 'gamepad' && readConnectedGamepad() !== null;
+}
+
+/**
+ * Comprueba que un `Gamepad` de la Gamepad API sea realmente un mando de juego
+ * y no unos cascos, ratón, teclado u otro periférico HID.
+ */
+export function isValidGamepad(pad: Gamepad | null | undefined): pad is Gamepad {
+  if (!pad || !pad.connected) return false;
+  if (NON_GAMEPAD_ID_RE.test(pad.id)) return false;
+  // Un mando usable en OUTORBIT necesita 2 sticks (>= 4 ejes) y >= 10 botones.
+  if (pad.axes.length < 4 || pad.buttons.length < 10) return false;
+  // Si el navegador no lo reconoce como 'standard', exigir al menos 12 botones
+  // para descartar controles multimedia o HID parciales.
+  if (pad.mapping !== 'standard' && pad.buttons.length < 12) return false;
+  return true;
+}
+
+/** True si el mando tiene algún botón pulsado o algún stick fuera de reposo. */
+export function hasGamepadActivity(pad: Gamepad, axisThreshold = 0.25): boolean {
+  for (const button of pad.buttons) {
+    if (button && (button.pressed || button.value > 0.5)) return true;
+  }
+  for (const axis of pad.axes) {
+    if (Math.abs(axis) > axisThreshold) return true;
+  }
+  return false;
+}
+
+/**
+ * Estado crudo de conexión leído de `navigator.getGamepads()`, filtrando
+ * dispositivos que no son mandos (cascos, teclados, ratones, etc.).
+ * Prioriza mandos con mapeo W3C `'standard'`.
  */
 export function readConnectedGamepad(): Gamepad | null {
   if (typeof navigator === 'undefined' || !navigator.getGamepads) return null;
   try {
     const pads = navigator.getGamepads();
     if (!pads) return null;
+    let fallback: Gamepad | null = null;
     for (const pad of pads) {
-      if (pad && pad.connected) return pad;
+      if (!isValidGamepad(pad)) continue;
+      if (pad.mapping === 'standard') return pad;
+      if (!fallback) fallback = pad;
     }
+    return fallback;
   } catch {
     // Algunos navegadores lanzan si se consulta sin gesto del usuario.
   }

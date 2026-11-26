@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { readConnectedGamepad } from '@/game/input/GamepadInput';
+import { markGamepadUsed, readConnectedGamepad } from '@/game/input/GamepadInput';
 
 // ============================================================================
 // Navegación de menús con mando (Gamepad API estándar W3C).
@@ -34,12 +34,31 @@ export function useGamepadMenuNav({
   onDirection,
   onConfirm,
   onBack,
-}: GamepadMenuNavOptions): void {
-  const cb = useRef({ onDirection, onConfirm, onBack });
-  cb.current = { onDirection, onConfirm, onBack };
+  onConnectionChange,
+}: GamepadMenuNavOptions & { onConnectionChange?: (connected: boolean) => void }): void {
+  const cb = useRef({ onDirection, onConfirm, onBack, onConnectionChange });
+  cb.current = { onDirection, onConfirm, onBack, onConnectionChange };
 
   useEffect(() => {
-    if (!enabled) return;
+    let lastConnected = readConnectedGamepad() !== null;
+    cb.current.onConnectionChange?.(lastConnected);
+    const syncConn = (): void => {
+      const next = readConnectedGamepad() !== null;
+      if (next !== lastConnected) {
+        lastConnected = next;
+        cb.current.onConnectionChange?.(next);
+      }
+    };
+    window.addEventListener('gamepadconnected', syncConn);
+    window.addEventListener('gamepaddisconnected', syncConn);
+
+    if (!enabled) {
+      return () => {
+        window.removeEventListener('gamepadconnected', syncConn);
+        window.removeEventListener('gamepaddisconnected', syncConn);
+      };
+    }
+
     let raf = 0;
     const held: Record<GamepadMenuDirection, boolean> = { up: false, down: false, left: false, right: false };
     const nextRepeat: Record<GamepadMenuDirection, number> = { up: 0, down: 0, left: 0, right: 0 };
@@ -50,6 +69,11 @@ export function useGamepadMenuNav({
     const poll = (): void => {
       raf = requestAnimationFrame(poll);
       const pad = readConnectedGamepad();
+      const nowConnected = pad !== null;
+      if (nowConnected !== lastConnected) {
+        lastConnected = nowConnected;
+        cb.current.onConnectionChange?.(nowConnected);
+      }
       if (!pad) {
         for (const dir of DIRECTIONS) held[dir] = false;
         prevConfirm = false;
@@ -75,24 +99,36 @@ export function useGamepadMenuNav({
         if (!held[dir]) {
           held[dir] = true;
           nextRepeat[dir] = now + REPEAT_DELAY_MS;
+          markGamepadUsed();
           cb.current.onDirection(dir);
         } else if (now >= nextRepeat[dir]) {
           nextRepeat[dir] = now + REPEAT_RATE_MS;
+          markGamepadUsed();
           cb.current.onDirection(dir);
         }
       }
 
       const confirm = !!pad.buttons[0]?.pressed;
-      if (confirm && !prevConfirm) cb.current.onConfirm?.();
+      if (confirm && !prevConfirm) {
+        markGamepadUsed();
+        cb.current.onConfirm?.();
+      }
       prevConfirm = confirm;
 
       const back = !!pad.buttons[1]?.pressed;
-      if (back && !prevBack) cb.current.onBack?.();
+      if (back && !prevBack) {
+        markGamepadUsed();
+        cb.current.onBack?.();
+      }
       prevBack = back;
     };
 
     raf = requestAnimationFrame(poll);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('gamepadconnected', syncConn);
+      window.removeEventListener('gamepaddisconnected', syncConn);
+    };
   }, [enabled]);
 }
 
@@ -107,6 +143,7 @@ export interface GamepadListNavOptions {
 
 /**
  * Navegación de lista con mando: devuelve el índice activo y su setter.
+ * Devuelve `-1` cuando no hay ningún mando real conectado (para ocultar el foco).
  * Cruz (A) confirma con el índice actual; Círculo (B) dispara onBack.
  */
 export function useGamepadListNav(
@@ -114,6 +151,7 @@ export function useGamepadListNav(
   options: GamepadListNavOptions,
 ): [number, (index: number) => void] {
   const { enabled = true, columns = 1, initialIndex = 0, onConfirm, onBack } = options;
+  const [hasPad, setHasPad] = useState(() => readConnectedGamepad() !== null);
   const [index, setIndex] = useState(() => Math.max(0, Math.min(initialIndex, count - 1)));
   const indexRef = useRef(index);
   indexRef.current = index;
@@ -124,6 +162,7 @@ export function useGamepadListNav(
 
   useGamepadMenuNav({
     enabled,
+    onConnectionChange: setHasPad,
     onDirection: (dir) => {
       const n = countRef.current;
       if (n <= 0) return;
@@ -145,5 +184,5 @@ export function useGamepadListNav(
   const setClamped = (i: number): void => {
     setIndex(Math.max(0, Math.min(i, Math.max(0, count - 1))));
   };
-  return [index, setClamped];
+  return [hasPad ? index : -1, setClamped];
 }

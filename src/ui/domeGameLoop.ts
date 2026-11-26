@@ -18,7 +18,14 @@ import { DomeWaveManager, type ManagedWaveEnemy, type WaveFloorMode } from '@/ga
 import { MotionVfxSystem } from '@/game/dome/MotionVfx';
 import { ComicImpactVfxSystem } from '@/game/dome/ComicImpactVfx';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
-import { GamepadInput, readConnectedGamepad } from '@/game/input/GamepadInput';
+import {
+  GamepadInput,
+  hasGamepadActivity,
+  isGamepadPreferred,
+  markGamepadUsed,
+  markPointerUsed,
+  readConnectedGamepad,
+} from '@/game/input/GamepadInput';
 import {
   ACTIVE_SKILLS_CATALOG,
   DomeProgressionManager,
@@ -805,6 +812,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         }
       };
       controllerRef.current = controller;
+      controller.setGamepadActive(gamepadActiveMode);
       setHud(controller.getHudState());
     })
     .catch((err) => {
@@ -812,7 +820,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     });
 
   // true mientras el jugador está jugando activamente con mando sin pointer lock.
-  let gamepadActiveMode = false;
+  let gamepadActiveMode = isGamepadPreferred();
 
   const isWaitingPointerCapture = (): boolean =>
     document.pointerLockElement !== canvas &&
@@ -822,7 +830,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   const onCanvasClick = () => {
     audio.unlock();
     if (tutorialOpenRef.current) return;
+    markPointerUsed();
     gamepadActiveMode = false;
+    controller?.setGamepadActive(false);
     if (document.pointerLockElement !== canvas) {
       Promise.resolve(canvas.requestPointerLock?.()).catch(() => undefined);
     }
@@ -838,7 +848,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   const onPointerLockChange = () => {
     const locked = document.pointerLockElement === canvas;
     if (locked) {
+      markPointerUsed();
       gamepadActiveMode = false;
+      controller?.setGamepadActive(false);
       hadPointerLockRef.current = true;
       // Entrenamiento: al recapturar el ratón (clic en el lienzo) el panel
       // debug se oculta solo para devolver el control completo del juego.
@@ -848,6 +860,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       }
     } else if (
       hadPointerLockRef.current &&
+      !gamepadActiveMode &&
+      !isGamepadPreferred() &&
       !levelUpOpenRef.current &&
       !battleReportOpenRef.current &&
       !pauseOpenRef.current &&
@@ -935,7 +949,9 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       return;
     }
     if (pauseOpenRef.current || tutorialOpenRef.current || isWaitingPointerCapture()) return;
-    gamepadActiveMode = false;
+    if (document.pointerLockElement === canvas) {
+      gamepadActiveMode = false;
+    }
     // Tab (Radar de enemigos, fuera de Training Mode): sin preventDefault el
     // navegador robaría el foco del canvas al pulsarla.
     if (e.code === 'Tab') e.preventDefault();
@@ -969,6 +985,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   let hudTimer = 0;
   let raf = 0;
   let gameOverTriggered = false;
+  let prevSettingsOpen = settingsOpenRef.current;
+  let circlePauseGraceUntil = 0;
   const parryStarScratch = new THREE.Vector3();
   const parryHeadScratch = new THREE.Vector3();
 
@@ -978,6 +996,11 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     const rawDt = Math.min((now - last) / 1000, 0.05);
     last = now;
 
+    if (prevSettingsOpen && !settingsOpenRef.current) {
+      circlePauseGraceUntil = now + 220;
+    }
+    prevSettingsOpen = settingsOpenRef.current;
+
     // --- Mando (Gamepad API): se lee SIEMPRE cada frame, incluso en pausa,
     // para poder abrir/cerrar DomePauseModal con Options y cerrarla con
     // Círculo (B). El resto de botones los consume el controlador al jugar.
@@ -985,27 +1008,19 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     // Cualquier botón del mando también desbloquea el AudioContext (se puede
     // jugar una run entera sin tocar el ratón ni el teclado).
     const rawPad = readConnectedGamepad();
-    if (rawPad) {
-      let padActivity = false;
-      for (const button of rawPad.buttons) {
-        if (button && button.pressed) {
-          audio.unlock();
-          padActivity = true;
-          break;
-        }
-      }
-      if (!padActivity) {
-        for (const axis of rawPad.axes) {
-          if (Math.abs(axis) > 0.25) {
-            padActivity = true;
-            break;
-          }
-        }
-      }
-      if (padActivity) {
+    if (!rawPad) {
+      gamepadActiveMode = false;
+    } else {
+      if (hasGamepadActivity(rawPad)) {
+        audio.unlock();
+        gamepadActiveMode = true;
+        markGamepadUsed();
+        hadPointerLockRef.current = false;
+      } else if (isGamepadPreferred() && document.pointerLockElement !== canvas) {
         gamepadActiveMode = true;
       }
     }
+    controller?.setGamepadActive(gamepadActiveMode);
     if (gamepad.justPressedAction('pause')) {
       if (
         !levelUpOpenRef.current &&
@@ -1024,7 +1039,12 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           }
         }
       }
-    } else if (pauseOpenRef.current && !settingsOpenRef.current && gamepad.justPressed(1)) {
+    } else if (
+      pauseOpenRef.current &&
+      !settingsOpenRef.current &&
+      now >= circlePauseGraceUntil &&
+      gamepad.justPressed(1)
+    ) {
       setIsPauseOpen(false);
     }
 

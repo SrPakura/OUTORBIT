@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CONTROL_ACTIONS,
   DEFAULT_GAMEPAD_BINDINGS,
@@ -14,6 +14,7 @@ import {
   type GameSettings,
 } from '@/game/settings';
 import { getConnectedGamepadName, readConnectedGamepad } from '@/game/input/GamepadInput';
+import { useGamepadMenuNav } from '@/game/input/gamepadMenuNav';
 import { areAllTutorialsCompleted, setAllTutorialsCompleted } from '@/game/localStorageState';
 import { useI18n } from '@/i18n';
 
@@ -80,6 +81,8 @@ function SliderRow({
   step,
   display,
   onChange,
+  focused = false,
+  rowRef,
 }: {
   label: string;
   accent: string;
@@ -89,9 +92,15 @@ function SliderRow({
   step: number;
   display: string;
   onChange: (value: number) => void;
+  focused?: boolean;
+  rowRef?: (el: HTMLElement | null) => void;
 }) {
   return (
-    <div className="set-row" style={{ '--accent': accent } as React.CSSProperties}>
+    <div
+      ref={rowRef}
+      className={`set-row${focused ? ' is-pad-focus' : ''}`}
+      style={{ '--accent': accent } as React.CSSProperties}
+    >
       <span className="set-row__label">{label}</span>
       <span className="set-row__value">{display}</span>
       <input
@@ -115,14 +124,23 @@ function ToggleRow({
   accent,
   checked,
   onChange,
+  focused = false,
+  rowRef,
 }: {
   label: string;
   accent: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  focused?: boolean;
+  rowRef?: (el: HTMLElement | null) => void;
 }) {
   return (
-    <button type="button" className="set-row set-row--toggle" onClick={() => onChange(!checked)}>
+    <button
+      ref={rowRef}
+      type="button"
+      className={`set-row set-row--toggle${focused ? ' is-pad-focus' : ''}`}
+      onClick={() => onChange(!checked)}
+    >
       <span className="set-row__label">{label}</span>
       <span
         className="set-chip"
@@ -144,7 +162,14 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
   const [skipTutorials, setSkipTutorials] = useState<boolean>(() => areAllTutorialsCompleted());
   const [capturing, setCapturing] = useState<ControlAction | null>(null);
   const [capturingPad, setCapturingPad] = useState<GamepadAction | null>(null);
+  const [captureCooldown, setCaptureCooldown] = useState(false);
   const [padName, setPadName] = useState<string | null>(() => getConnectedGamepadName());
+  const [padFocusIdx, setPadFocusIdx] = useState(0);
+  const rowRefs = useRef(new Map<number, HTMLElement>());
+  const setRowRef = (idx: number) => (el: HTMLElement | null) => {
+    if (el) rowRefs.current.set(idx, el);
+    else rowRefs.current.delete(idx);
+  };
 
   // Aplicación en vivo: cada cambio se persiste y propaga al instante.
   const patch = (mutate: (draft: GameSettings) => GameSettings): void => {
@@ -217,6 +242,8 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
               ...draft,
               gamepadBindings: { ...draft.gamepadBindings, [action]: index },
             }));
+            setCaptureCooldown(true);
+            window.setTimeout(() => setCaptureCooldown(false), 220);
             setCapturingPad(null);
             return;
           }
@@ -258,6 +285,199 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
     { id: 'gamepad', label: t('settings.tabGamepad'), accent: '#fbbf24' },
   ];
 
+  // --- Navegación completa con mando: crucetas (arriba/abajo/izq/der), X (0) y Círculo (1).
+  const padConnected = padName !== null;
+  const rowCount =
+    tab === 'general' ? 12 : tab === 'keyboard' ? 2 + CONTROL_ACTIONS.length : 14;
+  const activeFocus = padConnected ? Math.min(padFocusIdx, rowCount - 1) : -1;
+
+  const stepValue = (
+    val: number,
+    min: number,
+    max: number,
+    step: number,
+    delta: -1 | 1,
+  ): number => {
+    const next = Math.min(max, Math.max(min, val + delta * step));
+    return Math.round(next * 1000) / 1000;
+  };
+
+  const cycleTab = (delta: -1 | 1): void => {
+    const cur = tabs.findIndex((item) => item.id === tab);
+    const next = tabs[(cur + delta + tabs.length) % tabs.length];
+    if (next) setTab(next.id);
+  };
+
+  const cycleLanguage = (delta: -1 | 1): void => {
+    const langs: Array<'es' | 'en' | 'ja'> = ['es', 'en', 'ja'];
+    const cur = langs.indexOf(language);
+    const next = langs[(cur + delta + langs.length) % langs.length];
+    if (next && next !== language) setLanguage(next);
+  };
+
+  useGamepadMenuNav({
+    enabled: !capturing && !capturingPad && !captureCooldown,
+    onConnectionChange: (connected) => {
+      const nextName = connected ? getConnectedGamepadName() : null;
+      setPadName(nextName);
+    },
+    onDirection: (dir) => {
+      if (dir === 'up') {
+        setPadFocusIdx((i) => (i - 1 + rowCount) % rowCount);
+        return;
+      }
+      if (dir === 'down') {
+        setPadFocusIdx((i) => (i + 1) % rowCount);
+        return;
+      }
+      const delta: -1 | 1 = dir === 'left' ? -1 : 1;
+      const idx = Math.min(padFocusIdx, rowCount - 1);
+      if (idx === 0) {
+        cycleTab(delta);
+        return;
+      }
+      if (tab === 'general') {
+        switch (idx) {
+          case 1:
+            patch((d) => ({
+              ...d,
+              mouseSensitivity: stepValue(
+                d.mouseSensitivity,
+                SETTINGS_LIMITS.mouseSensitivity.min,
+                SETTINGS_LIMITS.mouseSensitivity.max,
+                0.05,
+                delta,
+              ),
+            }));
+            break;
+          case 2:
+            patch((d) => ({
+              ...d,
+              baseFov: stepValue(d.baseFov, SETTINGS_LIMITS.baseFov.min, SETTINGS_LIMITS.baseFov.max, 1, delta),
+            }));
+            break;
+          case 3:
+            patch((d) => ({ ...d, invertY: !d.invertY }));
+            break;
+          case 4:
+            patch((d) => ({
+              ...d,
+              masterVolume: stepValue(
+                d.masterVolume,
+                SETTINGS_LIMITS.masterVolume.min,
+                SETTINGS_LIMITS.masterVolume.max,
+                0.05,
+                delta,
+              ),
+            }));
+            break;
+          case 5:
+            patch((d) => ({
+              ...d,
+              musicVolume: stepValue(
+                d.musicVolume,
+                SETTINGS_LIMITS.musicVolume.min,
+                SETTINGS_LIMITS.musicVolume.max,
+                0.05,
+                delta,
+              ),
+            }));
+            break;
+          case 6:
+            patch((d) => ({
+              ...d,
+              sfxVolume: stepValue(
+                d.sfxVolume,
+                SETTINGS_LIMITS.sfxVolume.min,
+                SETTINGS_LIMITS.sfxVolume.max,
+                0.05,
+                delta,
+              ),
+            }));
+            break;
+          case 7:
+            patch((d) => ({ ...d, halftonesEnabled: !d.halftonesEnabled }));
+            break;
+          case 8:
+            patch((d) => ({ ...d, easyMode: !d.easyMode }));
+            break;
+          case 9: {
+            const next = !skipTutorials;
+            setAllTutorialsCompleted(next);
+            setSkipTutorials(next);
+            break;
+          }
+          case 10:
+            cycleLanguage(delta);
+            break;
+        }
+      } else if (tab === 'gamepad') {
+        if (idx === 1) {
+          patch((d) => ({
+            ...d,
+            gamepadSensitivity: stepValue(
+              d.gamepadSensitivity,
+              SETTINGS_LIMITS.gamepadSensitivity.min,
+              SETTINGS_LIMITS.gamepadSensitivity.max,
+              0.05,
+              delta,
+            ),
+          }));
+        } else if (idx === 2) {
+          patch((d) => ({
+            ...d,
+            gamepadDeadzone: stepValue(
+              d.gamepadDeadzone,
+              SETTINGS_LIMITS.gamepadDeadzone.min,
+              SETTINGS_LIMITS.gamepadDeadzone.max,
+              0.01,
+              delta,
+            ),
+          }));
+        }
+      }
+    },
+    onConfirm: () => {
+      const idx = Math.min(padFocusIdx, rowCount - 1);
+      if (idx === 0) {
+        cycleTab(1);
+        return;
+      }
+      if (tab === 'general') {
+        if (idx === 3) patch((d) => ({ ...d, invertY: !d.invertY }));
+        else if (idx === 7) patch((d) => ({ ...d, halftonesEnabled: !d.halftonesEnabled }));
+        else if (idx === 8) patch((d) => ({ ...d, easyMode: !d.easyMode }));
+        else if (idx === 9) {
+          const next = !skipTutorials;
+          setAllTutorialsCompleted(next);
+          setSkipTutorials(next);
+        } else if (idx === 10) cycleLanguage(1);
+        else if (idx === 11) handleResetAll();
+      } else if (tab === 'keyboard') {
+        if (idx >= 1 && idx <= CONTROL_ACTIONS.length) {
+          const action = CONTROL_ACTIONS[idx - 1];
+          if (action) setCapturing(action);
+        } else if (idx === 1 + CONTROL_ACTIONS.length) {
+          handleResetAll();
+        }
+      } else if (tab === 'gamepad') {
+        if (idx === 3) handleResetGamepad();
+        else if (idx >= 4 && idx < 4 + GAMEPAD_ACTIONS.length) {
+          const action = GAMEPAD_ACTIONS[idx - 4];
+          if (action) setCapturingPad(action);
+        } else if (idx === 13) {
+          handleResetAll();
+        }
+      }
+    },
+    onBack: onClose,
+  });
+
+  useEffect(() => {
+    if (activeFocus < 0) return;
+    rowRefs.current.get(activeFocus)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [activeFocus, tab]);
+
   return (
     <div className="set-root">
       <div className="set-speedlines" />
@@ -274,7 +494,10 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
       </div>
 
       {/* Pestañas */}
-      <div className="set-tabs">
+      <div
+        ref={setRowRef(0)}
+        className={`set-tabs${activeFocus === 0 ? ' is-pad-focus' : ''}`}
+      >
         {tabs.map(({ id, label, accent }) => (
           <button
             key={id}
@@ -304,6 +527,8 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                 step={0.05}
                 display={`${settings.mouseSensitivity.toFixed(2)}x`}
                 onChange={(value) => patch((draft) => ({ ...draft, mouseSensitivity: value }))}
+                focused={activeFocus === 1}
+                rowRef={setRowRef(1)}
               />
               <SliderRow
                 label={t('settings.fov')}
@@ -314,12 +539,16 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                 step={1}
                 display={`${Math.round(settings.baseFov)}°`}
                 onChange={(value) => patch((draft) => ({ ...draft, baseFov: value }))}
+                focused={activeFocus === 2}
+                rowRef={setRowRef(2)}
               />
               <ToggleRow
                 label={t('settings.invertY')}
                 accent="#22d3ee"
                 checked={settings.invertY}
                 onChange={(checked) => patch((draft) => ({ ...draft, invertY: checked }))}
+                focused={activeFocus === 3}
+                rowRef={setRowRef(3)}
               />
             </section>
 
@@ -336,6 +565,8 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                 step={0.05}
                 display={`${Math.round(settings.masterVolume * 100)}%`}
                 onChange={(value) => patch((draft) => ({ ...draft, masterVolume: value }))}
+                focused={activeFocus === 4}
+                rowRef={setRowRef(4)}
               />
               <SliderRow
                 label={t('settings.musicVolume')}
@@ -346,6 +577,8 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                 step={0.05}
                 display={`${Math.round(settings.musicVolume * 100)}%`}
                 onChange={(value) => patch((draft) => ({ ...draft, musicVolume: value }))}
+                focused={activeFocus === 5}
+                rowRef={setRowRef(5)}
               />
               <SliderRow
                 label={t('settings.sfxVolume')}
@@ -356,6 +589,8 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                 step={0.05}
                 display={`${Math.round(settings.sfxVolume * 100)}%`}
                 onChange={(value) => patch((draft) => ({ ...draft, sfxVolume: value }))}
+                focused={activeFocus === 6}
+                rowRef={setRowRef(6)}
               />
             </section>
 
@@ -368,12 +603,16 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                 accent="#fbbf24"
                 checked={settings.halftonesEnabled}
                 onChange={(checked) => patch((draft) => ({ ...draft, halftonesEnabled: checked }))}
+                focused={activeFocus === 7}
+                rowRef={setRowRef(7)}
               />
               <ToggleRow
                 label={t('settings.easyMode')}
                 accent="#fbbf24"
                 checked={settings.easyMode}
                 onChange={(checked) => patch((draft) => ({ ...draft, easyMode: checked }))}
+                focused={activeFocus === 8}
+                rowRef={setRowRef(8)}
               />
               <ToggleRow
                 label={t('settings.skipTutorials')}
@@ -383,8 +622,13 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                   setAllTutorialsCompleted(checked);
                   setSkipTutorials(checked);
                 }}
+                focused={activeFocus === 9}
+                rowRef={setRowRef(9)}
               />
-              <div className="set-row set-row--toggle">
+              <div
+                ref={setRowRef(10)}
+                className={`set-row set-row--toggle${activeFocus === 10 ? ' is-pad-focus' : ''}`}
+              >
                 <span className="set-row__label">{t('settings.language')}</span>
                 <span className="flex gap-2">
                   <button
@@ -442,10 +686,15 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
             </h2>
             <p className="set-note">{t('controls.keyboardHint')}</p>
             <div className="set-bindings">
-              {CONTROL_ACTIONS.map((action) => {
+              {CONTROL_ACTIONS.map((action, i) => {
                 const isCapturing = capturing === action;
+                const rowIdx = 1 + i;
                 return (
-                  <div key={action} className="set-binding">
+                  <div
+                    key={action}
+                    ref={setRowRef(rowIdx)}
+                    className={`set-binding${activeFocus === rowIdx ? ' is-pad-focus' : ''}`}
+                  >
                     <span className="set-binding__label">{t(ACTION_LABEL_KEYS[action])}</span>
                     <button
                       type="button"
@@ -491,6 +740,8 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                 step={0.05}
                 display={`${settings.gamepadSensitivity.toFixed(2)}x`}
                 onChange={(value) => patch((draft) => ({ ...draft, gamepadSensitivity: value }))}
+                focused={activeFocus === 1}
+                rowRef={setRowRef(1)}
               />
               <SliderRow
                 label={t('controls.deadzone')}
@@ -501,6 +752,8 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                 step={0.01}
                 display={`${Math.round(settings.gamepadDeadzone * 100)}%`}
                 onChange={(value) => patch((draft) => ({ ...draft, gamepadDeadzone: value }))}
+                focused={activeFocus === 2}
+                rowRef={setRowRef(2)}
               />
             </section>
 
@@ -509,15 +762,25 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
                 <h2 className="set-panel__title" style={{ '--accent': '#fbbf24' } as React.CSSProperties}>
                   {t('controls.buttonBindings')}
                 </h2>
-                <button type="button" className="set-mini-btn" onClick={handleResetGamepad}>
+                <button
+                  ref={setRowRef(3)}
+                  type="button"
+                  className={`set-mini-btn${activeFocus === 3 ? ' is-pad-focus' : ''}`}
+                  onClick={handleResetGamepad}
+                >
                   {t('controls.resetGamepad')}
                 </button>
               </div>
               <div className="set-bindings set-bindings--pad">
-                {GAMEPAD_ACTIONS.map((action) => {
+                {GAMEPAD_ACTIONS.map((action, i) => {
                   const isCapturing = capturingPad === action;
+                  const rowIdx = 4 + i;
                   return (
-                    <div key={action} className="set-binding">
+                    <div
+                      key={action}
+                      ref={setRowRef(rowIdx)}
+                      className={`set-binding${activeFocus === rowIdx ? ' is-pad-focus' : ''}`}
+                    >
                       <span className="set-binding__label">{t(GAMEPAD_ACTION_LABEL_KEYS[action])}</span>
                       <button
                         type="button"
@@ -539,7 +802,12 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
       </div>
 
       <div className="set-footer">
-        <button type="button" className="set-restore" onClick={handleResetAll}>
+        <button
+          ref={setRowRef(rowCount - 1)}
+          type="button"
+          className={`set-restore${activeFocus === rowCount - 1 ? ' is-pad-focus' : ''}`}
+          onClick={handleResetAll}
+        >
           {t('settings.restoreAll')}
         </button>
       </div>
@@ -869,6 +1137,33 @@ export default function SettingsScreen({ settings, onClose, onUpdateSettings }: 
         }
         .set-restore:hover { transform: skewX(-8deg) translateY(-2px); box-shadow: 8px 8px 0 #0b0d12; }
         .set-restore:active { transform: skewX(-8deg) translateY(1px); box-shadow: 4px 4px 0 #0b0d12; }
+
+        /* Foco de mando: solo visible cuando hay un mando conectado */
+        .set-tabs.is-pad-focus .set-tab.is-on {
+          outline: 3px solid #22d3ee;
+          outline-offset: 3px;
+        }
+        .set-row.is-pad-focus {
+          background: rgba(34, 211, 238, 0.14);
+          outline: 2px solid #0b0d12;
+          box-shadow: 4px 4px 0 #22d3ee;
+          padding-inline: 10px;
+          border-bottom-color: transparent;
+        }
+        .set-binding.is-pad-focus {
+          border-color: #22d3ee;
+          background: #fff;
+          box-shadow: 4px 4px 0 #22d3ee;
+        }
+        .set-mini-btn.is-pad-focus {
+          background: #0b0d12;
+          color: #fbbf24;
+          box-shadow: 4px 4px 0 #e11d48;
+        }
+        .set-restore.is-pad-focus {
+          transform: skewX(-8deg) translateY(-2px);
+          box-shadow: 8px 8px 0 #22d3ee;
+        }
       `}</style>
     </div>
   );

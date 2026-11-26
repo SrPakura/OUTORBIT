@@ -17,6 +17,7 @@ import {
 } from '@/game/localStorageState';
 import { SynthAudio } from '@/game/audio/SynthAudio';
 import { musicPlayer } from '@/game/audio/MusicPlayer';
+import { isGamepadPreferred } from '@/game/input/GamepadInput';
 import { NyxDomeController } from '@/game/dome/NyxDomeController';
 import { startDomeGameLoop, type DomeLevelUpUiState, type DomeTrainingBridge } from '@/ui/domeGameLoop';
 import DomeDarkMatterRings from '@/ui/DomeDarkMatterRings';
@@ -187,7 +188,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         openId: levelUpState.openId,
       });
       const canvas = canvasRef.current;
-      if (canvas && document.pointerLockElement !== canvas) {
+      if (canvas && !isGamepadPreferred() && document.pointerLockElement !== canvas) {
         Promise.resolve(canvas.requestPointerLock?.()).catch(() => undefined);
       }
     },
@@ -215,7 +216,9 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
     // onPointerLockChange vuelve a marcarla.
     hadPointerLockRef.current = false;
     setIsPauseOpen(false);
-    Promise.resolve(canvasRef.current?.requestPointerLock?.()).catch(() => undefined);
+    if (!isGamepadPreferred()) {
+      Promise.resolve(canvasRef.current?.requestPointerLock?.()).catch(() => undefined);
+    }
   }, []);
 
   const handlePauseRestart = useCallback(() => {
@@ -362,7 +365,9 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
       setTutorialCompleted(activeTutorial, true);
     }
     setActiveTutorial(null);
-    Promise.resolve(canvasRef.current?.requestPointerLock?.()).catch(() => undefined);
+    if (!isGamepadPreferred()) {
+      Promise.resolve(canvasRef.current?.requestPointerLock?.()).catch(() => undefined);
+    }
   }, [activeTutorial]);
 
   const handleSubmitScore = useCallback(async (playerName: string) => {

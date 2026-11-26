@@ -345,6 +345,7 @@ export class NyxDomeController {
   private readonly codesDown = new Set<string>();
   private readonly actionByCode = new Map<string, ControlAction>();
   private pointerLocked = false;
+  private gamepadActive = false;
   private wantJump = false;
   private wantDash = false;
   private wantAttack = false;
@@ -1005,6 +1006,10 @@ export class NyxDomeController {
     }
   }
 
+  setGamepadActive(active: boolean): void {
+    this.gamepadActive = active;
+  }
+
   /**
    * Tamaño del viewport en píxeles CSS: lo refresca la vista en cada resize
    * para que la mira no consulte window.innerWidth/innerHeight cada frame.
@@ -1325,6 +1330,7 @@ export class NyxDomeController {
       speedAttackKind: this.mode === 'speed_attack' ? this.speedAttackKind : null,
       pointerLocked: this.pointerLocked,
       gamepadConnected: this.isGamepadConnected(),
+      gamepadActive: this.gamepadActive,
       reticleLockState: this.reticleLockState,
       parryStarHovered: this.parryStarHovered,
       parryStage: !this.parryWindowActive

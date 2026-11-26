@@ -93,6 +93,8 @@ export interface DomeHudState {
   pointerLocked: boolean;
   /** Hay un mando (Gamepad API) conectado: el HUD muestra el aviso. */
   gamepadConnected?: boolean;
+  /** True si el jugador está jugando con mando (oculta el aviso de capturar ratón). */
+  gamepadActive?: boolean;
   reticleLockState: ReticleLockState;
   /** True cuando la mira apunta sobre la estrella dorada del parry del Gólem. */
   parryStarHovered?: boolean;

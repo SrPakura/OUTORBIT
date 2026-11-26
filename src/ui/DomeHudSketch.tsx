@@ -720,7 +720,7 @@ function DomeHudSketchInner({
       <DomeSkillSlotsHud slots={hud.slots} activeSlot={hud.activeSlot} />
 
       {/* 9. Overlay de captura de ratón — única superficie con la guía de controles */}
-      {!hud.pointerLocked && !hidePointerLockPrompt && (
+      {!hud.pointerLocked && !hud.gamepadActive && !hidePointerLockPrompt && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-[#090314]/45">
           <div className="-skew-x-12 border border-white/80 bg-[#090314]/90 px-6 py-2 shadow-[6px_6px_0_rgba(34,211,238,0.45)]">
             <span className="block skew-x-12 text-[11px] font-bold tracking-[0.24em] text-white">

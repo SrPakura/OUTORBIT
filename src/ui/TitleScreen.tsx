@@ -7,7 +7,7 @@ import { TitleDioramaSandbox } from '@/ui/TitleDioramaSandbox';
 import FluidInkButton from '@/ui/FluidInkButton';
 import SettingsScreen from '@/ui/SettingsScreen';
 import LeaderboardModal from '@/ui/LeaderboardModal';
-import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
+import { useGamepadListNav, useGamepadMenuNav } from '@/game/input/gamepadMenuNav';
 
 type MenuModal = 'settings' | 'leaderboard' | 'easyHint' | null;
 
@@ -64,6 +64,12 @@ export default function TitleScreen({
   const [padIndex] = useGamepadListNav(actions.length, {
     enabled: modal === null,
     onConfirm: (i) => actions[i]?.run(),
+  });
+  useGamepadMenuNav({
+    enabled: modal === 'easyHint',
+    onDirection: () => {},
+    onConfirm: () => setModal(null),
+    onBack: () => setModal(null),
   });
 
   // Montaje único del runtime WebGL (el sandbox se reconstruye solo al salir).
