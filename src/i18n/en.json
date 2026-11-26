@@ -96,6 +96,12 @@
     "emptySlot": "EMPTY",
     "levelShort": "Lv.",
     "edenCost": "COST: {{n}} EDEN",
+    "reroll": "RE-ROLL ({{n}})",
+    "instantHealTag": "100% INSTANT",
+    "healHpTitle": "Restore Health",
+    "healHpDesc": "Instantly restores your Health to 100% so you can keep fighting.",
+    "healEdenTitle": "Restore Eden",
+    "healEdenDesc": "Instantly refills your Eden bar to 100% to unleash your skills.",
     "rarity": {
       "base": "BASE",
       "common": "COMMON",

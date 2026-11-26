@@ -1644,7 +1644,7 @@ export function updateKronosPhase4(
 ): void {
   const k = internal.kronos;
   const effects = ctx.kronosNyxEffects;
-  if (k.state === 'supernova') {
+  if (!k.phase4 || k.state === 'supernova') {
     return;
   }
   k.phase4Timer -= dt;

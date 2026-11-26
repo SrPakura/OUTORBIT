@@ -32,7 +32,7 @@ export interface SkillSlotState {
 
 export interface LevelUpCardOption {
   id: string;
-  kind: 'active_new' | 'active_upgrade' | 'passive';
+  kind: 'active_new' | 'active_upgrade' | 'passive' | 'heal_hp' | 'heal_eden';
   skillId?: ActiveSkillId;
   passiveId?: PassiveId;
   title: string;
@@ -273,13 +273,29 @@ function pickRandom<T>(pool: readonly T[]): T {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-/** Elige 2 entradas distintas del pool (duplica si solo hay 1 disponible). */
-function pickTwoDistinct<T>(pool: readonly T[]): [T, T] {
-  if (pool.length <= 1) return [pool[0], pool[0]];
-  const firstIdx = Math.floor(Math.random() * pool.length);
-  let secondIdx = Math.floor(Math.random() * (pool.length - 1));
-  if (secondIdx >= firstIdx) secondIdx += 1;
-  return [pool[firstIdx], pool[secondIdx]];
+/** Elige hasta `count` entradas distintas al azar de `pool`. */
+function pickDistinctN<T>(pool: readonly T[], count: number): T[] {
+  const copy = [...pool];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, Math.min(count, copy.length));
+}
+
+/** Preferencia al re-rollear: intenta sacar opciones fuera de `excludeIds` primero. */
+function pickForReroll(
+  pool: readonly LevelUpCardOption[],
+  count: number,
+  excludeIds?: ReadonlySet<string>,
+): LevelUpCardOption[] {
+  if (!excludeIds || excludeIds.size === 0) return pickDistinctN(pool, count);
+  const fresh = pool.filter((item) => !excludeIds.has(item.id));
+  if (fresh.length >= count) return pickDistinctN(fresh, count);
+  const picked = [...pickDistinctN(fresh, fresh.length)];
+  const pickedIds = new Set(picked.map((item) => item.id));
+  const rest = pool.filter((item) => !pickedIds.has(item.id));
+  return [...picked, ...pickDistinctN(rest, count - picked.length)];
 }
 
 // ============================================================================
@@ -294,6 +310,8 @@ export class DomeProgressionManager {
   hp = 100;
   maxEden = 100;
   eden = 100;
+  /** Re-rolls disponibles por partida en la selección de cartas (3 por run). */
+  rerollsRemaining = 3;
   /** La 1ª elección de cartas (Nivel 1) sigue pendiente de resolverse. */
   pendingInitialPick = true;
 
@@ -343,45 +361,82 @@ export class DomeProgressionManager {
   }
 
   /**
+   * Consume 1 re-roll de la partida (máx. 3 por run) y genera nuevas cartas
+   * evitando repetir las mostradas si hay alternativas en el pool.
+   */
+  rerollLevelUpChoices(
+    forLevel: number,
+    currentChoices: readonly LevelUpCardOption[] | null,
+  ): LevelUpCardOption[] | null {
+    if (this.rerollsRemaining <= 0) return null;
+    this.rerollsRemaining -= 1;
+    const excludeIds = new Set(currentChoices?.map((c) => c.id) ?? []);
+    return this.generateLevelUpChoices(forLevel, excludeIds);
+  }
+
+  /**
    * Genera las cartas de la UI de subida al nivel `forLevel`:
    *  - Nivel 1: Carta 1 SIEMPRE Campo Gravitacional (BASE); Carta 2 aleatoria.
    *  - Impares (3, 5, 7...): 2 cartas de habilidad nueva (hueco libre o
    *    reemplazo) o mejora +1 de una equipada (implosion queda excluida:
    *    maxLevel 1).
-   *  - Pares (2, 4, 6...): las 3 pasivas que no estén al Nv 3; si todas lo
-   *    están, fallback a mejoras/habilidades activas.
+   *  - Pares (2, 4, 6...): mezcla pasivas (< Nv 3) + cartas instantáneas de
+   *    Regenerar Vida y Regenerar Edén (hasta 3 cartas al azar, evitando que
+   *    siempre salgan las 3 pasivas); fallback a activas si todo está al Nv 3.
    */
-  generateLevelUpChoices(forLevel: number): LevelUpCardOption[] {
+  generateLevelUpChoices(
+    forLevel: number,
+    excludeIds?: ReadonlySet<string>,
+  ): LevelUpCardOption[] {
     if (forLevel <= 1) {
-      const second = pickRandom(ACTIVE_SKILL_IDS.filter((id) => id !== 'gravity_field'));
+      const candidates = ACTIVE_SKILL_IDS.filter((id) => id !== 'gravity_field');
+      const filtered = excludeIds
+        ? candidates.filter((id) => !excludeIds.has(`active_new:${id}`))
+        : candidates;
+      const pool = filtered.length > 0 ? filtered : candidates;
+      const second = pickRandom(pool);
       return [this.buildNewSkillCard('gravity_field'), this.buildNewSkillCard(second)];
     }
 
     if (forLevel % 2 === 1) {
       const activePool = this.buildActiveOptionPool();
-      if (activePool.length >= 2) return pickTwoDistinct(activePool);
-      const combined = [...activePool, ...this.buildPassiveOptionPool()];
-      if (combined.length >= 2) return pickTwoDistinct(combined);
+      if (activePool.length >= 2) return pickForReroll(activePool, 2, excludeIds);
+      const combined = [
+        ...activePool,
+        ...this.buildPassiveOptionPool(),
+        this.buildHealHpCard(),
+        this.buildHealEdenCard(),
+      ];
+      if (combined.length >= 2) return pickForReroll(combined, 2, excludeIds);
       if (combined.length === 1) return combined;
     } else {
       const passivePool = this.buildPassiveOptionPool();
-      if (passivePool.length > 0) return passivePool;
+      const recoveryCards = [this.buildHealHpCard(), this.buildHealEdenCard()];
+      if (passivePool.length > 0) {
+        // Mezcla las pasivas disponibles con Regenerar Vida / Regenerar Edén y
+        // elige hasta 3 cartas sin forzar siempre las mismas 3 pasivas.
+        const mixedPool = [...passivePool, ...recoveryCards];
+        return pickForReroll(mixedPool, Math.min(3, mixedPool.length), excludeIds);
+      }
       const activePool = this.buildActiveOptionPool();
-      if (activePool.length >= 2) return pickTwoDistinct(activePool);
-      if (activePool.length === 1) return activePool;
+      const combined = [...activePool, ...recoveryCards];
+      if (combined.length >= 2) return pickForReroll(combined, Math.min(3, combined.length), excludeIds);
+      if (combined.length === 1) return combined;
     }
 
-    // Caso degenerado (todo maximizado): duplicamos una carta pasiva tope
-    // para que la UI siga teniendo sentido.
-    const fallback = this.buildPassiveCard('eden_regen');
-    return [fallback, { ...fallback, id: `${fallback.id}:dup` }];
+    return [this.buildHealHpCard(), this.buildHealEdenCard()];
   }
 
   /**
    * Aplica la carta elegida: equipa en el primer hueco libre (o reemplaza
    * `targetSlotIndex`), mejora la habilidad equipada o sube la pasiva.
+   * (`heal_hp` / `heal_eden` se aplican sobre el controlador en DomeGameView).
    */
   applyChoice(option: LevelUpCardOption, targetSlotIndex?: 0 | 1 | 2): void {
+    if (option.kind === 'heal_hp' || option.kind === 'heal_eden') {
+      if (this.pendingInitialPick) this.pendingInitialPick = false;
+      return;
+    }
     if (option.kind === 'passive') {
       if (option.passiveId !== undefined) {
         const def = PASSIVES_CATALOG[option.passiveId];
@@ -522,6 +577,34 @@ export class DomeProgressionManager {
       nextLevel,
       description: levelDef.description,
       accentColor: def.accentColor,
+    };
+  }
+
+  private buildHealHpCard(): LevelUpCardOption {
+    return {
+      id: 'heal_hp',
+      kind: 'heal_hp',
+      title: 'Regenerar Vida',
+      subtitle: 'Recuperación instantánea',
+      rarity: 'common',
+      currentLevel: 0,
+      nextLevel: 1,
+      description: 'Restaura tu Vida al 100% al instante para seguir combatiendo.',
+      accentColor: '#7dffa8',
+    };
+  }
+
+  private buildHealEdenCard(): LevelUpCardOption {
+    return {
+      id: 'heal_eden',
+      kind: 'heal_eden',
+      title: 'Regenerar Edén',
+      subtitle: 'Recuperación instantánea',
+      rarity: 'common',
+      currentLevel: 0,
+      nextLevel: 1,
+      description: 'Recarga tu barra de Edén al 100% al instante para desatar tus habilidades.',
+      accentColor: '#df9fff',
     };
   }
 

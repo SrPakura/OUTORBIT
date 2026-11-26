@@ -105,7 +105,7 @@ const DEBRIS_DRIFT_DAMPING = 0.8;
  * Espiral alrededor de Nyx al activar el Campo Gravitacional (m).
  */
 const NYX_HITBOX_RADIUS_M = 0.85;
-const INK_BALL_CAPTURE_RADIUS_BY_LEVEL = [2.0, 2.5, 3.0, 4.0, 5.0] as const;
+const INK_BALL_CAPTURE_RADIUS_BY_LEVEL = [7.0, 7.5, 8.0, 9.0, 10.0] as const;
 /**
  * Daño efectivo de una bola capturada: x3 una roca pequeña al impactar.
  * El pipeline de skills convierte el daño en fuerza cinética

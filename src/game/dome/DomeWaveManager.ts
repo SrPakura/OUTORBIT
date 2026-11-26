@@ -4060,6 +4060,14 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           }
         }
         if (hitEnemy) {
+          if (hitEnemy.entity.archetype === 'kronos_leviathan') {
+            this.tryBreakKronosStarFromSkill(hitEnemy);
+            hitEnemy.hitFlash = 1.3;
+            hitEnemy.entity.hitFlash = 1.3;
+            this.onEnemyExplode?.(projectile.mesh.position.clone(), 2.2, 0x34d399);
+            this.deactivateProjectile(projectile);
+            continue;
+          }
           hitEnemy.hitFlash = 1.3;
           hitEnemy.entity.hitFlash = 1.3;
           hitEnemy.entity.hp = Math.max(0, hitEnemy.entity.hp - projectile.damage);

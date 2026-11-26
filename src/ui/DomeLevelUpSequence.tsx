@@ -4,6 +4,7 @@ import { useI18n, SKILL_I18N_KEYS } from '@/i18n';
 import type { LevelUpCardOption } from '@/game/dome/DomeProgression';
 import type { SynthAudio } from '@/game/audio/SynthAudio';
 import { useGamepadListNav } from '@/game/input/gamepadMenuNav';
+import { readConnectedGamepad } from '@/game/input/GamepadInput';
 import SkillIcon from '@/ui/SkillIcon';
 
 // ============================================================================
@@ -51,6 +52,9 @@ export interface DomeLevelUpSequenceProps {
   /** Selección inicial de la partida: salta la animación del planeta y
    *  muestra el papel y las cartas desde el primer frame. */
   skipPlanetAnimation?: boolean;
+  /** Re-rolls disponibles en esta partida (0..3). */
+  rerollsRemaining?: number;
+  onReroll?: () => void;
   audioRef: { current: SynthAudio | null };
   onSelect: (option: LevelUpCardOption, replaceSlotIndex?: 0 | 1 | 2) => void;
 }
@@ -596,6 +600,8 @@ export default function DomeLevelUpSequence({
   equippedSlots,
   requiresSlotReplacement,
   skipPlanetAnimation,
+  rerollsRemaining = 0,
+  onReroll,
   audioRef,
   onSelect,
 }: DomeLevelUpSequenceProps) {
@@ -782,6 +788,22 @@ export default function DomeLevelUpSequence({
     [finish, flyToCenter, requiresSlotReplacement],
   );
 
+  const triggerReroll = useCallback(() => {
+    if (
+      !onReroll ||
+      rerollsRemaining <= 0 ||
+      lockedRef.current ||
+      flyingRef.current ||
+      returningRef.current ||
+      showReplace ||
+      phase !== 'cards'
+    ) {
+      return;
+    }
+    audio()?.playInkWipe();
+    onReroll();
+  }, [onReroll, phase, rerollsRemaining, showReplace]);
+
   // Mando — cartas: D-Pad/stick izq-der mueve, Cruz (A) elige.
   const [padCardIndex, setPadCardIndex] = useGamepadListNav(choices?.length ?? 0, {
     enabled: isOpen && phase === 'cards' && !showReplace,
@@ -791,6 +813,24 @@ export default function DomeLevelUpSequence({
       if (option) pick(option);
     },
   });
+
+  // Mando — re-roll con Triángulo / Y (botón 3) y detección de mando para el badge.
+  const [hasGamepad, setHasGamepad] = useState(() => readConnectedGamepad() !== null);
+  useEffect(() => {
+    if (!isOpen || phase !== 'cards' || showReplace) return;
+    let raf = 0;
+    let prevTri = !!readConnectedGamepad()?.buttons[3]?.pressed;
+    const poll = () => {
+      raf = requestAnimationFrame(poll);
+      const pad = readConnectedGamepad();
+      setHasGamepad(pad !== null);
+      const tri = !!pad?.buttons[3]?.pressed;
+      if (tri && !prevTri) triggerReroll();
+      prevTri = tri;
+    };
+    raf = requestAnimationFrame(poll);
+    return () => cancelAnimationFrame(raf);
+  }, [isOpen, phase, showReplace, triggerReroll]);
 
   // Mando — ranuras de reemplazo: Cruz (A) confirma, Círculo (B) vuelve.
   const [padSlotIndex, setPadSlotIndex] = useGamepadListNav(equippedSlots.length, {
@@ -813,6 +853,12 @@ export default function DomeLevelUpSequence({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newLevel]);
 
+  // Al re-rollear cartas, resetea el foco a la primera carta.
+  useEffect(() => {
+    setPadCardIndex(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [choices]);
+
   // Al abrir el panel de reemplazo, el foco del mando empieza en la ranura 1.
   useEffect(() => {
     if (showReplace) setPadSlotIndex(0);
@@ -829,7 +875,7 @@ export default function DomeLevelUpSequence({
     });
   }, [phase, showReplace, choices, padCardIndex, newLevel]);
 
-  // Teclado: [1..N] elige carta · con carta en vuelo [1..3] elige ranura · ESC vuelve
+  // Teclado: [1..N] elige carta · [R] re-rollea · con carta en vuelo [1..3] elige ranura · ESC vuelve
   useEffect(() => {
     if (phase !== 'cards' || !choices) return;
     const onKey = (e: KeyboardEvent) => {
@@ -846,6 +892,11 @@ export default function DomeLevelUpSequence({
         }
         return;
       }
+      if (e.code === 'KeyR') {
+        e.preventDefault();
+        triggerReroll();
+        return;
+      }
       const idx = Number(e.key) - 1;
       if (Number.isInteger(idx) && idx >= 0 && idx < choices.length) {
         pick(choices[idx]);
@@ -853,7 +904,7 @@ export default function DomeLevelUpSequence({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, choices, equippedSlots.length, closeReplace, finish, pick]);
+  }, [phase, choices, equippedSlots.length, closeReplace, finish, pick, triggerReroll]);
 
   if (!isOpen || !choices) return null;
 
@@ -883,13 +934,29 @@ export default function DomeLevelUpSequence({
                 : option.passiveId
                   ? SKILL_I18N_KEYS[option.passiveId]
                   : null;
-              const cardTitle = skillKey ? t(`skills.${skillKey}`) : option.title;
-              const cardDesc =
-                option.skillId && skillKey
-                  ? t(`skillDescriptions.${skillKey}`)
-                  : option.passiveId && skillKey
-                    ? t(`skillDescriptions.${skillKey}${option.nextLevel}`)
-                    : option.description;
+              const isHealHp = option.kind === 'heal_hp';
+              const isHealEden = option.kind === 'heal_eden';
+              const cardTitle = isHealHp
+                ? t('levelUp.healHpTitle')
+                : isHealEden
+                  ? t('levelUp.healEdenTitle')
+                  : skillKey
+                    ? t(`skills.${skillKey}`)
+                    : option.title;
+              const cardDesc = isHealHp
+                ? t('levelUp.healHpDesc')
+                : isHealEden
+                  ? t('levelUp.healEdenDesc')
+                  : option.skillId && skillKey
+                    ? t(`skillDescriptions.${skillKey}`)
+                    : option.passiveId && skillKey
+                      ? t(`skillDescriptions.${skillKey}${option.nextLevel}`)
+                      : option.description;
+              const iconId = isHealHp
+                ? 'hp_regen'
+                : isHealEden
+                  ? 'eden_regen'
+                  : (option.skillId ?? option.passiveId);
 
               return (
                 <div key={option.id} className="lu-card-slot">
@@ -915,15 +982,21 @@ export default function DomeLevelUpSequence({
                     <div className="lu-card__icon">
                       <div className="ring" />
                       <SkillIcon
-                        id={option.skillId ?? option.passiveId}
+                        id={iconId}
                         size={68}
                         className="lu-card__svg"
                       />
                     </div>
                     <p className="lu-card__name">{cardTitle}</p>
                     <p className="lu-card__level">
-                      {t('levelUp.levelShort')} {option.currentLevel}{' '}
-                      <span className="arrow">→ {t('levelUp.levelShort')} {option.nextLevel}</span>
+                      {isHealHp || isHealEden ? (
+                        <span className="arrow">{t('levelUp.instantHealTag')}</span>
+                      ) : (
+                        <>
+                          {t('levelUp.levelShort')} {option.currentLevel}{' '}
+                          <span className="arrow">→ {t('levelUp.levelShort')} {option.nextLevel}</span>
+                        </>
+                      )}
                     </p>
                     {option.edenCost != null && (
                       <span className="lu-card__cost">
@@ -939,6 +1012,21 @@ export default function DomeLevelUpSequence({
               );
             })}
           </main>
+          {onReroll && !showReplace && (
+            <div className="lu-reroll-wrap">
+              <button
+                type="button"
+                className="lu-reroll"
+                disabled={rerollsRemaining <= 0}
+                onClick={triggerReroll}
+              >
+                <span className="lu-reroll__inner">
+                  <span className="lu-reroll__key">{hasGamepad ? '△' : '[R]'}</span>
+                  <span>{t('levelUp.reroll', { n: rerollsRemaining })}</span>
+                </span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1497,6 +1585,51 @@ export default function DomeLevelUpSequence({
           30%  { opacity: 1; transform: scale(1); }
           60%  { opacity: 1; transform: scale(1.55); }
           100% { opacity: 0; transform: scale(0); }
+        }
+
+        /* ---- Re-roll de cartas ---- */
+        .lu-reroll-wrap {
+          position: fixed;
+          left: 50%;
+          bottom: 3.5vh;
+          transform: translateX(-50%);
+          z-index: 6;
+        }
+        .lu-reroll {
+          background: #0b0d12;
+          color: #ffffff;
+          border: 3px solid #0b0d12;
+          box-shadow: 5px 5px 0 #22d3ee;
+          padding: 10px 22px 11px;
+          font: 900 13px/1 "Helvetica Neue", Helvetica, Arial, sans-serif;
+          font-style: italic;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          transform: skewX(-8deg);
+          cursor: pointer;
+          transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease, opacity 120ms ease;
+        }
+        .lu-reroll:hover:not(:disabled) {
+          background: #e11d48;
+          box-shadow: 7px 7px 0 #0b0d12;
+          transform: skewX(-8deg) translateY(-2px);
+        }
+        .lu-reroll:disabled {
+          opacity: 0.38;
+          cursor: not-allowed;
+          box-shadow: 3px 3px 0 rgba(11, 13, 18, 0.35);
+        }
+        .lu-reroll__inner {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          transform: skewX(8deg);
+        }
+        .lu-reroll__key {
+          background: #22d3ee;
+          color: #0b0d12;
+          padding: 3px 7px 2px;
+          font: 900 11px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
         }
       `}</style>
     </div>

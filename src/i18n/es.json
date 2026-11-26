@@ -96,6 +96,12 @@
     "emptySlot": "VACÍO",
     "levelShort": "Nv.",
     "edenCost": "COSTE: {{n}} EDÉN",
+    "reroll": "RE-ROLL ({{n}})",
+    "instantHealTag": "100% AL INSTANTE",
+    "healHpTitle": "Regenerar Vida",
+    "healHpDesc": "Restaura tu Vida al 100% al instante para seguir combatiendo.",
+    "healEdenTitle": "Regenerar Edén",
+    "healEdenDesc": "Recarga tu barra de Edén al 100% al instante para desatar tus habilidades.",
     "rarity": {
       "base": "BASE",
       "common": "COMÚN",

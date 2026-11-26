@@ -96,6 +96,12 @@
     "emptySlot": "空き",
     "levelShort": "Lv.",
     "edenCost": "消費: {{n}} エデン",
+    "reroll": "引き直し ({{n}})",
+    "instantHealTag": "100% 即時回復",
+    "healHpTitle": "HP全回復",
+    "healHpDesc": "HPを即座に100%まで回復し、戦線復帰する。",
+    "healEdenTitle": "エデン全回復",
+    "healEdenDesc": "エデンゲージを即座に100%まで充填し、スキルを連発可能にする。",
     "rarity": {
       "base": "基本",
       "common": "コモン",

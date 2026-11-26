@@ -162,6 +162,13 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
       if (!prog || !choices) return;
       const fullOption = choices.find((c) => c.id === option.id) ?? choices[0];
       prog.applyChoice(fullOption, replaceSlotIndex);
+      if (fullOption.kind === 'heal_hp') {
+        const ctrl = controllerRef.current;
+        if (ctrl) ctrl.restoreResources(ctrl.getMaxHp(), 0);
+      } else if (fullOption.kind === 'heal_eden') {
+        const ctrl = controllerRef.current;
+        if (ctrl) ctrl.restoreResources(0, ctrl.getMaxEden());
+      }
 
       const [nextLevel, ...restLevels] = levelUpState.pendingLevels;
       if (nextLevel !== undefined) {
@@ -194,6 +201,18 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
     },
     [levelUpState.choices, levelUpState.openId, levelUpState.pendingLevels],
   );
+
+  const handleRerollChoices = useCallback(() => {
+    const prog = progressionRef.current;
+    if (!prog || !levelUpState.isOpen) return;
+    const nextChoices = prog.rerollLevelUpChoices(levelUpState.newLevel, levelUpState.choices);
+    if (!nextChoices) return;
+    setLevelUpState((prev) => ({
+      ...prev,
+      choices: nextChoices,
+      skipPlanetAnimation: true,
+    }));
+  }, [levelUpState.choices, levelUpState.isOpen, levelUpState.newLevel]);
 
   const handlePlayAgain = useCallback(() => {
     setBattleReport(null);
@@ -490,6 +509,8 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
         }
         requiresSlotReplacement={levelUpState.requiresSlotReplacement}
         skipPlanetAnimation={levelUpState.skipPlanetAnimation}
+        rerollsRemaining={progressionRef.current?.rerollsRemaining ?? 0}
+        onReroll={handleRerollChoices}
         audioRef={audioRef}
         onSelect={handleSelectCard}
       />
