@@ -21,6 +21,8 @@ import type {
 export interface TrailerStartOptions {
   wave?: number;
   oleada?: number;
+  enemigo?: EnemyArchetype | string | null;
+  enemy?: EnemyArchetype | string | null;
   seed?: number;
   loadout?: [ActiveSkillId, ActiveSkillId, ActiveSkillId];
   infiniteEden?: boolean;
@@ -66,8 +68,41 @@ export function setLastRecordedReplay(replay: ReplayFileV1 | null): void {
   lastRecordedReplay = replay;
 }
 
+const ENEMY_ALIAS_MAP: Record<string, EnemyArchetype> = {
+  golem: 'ground_golem',
+  ground_golem: 'ground_golem',
+  celula: 'abyssal_cell',
+  cell: 'abyssal_cell',
+  abyssal_cell: 'abyssal_cell',
+  cangrejo: 'crab_gunner',
+  crab: 'crab_gunner',
+  crab_gunner: 'crab_gunner',
+  pulpo: 'spiral_octopus',
+  octopus: 'spiral_octopus',
+  spiral_octopus: 'spiral_octopus',
+  mariposa: 'lightning_butterfly',
+  butterfly: 'lightning_butterfly',
+  lightning_butterfly: 'lightning_butterfly',
+  gorrion: 'giant_sparrow',
+  sparrow: 'giant_sparrow',
+  giant_sparrow: 'giant_sparrow',
+  prisma: 'prisma_necroz',
+  necroz: 'prisma_necroz',
+  prisma_necroz: 'prisma_necroz',
+  kronos: 'kronos_leviathan',
+  kronos_leviathan: 'kronos_leviathan',
+};
+
+function resolveEnemyArchetype(raw: string | null | undefined): EnemyArchetype | null {
+  if (!raw) return null;
+  const key = raw.trim().toLowerCase();
+  return ENEMY_ALIAS_MAP[key] ?? null;
+}
+
 function normalizeStartConfig(opts: TrailerStartOptions = {}): TrailerBotConfig {
   const waveRaw = opts.oleada ?? opts.wave ?? 1;
+  const resolvedEnemy =
+    opts.trainingArchetype ?? resolveEnemyArchetype(opts.enemigo ?? opts.enemy ?? null);
   return {
     wave: Math.max(1, Math.floor(waveRaw)),
     seed: typeof opts.seed === 'number' ? opts.seed >>> 0 : generateRandomSeed(),
@@ -77,7 +112,7 @@ function normalizeStartConfig(opts: TrailerStartOptions = {}): TrailerBotConfig 
     hud: opts.hud ?? false,
     style: opts.style ?? 'hyper',
     trickshotRate: opts.trickshotRate ?? 1.0,
-    trainingArchetype: opts.trainingArchetype ?? null,
+    trainingArchetype: resolvedEnemy,
   };
 }
 
@@ -115,6 +150,13 @@ Atajos en Modo Teatro (Replay):
 
   wave(n: number, opts: Omit<TrailerStartOptions, 'wave' | 'oleada'> = {}): void {
     outorbitTrailerApi.start({ ...opts, wave: n });
+  },
+
+  enemigo(
+    name: EnemyArchetype | string,
+    opts: Omit<TrailerStartOptions, 'enemigo' | 'enemy' | 'trainingArchetype'> = {},
+  ): void {
+    outorbitTrailerApi.start({ ...opts, enemigo: name });
   },
 
   start(opts: TrailerStartOptions = {}): void {

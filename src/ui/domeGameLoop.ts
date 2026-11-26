@@ -322,6 +322,13 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   let trailerTickCount = 0;
   let trailerAccumulator = 0;
 
+  const trailerTrainingArchetype =
+    trailerSession?.mode === 'record'
+      ? trailerSession.config.trainingArchetype
+      : trailerSession?.mode === 'replay'
+        ? trailerSession.replay.header.trainingArchetype
+        : null;
+
   waveMgr.setDifficultyScaling(!settingsRef.current.easyMode);
   if (trailerSession) {
     const startWaveNum =
@@ -344,10 +351,19 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       };
     }
     progression.setPassiveLevel('speed_force', 3);
-    applyFloorMode(waveMgr.getFloorModeForWave(startWaveNum));
+    const floorMode: WaveFloorMode =
+      trailerTrainingArchetype === 'kronos_leviathan'
+        ? 'boss'
+        : trailerTrainingArchetype === 'giant_sparrow' ||
+            trailerTrainingArchetype === 'prisma_necroz'
+          ? 'miniboss'
+          : trailerTrainingArchetype !== null
+            ? 'basic'
+            : waveMgr.getFloorModeForWave(startWaveNum);
+    applyFloorMode(floorMode);
     floatingSlabs.materializeActiveImmediate();
     refillActiveSlabs();
-    syncWaveMusic(waveMgr.getWaveInfo().label);
+    syncWaveMusic(floorMode === 'boss' ? 'BOSS' : waveMgr.getWaveInfo().label);
   } else if (training) {
     // Modo Entrenamiento: sin oleadas automáticas ni elección inicial de
     // cartas; suelos básicos para el Cangrejo Artillero y los escombros del
@@ -820,9 +836,13 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
           trailerSession.mode === 'record'
             ? trailerSession.config.wave
             : trailerSession.replay.header.wave;
-        waveMgr.startWave(startWaveNum, activeSlabs);
-        runTracker.recordWave(startWaveNum);
-        syncWaveMusic(waveMgr.getWaveInfo().label);
+        if (trailerTrainingArchetype !== null) {
+          waveMgr.spawnSingleEnemy(trailerTrainingArchetype, getTrainingSpawnPos());
+        } else {
+          waveMgr.startWave(startWaveNum, activeSlabs);
+          runTracker.recordWave(startWaveNum);
+          syncWaveMusic(waveMgr.getWaveInfo().label);
+        }
         trailerAssetsReady = true;
       }
       // KRONOS lee la física del mundo: V_base = velocidad máxima de Nyx
@@ -1349,7 +1369,11 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
 
       // Avance automático al completar oleada. En Entrenamiento no existen
       // oleadas: el enemigo único reaparece al instante con la vida llena.
-      if (training) {
+      if (trailerTrainingArchetype !== null) {
+        if (waveMgr.getActiveEnemyCount() === 0) {
+          waveMgr.spawnSingleEnemy(trailerTrainingArchetype, getTrainingSpawnPos());
+        }
+      } else if (training) {
         if (waveMgr.getActiveEnemyCount() === 0) {
           spawnTrainingEnemy();
         }
