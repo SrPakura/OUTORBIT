@@ -3882,7 +3882,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     projectile.active = true;
     projectile.kind = kind;
     projectile.damage = damage;
-    projectile.life = kind === 'electric_ball' ? 10.0 : PROJECTILE_LIFE_SEC;
+    projectile.life = kind === 'electric_ball' ? 5.0 : PROJECTILE_LIFE_SEC;
     projectile.decel = 0;
     projectile.autoAimRate = 0;
     projectile.captured = false;
