@@ -995,6 +995,10 @@ export class NyxDomeController {
       this.codesDown.clear();
       this.attackHeld = false;
       this.dashHeld = false;
+      this.wantDash = false;
+      this.wantAttack = false;
+      this.wantJump = false;
+      this.wantSlot = null;
     }
   }
 
@@ -1531,9 +1535,17 @@ export class NyxDomeController {
       case 'floating':
         this.updateFloating(simDt, f, r);
         break;
-      case 'dashing':
-        this.updateDashing(simDt);
+      case 'dashing': {
+        // En slow-mo fuera del vuelo hacia la estrella del Gólem, dashTimer corre
+        // en tiempo real para no dejar a Nyx atascada ~1.44 s en un dash lineal.
+        const dashTimerDt =
+          (this.bulletTimeTimer > 0 || this.redirectWindowTimer > 0) &&
+          !(this.parryWindowActive && this.parryPhase === 'parry_dash')
+            ? rawDt
+            : simDt;
+        this.updateDashing(dashTimerDt);
         break;
+      }
       case 'speed_attack':
         this.updateSpeedAttack(simDt, onHitEnemy, enemies);
         break;
@@ -2173,16 +2185,18 @@ export class NyxDomeController {
         this.redirectDash(target);
         return;
       }
-      if (r !== 0) {
-        // Amortigua la velocidad frontal restante y suma el vector lateral.
-        this.velocity.multiplyScalar(0.35);
-        this.velocity.addScaledVector(this.camRight, Math.sign(r) * DASH_SIDE_SPEED);
-      } else if (f < 0) {
+      if (f < 0 && r === 0) {
         // Corta en seco la velocidad frontal y frena del tirón hacia atrás.
         this.velocity.multiplyScalar(0.18);
         this.velocity.addScaledVector(this.camFwd, -DASH_BACK_IMPULSE);
+      } else if (r !== 0) {
+        // Amortigua la velocidad frontal restante y suma el vector lateral.
+        this.velocity.multiplyScalar(0.35);
+        this.velocity.addScaledVector(this.camRight, Math.sign(r) * DASH_SIDE_SPEED);
       } else {
-        return;
+        // Dash frontal (W o sin teclas direccionales): nunca ignorar Clic Derecho.
+        const dashSpd = DASH_SPEED * this.speedMultiplier;
+        this.velocity.copy(this.camFwd).multiplyScalar(dashSpd);
       }
       this.eden -= EDEN_DASH_COST;
       const hadLockedEnemy = this.lockedEnemy !== null;
@@ -2190,7 +2204,7 @@ export class NyxDomeController {
       this.redirectTargetEnemy = null;
       this.redirectWindowTimer = 0;
       this.speedAttackKind = null;
-      if (f < 0) {
+      if (f < 0 && r === 0) {
         // Frenazo evasivo: sale a flotación 0G, no mantiene el dash.
         this.mode = 'floating';
         this.dashSideRoll = 0;
@@ -2199,36 +2213,63 @@ export class NyxDomeController {
       } else {
         this.dashDir.copy(this.velocity).normalize();
         this.dashSpeed = this.velocity.length();
-        this.dashIsForward = false;
+        this.dashIsForward = r === 0 && f >= 0;
         this.mode = 'dashing';
         this.dashTimer = DASH_DURATION;
         // Dutch roll sostenido hacia el lado del dash lateral.
-        this.dashSideRoll = -Math.sign(r) * CAM_ROLL_DASH_SIDE;
+        this.dashSideRoll = r !== 0 ? -Math.sign(r) * CAM_ROLL_DASH_SIDE : 0;
         // Libera el lock de jump_land/land_recover para que el dash anime ya.
         this.animLock = null;
-        this.animator.setState('air_dash', { dashDir: r > 0 ? -1 : 1 });
+        if (r !== 0) this.animator.setState('air_dash', { dashDir: r > 0 ? -1 : 1 });
+        else this.animator.setState('air_dash');
       }
       // Latigazo elástico de cámara + tirachinas de distancia.
       this.dashWobbleImpulse = 1.0;
       this.startCamTug();
       this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
       this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
-      // Cámara lenta SOLO si había enemigo marcado (para re-lockear). En una
-      // Caída al Vacío sin enemigo, el dash solo corta el vector: NUNCA la toca.
-      if (hadLockedEnemy) this.bulletTimeTimer = BULLET_TIME_DURATION;
+      // Cámara lenta SOLO en cancel lateral si había enemigo marcado (para re-lockear).
+      // Si el jugador escapa hacia delante o ya estaba en slow-mo de redirección, sale a tiempo real.
+      if (hadLockedEnemy && r !== 0 && !inSlowMo) {
+        this.bulletTimeTimer = BULLET_TIME_DURATION;
+      } else {
+        this.bulletTimeTimer = 0;
+      }
       // Lateral: corte de viento con paneo estéreo al lado del dash; frenazo
       // trasero: caída etérea clásica.
       if (r !== 0) this.audio?.playSideDash(r > 0 ? 1 : -1);
       else this.audio?.playGravityShift();
     } else if (this.mode === 'dashing' && (this.redirectWindowTimer > 0 || this.bulletTimeTimer > 0)) {
       if (this.eden < EDEN_DASH_COST) return;
-      // Re-captura SOLO con el enemigo de vuelta dentro del visor: sin
-      // candidato no hay auto-aim con redirectTargetEnemy.
+      // Re-captura con el enemigo de vuelta dentro del visor: si no hay candidato
+      // pero pulsa dirección, permite encadenar otro dash para no quedar bloqueado.
       const target = this.reticleLockState === 'can_lock' ? this.candidateEnemy : null;
       if (target) {
         this.redirectDash(target);
         return;
       }
+      const dir = this.tmpA.set(0, 0, 0);
+      if (f !== 0 || r !== 0) {
+        dir.addScaledVector(this.camFwd, f).addScaledVector(this.camRight, r).normalize();
+      } else {
+        dir.copy(this.camFwd);
+      }
+      this.eden -= EDEN_DASH_COST;
+      const dashSpd = DASH_SPEED * this.speedMultiplier;
+      this.velocity.copy(dir).multiplyScalar(dashSpd);
+      this.dashDir.copy(dir);
+      this.dashSpeed = dashSpd;
+      this.dashIsForward = r === 0 && f >= 0;
+      this.dashTimer = DASH_DURATION;
+      this.dashSideRoll = -r * CAM_ROLL_DASH_SIDE;
+      this.dashWobbleImpulse = 1.0;
+      this.animLock = null;
+      this.startCamTug();
+      this.vfx.spawnSonicBoomRing(this.nyxRoot.position, this.velocity);
+      this.vfx.spawnGravityWake(this.nyxRoot.position, this.velocity);
+      if (r !== 0) this.animator.setState('air_dash', { dashDir: r > 0 ? -1 : 1 });
+      else this.animator.setState('air_dash');
+      this.audio?.playSideDash(r !== 0 ? (r > 0 ? 1 : -1) : 0);
     } else if (this.mode === 'floating') {
       if (this.eden < EDEN_DASH_COST) return;
       if (f < 0 && r === 0) {
@@ -2921,8 +2962,8 @@ export class NyxDomeController {
           !this.lockedEnemyInReticle &&
           requiredTurnRate > maxCentripetalTurnRate
         ) {
-          this.redirectTargetEnemy = this.lockedEnemy;
-          this.redirectWindowTimer = this.computeRedirectWindowSec(this.lockedEnemy);
+          // Rompe el lock para liberar la cámara y permitir girar hacia can_lock o dashear sin pelea con el auto-aim.
+          this.breakLock(true);
         }
       }
     } else if (enemies && enemies.length > 0) {

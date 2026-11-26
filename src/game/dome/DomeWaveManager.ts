@@ -2638,7 +2638,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
           playerPos,
           this.enemiesPassive,
           (origin, targetPos) => {
-            const ballSpeed = Math.min(22.95, 22.95 * this.speedMult);
+            const ballSpeed = Math.min(18.5, 18.5 * this.speedMult);
             this.fireProjectile(enemy, targetPos, 'electric_ball', 10, ballSpeed, 0, origin);
           },
         );
@@ -3883,7 +3883,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
     projectile.active = true;
     projectile.kind = kind;
     projectile.damage = damage;
-    projectile.life = kind === 'electric_ball' ? 5.0 : PROJECTILE_LIFE_SEC;
+    projectile.life = kind === 'electric_ball' ? 3.5 : PROJECTILE_LIFE_SEC;
     projectile.decel = 0;
     projectile.autoAimRate = 0;
     projectile.captured = false;
@@ -3955,7 +3955,7 @@ export class DomeWaveManager implements KronosBehaviorContext, CrabBehaviorConte
         if (speed > 1e-4) {
           const nyxSpeed = this.playerVelocity.length();
           const energyPull = THREE.MathUtils.clamp((nyxSpeed - 4.0) / 28.0, 0.04, 1.0);
-          const aimRate = 0.25 + energyPull * 5.2;
+          const aimRate = 0.15 + energyPull * 2.4;
           _aimDir.subVectors(playerPos, projectile.mesh.position);
           if (_aimDir.lengthSq() > 1e-4) {
             _aimDir.normalize();

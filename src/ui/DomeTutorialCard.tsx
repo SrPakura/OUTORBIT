@@ -91,7 +91,7 @@ export function DomeTutorialCard({ tutorialId, onDismiss }: DomeTutorialCardProp
           <div className="dtut-reticle-spotlight__ring dtut-reticle-spotlight__ring--outer" />
         </div>
       )}
-      <div className="dtut-stage">
+      <div className={`dtut-stage${tutorialId === 'tutorial_de_habilidades' ? ' dtut-stage--wide' : ''}`}>
         {/* Marcos desplazados cómic (ámbar atrás, cian en medio) */}
         <div className="dtut-frame dtut-frame--amber" aria-hidden="true" />
         <div className="dtut-frame dtut-frame--cyan" aria-hidden="true" />
@@ -119,8 +119,13 @@ export function DomeTutorialCard({ tutorialId, onDismiss }: DomeTutorialCardProp
                   <div className="dtut-orbit-arc dtut-orbit-arc--bottom" />
 
                   <div className="dtut-controls-visual">
-                    {/* Bloque teclado: WASD + ESPACIO */}
+                    {/* Bloque teclado: 1 2 3 + WASD + ESPACIO */}
                     <div className="dtut-kbd-group">
+                      <div className="dtut-num-row">
+                        <span className="dtut-key dtut-key--skill">1</span>
+                        <span className="dtut-key dtut-key--skill">2</span>
+                        <span className="dtut-key dtut-key--skill">3</span>
+                      </div>
                       <div className="dtut-wasd">
                         <span className="dtut-key dtut-key--w">W</span>
                         <span className="dtut-key dtut-key--a">A</span>
@@ -187,6 +192,9 @@ export function DomeTutorialCard({ tutorialId, onDismiss }: DomeTutorialCardProp
                   </span>
                   <span className="dtut-chip dtut-chip--cyan">
                     {t('domeTutorial.tutorial_de_movimiento.dashLabel')} · {t('domeTutorial.tutorial_de_movimiento.legendDash')}
+                  </span>
+                  <span className="dtut-chip dtut-chip--violet">
+                    {t('domeTutorial.tutorial_de_movimiento.skillsLabel')} · {t('domeTutorial.tutorial_de_movimiento.legendSkills')}
                   </span>
                 </div>
               </>
@@ -274,7 +282,7 @@ export function DomeTutorialCard({ tutorialId, onDismiss }: DomeTutorialCardProp
                   </span>
                 </div>
               </>
-            ) : (
+            ) : tutorialId === 'tutorial_de_slow_mo' ? (
               <>
                 <div className="dtut-orbit-ring">
                   <div className="dtut-orbit-arc dtut-orbit-arc--top" />
@@ -355,6 +363,46 @@ export function DomeTutorialCard({ tutorialId, onDismiss }: DomeTutorialCardProp
                   </span>
                 </div>
               </>
+            ) : (
+              <div className="dtut-skills-guide">
+                <div className="dtut-skills-subtitle">{t('domeTutorial.tutorial_de_habilidades.statesTitle')}</div>
+                <div className="dtut-states-grid">
+                  <div className="dtut-state-row">
+                    <span className="dtut-slot-dot dtut-slot-dot--ready" />
+                    <span>{t('domeTutorial.tutorial_de_habilidades.stateReady')}</span>
+                  </div>
+                  <div className="dtut-state-row">
+                    <span className="dtut-slot-dot dtut-slot-dot--active" />
+                    <span>{t('domeTutorial.tutorial_de_habilidades.stateActive')}</span>
+                  </div>
+                  <div className="dtut-state-row">
+                    <span className="dtut-slot-dot dtut-slot-dot--cd" />
+                    <span>{t('domeTutorial.tutorial_de_habilidades.stateCooldown')}</span>
+                  </div>
+                  <div className="dtut-state-row">
+                    <span className="dtut-slot-dot dtut-slot-dot--empty" />
+                    <span>{t('domeTutorial.tutorial_de_habilidades.stateEmpty')}</span>
+                  </div>
+                </div>
+
+                <div className="dtut-skills-subtitle">{t('domeTutorial.tutorial_de_habilidades.skillsTitle')}</div>
+                <div className="dtut-skills-list">
+                  {[
+                    ['gravity_field', 's1'],
+                    ['repulse_push', 's2'],
+                    ['eden_absorb', 's3'],
+                    ['attraction_well', 's4'],
+                    ['bounce_horizon', 's5'],
+                    ['black_hole', 's6'],
+                    ['implosion', 's7'],
+                  ].map(([iconId, key]) => (
+                    <div key={key} className="dtut-skill-item">
+                      <img src={`/icons/skills/${iconId}.webp`} alt="" className="dtut-skill-mini-icon" />
+                      <span>{t(`domeTutorial.tutorial_de_habilidades.${key}`)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
 
@@ -475,6 +523,9 @@ export function DomeTutorialCard({ tutorialId, onDismiss }: DomeTutorialCardProp
           position: relative;
           width: min(440px, 92vw);
           animation: dtut-slide-in 240ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .dtut-stage--wide {
+          width: min(560px, 94vw);
         }
 
         @keyframes dtut-slide-in {
@@ -672,7 +723,106 @@ export function DomeTutorialCard({ tutorialId, onDismiss }: DomeTutorialCardProp
         }
         .dtut-chip--amber { background: #fef3c7; }
         .dtut-chip--crimson { background: #ffe4e6; border-color: #e11d48; color: #9f1239; }
+        .dtut-num-row {
+          display: flex;
+          gap: 4px;
+        }
+        .dtut-key--skill {
+          width: 28px;
+          height: 22px;
+          background: #ede9fe;
+          border-color: #7c3aed;
+          color: #4c1d95;
+          font-size: 11px;
+        }
         .dtut-chip--cyan { background: #cffafe; border-color: #0891b2; color: #155e75; }
+        .dtut-chip--violet { background: #ede9fe; border-color: #7c3aed; color: #4c1d95; }
+
+        .dtut-skills-guide {
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+          gap: 7px;
+          text-align: left;
+        }
+        .dtut-skills-subtitle {
+          font-family: ui-monospace, "SF Mono", Menlo, monospace;
+          font-size: 10px;
+          font-weight: 900;
+          letter-spacing: 0.1em;
+          color: #0b0d12;
+          text-transform: uppercase;
+        }
+        .dtut-states-grid {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 4px;
+        }
+        .dtut-state-row {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          font-size: 11px;
+          font-weight: 700;
+          color: #1e293b;
+          background: #ffffff;
+          border: 1.5px solid #0b0d12;
+          padding: 3px 6px;
+        }
+        .dtut-slot-dot {
+          width: 13px;
+          height: 13px;
+          border-radius: 999px;
+          flex-shrink: 0;
+          background: #090418;
+        }
+        .dtut-slot-dot--ready {
+          border: 3px solid #818cf8;
+          box-shadow: 0 0 6px #22d3ee;
+        }
+        .dtut-slot-dot--active {
+          border: 3px solid #00e5ff;
+          box-shadow: 0 0 8px #00e5ff;
+          background: #0f2d46;
+        }
+        .dtut-slot-dot--cd {
+          border: 3px dashed rgba(148, 163, 184, 0.7);
+          opacity: 0.65;
+        }
+        .dtut-slot-dot--empty {
+          border: 2px solid rgba(148, 163, 184, 0.4);
+          opacity: 0.35;
+        }
+        .dtut-skills-list {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          max-height: 185px;
+          overflow-y: auto;
+          padding-right: 4px;
+        }
+        .dtut-skill-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 7px;
+          font-size: 11px;
+          line-height: 1.32;
+          font-weight: 600;
+          color: #0b0d12;
+          background: #ffffff;
+          border: 1.5px solid rgba(11, 13, 18, 0.25);
+          padding: 4px 6px;
+        }
+        .dtut-skill-mini-icon {
+          width: 18px;
+          height: 18px;
+          object-fit: contain;
+          background: #090418;
+          border-radius: 999px;
+          padding: 2px;
+          flex-shrink: 0;
+          filter: invert(1);
+        }
 
         .dtut-body {
           position: relative;

@@ -223,12 +223,14 @@
       "spaceLabel": "SPACE",
       "dashLabel": "RIGHT CLICK",
       "attackLabel": "LEFT CLICK",
+      "skillsLabel": "1 / 2 / 3",
       "legendMove": "MOVE 0G",
       "legendBrake": "BRAKE",
       "legendAttack": "ATTACK / VOID FALL",
       "legendDash": "DASH",
+      "legendSkills": "SKILLS",
       "paragraph1": "Move with WASD in a frenetic zero-G arena where you can reach extreme speeds, and brake using SPACE.",
-      "paragraph2": "Execute dashes in any direction with RIGHT CLICK, and use LEFT CLICK for auto-aim attacks on enemies — or Void Fall to gain massive speed when not aiming at any enemy."
+      "paragraph2": "Execute dashes in any direction with RIGHT CLICK, attack with LEFT CLICK (or Void Fall with no target), and trigger equipped skills with 1, 2, and 3."
     },
     "tutorial_de_rebotes": {
       "number": "02",
@@ -249,6 +251,25 @@
       "chipSpecial": "SPECIAL MOVES",
       "paragraph1": "In the game, certain attacks, parries, dodges, or special moves activate slow-mo mode.",
       "paragraph2": "Use this dilated time window to redirect your trajectory with a dash or line up your next strike."
+    },
+    "tutorial_de_habilidades": {
+      "number": "04",
+      "title": "SKILLS & VISUAL STATES",
+      "statesTitle": "SLOT VISUAL STATES (1 / 2 / 3)",
+      "stateReady": "READY · Full cyan/violet ring & bright icon: press 1/2/3 when you have enough Eden.",
+      "stateActive": "ACTIVE · Bright electric-cyan ring: skill currently active (e.g. rocks waiting for Left Click throw).",
+      "stateCooldown": "COOLDOWN · Dim icon at 42% with shrinking clockwise arc & timer.",
+      "stateEmpty": "EMPTY · Dimmed slot until unlocked on level-up.",
+      "skillsTitle": "SKILLS SUMMARY & EXTRAS",
+      "s1": "Gravity Field: orbits rocks to fire (Left Click). Extra: grabs slab debris, Octopus Ink Balls (90 dmg) & Butterfly Electric Balls (140 dmg unbreakable magnet).",
+      "s2": "Repulse Push: radial knockback blast. Extra: instant KO slamming foes into the White Barrier & reflects Electric Balls.",
+      "s3": "Eden Absorb: stand still (< 1.25 m/s) to restore Health & Eden instantly (0 Eden).",
+      "s4": "Attraction Well: slams 2 foes together. Extra: against a single foe, crushes them between the 2 nearest slabs.",
+      "s5": "Bounce Horizon: fires piercing crescent slashes. Extra: gains auto-aim from Lv 2 onward.",
+      "s6": "Black Hole: drifting suction vortex dealing AoE damage for 4.5 s.",
+      "s7": "Implosion (Legendary): instakills basics, deals -20% max HP to elites, or breaks 1 KRONOS Dorsal Star (locked in Phase 4).",
+      "paragraph1": "Press 1, 2, or 3 to cast the skill in that slot. Many interact directly with slabs and enemy projectiles.",
+      "paragraph2": "Watch the ring glow and icon brightness under your Yin-Yang bar to read ready, active, or cooldown states at a glance."
     }
   },
   "mobile": {

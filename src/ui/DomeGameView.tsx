@@ -188,7 +188,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
       });
       const canvas = canvasRef.current;
       if (canvas && document.pointerLockElement !== canvas) {
-        canvas.requestPointerLock?.();
+        Promise.resolve(canvas.requestPointerLock?.()).catch(() => undefined);
       }
     },
     [levelUpState.choices, levelUpState.openId, levelUpState.pendingLevels],
@@ -215,7 +215,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
     // onPointerLockChange vuelve a marcarla.
     hadPointerLockRef.current = false;
     setIsPauseOpen(false);
-    canvasRef.current?.requestPointerLock?.();
+    Promise.resolve(canvasRef.current?.requestPointerLock?.()).catch(() => undefined);
   }, []);
 
   const handlePauseRestart = useCallback(() => {
@@ -336,12 +336,33 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
     hud.bulletTimeActive,
   ]);
 
+  const handleFirstSkillUsed = useCallback(() => {
+    if (
+      training ||
+      tutorialOpenRef.current ||
+      pauseOpenRef.current ||
+      levelUpOpenRef.current ||
+      battleReportOpenRef.current
+    ) {
+      return;
+    }
+    const progress = loadTutorialProgress();
+    const habilidades = progress.find((entry) => entry.id === 'tutorial_de_habilidades');
+    if (habilidades && !habilidades.completed) {
+      tutorialOpenRef.current = true;
+      if (document.pointerLockElement) {
+        document.exitPointerLock?.();
+      }
+      setActiveTutorial('tutorial_de_habilidades');
+    }
+  }, [training]);
+
   const handleDismissTutorial = useCallback(() => {
     if (activeTutorial) {
       setTutorialCompleted(activeTutorial, true);
     }
     setActiveTutorial(null);
-    canvasRef.current?.requestPointerLock?.();
+    Promise.resolve(canvasRef.current?.requestPointerLock?.()).catch(() => undefined);
   }, [activeTutorial]);
 
   const handleSubmitScore = useCallback(async (playerName: string) => {
@@ -381,6 +402,7 @@ export default function DomeGameView({ settings, onExit, onUpdateSettings, train
       debugPanelOpenRef,
       tutorialOpenRef,
       hadPointerLockRef,
+      onFirstSkillUsed: handleFirstSkillUsed,
     });
   }, [runSeed, training]);
 

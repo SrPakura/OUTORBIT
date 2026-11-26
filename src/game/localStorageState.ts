@@ -49,7 +49,8 @@ export interface OtherSettingEntry {
 export type TutorialProgressId =
   | 'tutorial_de_movimiento'
   | 'tutorial_de_rebotes'
-  | 'tutorial_de_slow_mo';
+  | 'tutorial_de_slow_mo'
+  | 'tutorial_de_habilidades';
 
 export interface TutorialProgressEntry {
   id: TutorialProgressId;
@@ -60,6 +61,7 @@ const DEFAULT_TUTORIAL_PROGRESS: TutorialProgressEntry[] = [
   { id: 'tutorial_de_movimiento', completed: false },
   { id: 'tutorial_de_rebotes', completed: false },
   { id: 'tutorial_de_slow_mo', completed: false },
+  { id: 'tutorial_de_habilidades', completed: false },
 ];
 
 function safeGetItem(key: string): string | null {

@@ -223,12 +223,14 @@
       "spaceLabel": "ESPACIO",
       "dashLabel": "CLIC DERECHO",
       "attackLabel": "CLIC IZQUIERDO",
+      "skillsLabel": "1 / 2 / 3",
       "legendMove": "MOVER 0G",
       "legendBrake": "FRENAR",
       "legendAttack": "ATAQUE / CAÍDA",
       "legendDash": "DASH",
+      "legendSkills": "HABILIDADES",
       "paragraph1": "Muévete con WASD en un entorno de gravedad 0 frenético donde puedes alcanzar velocidades altísimas, y frena usando ESPACIO.",
-      "paragraph2": "Además, puedes ejecutar dashes en cualquier dirección con CLIC DERECHO, y con CLIC IZQUIERDO ataques a enemigos con auto-aim, o caídas al vacío para ganar gran velocidad si no apuntas a ningún enemigo."
+      "paragraph2": "Ejecuta dashes en cualquier dirección con CLIC DERECHO, ataca con CLIC IZQUIERDO (o Caída al Vacío sin objetivo), y activa tus habilidades con 1, 2 y 3."
     },
     "tutorial_de_rebotes": {
       "number": "02",
@@ -249,6 +251,25 @@
       "chipSpecial": "MOV. ESPECIALES",
       "paragraph1": "En el juego, ciertos ataques, parrys, esquives o movimientos especiales activan el modo slow-mo.",
       "paragraph2": "Aprovecha esta ventana de cámara lenta para redirigir tu trayectoria con un dash o preparar el siguiente golpe."
+    },
+    "tutorial_de_habilidades": {
+      "number": "04",
+      "title": "HABILIDADES Y ESTADOS",
+      "statesTitle": "ESTADOS DE LAS RANURAS (1 / 2 / 3)",
+      "stateReady": "LISTA · Aro cian/violeta completo e icono brillante: pulsa 1/2/3 si tienes Edén.",
+      "stateActive": "ACTIVA · Aro azul eléctrico intenso: habilidad en curso (p. ej. rocas listas para lanzar con Clic Izq.).",
+      "stateCooldown": "RECARGA · Icono apagado y aro recortado con contador: esperando cooldown.",
+      "stateEmpty": "VACÍA · Ranura atenuada hasta desbloquear habilidad al subir de nivel.",
+      "skillsTitle": "RESUMEN Y EXTRAS OCULTOS",
+      "s1": "Campo Gravitacional: orbita rocas para lanzar (Clic Izq.). Extra: atrapa escombros, Bolas de Tinta (90 dmg) y Bolas Eléctricas (140 dmg e imán infalible contra la Mariposa).",
+      "s2": "Empuje: onda expansiva de empuje. Extra: muerte instantánea al estampar contra la Barrera Blanca y refleja Bolas Eléctricas hacia enemigos.",
+      "s3": "Absorción de Edén: quédate quieta (< 1.25 m/s) para curar Vida y Edén al instante (0 Edén).",
+      "s4": "Pozo de Atracción: choca 2 enemigos entre sí. Extra: si solo hay 1, lo aplasta entre las 2 losas más cercanas.",
+      "s5": "Horizonte de Rebote: lanza ondas perforantes. Extra: desde Nv. 2 ganan auto-aim.",
+      "s6": "Agujero Negro: vórtice móvil de succión y daño continuo durante 4.5 s.",
+      "s7": "Implosión (Legendaria): colapsa básicos al instante, quita -20% HP a élites o rompe 1 estrella de KRONOS (bloqueada en Fase 4).",
+      "paragraph1": "Pulsa 1, 2 o 3 para activar la habilidad de esa ranura. Muchas combinan efectos con el escenario y los proyectiles enemigos.",
+      "paragraph2": "Fíjate en el color del aro y el brillo del icono bajo tu barra Yin-Yang para saber al instante si están listas, activas o recargándose."
     }
   },
   "mobile": {

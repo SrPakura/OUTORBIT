@@ -94,6 +94,7 @@ export interface DomeGameLoopParams {
   debugPanelOpenRef: { current: boolean };
   tutorialOpenRef: { current: boolean };
   hadPointerLockRef: { current: boolean };
+  onFirstSkillUsed?: () => void;
 }
 
 /**
@@ -124,6 +125,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     debugPanelOpenRef,
     tutorialOpenRef,
     hadPointerLockRef,
+    onFirstSkillUsed,
   } = params;
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -690,6 +692,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
         if (levelUpOpenRef.current || battleReportOpenRef.current || pauseOpenRef.current || !controller) return;
         const slot = progression.slots[slotIdx];
         if (!slot.skillId) return;
+        onFirstSkillUsed?.();
         // Si pulsa el slot de Campo Gravitacional teniendo rocas activas -> cancela y las suelta
         if (slot.skillId === 'gravity_field' && skillExecutor.hasActiveGravityRocks()) {
           skillExecutor.cancelGravityField();
@@ -804,11 +807,20 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       console.error('Failed to load NYX model:', err);
     });
 
+  // true mientras el jugador está jugando activamente con mando sin pointer lock.
+  let gamepadActiveMode = false;
+
+  const isWaitingPointerCapture = (): boolean =>
+    document.pointerLockElement !== canvas &&
+    !gamepadActiveMode &&
+    !(training && debugPanelOpenRef.current);
+
   const onCanvasClick = () => {
     audio.unlock();
     if (tutorialOpenRef.current) return;
+    gamepadActiveMode = false;
     if (document.pointerLockElement !== canvas) {
-      canvas.requestPointerLock?.();
+      Promise.resolve(canvas.requestPointerLock?.()).catch(() => undefined);
     }
   };
 
@@ -822,6 +834,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
   const onPointerLockChange = () => {
     const locked = document.pointerLockElement === canvas;
     if (locked) {
+      gamepadActiveMode = false;
       hadPointerLockRef.current = true;
       // Entrenamiento: al recapturar el ratón (clic en el lienzo) el panel
       // debug se oculta solo para devolver el control completo del juego.
@@ -917,7 +930,8 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       }
       return;
     }
-    if (pauseOpenRef.current || tutorialOpenRef.current) return;
+    if (pauseOpenRef.current || tutorialOpenRef.current || isWaitingPointerCapture()) return;
+    gamepadActiveMode = false;
     // Tab (Radar de enemigos, fuera de Training Mode): sin preventDefault el
     // navegador robaría el foco del canvas al pulsarla.
     if (e.code === 'Tab') e.preventDefault();
@@ -968,11 +982,24 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     // jugar una run entera sin tocar el ratón ni el teclado).
     const rawPad = readConnectedGamepad();
     if (rawPad) {
+      let padActivity = false;
       for (const button of rawPad.buttons) {
         if (button && button.pressed) {
           audio.unlock();
+          padActivity = true;
           break;
         }
+      }
+      if (!padActivity) {
+        for (const axis of rawPad.axes) {
+          if (Math.abs(axis) > 0.25) {
+            padActivity = true;
+            break;
+          }
+        }
+      }
+      if (padActivity) {
+        gamepadActiveMode = true;
       }
     }
     if (gamepad.justPressedAction('pause')) {
@@ -1002,7 +1029,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
       battleReportOpenRef.current ||
       pauseOpenRef.current ||
       tutorialOpenRef.current;
-    const isPaused = menuPaused || implosionCinematic !== null;
+    const isPaused = menuPaused || isWaitingPointerCapture() || implosionCinematic !== null;
     const effRawDt = isPaused ? 0 : rawDt;
     const timeScale = controller ? controller.getTimeScale() : 1.0;
     const worldDt = effRawDt * timeScale;
