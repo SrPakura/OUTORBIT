@@ -110,7 +110,7 @@ const HITSTOP_PENETRATE = 0.09;
 const HITSTOP_KILL = 0.12;
 
 /** Regla de la Barrera Blanca (sección 2.1): -10 HP para Nyx. */
-const NYX_BARRIER_DAMAGE = 10;
+const NYX_BARRIER_DAMAGE = 20;
 const NYX_BARRIER_INVULN_SEC = 0.8;
 const NYX_BARRIER_STAGGER_SEC = 0.5;
 /**

@@ -458,7 +458,7 @@ export function startDomeGameLoop(params: DomeGameLoopParams): () => void {
     options?: { hurtSlash?: boolean; shake?: boolean; sound?: boolean },
   ) => {
     if (!controller || amount <= 0) return;
-    controller.applyDamage(amount, options);
+    controller.applyDamage(amount * 2, options);
     if (training && controller.getHp() < 1) {
       controller.restoreResources(progression.maxHp, 0);
     }

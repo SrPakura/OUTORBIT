@@ -193,9 +193,9 @@ const KICK_RECOVER_BRAKE = 4.2; // exp(-4.2*dt): frena hasta casi 0
 const KICK_RECOVER_MAX_TIME_PER_FLIP = 0.9; // seguridad anti-atasco por flip
 
 // --- Economía de Edén
-const EDEN_MOVE_DRAIN = 1.0;
-const EDEN_DASH_COST = 3.0;
-const EDEN_ATTACK_DRAIN = 2.0;
+const EDEN_MOVE_DRAIN = 1.5;
+const EDEN_DASH_COST = 4.5;
+const EDEN_ATTACK_DRAIN = 3.0;
 const EDEN_IDLE_REGEN_FRAC = 0.01; // 1% de maxEden por segundo
 /** Por debajo de este Edén en 0G, Nyx nada físicamente sin gastar Edén. */
 const EDEN_SWIM_THRESHOLD = 5.5;
@@ -311,7 +311,7 @@ const TOUCH_GO_MIN_IMPACT = 3;
 const STEEP_SLIDE_THRESHOLD = 0.72;
 const STEEP_SLIDE_ACCEL = 7.5;
 
-const DOME_BOUNCE_DAMAGE = 10;
+const DOME_BOUNCE_DAMAGE = 20;
 
 // --- Mando (Gamepad API): rad/s de giro de cámara a stick derecho a tope,
 // escalado por gamepadSensitivity (el ratón usa 0.0023 rad/px).

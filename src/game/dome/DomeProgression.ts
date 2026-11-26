@@ -85,7 +85,7 @@ export const ACTIVE_SKILLS_CATALOG: Readonly<Record<ActiveSkillId, ActiveSkillDe
     id: 'gravity_field',
     name: 'Campo Gravitacional',
     rarity: 'base',
-    edenCost: 8,
+    edenCost: 12,
     cooldown: 5,
     maxLevel: 5,
     description:
@@ -96,7 +96,7 @@ export const ACTIVE_SKILLS_CATALOG: Readonly<Record<ActiveSkillId, ActiveSkillDe
     id: 'repulse_push',
     name: 'Empuje',
     rarity: 'common',
-    edenCost: 12,
+    edenCost: 18,
     cooldown: 7,
     maxLevel: 5,
     description:
@@ -118,7 +118,7 @@ export const ACTIVE_SKILLS_CATALOG: Readonly<Record<ActiveSkillId, ActiveSkillDe
     id: 'attraction_well',
     name: 'Pozo de Atracción',
     rarity: 'common',
-    edenCost: 18,
+    edenCost: 27,
     cooldown: 10,
     maxLevel: 3,
     description:
@@ -129,7 +129,7 @@ export const ACTIVE_SKILLS_CATALOG: Readonly<Record<ActiveSkillId, ActiveSkillDe
     id: 'bounce_horizon',
     name: 'Horizonte de Rebote',
     rarity: 'epic',
-    edenCost: 22,
+    edenCost: 33,
     cooldown: 8,
     maxLevel: 3,
     description:
@@ -140,7 +140,7 @@ export const ACTIVE_SKILLS_CATALOG: Readonly<Record<ActiveSkillId, ActiveSkillDe
     id: 'black_hole',
     name: 'Agujero Negro',
     rarity: 'epic',
-    edenCost: 30,
+    edenCost: 45,
     cooldown: 16,
     maxLevel: 3,
     description:
@@ -151,7 +151,7 @@ export const ACTIVE_SKILLS_CATALOG: Readonly<Record<ActiveSkillId, ActiveSkillDe
     id: 'implosion',
     name: 'Implosión',
     rarity: 'legendary',
-    edenCost: 45,
+    edenCost: 68,
     cooldown: 25,
     maxLevel: 1,
     description:
