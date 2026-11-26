@@ -84,7 +84,7 @@ export const outorbitTrailerApi = {
     console.info(
       `%c[OUTORBIT Trailer & Replay Theater]
 %cComandos disponibles (window.outorbitTrailer / window.trailer):
-  trailer.start({ wave: 1, hud: false, loadout: ['gravity_field','bounce_horizon','black_hole'] })
+  trailer.start({ wave: 1, hud: false, style: 'hyper'|'cinematic'|'flow', loadout: ['gravity_field','bounce_horizon','black_hole'] })
   trailer.stop()                         -> detiene el bot y guarda la toma en memoria
   trailer.download('toma.json')          -> descarga el .outorbit-replay.json
   trailer.playLast({ camera: 'free' })   -> reproduce la última toma en Modo Teatro
