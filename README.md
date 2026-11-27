@@ -9,7 +9,6 @@ Pilotas a **Nyx** dentro de una cúpula esférica de 90 m con patadas cinéticas
 - **Base44 Launchpad:** https://app.base44.com/launchpad/outorbit-68425086
 - **Tráiler oficial:** [Español](https://youtu.be/SbeiJa_cvQg) · [English](https://youtu.be/J531y2JGJIA) · [日本語](https://youtu.be/QMWH1bp72aY)
 - **Gameplay sin cortes:** https://youtu.be/judB3ZIQRtc
-- **Repositorio de la web:** https://github.com/SrPakura/OUTORBIT_WEB
 
 ---
 
