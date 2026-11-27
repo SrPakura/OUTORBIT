@@ -119,7 +119,7 @@ export const es = {
           'Piloto de combate gravitatorio con shader Cosmic Nebula y tinta blanca (grosores 0.015 / 0.011 / 0.008). Transforma velocidad pura en poder de perforación y alterna 6 estados entre suelo omnidireccional, vacío 0G y Sentadilla Cinética.',
         aiFlow: ['GROUNDED (ADHERIDA A LOSA)', 'FLOATING 0G (HASTA 28 m/s)', 'DASH (31 m/s · 0.36s)', 'PATADA TALADRO (≥ 18 m/s · ×1.55)', 'SENTADILLA CINÉTICA (0 EDÉN)'],
         counter:
-          'Sus propios fallos de trayectoria se corrigen con Kick Recover (frenada aérea perfecta) y Slow-Mo de redirección a 0.25×. Cuidado con rozar la Barrera Blanca (88.6 m): inflige 10 HP.',
+          'Sus propios fallos de trayectoria se corrigen con Kick Recover (frenada aérea perfecta) y Slow-Mo de redirección a 0.25×. Cuidado con rozar la Barrera Blanca (88.6 m): inflige 20 HP.',
       },
       abyssal_cell: {
         name: 'CÉLULA ABISAL',
@@ -134,8 +134,8 @@ export const es = {
         name: 'CANGREJO ARTILLERO',
         role: 'TORRETA DE LOSAS ORBITALES',
         summary:
-          'Se ancla encima de las 10 losas flotantes y salta entre ellas. Alterna ráfagas de proyectiles parryables, un láser continuo devastador de 20 HP/s con 2.0 s de telegrafiado y carga kamikaze al límite.',
-        aiFlow: ['SCUTTLE EN LOSA', 'JUMP ENTRE LOSAS', 'LASER CHARGE (2.0s)', 'LASER FIRE (20 HP/s)', 'KAMIKAZE PRIME'],
+          'Se ancla encima de las 10 losas flotantes y salta entre ellas. Alterna ráfagas de proyectiles parryables, un láser continuo devastador de 40 HP/s con 2.0 s de telegrafiado y carga kamikaze al límite.',
+        aiFlow: ['SCUTTLE EN LOSA', 'JUMP ENTRE LOSAS', 'LASER CHARGE (2.0s)', 'LASER FIRE (40 HP/s)', 'KAMIKAZE PRIME'],
         counter:
           'Usa las propias losas orbitales como cobertura física real para cortar la línea de visión del láser. Devuelve su ráfaga de 3 proyectiles con parry o derríbalo de la losa con Patada Taladro (≥ 22.6 m/s para perforar 35 de carne).',
       },
@@ -143,7 +143,7 @@ export const es = {
         name: 'PULPO ESPIRAL',
         role: 'HOSTIGADOR TÁCTICO Y CONTRA-PARRY',
         summary:
-          'Sigue un ciclo libre de 5.0 s disparando bolas de tinta ácida (8 HP + mancha HUD al 55 % durante 3 s y DoT de 4 HP/s) y Bola Gigante de Dispersión (15×8 fragmentos). Su último tramo entra en ventana roja de Contra-Parry.',
+          'Sigue un ciclo libre de 5.0 s disparando bolas de tinta ácida (16 HP + mancha HUD al 55 % durante 3 s y DoT de 4 HP/s) y Bola Gigante de Dispersión (15×8 fragmentos). Su último tramo entra en ventana roja de Contra-Parry.',
         aiFlow: ['OBSERVE EN BANDA 2–80m', 'PRE-DASH READY (4.0s)', 'VENTANA CONTRA-PARRY (ÚLT. 1.5s)', 'INK BALL / GIANT CHARGE', 'FUGA A 48 m/s'],
         counter:
           'No lo golpees de frente cuando brille en rojo durante su Contra-Parry (te mancha 5–10 s al 65 % y huye a 48 m/s). Captura sus bolas de tinta con Campo Gravitacional y devuélveselas para infligir 90 de daño.',
@@ -152,7 +152,7 @@ export const es = {
         name: 'GÓLEM ROMPESUELOS',
         role: 'COLOSO BLINDADO · DESTRUCTOR DE LOSAS',
         summary:
-          'Enorme masa con 80 de carne y barra de stamina (100). Levanta pared frontal reactiva (block), ejecuta puñetazos de 16 HP que aturden y cargas en espiral capaces de partir las losas flotantes en escombros.',
+          'Enorme masa con 80 de carne y barra de stamina (100). Levanta pared frontal reactiva (block), ejecuta puñetazos de 32 HP que aturden y cargas en espiral capaces de partir las losas flotantes en escombros.',
         aiFlow: ['HELICOPTER CHASE', 'BLOCK WALL (FRONTAL)', 'BRUTE PUNCH / SPIRAL CHARGE', 'PARRY WINDOW (0.10×)', 'EXHAUSTED LOOP (5.0s)'],
         counter:
           'Evita atacar frontalmente su muro defensivo. Hazle parry en el momento del impacto para activar el Slow-Mo de 0.10×, rodea con dash hacia su estrella y remata la cabeza (-35 % HP), o aprovéchate de sus 5.0 s de fatiga.',
@@ -219,7 +219,7 @@ export const es = {
     laws: [
       {
         title: '6 MODOS DE MOVIMIENTO',
-        body: 'grounded (boca abajo en losas: 2.0/7.4/10.0 m/s), floating (0G tope 28 m/s), dashing (31 m/s, 0.36 s, 3 Edén), speed_attack (23.5–34 m/s), kick_recover y kinetic_bounce (Sentadilla ≤ 42 m y ≥ 12 m/s: conserva 100 % de velocidad a 0 Edén).',
+        body: 'grounded (boca abajo en losas: 2.0/7.4/10.0 m/s), floating (0G tope 28 m/s), dashing (31 m/s, 0.36 s, 4.5 Edén), speed_attack (23.5–34 m/s), kick_recover y kinetic_bounce (Sentadilla ≤ 42 m y ≥ 12 m/s: conserva 100 % de velocidad a 0 Edén).',
       },
       {
         title: 'SLOW-MO TÁCTICO Y HIT-STOP',
@@ -231,7 +231,7 @@ export const es = {
       },
       {
         title: 'CÚPULA DE 90M Y BARRERA BLANCA',
-        body: 'Arena esférica de 90 m con 10 losas orbitales móviles (2.2–4.2 m/s). Chocar contra la Barrera Blanca a 88.6 m quita 10 HP a Nyx, pero mata al instante a todo enemigo básico empujado contra ella.',
+        body: 'Arena esférica de 90 m con 10 losas orbitales móviles (2.2–4.2 m/s). Chocar contra la Barrera Blanca a 88.6 m quita 20 HP a Nyx, pero mata al instante a todo enemigo básico empujado contra ella.',
       },
     ],
     skillsKicker: 'PROGRESIÓN ROGUELITE · 3 RANURAS ACTIVAS',
@@ -263,7 +263,7 @@ export const es = {
       },
       eden_absorb: {
         name: 'Absorción de Edén',
-        desc: 'Canalización estática (< 1.25 m/s). Recupera 9 / 13 / 17 HP y 13 / 18 / 23 de Edén al instante.',
+        desc: 'Canalización estática (< 1.25 m/s). Recupera 9 / 13 / 17 HP y 32 / 44 / 56 de Edén al instante.',
         synergy: 'Sin coste de Edén: clave para sostener partidas largas sin depender solo de pickups.',
       },
       attraction_well: {
@@ -284,7 +284,7 @@ export const es = {
       implosion: {
         name: 'Implosión',
         desc: 'Cinemática orbital sin límite de distancia que colapsa el objetivo fijado.',
-        synergy: 'Aniquila básicos al instante, inflige -20 % HP máx. a élites o rompe 1 Estrella Dorsal de KRONOS (1 uso/Leviatán, bloqueada en Fase 4).',
+        synergy: 'Aniquila básicos al instante, inflige -20 % HP máx. a élites o rompe 1 Estrella Dorsal de KRONOS (solo en Fases 2 y 3).',
       },
     },
     passivesCopy: {

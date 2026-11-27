@@ -119,7 +119,7 @@ export const en: WebDictionary = {
           'Gravity combat pilot rendered in Cosmic Nebula shader with variable white ink outlines (0.015 / 0.011 / 0.008). Converts pure speed into armor penetration across 6 movement states.',
         aiFlow: ['GROUNDED (SLAB ADHESION)', 'FLOATING 0G (UP TO 28 m/s)', 'DASH (31 m/s · 0.36s)', 'DRILL KICK (≥ 18 m/s · ×1.55)', 'KINETIC BOUNCE (0 EDEN)'],
         counter:
-          'Missed locks trigger 0.25× tactical redirection slow-mo and Kick Recover air braking. Avoid slamming into the White Barrier (88.6 m), which deals 10 HP.',
+          'Missed locks trigger 0.25× tactical redirection slow-mo and Kick Recover air braking. Avoid slamming into the White Barrier (88.6 m), which deals 20 HP.',
       },
       abyssal_cell: {
         name: 'ABYSSAL CELL',
@@ -134,8 +134,8 @@ export const en: WebDictionary = {
         name: 'CRAB GUNNER',
         role: 'ORBITAL SLAB TURRET',
         summary:
-          'Anchors atop the 10 floating slabs and leaps between them. Alternates parryable 3-shot bursts, a continuous 20 HP/s laser after a 2.0 s telegraph, and a final kamikaze charge.',
-        aiFlow: ['SCUTTLE ON SLAB', 'SLAB JUMP', 'LASER CHARGE (2.0s)', 'LASER FIRE (20 HP/s)', 'KAMIKAZE PRIME'],
+          'Anchors atop the 10 floating slabs and leaps between them. Alternates parryable 3-shot bursts, a continuous 40 HP/s laser after a 2.0 s telegraph, and a final kamikaze charge.',
+        aiFlow: ['SCUTTLE ON SLAB', 'SLAB JUMP', 'LASER CHARGE (2.0s)', 'LASER FIRE (40 HP/s)', 'KAMIKAZE PRIME'],
         counter:
           'Use floating slabs as physical cover to break laser line-of-sight. Parry its 3-orb burst or drill through its 35-thickness shell (≥ 22.6 m/s).',
       },
@@ -143,7 +143,7 @@ export const en: WebDictionary = {
         name: 'SPIRAL OCTOPUS',
         role: 'TACTICAL SKIRMISHER & COUNTER-PARRY',
         summary:
-          'Operates on a 5.0 s loop firing acid ink balls (8 HP + 55% HUD stain for 3 s + 4 HP/s DoT) and a 15×8 Giant Scatter Ball. Glows red during the final 1.5 s Counter-Parry window.',
+          'Operates on a 5.0 s loop firing acid ink balls (16 HP + 55% HUD stain for 3 s + 4 HP/s DoT) and a 15×8 Giant Scatter Ball. Glows red during the final 1.5 s Counter-Parry window.',
         aiFlow: ['OBSERVE (2–80m)', 'PRE-DASH READY (4.0s)', 'RED COUNTER-PARRY (1.5s)', 'INK / GIANT BALL', '48 m/s ESCAPE'],
         counter:
           'Hold fire during its red Counter-Parry window (triggers 5–10 s 65% ink screen stain). Capture its ink balls in Gravity Field to hurl back for 90 damage.',
@@ -152,7 +152,7 @@ export const en: WebDictionary = {
         name: 'GROUND GOLEM',
         role: 'ARMORED COLOSSUS · SLAB BREAKER',
         summary:
-          'Heavy 80-flesh bruiser with 100 stamina. Raises a reactive frontal block wall, throws 16 HP stun punches, and performs spiral charges that shatter floating slabs into debris.',
+          'Heavy 80-flesh bruiser with 100 stamina. Raises a reactive frontal block wall, throws 32 HP stun punches, and performs spiral charges that shatter floating slabs into debris.',
         aiFlow: ['HELICOPTER CHASE', 'FRONTAL BLOCK', 'BRUTE PUNCH / SPIRAL', 'PARRY WINDOW (0.10×)', 'EXHAUSTED (5.0s)'],
         counter:
           'Never ram its frontal wall. Parry at impact for 0.10× ultra-slow-mo, dash behind to strike its star (-35% HP head crit), or punish its 5.0 s exhausted state.',
@@ -219,7 +219,7 @@ export const en: WebDictionary = {
     laws: [
       {
         title: '6 MOVEMENT MODES',
-        body: 'grounded (any slab face even upside down: 2.0/7.4/10.0 m/s), floating (0G soft cap 28 m/s), dashing (31 m/s, 0.36 s, 3 Eden), speed_attack (23.5–34 m/s), kick_recover, and kinetic_bounce (≤ 42 m, ≥ 12 m/s: 100% speed kept, 0 Eden cost).',
+        body: 'grounded (any slab face even upside down: 2.0/7.4/10.0 m/s), floating (0G soft cap 28 m/s), dashing (31 m/s, 0.36 s, 4.5 Eden), speed_attack (23.5–34 m/s), kick_recover, and kinetic_bounce (≤ 42 m, ≥ 12 m/s: 100% speed kept, 0 Eden cost).',
       },
       {
         title: 'TACTICAL SLOW-MO & HIT-STOP',
@@ -231,7 +231,7 @@ export const en: WebDictionary = {
       },
       {
         title: '90M DOME & WHITE BARRIER',
-        body: '90 m spherical arena with 10 orbiting slabs (2.2–4.2 m/s). Hitting the White Barrier at 88.6 m deals 10 HP to Nyx, but instantly eliminates basic enemies slammed into it.',
+        body: '90 m spherical arena with 10 orbiting slabs (2.2–4.2 m/s). Hitting the White Barrier at 88.6 m deals 20 HP to Nyx, but instantly eliminates basic enemies slammed into it.',
       },
     ],
     skillsKicker: 'ROGUELITE PROGRESSION · 3 ACTIVE SLOTS',
@@ -263,7 +263,7 @@ export const en: WebDictionary = {
       },
       eden_absorb: {
         name: 'Eden Absorb',
-        desc: 'Stationary channel (< 1.25 m/s). Restores 9 / 13 / 17 HP and 13 / 18 / 23 Eden instantly.',
+        desc: 'Stationary channel (< 1.25 m/s). Restores 9 / 13 / 17 HP and 32 / 44 / 56 Eden instantly.',
         synergy: 'Zero Eden cost: essential sustain tool without relying solely on pickups.',
       },
       attraction_well: {
@@ -284,7 +284,7 @@ export const en: WebDictionary = {
       implosion: {
         name: 'Implosion',
         desc: 'Unlimited-range orbital cinematic collapsing the locked target.',
-        synergy: 'Instantly obliterates basic enemies, deals -20% max HP to elites, or breaks 1 KRONOS Dorsal Star (locked in Phase 4).',
+        synergy: 'Instantly obliterates basic enemies, deals -20% max HP to elites, or breaks 1 KRONOS Dorsal Star (Phases 2 and 3 only).',
       },
     },
     passivesCopy: {
