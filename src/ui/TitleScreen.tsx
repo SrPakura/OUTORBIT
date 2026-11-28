@@ -53,12 +53,15 @@ export default function TitleScreen({
     onPlay();
   };
 
+  const officialWebsiteUrl = `https://outorbit.pakura.dev/?lang=${language}`;
+
   // Navegación con mando: D-Pad/stick mueve, Cruz (A) activa.
   const actions = [
     { id: 'play', run: handlePlayClick },
     ...(onPlayTraining ? [{ id: 'training', run: onPlayTraining }] : []),
     { id: 'settings', run: () => setModal('settings') },
     { id: 'leaderboard', run: () => setModal('leaderboard') },
+    { id: 'website', run: () => window.open(officialWebsiteUrl, '_blank', 'noopener,noreferrer') },
     { id: 'language', run: toggleLanguage },
   ] as const;
   const [padIndex] = useGamepadListNav(actions.length, {
@@ -107,7 +110,7 @@ export default function TitleScreen({
       />
 
       {/* --- Menú dentro del blade de papel del shader: logo + botones de tinta --- */}
-      <div className="absolute left-[3.5%] top-[14%] z-10 flex w-[25%] min-w-[230px] max-w-[380px] flex-col gap-7">
+      <div className="absolute left-[3.5%] top-[11%] z-10 flex w-[25%] min-w-[230px] max-w-[380px] flex-col gap-6">
         <header className="select-none">
           <div className="mb-2 flex items-center gap-2">
             <span className="title-tag">{t('menu.tagline')}</span>
@@ -118,7 +121,7 @@ export default function TitleScreen({
           </h1>
         </header>
 
-        <nav className="flex flex-col gap-3">
+        <nav className="flex flex-col gap-2.5">
           <FluidInkButton
             label={t('menu.play')}
             stops={MENU_STOPS}
@@ -152,6 +155,15 @@ export default function TitleScreen({
             labelFontSize="0.875rem"
             focused={padIndex === (onPlayTraining ? 3 : 2)}
             onClick={() => setModal('leaderboard')}
+          />
+          <FluidInkButton
+            label={t('menu.website')}
+            stops={MENU_STOPS}
+            vbHeight={84}
+            labelFontSize="0.875rem"
+            focused={padIndex === (onPlayTraining ? 4 : 3)}
+            href={officialWebsiteUrl}
+            target="_blank"
           />
         </nav>
       </div>

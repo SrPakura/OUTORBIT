@@ -31,6 +31,10 @@ export interface FluidInkButtonProps {
   focused?: boolean;
   ariaLabel?: string;
   onClick?: () => void;
+  /** Si se indica, renderiza un enlace `<a>` en lugar de `<button>`. */
+  href?: string;
+  target?: string;
+  rel?: string;
 }
 
 const VB_W = 340;
@@ -161,6 +165,9 @@ export default function FluidInkButton({
   focused = false,
   ariaLabel,
   onClick,
+  href,
+  target,
+  rel,
 }: FluidInkButtonProps) {
   const idRef = useRef<string | null>(null);
   if (!idRef.current) idRef.current = `fink-${++uidCounter}`;
@@ -171,7 +178,7 @@ export default function FluidInkButton({
   const clipRef = useRef<SVGPathElement | null>(null);
   const coreRef = useRef<SVGPathElement | null>(null);
   const gradRef = useRef<SVGLinearGradientElement | null>(null);
-  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const btnRef = useRef<HTMLElement | null>(null);
 
   // Estado de la simulación líquida (la referencia, tal cual)
   const sim = useRef({
@@ -280,6 +287,19 @@ export default function FluidInkButton({
     };
   }, [vbHeight, cornerRadius, amplitude]);
 
+  const content = (
+    <>
+      <span className="fink-label" style={{ color: textColor, fontSize: labelFontSize }}>
+        {label}
+      </span>
+      {hint && (
+        <span className="fink-hint" style={{ color: textColor, borderColor: `${textColor}55` }}>
+          {hint}
+        </span>
+      )}
+    </>
+  );
+
   return (
     <div className={`fink-wrap${focused ? ' is-focused' : ''}`}>
       <svg viewBox={`0 0 ${VB_W} ${vbHeight}`} className="fink-svg" aria-hidden="true">
@@ -314,22 +334,33 @@ export default function FluidInkButton({
         </g>
       </svg>
 
-      <button
-        ref={btnRef}
-        type="button"
-        aria-label={ariaLabel ?? label}
-        onClick={onClick}
-        className="fink-btn"
-      >
-        <span className="fink-label" style={{ color: textColor, fontSize: labelFontSize }}>
-          {label}
-        </span>
-        {hint && (
-          <span className="fink-hint" style={{ color: textColor, borderColor: `${textColor}55` }}>
-            {hint}
-          </span>
-        )}
-      </button>
+      {href ? (
+        <a
+          ref={(el) => {
+            btnRef.current = el;
+          }}
+          href={href}
+          target={target}
+          rel={rel ?? (target === '_blank' ? 'noopener noreferrer' : undefined)}
+          aria-label={ariaLabel ?? label}
+          onClick={onClick}
+          className="fink-btn"
+        >
+          {content}
+        </a>
+      ) : (
+        <button
+          ref={(el) => {
+            btnRef.current = el;
+          }}
+          type="button"
+          aria-label={ariaLabel ?? label}
+          onClick={onClick}
+          className="fink-btn"
+        >
+          {content}
+        </button>
+      )}
 
       <style>{`
         .fink-wrap { position: relative; width: 100%; transform: skewX(-12deg); transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), filter 0.16s ease; }
@@ -350,6 +381,7 @@ export default function FluidInkButton({
           border: none;
           background: transparent;
           font-family: inherit;
+          text-decoration: none;
           touch-action: manipulation;
           transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
         }
